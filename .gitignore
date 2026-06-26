@@ -1,0 +1,30 @@
+# .NET build output
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio
+.vs/
+*.user
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Python caches
+__pycache__/
+*.pyc
+
+# File geodatabase lock files
+*.lock
+
+# Photoshop icon sources (the exported .png files are what the add-in uses)
+*.psd
+
+# Distribution artifacts (built package, cert, install notes)
+Deploy_Folder/
+
+# Code-signing certificate material (never commit private keys)
+*.pfx
+*.p12
+*.snk
+*.cer
+*.crt

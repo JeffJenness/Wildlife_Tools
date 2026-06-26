@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ArcGIS defaultAssembly="WildlifeTools.dll"
+        defaultNamespace="WildlifeTools"
+        xmlns="http://schemas.esri.com/DADF/Registry"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
+
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.0" desktopVersion="3.7.1901" product="ArcGISPro">
+    <Name>WildlifeTools</Name>
+    <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
+    <Image>Images\AddinDesktop32.png</Image>
+    <Author>Jeff Jenness</Author>
+    <Company>Jenness Enterprises</Company>
+    <Date>6/26/2026 9:21:21 AM</Date>
+    <Subject>Framework, Geometry, Geoprocessing</Subject>
+    <!-- Note subject can be one or more of these topics:
+                    Content, Framework, Editing, Geodatabase, Geometry, Geoprocessing, Layouts, Map Authoring, Map Exploration -->
+  </AddInInfo>
+
+  <modules>
+    <insertModule id="WildlifeTools_Module" className="Module1" autoLoad="true" caption="Wildlife Tools">
+      <tabs>
+        <tab id="WildlifeTools_Tab1" caption="Wildlife">
+          <group refID="WildlifeTools_Group1"/>
+        </tab>
+      </tabs>
+
+      <groups>
+        <group id="WildlifeTools_Group1" caption="Home Range" appearsOnAddInTab="false">
+          <button refID="WildlifeTools_LoCoHStandard" size="large" />
+        </group>
+      </groups>
+
+      <controls>
+        <button id="WildlifeTools_LoCoHStandard"
+                caption="LoCoH (Standard)"
+                className="LoCoHStandardButton"
+                loadOnClick="true"
+                smallImage="Images\AddInDesktop16.png"
+                largeImage="Images\AddInDesktop32.png"
+                keytip="LC">
+          <tooltip heading="Local Convex Hull (LoCoH) - Standard">
+            Opens the Standard (k-) Local Convex Hull home-range tool from the Jenness Enterprises toolbox.<disabledText />
+          </tooltip>
+        </button>
+      </controls>
+
+    </insertModule>
+  </modules>
+</ArcGIS>
