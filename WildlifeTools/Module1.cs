@@ -33,6 +33,32 @@ namespace WildlifeTools
         /// </summary>
         public static Module1 Current => _this ??= (Module1)FrameworkApplication.FindModule("WildlifeTools_Module");
 
+        // Thought for the Day: keys of recently shown quotes (oldest first), persisted
+        // with the project, so a quote is not repeated until MaxRecentQuotes others have
+        // been shown.
+        private const string RecentQuoteKeysKey = "ThoughtForTheDay_RecentQuoteKeys";
+        public const int MaxRecentQuotes = 100;
+
+        /// <summary>Keys of the most recently shown "Thought for the Day" quotes.</summary>
+        public static List<string> RecentQuoteKeys { get; } = new List<string>();
+
+        /// <summary>Records a shown quote's key, moving it to the most-recent end and
+        /// dropping the oldest beyond the cap.</summary>
+        public static void RecordRecentQuote(string key)
+        {
+            if (string.IsNullOrEmpty(key))
+            {
+                return;
+            }
+
+            RecentQuoteKeys.Remove(key);
+            RecentQuoteKeys.Add(key);
+            while (RecentQuoteKeys.Count > MaxRecentQuotes)
+            {
+                RecentQuoteKeys.RemoveAt(0);
+            }
+        }
+
         #region Overrides
         /// <summary>
         /// Called by Framework when the module is first loaded. Subscribes to project
@@ -44,6 +70,24 @@ namespace WildlifeTools
             // A project may already be open when the module first loads.
             EnsureToolboxInProject();
             return base.Initialize();
+        }
+
+        /// <summary>Restores the recent-quote history persisted with the project.</summary>
+        protected override Task OnReadSettingsAsync(ModuleSettingsReader settings)
+        {
+            RecentQuoteKeys.Clear();
+            if (settings?.Get(RecentQuoteKeysKey) is string recentQuotes && !string.IsNullOrEmpty(recentQuotes))
+            {
+                RecentQuoteKeys.AddRange(recentQuotes.Split('|', StringSplitOptions.RemoveEmptyEntries));
+            }
+            return Task.FromResult(0);
+        }
+
+        /// <summary>Persists the recent-quote history with the project.</summary>
+        protected override Task OnWriteSettingsAsync(ModuleSettingsWriter settings)
+        {
+            settings.Add(RecentQuoteKeysKey, string.Join("|", RecentQuoteKeys));
+            return Task.FromResult(0);
         }
 
         /// <summary>

@@ -1,0 +1,73 @@
+<Window x:Class="WildlifeTools.QuoteWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="A Little Inspiration"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize" SizeToContent="Height"
+        Width="520" MaxHeight="760" Opacity="0"
+        Loaded="OnLoaded">
+
+  <!-- Outer margin leaves room for the drop shadow so it isn't clipped by the
+       transparent window edge. -->
+  <Border CornerRadius="16" BorderThickness="3" Margin="18"
+          MouseLeftButtonDown="OnDrag">
+    <Border.BorderBrush>
+      <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#3A7BD5" Offset="0" />
+        <GradientStop Color="#00D2A8" Offset="1" />
+      </LinearGradientBrush>
+    </Border.BorderBrush>
+    <Border.Effect>
+      <DropShadowEffect BlurRadius="26" ShadowDepth="3" Opacity="0.5" />
+    </Border.Effect>
+
+    <!-- Card. Its Background is set to the (downscaled) background image in
+         code-behind; the gradient here is the fallback if the image is absent.
+         A Border clips its Background brush to CornerRadius automatically. -->
+    <Border x:Name="CardBorder" CornerRadius="13">
+      <Border.Background>
+        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+          <GradientStop Color="#1B2A40" Offset="0" />
+          <GradientStop Color="#2C4A6E" Offset="1" />
+        </LinearGradientBrush>
+      </Border.Background>
+
+      <Grid>
+        <!-- Readability scrim over the background image (own radius so its
+             corners match the rounded card). -->
+        <Rectangle Fill="#B3101826" RadiusX="13" RadiusY="13" />
+
+        <!-- Close button -->
+        <Button Content="&#x2715;" Click="OnClose" Cursor="Hand"
+                HorizontalAlignment="Right" VerticalAlignment="Top"
+                Width="26" Height="26" Margin="6" FontSize="13"
+                Foreground="White" Background="Transparent" BorderThickness="0"
+                ToolTip="Close" />
+
+        <!-- Quote + author. A ScrollViewer lets a very long quote scroll once the
+             window reaches its MaxHeight instead of being clipped. -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                      Margin="0,34,0,8">
+          <StackPanel Margin="38,0">
+            <!-- One TextBlock per paragraph is created in code (SetQuote) so the
+                 gap *between* paragraphs can exceed the within-paragraph line
+                 spacing. -->
+            <StackPanel x:Name="QuoteParagraphs">
+              <StackPanel.Effect>
+                <DropShadowEffect BlurRadius="6" ShadowDepth="1.5" Opacity="0.8" Color="Black" />
+              </StackPanel.Effect>
+            </StackPanel>
+            <TextBlock x:Name="AuthorTextBlock" Foreground="#CFE3FF" FontSize="14.5"
+                       HorizontalAlignment="Right" Margin="0,18,0,0" TextWrapping="Wrap"
+                       TextAlignment="Right">
+              <TextBlock.Effect>
+                <DropShadowEffect BlurRadius="5" ShadowDepth="1.5" Opacity="0.8" Color="Black" />
+              </TextBlock.Effect>
+            </TextBlock>
+          </StackPanel>
+        </ScrollViewer>
+      </Grid>
+    </Border>
+  </Border>
+</Window>

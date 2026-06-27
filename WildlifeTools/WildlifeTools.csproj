@@ -11,11 +11,29 @@
     <None Remove="Config.daml" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="Config.daml" />    
+    <Content Include="Config.daml" />
     <Content Include="Images\AddInDesktop16.png" />
     <Content Include="Images\AddInDesktop32.png" />
     <Content Include="DarkImages\AddInDesktop16.png" />
-    <Content Include="DarkImages\AddInDesktop32.png" />    
+    <Content Include="DarkImages\AddInDesktop32.png" />
+    <Content Include="Images\Heart_16.png" />
+    <Content Include="Images\Heart_32.png" />
+    <Content Include="DarkImages\Heart_16.png" />
+    <Content Include="DarkImages\Heart_32.png" />
+    <!-- The Thought-for-the-Day card background is loaded from disk by path at run
+         time, so it must sit next to the assembly (copied to the output directory). -->
+    <Content Include="Images\quote_bg.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+  <!-- Inspirational_Quotes.json is a synced copy of the SSI add-in master
+       (SSI_ArcGIS_Tools\Metadata\Inspirational_Quotes.json); deployed next to the
+       assembly for the Thought-for-the-Day tool. -->
+  <ItemGroup>
+    <None Remove="Metadata\Inspirational_Quotes.json" />
+    <Content Include="Metadata\Inspirational_Quotes.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <ItemGroup>
     <None Include="Properties\launchSettings.json" />

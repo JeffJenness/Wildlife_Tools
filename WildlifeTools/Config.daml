@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.3.1" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\AddinDesktop32.png</Image>
@@ -22,12 +22,18 @@
       <tabs>
         <tab id="WildlifeTools_Tab1" caption="Wildlife">
           <group refID="WildlifeTools_Group1"/>
+          <group refID="WildlifeTools_GroupBreak"/>
         </tab>
       </tabs>
 
       <groups>
         <group id="WildlifeTools_Group1" caption="Home Range" appearsOnAddInTab="false">
           <button refID="WildlifeTools_LoCoHStandard" size="large" />
+          <button refID="WildlifeTools_LoCoHAdaptive" size="large" />
+          <button refID="WildlifeTools_LoCoHFixedSphere" size="large" />
+        </group>
+        <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
+          <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
         </group>
       </groups>
 
@@ -41,6 +47,39 @@
                 keytip="LC">
           <tooltip heading="Local Convex Hull (LoCoH) - Standard">
             Opens the Standard (k-) Local Convex Hull home-range tool from the Jenness Enterprises toolbox.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_LoCoHAdaptive"
+                caption="LoCoH (Adaptive)"
+                className="LoCoHAdaptiveButton"
+                loadOnClick="true"
+                smallImage="Images\AddInDesktop16.png"
+                largeImage="Images\AddInDesktop32.png"
+                keytip="LA">
+          <tooltip heading="Local Convex Hull (LoCoH) - Adaptive">
+            Opens the Adaptive (a-) Local Convex Hull home-range tool from the Jenness Enterprises toolbox.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_LoCoHFixedSphere"
+                caption="LoCoH (Fixed Sphere)"
+                className="LoCoHFixedSphereButton"
+                loadOnClick="true"
+                smallImage="Images\AddInDesktop16.png"
+                largeImage="Images\AddInDesktop32.png"
+                keytip="LF">
+          <tooltip heading="Local Convex Hull (LoCoH) - Fixed Sphere">
+            Opens the Fixed-sphere-of-influence (r-) Local Convex Hull home-range tool from the Jenness Enterprises toolbox.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_ThoughtForTheDay"
+                caption="Thought for the Day"
+                className="ThoughtForTheDayButton"
+                loadOnClick="true"
+                smallImage="Images\Heart_16.png"
+                largeImage="Images\Heart_32.png"
+                keytip="TD">
+          <tooltip heading="Thought for the Day">
+            Shows a random inspirational quote in a little pop-up card.<disabledText />
           </tooltip>
         </button>
       </controls>
