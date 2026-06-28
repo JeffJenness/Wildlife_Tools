@@ -476,13 +476,15 @@ def run_locoh_standard(in_features, k, out_isopleths, out_hulls=None, messages=N
         log("Created layer file: {}".format(iso_lyrx))
 
     # --- optional output: individual hulls ------------------------------
-    # Each hull carries the cumulative count/proportion at its area rank
-    # (legacy _LoCoH_Polys semantics); Area is the individual hull's own area.
+    # Each hull reports its OWN statistics over its OWN area: every k-LoCoH
+    # hull is built from exactly k points (the focal point and its k-1 nearest
+    # neighbours), so Point_Count is k and Pts_per_SqKm is k over the hull area.
     if out_hulls:
         log("Writing individual hulls: {}".format(out_hulls))
         _create_polygon_fc(out_hulls, sr, STANDARD_FIELDS)
-        hull_rows = [(hulls_sorted[i], areas_sorted[i], counts[i], proportions[i],
-                      _density_per_sqkm(counts[i], areas_sorted[i], is_geographic, dist_mpu))
+        k_prop = k / float(n)
+        hull_rows = [(hulls_sorted[i], areas_sorted[i], k, k_prop,
+                      _density_per_sqkm(k, areas_sorted[i], is_geographic, dist_mpu))
                      for i in range(len(hulls_sorted))]
         _write_rows(out_hulls, hull_rows, STANDARD_FIELDS)
         write_metadata(out_hulls, in_base, k, n, is_geographic,
@@ -624,11 +626,14 @@ def run_locoh_adaptive(in_features, a_meters, report_factor, report_unit,
         log("Created layer file: {}".format(iso_lyrx))
 
     # --- optional output: individual hulls ---
+    # Each hull reports its OWN statistics: Point_Count is the hull's own
+    # neighbour count and Pts_per_SqKm is that count over the hull's own area.
     if out_hulls:
         log("Writing individual hulls: {}".format(out_hulls))
         _create_polygon_fc(out_hulls, sr, ADAPTIVE_FIELDS)
-        hull_rows = [(hulls_sorted[i], areas_sorted[i], counts[i], proportions[i], cumdist_report[i],
-                      _density_per_sqkm(counts[i], areas_sorted[i], is_geographic, dist_mpu))
+        hull_rows = [(hulls_sorted[i], areas_sorted[i], counts_sorted[i],
+                      counts_sorted[i] / float(n), cumdist_report[i],
+                      _density_per_sqkm(counts_sorted[i], areas_sorted[i], is_geographic, dist_mpu))
                      for i in range(len(hulls_sorted))]
         _write_rows(out_hulls, hull_rows, ADAPTIVE_FIELDS)
         write_metadata_adaptive(out_hulls, in_base, a_report, report_unit, used_max,
@@ -790,8 +795,13 @@ def run_locoh_fixed_sphere(in_features, r_meters, report_factor, report_unit,
     if out_hulls:
         log("Writing individual hulls: {}".format(out_hulls))
         _create_polygon_fc(out_hulls, sr, FIXEDSPHERE_FIELDS)
-        hull_rows = [(hulls_sorted[i], areas_sorted[i], counts[i], proportions[i], sphere_sorted[i],
-                      _density_per_sqkm(counts[i], areas_sorted[i], is_geographic, dist_mpu))
+        # Each hull reports its OWN statistics: Point_Count is the number of
+        # points used to build the hull (focal point + within-r neighbours,
+        # at least 3); Sphere_Point_Count is the true count within radius r;
+        # Pts_per_SqKm is Point_Count over the hull's own area.
+        hull_rows = [(hulls_sorted[i], areas_sorted[i], counts_sorted[i],
+                      counts_sorted[i] / float(n), sphere_sorted[i],
+                      _density_per_sqkm(counts_sorted[i], areas_sorted[i], is_geographic, dist_mpu))
                      for i in range(len(hulls_sorted))]
         _write_rows(out_hulls, hull_rows, FIXEDSPHERE_FIELDS)
         write_metadata_fixed_sphere(out_hulls, in_base, r_report, report_unit, used_auto,

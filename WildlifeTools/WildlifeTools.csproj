@@ -125,4 +125,16 @@
     </Reference>
   </ItemGroup>
    <Import Project="C:\Program Files\ArcGIS\Pro\bin\Esri.ProApp.SDK.Desktop.targets" Condition="Exists('C:\Program Files\ArcGIS\Pro\bin\Esri.ProApp.SDK.Desktop.targets') AND !Exists('Esri.ArcGISPro.Extensions.targets')" />
+
+  <!-- Self-deploy fallback. The Esri SDK targets invoke RegisterAddIn.exe without
+       a full path, so deployment fails when the ArcGIS Pro 'bin' folder is not on
+       PATH (e.g. building from a plain shell). This calls it by full path after the
+       build so the freshly packaged add-in installs to the user AddIns folder.
+       ContinueOnError keeps a locked file (Pro running) from failing the build. -->
+  <Target Name="DeployAddInFallback" AfterTargets="Build"
+          Condition="Exists('C:\Program Files\ArcGIS\Pro\bin\RegisterAddIn.exe') AND Exists('$(TargetDir)$(AssemblyName).esriAddinX')">
+    <Exec Command="&quot;C:\Program Files\ArcGIS\Pro\bin\RegisterAddIn.exe&quot; &quot;$(TargetDir)$(AssemblyName).esriAddinX&quot; /s"
+          ContinueOnError="true" />
+    <Message Importance="high" Text="DeployAddInFallback: registered $(AssemblyName).esriAddinX to the user AddIns folder." />
+  </Target>
 </Project>
