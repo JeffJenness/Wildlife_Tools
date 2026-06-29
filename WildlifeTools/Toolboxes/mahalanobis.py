@@ -51,6 +51,10 @@ MAHAL_TAGS = ("Mahalanobis distance, habitat model, multivariate, covariance, "
 # Clip over the full dataset extent), shipped with the toolbox.
 LAYER_TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               "LayerTemplates", "Mahalanobis_Raster.lyrx")
+# Separate ramp for chi-square p-value (typicality) output: "Yellow to Green to Dark Blue"
+# (yellow = low p / atypical, dark blue = high p / close match).
+LAYER_TEMPLATE_PVALUE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     "LayerTemplates", "Mahalanobis_Pvalue.lyrx")
 
 # Output value options (kept in sync with the tool's Output value parameter).
 OUT_D2 = "Squared distance (D2): Traditional for ecological modeling"
@@ -516,6 +520,34 @@ def stats_from_samples(samples):
     return mean, cov, np.atleast_2d(corr)
 
 
+def _gdal_source_path(raster, scratch):
+    """Return ``(path, tmp_copy)``: a path ``gdal.Open`` / ``gdal.Warp`` can read for
+    ``raster``, and the scratch GeoTIFF that the caller must delete afterward (or None if
+    the native path was directly usable).
+
+    GDAL cannot open every arcpy raster by its native path -- rasters inside a file
+    geodatabase, mosaic datasets, and some in-memory layers all fail. When the catalog
+    path is not directly GDAL-openable, the raster is exported to a scratch GeoTIFF (arcpy
+    can read anything) and that path is returned, with ``tmp_copy`` set so the caller can
+    clean it up once the GDAL dataset / VRT built from it has been released.
+    """
+    gdal = _gdal()
+    try:
+        path = arcpy.Describe(raster).catalogPath
+    except Exception:
+        path = raster
+    try:
+        ds = gdal.Open(path)
+    except RuntimeError:
+        ds = None
+    if ds is not None:
+        ds = None
+        return path, None
+    tif = arcpy.CreateUniqueName("mahal_src.tif", scratch)
+    arcpy.management.CopyRaster(raster, tif)
+    return tif, tif
+
+
 def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
                            scratch, messages):
     """Mean/cov/corr from cells where a categorical raster equals ``cat_value``.
@@ -526,8 +558,9 @@ def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
     gdal = _gdal()
     width, height = geo["width"], geo["height"]
     minx, maxy, cell = geo["minx"], geo["maxy"], geo["cell"]
+    cat_src, cat_tmp = _gdal_source_path(cat_path, scratch)
     cat_vrt = gdal.Warp(
-        "", arcpy.Describe(cat_path).catalogPath, format="VRT",
+        "", cat_src, format="VRT",
         outputType=gdal.GDT_Float64,
         outputBounds=(minx, geo["maxy"] - height * cell, minx + width * cell, maxy),
         width=width, height=height, resampleAlg="near", dstNodata=float("nan"))
@@ -556,6 +589,14 @@ def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
         n += X.shape[1]
         s1 += X.sum(axis=1)
         s2 += X @ X.T
+    # The category VRT has been fully read; release it and remove any scratch copy.
+    cat_band = None
+    cat_vrt = None
+    if cat_tmp:
+        try:
+            arcpy.management.Delete(cat_tmp)
+        except Exception:
+            pass
     if n < k + 1:
         raise arcpy.ExecuteError(
             "Only {} cells matched category {}; need at least {} for a {}-variable "
@@ -660,17 +701,21 @@ def _row_strips(height, width, k):
 
 
 def _mask_vrt(geo, messages):
-    """Warped VRT dataset for the Mask environment aligned to the grid, or None.
+    """Return ``(vrt, tmp_copy)`` for the Mask environment aligned to the grid, or
+    ``(None, None)`` if there is no mask or it could not be read.
 
     The dataset (not just its band) must be returned so the caller can keep it alive
-    for the duration of the block loop -- a freed VRT invalidates its bands.
+    for the duration of the block loop -- a freed VRT invalidates its bands. ``tmp_copy``
+    is a scratch GeoTIFF the caller must delete after the loop (None if not needed); it
+    backs the VRT, so it can only be removed once the VRT is released.
     """
     mask = arcpy.env.mask
     if not mask:
-        return None
+        return None, None
     gdal = _gdal()
+    mask_tmp = None
     try:
-        mask_path = arcpy.Describe(mask).catalogPath
+        mask_path, mask_tmp = _gdal_source_path(mask, arcpy.env.scratchFolder)
         width, height, cell = geo["width"], geo["height"], geo["cell"]
         minx, maxy = geo["minx"], geo["maxy"]
         vrt = gdal.Warp(
@@ -678,24 +723,170 @@ def _mask_vrt(geo, messages):
             outputBounds=(minx, maxy - height * cell, minx + width * cell, maxy),
             width=width, height=height, resampleAlg="near", dstNodata=float("nan"))
         messages.addMessage("Honoring Mask environment.")
-        return vrt
+        return vrt, mask_tmp
     except Exception as e:
         messages.addWarningMessage("Could not apply the Mask environment: {}".format(e))
+        if mask_tmp:
+            try:
+                arcpy.management.Delete(mask_tmp)
+            except Exception:
+                pass
+        return None, None
+
+
+class _RasterStats(object):
+    """Streaming min / max / mean / std accumulator over the valid output cells.
+
+    Lets us record the statistics from values we are already computing, so the output's
+    statistics can be set directly (arcpy SetRasterProperties) instead of paying for a
+    full-raster CalculateStatistics scan -- which, on file-geodatabase float rasters,
+    is pathologically slow (tens of seconds even for tiny rasters) and scans the data we
+    just generated. Uses population variance (ddof=0), matching CalculateStatistics.
+    """
+    __slots__ = ("n", "vmin", "vmax", "vsum", "vsumsq")
+
+    def __init__(self):
+        self.n = 0
+        self.vmin = np.inf
+        self.vmax = -np.inf
+        self.vsum = 0.0
+        self.vsumsq = 0.0
+
+    def add(self, values):
+        v = np.asarray(values, dtype=np.float64).ravel()
+        if v.size == 0:
+            return
+        self.n += int(v.size)
+        self.vmin = min(self.vmin, float(v.min()))
+        self.vmax = max(self.vmax, float(v.max()))
+        self.vsum += float(v.sum())
+        self.vsumsq += float(np.square(v).sum())
+
+    def result(self):
+        if self.n == 0:
+            return None
+        mean = self.vsum / self.n
+        var = max(self.vsumsq / self.n - mean * mean, 0.0)
+        return {"min": self.vmin, "max": self.vmax, "mean": mean,
+                "std": float(np.sqrt(var)), "count": self.n}
+
+
+def _apply_known_statistics(raster, stats, messages):
+    """Set band statistics on ``raster`` from precomputed values (no scan).
+
+    Returns True on success. On False (no stats, or the call failed) the caller should
+    fall back to arcpy.management.CalculateStatistics.
+    """
+    if not stats:
+        return False
+    try:
+        arcpy.management.SetRasterProperties(
+            raster,
+            statistics=[[1, stats["min"], stats["max"], stats["mean"], stats["std"]]])
+        messages.addMessage(
+            "Set raster statistics from the computed values (min {:.6g}, max {:.6g}, "
+            "mean {:.6g}, std {:.6g}).".format(
+                stats["min"], stats["max"], stats["mean"], stats["std"]))
+        return True
+    except Exception as e:
+        messages.addWarningMessage(
+            "Could not set precomputed statistics ({}); falling back to Calculate "
+            "Statistics.".format(e))
+        return False
+
+
+# Number of histogram bins to embed in the output layer file (matches ArcGIS Pro's
+# default raster-stretch histogram resolution).
+_HIST_BINS = 256
+
+
+def _finalize_stats(out_band, stats_acc, messages):
+    """Return the ``stats_acc`` result (min/max/mean/std/count) augmented with a
+    ``_HIST_BINS``-bin histogram read from ``out_band``.
+
+    The histogram is what the Percent Clip stretch needs to find its 0.5 % clip bounds;
+    we read it from the freshly written *scratch GeoTIFF* band with GDAL (fast and local),
+    avoiding the pathologically slow CalculateStatistics on the file-geodatabase output.
+    The histogram keys are omitted for an empty or single-value (constant) raster.
+    """
+    result = stats_acc.result()
+    if result is not None and result["max"] > result["min"]:
+        try:
+            counts = out_band.GetHistogram(result["min"], result["max"], _HIST_BINS,
+                                           include_out_of_range=0, approx_ok=0)
+            nsamp = int(sum(counts))
+            if nsamp > 0:
+                # Keep the raw counts (for GDAL SetDefaultHistogram) plus nsamples and
+                # resolution; the layer-file densities are derived from these.
+                result["hist_counts"] = [int(c) for c in counts]
+                result["nsamples"] = nsamp
+                result["resolution"] = (result["max"] - result["min"]) / (_HIST_BINS - 1)
+        except Exception as e:
+            if messages is not None:
+                messages.addWarningMessage(
+                    "Could not build the symbology histogram: {}".format(e))
+    return result
+
+
+def _write_gtiff_stats(out_band, stats):
+    """Write statistics + a default histogram into a GDAL band so arcpy CopyRaster carries
+    them into the output raster -- including file-geodatabase rasters, which GDAL cannot
+    write to directly but CopyRaster *can* populate from the scratch GeoTIFF's PAM.
+
+    Returns True if a histogram was written (which means the output will carry one, so the
+    caller must NOT then call SetRasterProperties -- that erases the stored histogram).
+    """
+    if not stats:
+        return False
+    try:
+        out_band.SetStatistics(float(stats["min"]), float(stats["max"]),
+                               float(stats["mean"]), float(stats["std"]))
+    except Exception:
+        pass
+    counts = stats.get("hist_counts")
+    if not counts:
+        return False
+    try:
+        out_band.SetDefaultHistogram(float(stats["min"]), float(stats["max"]), list(counts))
+        return True
+    except Exception:
+        return False
+
+
+def _stretch_stats_dict(stats):
+    """A CIM ``stretchStats`` (StatsHistogram) block from accumulated stats + histogram.
+
+    Returns None if there is no usable histogram (empty / constant raster). Injecting this
+    into the output layer file's stretch colorizer makes the Percent Clip render correctly
+    immediately, independent of the raster's stored histogram.
+    """
+    if not stats or "hist_counts" not in stats:
         return None
+    nsamp = float(stats["nsamples"])
+    densities = [c / nsamp for c in stats["hist_counts"]]
+    return {"type": "StatsHistogram",
+            "min": stats["min"], "max": stats["max"],
+            "mean": stats["mean"], "stddev": stats["std"],
+            "limitMin": stats["min"], "limitMax": stats["max"],
+            "histogram": densities,
+            "nsamples": stats["nsamples"],
+            "resolution": stats["resolution"]}
 
 
 def compute_mahalanobis(vrts, geo, mean, inv_cov, out_type, scratch, messages):
     """Compute the D2 / D / p-value raster, block by block, into a scratch GeoTIFF.
 
-    Returns the scratch GeoTIFF path (grid CRS, Float32, NODATA_OUT). The caller
-    copies it to the user's requested output location. Honors the Mask environment.
+    Returns ``(scratch_path, stats)`` where ``stats`` is the dataset min/max/mean/std
+    accumulated over the valid output cells (or None if every cell was NoData). The caller
+    copies the scratch GeoTIFF to the user's output and applies ``stats`` directly. Honors
+    the Mask environment.
     """
     gdal = _gdal()
     width, height = geo["width"], geo["height"]
     cell, minx, maxy = geo["cell"], geo["minx"], geo["maxy"]
     k = len(vrts)
     df = k
-    mask_vrt = _mask_vrt(geo, messages)          # keep dataset alive for the loop
+    mask_vrt, mask_tmp = _mask_vrt(geo, messages)   # keep dataset alive for the loop
     mask_band = mask_vrt.GetRasterBand(1) if mask_vrt is not None else None
 
     if out_type == OUT_PVALUE:
@@ -715,6 +906,7 @@ def compute_mahalanobis(vrts, geo, mean, inv_cov, out_type, scratch, messages):
 
     bands = [v.GetRasterBand(1) for v in vrts]
     mean = mean.reshape(k, 1)
+    stats = _RasterStats()
     strips = list(_row_strips(height, width, k))
     # Determinate progress bar over the block strips (replaces the indeterminate marquee).
     try:
@@ -742,6 +934,7 @@ def compute_mahalanobis(vrts, geo, mean, inv_cov, out_type, scratch, messages):
             else:
                 res = d2
             out[valid] = res.astype(np.float32)
+            stats.add(out[valid])      # record statistics from values we already have
         out_band.WriteArray(out.reshape(rows, width), 0, yoff)
         try:
             arcpy.SetProgressorPosition(idx + 1)
@@ -751,10 +944,25 @@ def compute_mahalanobis(vrts, geo, mean, inv_cov, out_type, scratch, messages):
         arcpy.ResetProgressor()
     except Exception:
         pass
+    # Release the mask VRT and delete its scratch copy (if one was exported).
+    mask_band = None
+    mask_vrt = None
+    if mask_tmp:
+        try:
+            arcpy.management.Delete(mask_tmp)
+        except Exception:
+            pass
     out_band.FlushCache()
     out_ds.FlushCache()
-    out_ds = None
-    return out_path
+    # Read the histogram off the scratch band (fast, local), then write the stats + histogram
+    # into the band's PAM so CopyRaster carries them into the output raster.
+    result = _finalize_stats(out_band, stats, messages)
+    if result is not None:
+        result["on_raster"] = _write_gtiff_stats(out_band, result)
+    out_band.FlushCache()
+    out_ds.FlushCache()
+    out_ds = None      # closing the dataset writes the .aux.xml (PAM) to disk
+    return out_path, result
 
 
 # ---------------------------------------------------------------------------
@@ -850,14 +1058,21 @@ def _write_raster_metadata(out_raster, variables, stats_source, out_type, n_used
 # ---------------------------------------------------------------------------
 # Output symbology (blue -> yellow -> red, Percent Clip, full-extent stats)
 # ---------------------------------------------------------------------------
-def write_raster_layer_file(out_raster, messages):
+def write_raster_layer_file(out_raster, messages, stretch_stats=None, template=None):
     """Create a .lyrx beside the output raster, styled by the stretch template.
 
     Builds a base layer file carrying the raster's data connection (so it is a usable
     standalone layer file), then splices in the template's stretch colorizer. Returns
     the .lyrx path (also used as the output symbology), or None on failure.
+
+    ``template`` is the .lyrx whose color ramp / scheme to apply (defaults to the blue ->
+    yellow -> red ``LAYER_TEMPLATE``; the p-value output passes ``LAYER_TEMPLATE_PVALUE``).
+    ``stretch_stats`` (a CIM StatsHistogram dict from ``_stretch_stats_dict``) is injected
+    into the colorizer so the Percent Clip stretch has the histogram it needs to compute
+    its clip bounds -- the output raster itself need not store one.
     """
-    if not os.path.exists(LAYER_TEMPLATE):
+    template = template or LAYER_TEMPLATE
+    if not os.path.exists(template):
         messages.addWarningMessage("Layer-file template not found; skipping layer file.")
         return None
     try:
@@ -890,7 +1105,7 @@ def write_raster_layer_file(out_raster, messages):
     # keeping the real stretch statistics that SaveToLayerFile captured (a stretch
     # colorizer with no statistics will not render -- the cause of a blank symbology).
     try:
-        with open(LAYER_TEMPLATE, encoding="utf-8") as f:
+        with open(template, encoding="utf-8") as f:
             tmpl_col = json.load(f)["layerDefinitions"][0]["colorizer"]
         with open(out_lyrx, encoding="utf-8") as f:
             lyr = json.load(f)
@@ -906,6 +1121,11 @@ def write_raster_layer_file(out_raster, messages):
                 out_col["colorScheme"] = tmpl_col["colorScheme"]
             if "noDataColor" in tmpl_col:
                 out_col["noDataColor"] = tmpl_col["noDataColor"]
+            # Replace the stretch statistics with our own (which include the histogram the
+            # Percent Clip needs). SaveToLayerFile writes a degenerate stretchStats
+            # (histogram [-1]) when the raster stores no histogram -- the blank-stretch bug.
+            if stretch_stats:
+                out_col["stretchStats"] = stretch_stats
         else:
             out_ld["colorizer"] = tmpl_col          # fallback: use the template wholesale
         out_ld["name"] = name
@@ -988,7 +1208,7 @@ def run_mahalanobis_raster(var_rows, sample_method, stats_source, out_type,
                              source_extra, messages)
 
     messages.addMessage("Computing Mahalanobis raster ({})...".format(out_type))
-    scratch_tif = compute_mahalanobis(
+    scratch_tif, out_stats = compute_mahalanobis(
         vrts, geo, mean, inv_cov, out_type, scratch, messages)
 
     # Save the output, then build statistics and pyramids as separate, labeled phases so
@@ -1003,12 +1223,21 @@ def run_mahalanobis_raster(var_rows, sample_method, stats_source, out_type,
         arcpy.management.CopyRaster(scratch_tif, out_raster)
     finally:
         arcpy.env.pyramid = prev_pyramid
-    # Compute dataset statistics so the Percent Clip stretch has full-extent stats.
-    _set_label("Calculating raster statistics...")
-    try:
-        arcpy.management.CalculateStatistics(out_raster)
-    except Exception as e:
-        messages.addWarningMessage("Could not calculate raster statistics: {}".format(e))
+    # Statistics + histogram (needed by the Percent Clip stretch) come from the values
+    # accumulated during the block loop -- avoiding the CalculateStatistics full-raster scan,
+    # which is pathologically slow on file-geodatabase float rasters. When the histogram was
+    # carried with the raster (via the scratch GeoTIFF + CopyRaster), do NOT call
+    # SetRasterProperties -- it erases the stored histogram. Otherwise set the stats directly,
+    # falling back to CalculateStatistics only if that fails.
+    _set_label("Setting raster statistics...")
+    if out_stats and out_stats.get("on_raster"):
+        messages.addMessage(
+            "Statistics and histogram were written with the raster (no scan needed).")
+    elif not _apply_known_statistics(out_raster, out_stats, messages):
+        try:
+            arcpy.management.CalculateStatistics(out_raster)
+        except Exception as e:
+            messages.addWarningMessage("Could not calculate raster statistics: {}".format(e))
     try:
         _write_raster_metadata(out_raster, variables, stats_source, out_type, n_used)
     except Exception as e:
@@ -1023,9 +1252,13 @@ def run_mahalanobis_raster(var_rows, sample_method, stats_source, out_type,
     except Exception as e:
         messages.addWarningMessage("Could not build pyramids: {}".format(e))
     messages.addMessage("Mahalanobis raster complete: {}".format(out_raster))
-    # Build the blue-yellow-red Percent Clip layer file; returned as output symbology.
+    # Build the Percent Clip layer file; returned as output symbology. The p-value output
+    # uses the yellow->green->dark-blue ramp, the D2/D outputs the blue->yellow->red ramp.
     _set_label("Creating layer file and symbology...")
-    return write_raster_layer_file(out_raster, messages)
+    template = LAYER_TEMPLATE_PVALUE if out_type == OUT_PVALUE else LAYER_TEMPLATE
+    return write_raster_layer_file(out_raster, messages,
+                                   stretch_stats=_stretch_stats_dict(out_stats),
+                                   template=template)
 
 
 # ---------------------------------------------------------------------------
@@ -1372,18 +1605,20 @@ def run_chi_square_transform(in_raster, df, out_raster, messages=None):
         raise arcpy.ExecuteError(
             "Degrees of freedom must be a positive integer (the number of variables).")
 
+    scratch = arcpy.env.scratchFolder
+    # GDAL cannot open every arcpy raster by path (file-geodatabase rasters, mosaics,
+    # in-memory layers); _gdal_source_path exports to a scratch GeoTIFF when needed.
+    in_path, in_copy = _gdal_source_path(in_raster, scratch)
     try:
-        in_path = arcpy.Describe(in_raster).catalogPath
-    except Exception:
-        in_path = in_raster
-    src = gdal.Open(in_path)
+        src = gdal.Open(in_path)
+    except RuntimeError:
+        src = None
     if src is None:
         raise arcpy.ExecuteError("Could not open the input raster: {}".format(in_raster))
     band = src.GetRasterBand(1)
     width, height = src.RasterXSize, src.RasterYSize
     in_nodata = band.GetNoDataValue()
 
-    scratch = arcpy.env.scratchFolder
     out_path = arcpy.CreateUniqueName("mahal_chi.tif", scratch)
     drv = gdal.GetDriverByName("GTiff")
     out_ds = drv.Create(out_path, width, height, 1, gdal.GDT_Float32,
@@ -1399,6 +1634,7 @@ def run_chi_square_transform(in_raster, df, out_raster, messages=None):
     messages.addMessage(
         "Transforming D2 raster to chi-square p-values (df = {}).".format(df))
     _set_label("Computing chi-square p-values...")
+    stats = _RasterStats()
     strips = list(_row_strips(height, width, 1))
     try:
         arcpy.SetProgressor("step", "Computing chi-square p-values...", 0, len(strips), 1)
@@ -1413,6 +1649,7 @@ def run_chi_square_transform(in_raster, df, out_raster, messages=None):
         if valid.any():
             d2 = np.maximum(block[valid], 0.0)
             out[valid] = chi2.sf(d2, df).astype(np.float32)
+            stats.add(out[valid])      # record statistics from values we already have
         out_band.WriteArray(out, 0, yoff)
         try:
             arcpy.SetProgressorPosition(idx + 1)
@@ -1424,8 +1661,15 @@ def run_chi_square_transform(in_raster, df, out_raster, messages=None):
         pass
     out_band.FlushCache()
     out_ds.FlushCache()
+    # Read the histogram, then write stats + histogram into the band's PAM so CopyRaster
+    # carries them into the output raster.
+    out_stats = _finalize_stats(out_band, stats, messages)
+    if out_stats is not None:
+        out_stats["on_raster"] = _write_gtiff_stats(out_band, out_stats)
+    out_band.FlushCache()
+    out_ds.FlushCache()
     src = None
-    out_ds = None
+    out_ds = None      # closing the dataset writes the .aux.xml (PAM) to disk
 
     # Save / stats / metadata / pyramids / symbology -- mirror run_mahalanobis_raster.
     _set_label("Saving output raster...")
@@ -1435,11 +1679,18 @@ def run_chi_square_transform(in_raster, df, out_raster, messages=None):
         arcpy.management.CopyRaster(out_path, out_raster)
     finally:
         arcpy.env.pyramid = prev_pyramid
-    _set_label("Calculating raster statistics...")
-    try:
-        arcpy.management.CalculateStatistics(out_raster)
-    except Exception as e:
-        messages.addWarningMessage("Could not calculate raster statistics: {}".format(e))
+    # Statistics + histogram from the accumulated p-values. If the histogram was carried with
+    # the raster, skip SetRasterProperties (it would erase the histogram); otherwise set the
+    # stats directly, falling back to the scan only if that fails.
+    _set_label("Setting raster statistics...")
+    if out_stats and out_stats.get("on_raster"):
+        messages.addMessage(
+            "Statistics and histogram were written with the raster (no scan needed).")
+    elif not _apply_known_statistics(out_raster, out_stats, messages):
+        try:
+            arcpy.management.CalculateStatistics(out_raster)
+        except Exception as e:
+            messages.addWarningMessage("Could not calculate raster statistics: {}".format(e))
     try:
         _write_chi_metadata(in_raster, out_raster, df)
     except Exception as e:
@@ -1448,6 +1699,11 @@ def run_chi_square_transform(in_raster, df, out_raster, messages=None):
         arcpy.management.Delete(out_path)
     except Exception:
         pass
+    if in_copy:
+        try:
+            arcpy.management.Delete(in_copy)
+        except Exception:
+            pass
     _set_label("Building pyramids...")
     try:
         arcpy.management.BuildPyramids(out_raster)
@@ -1455,4 +1711,6 @@ def run_chi_square_transform(in_raster, df, out_raster, messages=None):
         messages.addWarningMessage("Could not build pyramids: {}".format(e))
     messages.addMessage("Chi-square p-value raster complete: {}".format(out_raster))
     _set_label("Creating layer file and symbology...")
-    return write_raster_layer_file(out_raster, messages)
+    return write_raster_layer_file(out_raster, messages,
+                                   stretch_stats=_stretch_stats_dict(out_stats),
+                                   template=LAYER_TEMPLATE_PVALUE)

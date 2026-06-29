@@ -675,9 +675,28 @@ def _rat_flagged(p_raster):
     return flagged
 
 
+def _any_multiband(p_raster):
+    """True if any selected raster in the list has more than one band.
+
+    Used to enable the Bands-to-exclude control only when there is actually a multiband
+    raster to exclude bands from (a Python toolbox can grey a parameter out but cannot
+    hide it outright).
+    """
+    for r in _raster_list(p_raster):
+        try:
+            d = arcpy.Describe(r)
+            if d.dataType in _RASTER_DT and getattr(d, "bandCount", 1) > 1:
+                return True
+        except Exception:
+            pass
+    return False
+
+
 def _mahal_update(tool, P, out_name, out_base, derived_re):
     """Shared updateParameters: sample always on; output + table autofill; enabling."""
     P["sample_method"].enabled = True
+    # The Bands-to-exclude control is only meaningful when a multiband raster is present.
+    P["exclude_bands"].enabled = _any_multiband(P["raster_vars"])
 
     source = P["stats_source"].valueAsText
     is_pts = (source == mahalanobis.SRC_POINTS)
@@ -906,8 +925,10 @@ class MahalanobisRaster(object):
             datatype="DERasterDataset", parameterType="Required", direction="Output")
 
         sm, ss, cr, cf, cv, mt, ct, inv = _mahal_core_params()
+        # Sample points (and its selection toggle) sit with the other input datasets,
+        # above the Cell value sampling option.
         return [_make_raster_vars_param(), _make_poly_vars_param(), _make_exclude_bands_param(),
-                sm, ss, points, use_selected, cr, cf, cv, mt, ct, inv,
+                points, use_selected, sm, ss, cr, cf, cv, mt, ct, inv,
                 out_raster, _out_type_param()] + _make_mahal_table_params(self.CAT)
 
     def isLicensed(self):
@@ -1141,6 +1162,8 @@ class MahalanobisCovariance(object):
     def updateParameters(self, parameters):
         P = {p.name: p for p in parameters}
         P["sample_method"].enabled = True
+        # The Bands-to-exclude control is only meaningful when a multiband raster is present.
+        P["exclude_bands"].enabled = _any_multiband(P["raster_vars"])
         source = P["stats_source"].valueAsText
         is_pts = (source == mahalanobis.SRC_POINTS)
         is_cat = (source == mahalanobis.SRC_CATEGORICAL)
