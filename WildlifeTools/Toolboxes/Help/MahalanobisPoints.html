@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mahalanobis Distance - Calculate at Points</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="tool-help">
+
+<h1>Mahalanobis Distance &mdash; Calculate at Points</h1>
+<p class="subtitle">Jenness Enterprises Wildlife Tools &middot; Mahalanobis Tools</p>
+
+<section id="summary">
+<h2>Summary</h2>
+<p>Calculates a Mahalanobis value at each input point, measuring how far the point's
+combination of landscape-variable values lies from a multivariate reference mean, scaled by
+the inverse covariance among the variables.</p>
+</section>
+
+<section id="usage">
+<h2>Usage</h2>
+<p>The value for a point is the quadratic form
+<code>D&sup2; = (x &minus; &mu;)' &middot; &Sigma;&#8315;&sup1; &middot; (x &minus; &mu;)</code>,
+where <code>x</code> is the point's vector of landscape-variable values, <code>&mu;</code> is
+the mean vector, and <code>&Sigma;&#8315;&sup1;</code> is the inverse covariance matrix. The
+reference mean and covariance can be computed from a point sample, from the cells of a
+categorical raster, or read from previously saved tables.</p>
+
+<p>The output is a <strong>copy of the input points</strong> with one added field
+(<code>Mahal_D2</code>, <code>Mahal_D</code>, or <code>Mahal_pval</code> depending on the
+output value). Points that fall outside the extent of any landscape raster, or on a NoData
+cell, receive a <strong>null</strong> value.</p>
+
+<p>Predictor rasters always contribute their <strong>cell values</strong>, never raster
+attribute-table values. A multiband raster expands to one variable per band. A predictor may
+instead be a polygon feature layer plus a numeric field.</p>
+
+<div class="note">A common workflow is to leave <em>Sample points for statistics</em> empty so
+the mean and covariance are built from the input points themselves &mdash; each point's value
+is then its Mahalanobis distance from the centroid of all the points, useful for flagging
+atypical observations. Provide a separate statistics sample (or existing tables) to evaluate
+the points against a different reference distribution.</div>
+
+<p><strong>Reference:</strong> Mahalanobis, P.C. (1936). On the generalised distance in
+statistics. <em>Proceedings of the National Institute of Sciences of India</em> 2(1):49&ndash;55.</p>
+</section>
+
+<section id="parameters">
+<h2>Parameters</h2>
+<table class="params">
+<thead><tr><th>Label</th><th>Explanation</th><th>Data Type</th></tr></thead>
+<tbody>
+<tr><td class="param-name">Input points to evaluate</td>
+<td>The point features at which to compute a Mahalanobis value. The output is a copy of these
+points with the value field added.</td>
+<td class="type">Feature Layer</td></tr>
+<tr><td class="param-name">Raster Landscape Variables</td>
+<td>The raster datasets (cell values are used); at least one is required. A multiband raster is
+expanded to one variable per band. <strong>Order matters</strong> (rasters first, then polygons)
+and must match any reused tables.</td>
+<td class="type">Raster Layer (multiple)</td></tr>
+<tr><td class="param-name">Polygon Landscape Variables (Optional)</td>
+<td>Optional polygon variables: a polygon feature class plus a numeric field (validated dropdown),
+rasterized to the analysis grid.</td>
+<td class="type">Value Table</td></tr>
+<tr><td class="param-name">Bands to exclude from multiband rasters (Optional)</td>
+<td>Optional. Name a multiband raster and the 1-based band number to leave out.</td>
+<td class="type">Value Table</td></tr>
+<tr><td class="param-name">Cell value sampling</td>
+<td>Exact (nearest cell) or Interpolated (bilinear) sampling of rasters at the points.
+<br/><br/>Exact cell values are more appropriate for <strong>categorical</strong> rasters,
+while bilinear interpolation is more appropriate for <strong>continuous</strong> rasters.
+Interpolation is rarely appropriate for categorical data unless the categories are at least
+ordinal, and preferably interval or ratio; it should never be used for nominal (unordered)
+categories.</td>
+<td class="type">String</td></tr>
+<tr><td class="param-name">Source of mean vector and covariance matrix</td>
+<td>Calculate from a point sample, from a categorical raster's matching cells, or read from
+existing tables.</td>
+<td class="type">String</td></tr>
+<tr><td class="param-name">Sample points for statistics</td>
+<td>The point sample used to compute the mean and covariance. <strong>Leave empty to use the
+input points being evaluated</strong> (the common case).</td>
+<td class="type">Feature Layer</td></tr>
+<tr><td class="param-name">Use only the selected statistics points</td>
+<td>If checked and the statistics points layer has a selection, only the selected points build
+the statistics.</td>
+<td class="type">Boolean</td></tr>
+<tr><td class="param-name">Categorical raster / field / value</td>
+<td>For the Categorical raster source: the raster, an informational field, and the cell value
+whose cells define the reference sample.</td>
+<td class="type">Raster Layer / Field / String</td></tr>
+<tr><td class="param-name">Mean vector table / Covariance matrix table</td>
+<td>For the Existing tables source: previously saved tables; the covariance table's stored variable order is used to validate the variable list.</td>
+<td class="type">Table View</td></tr>
+<tr><td class="param-name">Covariance inversion method</td>
+<td>Standard (inverse) for well-conditioned data; Pseudo-inverse (SVD) for strongly collinear
+variables. The covariance condition number is reported.</td>
+<td class="type">String</td></tr>
+<tr><td class="param-name">Output points</td>
+<td>A copy of the input points with the Mahalanobis value field. Defaults to
+<code>Mahalanobis_Points</code>, auto-incremented if taken.</td>
+<td class="type">Feature Class</td></tr>
+<tr><td class="param-name">Output value</td>
+<td>Squared distance (D&sup2;), Distance (D), or Chi-square p-value (degrees of freedom = number
+of variables).</td>
+<td class="type">String</td></tr>
+<tr><td class="param-name">Generate / save statistics tables</td>
+<td>Optionally write the mean vector, covariance, inverse covariance, and correlation matrices
+to tables (auto-named from the output, e.g. <code>&lt;output&gt;_Means</code>).</td>
+<td class="type">Boolean / Table</td></tr>
+</tbody>
+</table>
+</section>
+
+<section id="environments">
+<h2>Environments</h2>
+<p>This tool honors the following analysis environments, which define the grid on which the
+landscape variables are sampled at the points:</p>
+<ul>
+<li><a href="https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/output-coordinate-system.htm">Output Coordinate System</a></li>
+<li><a href="https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/cell-size.htm">Cell Size</a></li>
+<li><a href="https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/extent.htm">Processing Extent</a> &mdash; points outside it receive a null value.</li>
+<li><a href="https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/snap-raster.htm">Snap Raster</a></li>
+</ul>
+<p>Other geoprocessing environments do not affect this tool.</p>
+</section>
+
+<section id="code">
+<h2>Code sample</h2>
+<h3>MahalanobisPoints example (stand-alone script)</h3>
+<p>Compute a squared-distance (D&sup2;) Mahalanobis value at each observed location, building the
+mean and covariance from those same points.</p>
+<pre><code>import arcpy
+
+arcpy.ImportToolbox(r"C:\Tools\JennessEnterprisesTools.pyt")
+
+arcpy.jenness.MahalanobisPoints(
+    target_points="Observed_Locations",
+    raster_vars="elev_clip;slope_clip;curvature",
+    sample_method="Interpolated (bilinear)",
+    stats_source="Calculate directly from sample point features",
+    inversion="Standard (inverse)",
+    out_points=r"C:\Project\Mahalanobis.gdb\Observed_Mahal",
+    out_type="Squared distance (D2): Traditional for ecological modeling")</code></pre>
+
+<h3>MahalanobisPoints example 2 (evaluate against existing tables)</h3>
+<p>Score a separate set of candidate points against a mean and covariance saved earlier,
+returning a chi-square typicality p-value.</p>
+<pre><code>import arcpy
+
+arcpy.ImportToolbox(r"C:\Tools\JennessEnterprisesTools.pyt")
+
+gdb = r"C:\Project\Mahalanobis.gdb"
+arcpy.jenness.MahalanobisPoints(
+    target_points="Candidate_Sites",
+    raster_vars="elev_clip;slope_clip;curvature",
+    sample_method="Exact (nearest cell)",
+    stats_source="Existing tables",
+    mean_table=gdb + r"\Observed_Mahal_Means",
+    cov_table=gdb + r"\Observed_Mahal_Covariance",
+    inversion="Standard (inverse)",
+    out_points=gdb + r"\Candidate_typicality",
+    out_type="Chi-square p-value")</code></pre>
+</section>
+
+<footer>Tool by Jeff Jenness, Jenness Enterprises (<a href="http://www.jennessent.com">www.jennessent.com</a>).
+Ported from the legacy ArcMap Land Facet Corridor Tools.</footer>
+
+</main>
+</body>
+</html>

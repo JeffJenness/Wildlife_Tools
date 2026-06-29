@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Convex Hull (LoCoH) - Adaptive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="tool-help">
+
+<h1>Local Convex Hull (LoCoH) &mdash; Adaptive</h1>
+<p class="subtitle">Jenness Enterprises Wildlife Tools &middot; Home Range</p>
+
+<section id="summary">
+<h2>Summary</h2>
+<p>Adaptive (<em>a</em>-) Local Convex Hull (LoCoH) home-range and utilization-distribution
+estimator (Getz et al. 2007). For every input point, neighbors are added in order of
+increasing distance until their cumulative distance reaches the maximum cumulative length
+<em>a</em>; the convex hull of the focal point and its selected neighbors becomes its local
+hull. Hulls are sorted by point count and merged cumulatively into density isopleths.</p>
+</section>
+
+<section id="usage">
+<h2>Usage</h2>
+<p><strong>Choosing a:</strong> the maximum cumulative length <em>a</em> controls how far the
+cumulative neighbor distance may extend before a local hull is closed. Larger <em>a</em> gives
+larger, smoother hulls; smaller <em>a</em> gives tighter, more fragmented hulls (too small, and
+many focal points have fewer than 3 neighbors and are skipped).</p>
+
+<p>Getz et al. (2007) suggest, as a starting heuristic, <em>a</em> equal to the maximum distance
+between any pair of points (the default option here), then refining downward toward the value
+that minimizes combined Type I and Type II error via the &ldquo;minimum spurious hole
+covering&rdquo; (MSHC) rule (Getz and Wilmers 2004). The T-LoCoH package (Lyons, Turner and
+Getz 2013) recommends choosing the parameter empirically by examining how isopleth area and
+spurious holes change across a range of values.</p>
+
+<div class="note">When you specify a length, it may be entered in any linear unit and is
+converted to meters internally; the adaptive cumulative distance is reported in the unit you
+chose. Screen out obvious location errors before running &mdash; LoCoH is sensitive to outliers.</div>
+
+<p><strong>References:</strong></p>
+<ul>
+<li>Getz, W.M. and Wilmers, C.C. (2004). <em>Ecography</em> 27:489&ndash;505. <a href="https://doi.org/10.1111/j.0906-7590.2004.03835.x">doi:10.1111/j.0906-7590.2004.03835.x</a></li>
+<li>Getz, W.M. et al. (2007). <em>PLoS ONE</em> 2(2):e207. <a href="https://doi.org/10.1371/journal.pone.0000207">doi:10.1371/journal.pone.0000207</a></li>
+<li>Lyons, A.J., Turner, W.C. and Getz, W.M. (2013). <em>Movement Ecology</em> 1:2. <a href="https://doi.org/10.1186/2051-3933-1-2">doi:10.1186/2051-3933-1-2</a></li>
+</ul>
+</section>
+
+<section id="parameters">
+<h2>Parameters</h2>
+<table class="params">
+<thead><tr><th>Label</th><th>Explanation</th><th>Data Type</th></tr></thead>
+<tbody>
+<tr><td class="param-name">Input point features</td>
+<td>The point features (for example, GPS or VHF telemetry fixes) from which the local hulls are
+built. May be in a geographic or projected coordinate system; empty or null geometries are ignored.</td>
+<td class="type">Feature Layer</td></tr>
+<tr><td class="param-name">Maximum cumulative length (a)</td>
+<td><em>Maximum distance between any pair of points</em> sets <em>a</em> automatically (the
+Getz et al. 2007 heuristic). <em>Specify a length</em> enables the Length parameter so you can
+enter a value.</td>
+<td class="type">String</td></tr>
+<tr><td class="param-name">Length</td>
+<td>The maximum cumulative length <em>a</em>, used only when <em>Specify a length</em> is chosen.
+Enter a value in any linear unit; it is converted to meters for the computation, and the
+adaptive cumulative distance is reported in the unit you choose.</td>
+<td class="type">Linear Unit</td></tr>
+<tr><td class="param-name">Cumulative LoCoH [Adaptive] Hulls</td>
+<td>Output polygon feature class of the dissolved cumulative LoCoH isopleths. Each feature stores
+its dissolved area (Area), enclosed point count (Point_Count), point proportion
+(Point_Proportion), and the adaptive cumulative distance (Adaptive_Cumulative_Dist).</td>
+<td class="type">Feature Class</td></tr>
+<tr><td class="param-name">Output individual hulls (optional)</td>
+<td>Optional output polygon feature class of the individual local convex hulls, each with its own
+area and the cumulative count, proportion, and adaptive distance at its rank.</td>
+<td class="type">Feature Class</td></tr>
+</tbody>
+</table>
+</section>
+
+<section id="environments">
+<h2>Environments</h2>
+<p>This tool honors the following analysis environment:</p>
+<ul>
+<li><a href="https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/output-coordinate-system.htm">Output Coordinate System</a> &mdash; if set to a coordinate system other than the input's, the output polygons are reprojected to it as a last step. Areas, point counts, densities, and the adaptive distance are still computed in the input coordinate system and are preserved unchanged.</li>
+</ul>
+<p>No other geoprocessing environments affect this tool.</p>
+</section>
+
+<section id="code">
+<h2>Code sample</h2>
+<h3>LoCoHAdaptive example (stand-alone script)</h3>
+<p>Run an adaptive LoCoH using the maximum distance between any pair of points, creating the
+cumulative isopleths and the individual hulls.</p>
+<pre><code>import arcpy
+
+arcpy.ImportToolbox(r"C:\Tools\JennessEnterprisesTools.pyt")
+
+arcpy.jenness.LoCoHAdaptive(
+    "Owl_6_Points", "Maximum distance between any pair of points", None,
+    r"C:\Project\HomeRanges.gdb\Owl_6_Points_Adaptive_Cumulative",
+    r"C:\Project\HomeRanges.gdb\Owl_6_Points_Adaptive_Hulls")</code></pre>
+</section>
+
+<footer>Tool by Jeff Jenness, Jenness Enterprises (<a href="http://www.jennessent.com">www.jennessent.com</a>).
+Method: Getz et al. (2007).</footer>
+
+</main>
+</body>
+</html>

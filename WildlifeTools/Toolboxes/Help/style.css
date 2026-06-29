@@ -1,0 +1,70 @@
+/* Jenness Enterprises tool help — shared stylesheet (Esri tool-reference inspired).
+   Drop this file alongside the tool .html pages when hosting on the web. */
+
+:root {
+  --esri-blue: #0079c1;
+  --esri-dark: #00598a;
+  --ink: #323232;
+  --muted: #6e6e6e;
+  --rule: #d4d4d4;
+  --code-bg: #f4f6f7;
+  --note-bg: #eef6fb;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Avenir Next", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--ink);
+  line-height: 1.55;
+  background: #fff;
+}
+
+.tool-help { max-width: 1000px; margin: 0 auto; padding: 32px 28px 64px; }
+
+h1 { font-size: 1.95rem; font-weight: 600; margin: 0 0 4px; color: var(--esri-dark); }
+.subtitle { color: var(--muted); margin: 0 0 24px; font-size: .95rem; }
+
+h2 {
+  font-size: 1.3rem; font-weight: 600; color: var(--esri-dark);
+  margin: 34px 0 10px; padding-bottom: 6px; border-bottom: 2px solid var(--esri-blue);
+}
+h3 { font-size: 1.05rem; font-weight: 600; margin: 22px 0 6px; }
+
+p { margin: .55em 0; }
+a { color: var(--esri-blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+ul, ol { margin: .5em 0; padding-left: 1.5em; }
+li { margin: .28em 0; }
+
+code {
+  font-family: "Consolas", "SFMono-Regular", Menlo, monospace;
+  font-size: .92em; background: var(--code-bg); padding: 1px 4px; border-radius: 3px;
+}
+pre {
+  background: var(--code-bg); border: 1px solid var(--rule);
+  border-left: 3px solid var(--esri-blue); border-radius: 4px;
+  padding: 14px 16px; overflow: auto; margin: .7em 0;
+}
+pre code { background: none; padding: 0; font-size: .88rem; line-height: 1.5; }
+
+table.params { border-collapse: collapse; width: 100%; margin: .7em 0; font-size: .95rem; }
+table.params th, table.params td {
+  border: 1px solid var(--rule); padding: 9px 11px; text-align: left; vertical-align: top;
+}
+table.params th { background: #f0f4f7; font-weight: 600; }
+table.params td.type { white-space: nowrap; color: #555; font-size: .9rem; }
+.param-name { font-weight: 600; }
+.req { color: var(--muted); font-weight: 400; font-size: .85em; }
+
+.note {
+  background: var(--note-bg); border-left: 3px solid var(--esri-blue);
+  padding: 10px 14px; margin: .9em 0; border-radius: 0 4px 4px 0;
+}
+
+footer {
+  margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--rule);
+  color: var(--muted); font-size: .85rem;
+}

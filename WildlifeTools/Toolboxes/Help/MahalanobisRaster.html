@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mahalanobis Distance - Create Raster Surface</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="tool-help">
+
+<h1>Mahalanobis Distance &mdash; Create Raster Surface</h1>
+<p class="subtitle">Jenness Enterprises Wildlife Tools &middot; Mahalanobis Tools</p>
+
+<section id="summary">
+<h2>Summary</h2>
+<p>Creates a raster of Mahalanobis distances measuring, for every cell, how far that
+cell's combination of landscape-variable values lies from a multivariate reference
+mean, scaled by the inverse covariance among the variables.</p>
+</section>
+
+<section id="usage">
+<h2>Usage</h2>
+<p>The squared Mahalanobis distance for a cell is the quadratic form
+<code>D&sup2; = (x &minus; &mu;)' &middot; &Sigma;&#8315;&sup1; &middot; (x &minus; &mu;)</code>,
+where <code>x</code> is the cell's vector of landscape-variable values, <code>&mu;</code>
+is the mean vector, and <code>&Sigma;&#8315;&sup1;</code> is the inverse covariance matrix.
+The reference mean and covariance can be computed from sample point features, from the
+cells of a categorical raster, or read from previously saved tables.</p>
+
+<p>The computation is performed cell-by-cell (block vectorized) rather than through
+whole-raster map algebra, so it stays memory-bounded for large rasters and many variables.</p>
+
+<p>Predictor rasters always contribute their <strong>cell values</strong>, never any raster
+attribute-table values. Rasters are added to the <strong>Raster Landscape Variables</strong>
+list; polygon variables (a polygon feature class plus a numeric field, rasterized to the grid)
+go in the separate <strong>Polygon Landscape Variables</strong> table, which has a validated
+field dropdown.</p>
+
+<p>A multiband raster is expanded automatically to one variable per band, named
+<code>raster_Band_X</code>. To leave out specific bands, add them to the <strong>Bands to
+exclude</strong> table (name the multiband raster and the band number).</p>
+
+<div class="note">Output value choices are all functions of the same per-cell D&sup2;:
+<strong>Squared distance (D&sup2;)</strong> is the traditional ecological-modeling quantity
+and the input required by a chi-square transform; <strong>Distance (D)</strong> is its
+square root; <strong>Chi-square p-value</strong> is the upper-tail typicality probability
+(0&ndash;1, with values near 1 indicating a close match to the reference conditions).</div>
+
+<p><strong>Reference:</strong> Mahalanobis, P.C. (1936). On the generalised distance in
+statistics. <em>Proceedings of the National Institute of Sciences of India</em> 2(1):49&ndash;55.</p>
+</section>
+
+<section id="parameters">
+<h2>Parameters</h2>
+<table class="params">
+<thead><tr><th>Label</th><th>Explanation</th><th>Data Type</th></tr></thead>
+<tbody>
+<tr><td class="param-name">Raster Landscape Variables</td>
+<td>The raster datasets that define the multivariate space; their cell values are used. At
+least one raster is required (it sets the analysis grid's cell size, coordinate system, and
+extent). A multiband raster is expanded to one variable per band. <strong>Order matters:</strong>
+the variables become the columns of the mean vector and covariance matrix in the order listed
+(rasters first, then polygons), so the same datasets must be supplied in the same order whenever
+a saved mean/covariance is reused.</td>
+<td class="type">Raster Layer (multiple)</td></tr>
+<tr><td class="param-name">Polygon Landscape Variables (Optional)</td>
+<td>Optional polygon variables. Each row is a polygon feature class plus a numeric field
+(chosen from a validated dropdown), which is rasterized to the analysis grid.</td>
+<td class="type">Value Table</td></tr>
+<tr><td class="param-name">Bands to exclude from multiband rasters (Optional)</td>
+<td>Optional. To leave out specific bands of a multiband raster, add a row naming the multiband
+raster and the 1-based band number to exclude.</td>
+<td class="type">Value Table</td></tr>
+
+<tr><td class="param-name">Cell value sampling</td>
+<td>How a raster value is read at a location that may not align to a cell center.
+<em>Exact (nearest cell)</em> uses the value of the containing cell; <em>Interpolated
+(bilinear)</em> estimates from the four nearest cell centers.
+<br/><br/>Exact cell values are more appropriate for <strong>categorical</strong> rasters,
+while bilinear interpolation is more appropriate for <strong>continuous</strong> rasters.
+Interpolation is rarely appropriate for categorical data unless the categories are at least
+ordinal, and preferably interval or ratio; it should never be used for nominal (unordered)
+categories.</td>
+<td class="type">String</td></tr>
+
+<tr><td class="param-name">Source of mean vector and covariance matrix</td>
+<td>Where the reference statistics come from: calculate directly from sample point features;
+from every cell of a categorical raster equal to a chosen value; or read from previously
+saved tables (the variable order is then validated against the tables).</td>
+<td class="type">String</td></tr>
+
+<tr><td class="param-name">Sample points</td>
+<td>The reference point features whose locations define the sample. Points outside the extent
+of any landscape raster, or on NoData cells, are excluded and reported.</td>
+<td class="type">Feature Layer</td></tr>
+
+<tr><td class="param-name">Use only the selected points</td>
+<td>If checked and the points layer has an active selection, only the selected points are used.</td>
+<td class="type">Boolean</td></tr>
+
+<tr><td class="param-name">Categorical raster</td>
+<td>A categorical raster whose matching cells define the reference sample (Categorical raster source).</td>
+<td class="type">Raster Layer</td></tr>
+
+<tr><td class="param-name">Category field</td>
+<td>Informational only &mdash; reference cells are selected by their numeric cell value, not an attribute field.</td>
+<td class="type">Field</td></tr>
+
+<tr><td class="param-name">Category cell value</td>
+<td>The categorical raster cell value whose cells form the reference sample.</td>
+<td class="type">String</td></tr>
+
+<tr><td class="param-name">Mean vector table</td>
+<td>A previously saved mean vector table (Existing tables source).</td>
+<td class="type">Table View</td></tr>
+
+<tr><td class="param-name">Covariance matrix table</td>
+<td>A previously saved covariance matrix table; its stored variable order is used to validate the variable list.</td>
+<td class="type">Table View</td></tr>
+
+<tr><td class="param-name">Covariance inversion method</td>
+<td><em>Standard (inverse)</em> is the ordinary matrix inverse &mdash; fast and exact for
+well-conditioned data, and the right choice in almost all cases; it fails on a singular
+covariance (a variable with no variance, or two perfectly correlated variables).
+<em>Pseudo-inverse (SVD)</em> returns a stable least-squares inverse when variables are
+strongly collinear. The tool reports the covariance condition number.</td>
+<td class="type">String</td></tr>
+
+<tr><td class="param-name">Output Mahalanobis raster</td>
+<td>The output raster of the chosen Mahalanobis value. Defaults to <code>Mahalanobis</code>
+in the current workspace, auto-incremented if that name is taken.</td>
+<td class="type">Raster Dataset</td></tr>
+
+<tr><td class="param-name">Output value</td>
+<td>Which transform of the per-cell D&sup2; to write: Squared distance (D&sup2;), Distance (D),
+or Chi-square p-value (degrees of freedom = number of variables).</td>
+<td class="type">String</td></tr>
+
+<tr><td class="param-name">Generate mean vector table</td>
+<td>Check to also write the computed mean vector to a table; an output name is auto-filled.</td>
+<td class="type">Boolean</td></tr>
+<tr><td class="param-name">Mean vector table</td>
+<td>Output table for the mean vector (one row per variable), with the ordered variable list
+stored in its metadata. Auto-named <code>&lt;raster&gt;_Means</code>.</td>
+<td class="type">Table</td></tr>
+
+<tr><td class="param-name">Generate covariance matrix table</td>
+<td>Check to also write the covariance matrix to a table.</td>
+<td class="type">Boolean</td></tr>
+<tr><td class="param-name">Covariance matrix table</td>
+<td>Output table for the covariance matrix. Auto-named <code>&lt;raster&gt;_Covariance</code>.</td>
+<td class="type">Table</td></tr>
+
+<tr><td class="param-name">Generate inverse covariance matrix table</td>
+<td>Check to also write the inverse covariance matrix to a table.</td>
+<td class="type">Boolean</td></tr>
+<tr><td class="param-name">Inverse covariance matrix table</td>
+<td>Output table for the inverse covariance. Auto-named <code>&lt;raster&gt;_Inv_Covariance</code>.</td>
+<td class="type">Table</td></tr>
+
+<tr><td class="param-name">Generate correlation matrix table</td>
+<td>Check to also write the correlation matrix to a table.</td>
+<td class="type">Boolean</td></tr>
+<tr><td class="param-name">Correlation matrix table</td>
+<td>Output table for the correlation matrix. Auto-named <code>&lt;raster&gt;_Correlation</code>.</td>
+<td class="type">Table</td></tr>
+</tbody>
+</table>
+</section>
+
+<section id="environments">
+<h2>Environments</h2>
+<p>This tool honors the following analysis environments:</p>
+<ul>
+<li><a href="https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/output-coordinate-system.htm">Output Coordinate System</a> &mdash; the analysis-grid coordinate system; predictors are reprojected to it.</li>
+<li><a href="https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/cell-size.htm">Cell Size</a> &mdash; the analysis-grid resolution.</li>
+<li><a href="https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/extent.htm">Processing Extent</a> &mdash; clips the analysis grid (intersected with the predictor data, snapped to cells).</li>
+<li><a href="https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/snap-raster.htm">Snap Raster</a> &mdash; aligns the analysis-grid origin to the snap raster's cells.</li>
+<li><a href="https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/mask.htm">Mask</a> &mdash; cells outside the mask are written as NoData.</li>
+</ul>
+<p>Other geoprocessing environments do not affect this tool.</p>
+</section>
+
+<section id="code">
+<h2>Code sample</h2>
+<h3>MahalanobisRaster example (stand-alone script)</h3>
+<p>This example calculates a Mahalanobis squared-distance (D&sup2;) raster from three rasters
+currently available in the active map &mdash; <code>elev_clip</code>, <code>slope_clip</code>,
+and <code>curvature</code> &mdash; with the mean vector and covariance matrix calculated from
+a point layer named <code>Sample_Points_for_Mahal</code>, also in the current map. It also
+saves the four statistics tables.</p>
+<pre><code>import arcpy
+
+arcpy.ImportToolbox(r"C:\Tools\JennessEnterprisesTools.pyt")
+
+out_gdb = r"C:\Project\Mahalanobis.gdb"
+arcpy.jenness.MahalanobisRaster(
+    raster_vars="elev_clip;slope_clip;curvature",
+    sample_method="Interpolated (bilinear)",
+    stats_source="Calculate directly from sample point features",
+    points="Sample_Points_for_Mahal",
+    use_selected=False,
+    inversion="Standard (inverse)",
+    out_raster=out_gdb + r"\Mahalanobis",
+    out_type="Squared distance (D2): Traditional for ecological modeling",
+    gen_mean=True,  save_mean=out_gdb + r"\Mahalanobis_Means",
+    gen_cov=True,   save_cov=out_gdb + r"\Mahalanobis_Covariance",
+    gen_invcov=True, save_invcov=out_gdb + r"\Mahalanobis_Inv_Covariance",
+    gen_corr=True,  save_corr=out_gdb + r"\Mahalanobis_Correlation")</code></pre>
+
+<h3>MahalanobisRaster example 2 (reuse saved statistics, with environments)</h3>
+<p>Apply a previously saved mean vector and covariance matrix to a multiband image,
+clipping the result to a study-area mask and a 30-meter grid.</p>
+<pre><code>import arcpy
+
+arcpy.ImportToolbox(r"C:\Tools\JennessEnterprisesTools.pyt")
+
+# Multiband_Input expands to one variable per band automatically.
+arcpy.env.cellSize = 30
+arcpy.env.mask = r"C:\Project\StudyArea.gdb\boundary"
+
+arcpy.jenness.MahalanobisRaster(
+    raster_vars="Multiband_Input",
+    sample_method="Exact (nearest cell)",
+    stats_source="Existing tables",
+    mean_table=r"C:\Project\Mahalanobis.gdb\Mahalanobis_Means",
+    cov_table=r"C:\Project\Mahalanobis.gdb\Mahalanobis_Covariance",
+    inversion="Pseudo-inverse (SVD)",
+    out_raster=r"C:\Project\Mahalanobis.gdb\Mahal_typicality",
+    out_type="Chi-square p-value")</code></pre>
+</section>
+
+<footer>Tool by Jeff Jenness, Jenness Enterprises (<a href="http://www.jennessent.com">www.jennessent.com</a>).
+Ported from the legacy ArcMap Land Facet Corridor Tools.</footer>
+
+</main>
+</body>
+</html>

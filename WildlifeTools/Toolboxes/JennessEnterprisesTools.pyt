@@ -21,6 +21,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import locoh          # noqa: E402
+import mahalanobis    # noqa: E402
 import error_report   # noqa: E402
 
 import re
@@ -32,6 +33,26 @@ def _legalize(name):
     if legal and legal[0].isdigit():
         legal = "_" + legal
     return legal or "LoCoH"
+
+
+def _unique_name(base, ws):
+    """First free dataset name in ``ws``: ``base``, then ``base_2``, ``base_3``, ...
+
+    Matches the requested convention (no "_1"; the first duplicate becomes "_2"),
+    unlike arcpy.CreateUniqueName which appends "0".
+    """
+    def taken(name):
+        try:
+            return bool(ws) and arcpy.Exists(os.path.join(ws, name))
+        except Exception:
+            return False
+    name = base
+    if taken(base):
+        i = 2
+        while taken("{}_{}".format(base, i)):
+            i += 1
+        name = "{}_{}".format(base, i)
+    return os.path.join(ws, name) if ws else name
 
 
 def _confirm(text, caption="Wildlife Tools"):
@@ -97,7 +118,8 @@ class Toolbox(object):
     def __init__(self):
         self.label = "Jenness Enterprises Tools"
         self.alias = "jenness"
-        self.tools = [LoCoHStandard, LoCoHAdaptive, LoCoHFixedSphere]
+        self.tools = [LoCoHStandard, LoCoHAdaptive, LoCoHFixedSphere,
+                      MahalanobisRaster, MahalanobisPoints]
 
 
 class LoCoHStandard(object):
@@ -502,6 +524,503 @@ class LoCoHFixedSphere(object):
                     parameters[3].symbology = iso_lyrx
                 except Exception as e:
                     messages.addWarningMessage("Could not set output symbology: {}".format(e))
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers for the two Mahalanobis tools
+# ---------------------------------------------------------------------------
+# Multiband rasters are NOT expanded into per-band rows in the dialog: a value-table
+# column that accepts both rasters and bands becomes a GPComposite, whose value cannot
+# be reassigned in updateParameters (it clears to empty -- ERROR 000735). Instead the
+# raster list holds whole rasters, multiband rasters are expanded to bands at run time,
+# and an optional "Bands to exclude" control drops specific bands.
+_RASTER_DT = ("RasterDataset", "RasterLayer", "RasterBand")
+
+# (generate-checkbox name, output-table name, name suffix, engine save_opts key)
+_MAHAL_TABLE_SPECS = [("gen_mean", "save_mean", "Means", "mean"),
+                      ("gen_cov", "save_cov", "Covariance", "cov"),
+                      ("gen_invcov", "save_invcov", "Inv_Covariance", "invcov"),
+                      ("gen_corr", "save_corr", "Correlation", "corr")]
+
+
+def _mahal_var_name(ds):
+    """Resolved variable name; a band '<raster>\\Band_X' becomes '<raster>_Band_X'."""
+    try:
+        path = arcpy.Describe(ds).catalogPath
+        d = arcpy.Describe(path)
+        if d.dataType == "RasterBand":
+            try:
+                parent = arcpy.Describe(os.path.dirname(path)).baseName
+            except Exception:
+                parent = os.path.splitext(os.path.basename(os.path.dirname(path)))[0]
+            return "{}_{}".format(parent, d.baseName)
+        return d.baseName
+    except Exception:
+        return str(ds)
+
+
+def _make_raster_vars_param():
+    """Required multi-value raster list (whole rasters, including multiband)."""
+    return arcpy.Parameter(displayName="Raster Landscape Variables", name="raster_vars",
+                           datatype="GPRasterLayer", parameterType="Required",
+                           direction="Input", multiValue=True)
+
+
+def _make_poly_vars_param():
+    """Optional polygon variable table with a real (validated) Field dropdown."""
+    p = arcpy.Parameter(displayName="Polygon Landscape Variables (Optional)",
+                        name="poly_vars", datatype="GPValueTable",
+                        parameterType="Optional", direction="Input")
+    p.columns = [["GPFeatureLayer", "Polygon feature class"], ["Field", "Numeric field"]]
+    try:
+        p.filters[0].list = ["Polygon"]
+    except Exception:
+        pass
+    return p
+
+
+def _make_exclude_bands_param():
+    """Optional table of (multiband raster, band number) pairs to exclude."""
+    p = arcpy.Parameter(displayName="Bands to exclude from multiband rasters (Optional)",
+                        name="exclude_bands", datatype="GPValueTable",
+                        parameterType="Optional", direction="Input")
+    p.columns = [["GPRasterLayer", "Multiband raster"], ["GPLong", "Band number to exclude"]]
+    return p
+
+
+def _make_mahal_table_params(category):
+    """The four generate-checkbox + output-table parameter pairs (in order)."""
+    labels = {
+        "gen_mean": "Generate mean vector table", "save_mean": "Mean vector table",
+        "gen_cov": "Generate covariance matrix table", "save_cov": "Covariance matrix table",
+        "gen_invcov": "Generate inverse covariance matrix table",
+        "save_invcov": "Inverse covariance matrix table",
+        "gen_corr": "Generate correlation matrix table", "save_corr": "Correlation matrix table"}
+    out = []
+    for gen, tbl, _suffix, _key in _MAHAL_TABLE_SPECS:
+        pg = arcpy.Parameter(displayName=labels[gen], name=gen, datatype="GPBoolean",
+                             parameterType="Optional", direction="Input", category=category)
+        pg.value = False
+        pt = arcpy.Parameter(displayName=labels[tbl], name=tbl, datatype="DETable",
+                             parameterType="Optional", direction="Output", category=category)
+        out += [pg, pt]
+    return out
+
+
+def _raster_list(p_raster):
+    try:
+        return list(p_raster.values) if p_raster.values else []
+    except Exception:
+        return []
+
+
+def _combined_var_rows(p_raster, p_poly):
+    """Engine var_rows: rasters first (each expands to its bands at run time), then polygons."""
+    rows = [(r, None) for r in _raster_list(p_raster)]
+    for r in (p_poly.value or []):
+        fld = r[1] if len(r) > 1 else None
+        rows.append((r[0], str(fld) if fld not in (None, "") else None))
+    return rows
+
+
+def _build_exclude(p_excl):
+    """Set of (raster_catalogPath_lower, band_number) from the exclude-bands table."""
+    excl = set()
+    for r in (p_excl.value or []):
+        try:
+            excl.add((arcpy.Describe(r[0]).catalogPath.lower(), int(r[1])))
+        except Exception:
+            pass
+    return excl
+
+
+def _expanded_var_names(p_raster, p_poly, exclude):
+    """Variable names exactly as the engine will build them (multiband expanded)."""
+    names = []
+    for r in _raster_list(p_raster):
+        try:
+            path = arcpy.Describe(r).catalogPath
+            d = arcpy.Describe(path)
+            if d.dataType in ("RasterDataset", "RasterLayer") and getattr(d, "bandCount", 1) > 1:
+                for i, ch in enumerate(d.children, start=1):
+                    if (path.lower(), i) in exclude:
+                        continue
+                    names.append("{}_{}".format(d.baseName, ch.name))
+            else:
+                names.append(d.baseName)
+        except Exception:
+            names.append(str(r))
+    for r in (p_poly.value or []):
+        names.append(_mahal_var_name(r[0]))
+    return names
+
+
+def _rat_flagged(p_raster):
+    flagged = []
+    for r in _raster_list(p_raster):
+        try:
+            d = arcpy.Describe(r)
+            if d.dataType in _RASTER_DT and getattr(d, "hasRAT", False):
+                flagged.append(d.baseName)
+        except Exception:
+            pass
+    return flagged
+
+
+def _mahal_update(tool, P, out_name, out_base, derived_re):
+    """Shared updateParameters: sample always on; output + table autofill; enabling."""
+    P["sample_method"].enabled = True
+
+    p_out = P[out_name]
+    cur = p_out.valueAsText or ""
+    cur_name = os.path.basename(cur)
+    if cur_name.lower().endswith(".shp"):
+        cur_name = cur_name[:-4]
+    if (cur == "" or cur_name == tool._auto_out
+            or re.search(derived_re, cur_name, re.IGNORECASE)):
+        ws = arcpy.env.workspace or arcpy.env.scratchGDB
+        unique = _unique_name(out_base, ws)
+        p_out.value = unique
+        tool._auto_out = os.path.basename(unique)
+
+    obase = os.path.splitext(os.path.basename(p_out.valueAsText or out_base))[0]
+    tbl_ws = os.path.dirname(p_out.valueAsText) if p_out.valueAsText else None
+    tbl_ws = tbl_ws or arcpy.env.workspace or arcpy.env.scratchGDB
+    for gen, tbl, suffix, key in _MAHAL_TABLE_SPECS:
+        p_chk, p_tbl = P[gen], P[tbl]
+        p_tbl.enabled = bool(p_chk.value)
+        cur_tbl = p_tbl.valueAsText or ""
+        cur_tname = os.path.splitext(os.path.basename(cur_tbl))[0]
+        if p_chk.value:
+            if cur_tbl == "" or cur_tname == tool._auto_tables.get(key):
+                full = _unique_name("{}_{}".format(obase, suffix), tbl_ws)
+                p_tbl.value = full
+                tool._auto_tables[key] = os.path.splitext(os.path.basename(full))[0]
+        else:
+            if cur_tbl == "" or cur_tname == tool._auto_tables.get(key):
+                p_tbl.value = None
+                tool._auto_tables.pop(key, None)
+
+    source = P["stats_source"].valueAsText
+    is_pts = (source == mahalanobis.SRC_POINTS)
+    is_cat = (source == mahalanobis.SRC_CATEGORICAL)
+    is_tab = (source == mahalanobis.SRC_TABLES)
+    if "points" in P:
+        P["points"].enabled = is_pts
+    if "stats_points" in P:
+        P["stats_points"].enabled = is_pts
+    P["use_selected"].enabled = is_pts
+    P["cat_raster"].enabled = is_cat
+    P["cat_field"].enabled = is_cat
+    P["cat_value"].enabled = is_cat
+    P["mean_table"].enabled = is_tab
+    P["cov_table"].enabled = is_tab
+
+
+def _mahal_messages(tool, P):
+    """Shared updateMessages: RAT warning, polygon-field check, source + order checks."""
+    p_raster, p_poly = P["raster_vars"], P["poly_vars"]
+    flagged = _rat_flagged(p_raster)
+    if flagged:
+        p_raster.setWarningMessage(
+            "These rasters have attribute tables, which will be IGNORED -- the tool uses "
+            "their cell values: {}.".format(", ".join(flagged)))
+    if p_poly.value:
+        bad = [str(r[0]) for r in p_poly.value if not (len(r) > 1 and r[1])]
+        if bad:
+            p_poly.setErrorMessage(
+                "Each polygon variable needs a numeric field selected in the Numeric "
+                "field column.")
+    source = P["stats_source"].valueAsText
+    if "points" in P and source == mahalanobis.SRC_POINTS and not P["points"].value:
+        P["points"].setErrorMessage("Select the sample point features.")
+    if source == mahalanobis.SRC_CATEGORICAL:
+        if not P["cat_raster"].value:
+            P["cat_raster"].setErrorMessage("Select the categorical raster.")
+        if P["cat_value"].value in (None, ""):
+            P["cat_value"].setErrorMessage("Enter the category cell value to use.")
+    if source == mahalanobis.SRC_TABLES:
+        if not P["mean_table"].value:
+            P["mean_table"].setErrorMessage("Select the mean vector table.")
+        if not P["cov_table"].value:
+            P["cov_table"].setErrorMessage("Select the covariance matrix table.")
+        if (P["raster_vars"].values or p_poly.value) and (P["mean_table"].value or P["cov_table"].value):
+            try:
+                meta = mahalanobis.decode_variable_metadata(
+                    P["mean_table"].valueAsText or P["cov_table"].valueAsText)
+            except Exception:
+                meta = None
+            if meta and meta.get("variables"):
+                want = [v["name"] for v in meta["variables"]]
+                have = _expanded_var_names(p_raster, p_poly, _build_exclude(P["exclude_bands"]))
+                if have and have != want:
+                    p_raster.setWarningMessage(
+                        "Variable order does not match the tables' stored order [{}]. A "
+                        "wrong order produces incorrect distances.".format(", ".join(want)))
+
+
+def _mahal_save_opts(P):
+    opts = {}
+    for gen, tbl, _suffix, key in _MAHAL_TABLE_SPECS:
+        if P[gen].value and P[tbl].valueAsText:
+            opts[key] = P[tbl].valueAsText
+    return opts
+
+
+def _mahal_core_params():
+    """Parameters common (same name/definition) to both Mahalanobis tools, in order:
+    sample_method, stats_source, cat_raster/field/value, mean/cov tables, inversion."""
+    sample_method = arcpy.Parameter(
+        displayName="Cell value sampling", name="sample_method", datatype="GPString",
+        parameterType="Optional", direction="Input")
+    sample_method.filter.type = "ValueList"
+    sample_method.filter.list = [mahalanobis.SAMPLE_EXACT, mahalanobis.SAMPLE_INTERP]
+    sample_method.value = mahalanobis.SAMPLE_EXACT
+
+    stats_source = arcpy.Parameter(
+        displayName="Source of mean vector and covariance matrix", name="stats_source",
+        datatype="GPString", parameterType="Required", direction="Input")
+    stats_source.filter.type = "ValueList"
+    stats_source.filter.list = [mahalanobis.SRC_POINTS, mahalanobis.SRC_CATEGORICAL,
+                                mahalanobis.SRC_TABLES]
+    stats_source.value = mahalanobis.SRC_POINTS
+
+    cat_raster = arcpy.Parameter(
+        displayName="Categorical raster", name="cat_raster", datatype="GPRasterLayer",
+        parameterType="Optional", direction="Input")
+    cat_field = arcpy.Parameter(
+        displayName="Category field (informational; cell values are used)", name="cat_field",
+        datatype="Field", parameterType="Optional", direction="Input")
+    cat_field.parameterDependencies = [cat_raster.name]
+    cat_value = arcpy.Parameter(
+        displayName="Category cell value", name="cat_value", datatype="GPString",
+        parameterType="Optional", direction="Input")
+
+    mean_table = arcpy.Parameter(
+        displayName="Mean vector table", name="mean_table", datatype="GPTableView",
+        parameterType="Optional", direction="Input")
+    cov_table = arcpy.Parameter(
+        displayName="Covariance matrix table", name="cov_table", datatype="GPTableView",
+        parameterType="Optional", direction="Input")
+
+    inversion = arcpy.Parameter(
+        displayName="Covariance inversion method", name="inversion", datatype="GPString",
+        parameterType="Required", direction="Input")
+    inversion.filter.type = "ValueList"
+    inversion.filter.list = [mahalanobis.INV_STANDARD, mahalanobis.INV_PSEUDO]
+    inversion.value = mahalanobis.INV_STANDARD
+    return [sample_method, stats_source, cat_raster, cat_field, cat_value,
+            mean_table, cov_table, inversion]
+
+
+def _out_type_param():
+    p = arcpy.Parameter(displayName="Output value", name="out_type", datatype="GPString",
+                        parameterType="Required", direction="Input")
+    p.filter.type = "ValueList"
+    p.filter.list = [mahalanobis.OUT_D2, mahalanobis.OUT_D, mahalanobis.OUT_PVALUE]
+    p.value = mahalanobis.OUT_D2
+    return p
+
+
+class MahalanobisRaster(object):
+    """Mahalanobis Distance Raster -- the primary tool of the Mahalanobis suite.
+
+    Parameters are accessed by name (not index). A multiband raster in the Raster
+    Landscape Variables list expands to one variable per band at run time; use the
+    Bands to exclude table to drop specific bands.
+    """
+
+    CAT = "Optional output statistics tables"
+
+    def __init__(self):
+        self.label = "Mahalanobis Distance - Create Raster Surface"
+        self.description = (
+            "Creates a raster of Mahalanobis distances: for every cell, the squared "
+            "distance (x - mu)' * Sigma^-1 * (x - mu) between the cell's vector of "
+            "landscape-variable values and the multivariate mean of a reference sample, "
+            "scaled by the inverse covariance matrix. The mean vector and covariance can "
+            "be derived from sample points, from cells of a categorical raster, or read "
+            "from existing tables. Output can be squared distance, distance, or a "
+            "chi-square p-value. Computed cell-by-cell (block vectorized) for speed and "
+            "safety on large, many-variable rasters.")
+        self.category = "Mahalanobis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_tables = {}
+
+    def getParameterInfo(self):
+        points = arcpy.Parameter(
+            displayName="Sample points", name="points", datatype="GPFeatureLayer",
+            parameterType="Optional", direction="Input")
+        points.filter.list = ["Point", "Multipoint"]
+        use_selected = arcpy.Parameter(
+            displayName="Use only the selected points", name="use_selected",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        use_selected.value = False
+        out_raster = arcpy.Parameter(
+            displayName="Output Mahalanobis raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required", direction="Output")
+
+        sm, ss, cr, cf, cv, mt, ct, inv = _mahal_core_params()
+        return [_make_raster_vars_param(), _make_poly_vars_param(), _make_exclude_bands_param(),
+                sm, ss, points, use_selected, cr, cf, cv, mt, ct, inv,
+                out_raster, _out_type_param()] + _make_mahal_table_params(self.CAT)
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        _mahal_update(self, {p.name: p for p in parameters}, "out_raster",
+                      "Mahalanobis", r"_MahalanobisRaster\d*$")
+        return
+
+    def updateMessages(self, parameters):
+        _mahal_messages(self, {p.name: p for p in parameters})
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(mahalanobis)
+            P = {p.name: p for p in parameters}
+            source = P["stats_source"].valueAsText
+            points = P["points"].valueAsText if source == mahalanobis.SRC_POINTS else None
+            use_selected = bool(P["use_selected"].value)
+            if points and not use_selected:
+                try:
+                    points = arcpy.Describe(points).catalogPath
+                except Exception:
+                    pass
+
+            out_lyrx = mahalanobis.run_mahalanobis_raster(
+                var_rows=_combined_var_rows(P["raster_vars"], P["poly_vars"]),
+                sample_method=(P["sample_method"].valueAsText or mahalanobis.SAMPLE_EXACT),
+                stats_source=source,
+                out_type=P["out_type"].valueAsText,
+                out_raster=P["out_raster"].valueAsText,
+                inversion=P["inversion"].valueAsText,
+                points=points,
+                use_selected=use_selected,
+                cat_raster=P["cat_raster"].valueAsText,
+                cat_field=P["cat_field"].valueAsText,
+                cat_value=P["cat_value"].valueAsText,
+                mean_table=P["mean_table"].valueAsText,
+                cov_table=P["cov_table"].valueAsText,
+                save_opts=(_mahal_save_opts(P) or None),
+                exclude_bands=_build_exclude(P["exclude_bands"]),
+                messages=messages)
+            if out_lyrx:
+                try:
+                    P["out_raster"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage("Could not set output symbology: {}".format(e))
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class MahalanobisPoints(object):
+    """Mahalanobis Distance at Points -- a Mahalanobis value at each input point.
+
+    Like the raster tool but with target_points first, a stats_points sample (defaults
+    to the target points), and a point feature-class output.
+    """
+
+    CAT = "Optional output statistics tables"
+
+    def __init__(self):
+        self.label = "Mahalanobis Distance - Calculate at Points"
+        self.description = (
+            "Calculates a Mahalanobis value at each input point: the squared distance "
+            "(x - mu)' * Sigma^-1 * (x - mu) between the point's vector of landscape-variable "
+            "values and the multivariate mean of a reference sample. The output is a copy of "
+            "the input points with a Mahalanobis value field; points outside the landscape "
+            "data are null. Mean and covariance can come from sample points, a categorical "
+            "raster, or existing tables; output value can be squared distance, distance, or a "
+            "chi-square p-value.")
+        self.category = "Mahalanobis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_tables = {}
+
+    def getParameterInfo(self):
+        target_points = arcpy.Parameter(
+            displayName="Input points to evaluate", name="target_points",
+            datatype="GPFeatureLayer", parameterType="Required", direction="Input")
+        target_points.filter.list = ["Point", "Multipoint"]
+        stats_points = arcpy.Parameter(
+            displayName="Sample points for statistics (defaults to the input points)",
+            name="stats_points", datatype="GPFeatureLayer",
+            parameterType="Optional", direction="Input")
+        stats_points.filter.list = ["Point", "Multipoint"]
+        use_selected = arcpy.Parameter(
+            displayName="Use only the selected statistics points", name="use_selected",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        use_selected.value = False
+        out_points = arcpy.Parameter(
+            displayName="Output points", name="out_points", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+
+        sm, ss, cr, cf, cv, mt, ct, inv = _mahal_core_params()
+        return [target_points, _make_raster_vars_param(), _make_poly_vars_param(),
+                _make_exclude_bands_param(), sm, ss, stats_points, use_selected,
+                cr, cf, cv, mt, ct, inv, out_points, _out_type_param()] \
+            + _make_mahal_table_params(self.CAT)
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        _mahal_update(self, {p.name: p for p in parameters}, "out_points",
+                      "Mahalanobis_Points", r"_MahalanobisPoints\d*$")
+        return
+
+    def updateMessages(self, parameters):
+        _mahal_messages(self, {p.name: p for p in parameters})
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(mahalanobis)
+            P = {p.name: p for p in parameters}
+            source = P["stats_source"].valueAsText
+            stats_points = (P["stats_points"].valueAsText
+                            if source == mahalanobis.SRC_POINTS else None)
+            use_selected = bool(P["use_selected"].value)
+            if stats_points and not use_selected:
+                try:
+                    stats_points = arcpy.Describe(stats_points).catalogPath
+                except Exception:
+                    pass
+
+            mahalanobis.run_mahalanobis_points(
+                target_points=P["target_points"].valueAsText,
+                var_rows=_combined_var_rows(P["raster_vars"], P["poly_vars"]),
+                sample_method=(P["sample_method"].valueAsText or mahalanobis.SAMPLE_EXACT),
+                stats_source=source,
+                out_type=P["out_type"].valueAsText,
+                out_points=P["out_points"].valueAsText,
+                inversion=P["inversion"].valueAsText,
+                stats_points=stats_points,
+                use_selected=use_selected,
+                cat_raster=P["cat_raster"].valueAsText,
+                cat_field=P["cat_field"].valueAsText,
+                cat_value=P["cat_value"].valueAsText,
+                mean_table=P["mean_table"].valueAsText,
+                cov_table=P["cov_table"].valueAsText,
+                save_opts=(_mahal_save_opts(P) or None),
+                exclude_bands=_build_exclude(P["exclude_bands"]),
+                messages=messages)
         except arcpy.ExecuteError:
             raise
         except Exception:

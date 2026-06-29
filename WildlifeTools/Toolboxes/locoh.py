@@ -424,6 +424,48 @@ def write_layer_file(out_fc, messages=None):
 
 
 # ---------------------------------------------------------------------------
+# Output Coordinate System environment
+# ---------------------------------------------------------------------------
+def _reproject_in_place(fc, src_sr, messages=None):
+    """Honor the Output Coordinate System environment as a last step.
+
+    If arcpy.env.outputCoordinateSystem is set and differs from src_sr, reproject the
+    finished output feature class in place. Only the geometry is transformed; the Area,
+    count, density and distance attributes were measured in the input coordinate system
+    (Haversine/spheroidal for geographic, planar for projected) and are preserved.
+    """
+    if not fc:
+        return
+    target = arcpy.env.outputCoordinateSystem
+    if target is None:
+        return
+
+    def _same(a, b):
+        if a is None or b is None:
+            return False
+        if getattr(a, "factoryCode", 0) and getattr(b, "factoryCode", 0):
+            return a.factoryCode == b.factoryCode
+        return (a.name or "") == (b.name or "")
+
+    if _same(target, src_sr):
+        return
+    try:
+        base = arcpy.Describe(fc).baseName
+        tmp = arcpy.CreateUniqueName("loc_reproj", "memory")
+        arcpy.management.Project(fc, tmp, target)   # geometry-only reprojection
+        arcpy.management.Delete(fc)
+        arcpy.management.CopyFeatures(tmp, fc)       # rebuild at the original path/format
+        arcpy.management.Delete(tmp)
+        if messages is not None:
+            messages.addMessage(
+                "Reprojected {} to {} (Output Coordinate System).".format(
+                    base, target.name))
+    except Exception as e:
+        if messages is not None:
+            messages.addWarningMessage("Could not reproject output: {}".format(e))
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 def run_locoh_standard(in_features, k, out_isopleths, out_hulls=None, messages=None):
@@ -469,6 +511,7 @@ def run_locoh_standard(in_features, k, out_isopleths, out_hulls=None, messages=N
                  _density_per_sqkm(counts[i], iso_areas[i], is_geographic, dist_mpu))
                 for i in range(len(cumulative) - 1, -1, -1)]
     _write_rows(out_isopleths, iso_rows, STANDARD_FIELDS)
+    _reproject_in_place(out_isopleths, sr, messages)
     write_metadata(out_isopleths, in_base, k, n, is_geographic,
                    individual_hulls=bool(out_hulls), is_isopleth=True)
     iso_lyrx = write_layer_file(out_isopleths, messages)
@@ -487,6 +530,7 @@ def run_locoh_standard(in_features, k, out_isopleths, out_hulls=None, messages=N
                       _density_per_sqkm(k, areas_sorted[i], is_geographic, dist_mpu))
                      for i in range(len(hulls_sorted))]
         _write_rows(out_hulls, hull_rows, STANDARD_FIELDS)
+        _reproject_in_place(out_hulls, sr, messages)
         write_metadata(out_hulls, in_base, k, n, is_geographic,
                        individual_hulls=True, is_isopleth=False)
 
@@ -619,6 +663,7 @@ def run_locoh_adaptive(in_features, a_meters, report_factor, report_unit,
                  _density_per_sqkm(counts[i], iso_areas[i], is_geographic, dist_mpu))
                 for i in range(len(cumulative) - 1, -1, -1)]
     _write_rows(out_isopleths, iso_rows, ADAPTIVE_FIELDS)
+    _reproject_in_place(out_isopleths, sr, messages)
     write_metadata_adaptive(out_isopleths, in_base, a_report, report_unit, used_max,
                             n, is_geographic, bool(out_hulls), is_isopleth=True)
     iso_lyrx = write_layer_file(out_isopleths, messages)
@@ -636,6 +681,7 @@ def run_locoh_adaptive(in_features, a_meters, report_factor, report_unit,
                       _density_per_sqkm(counts_sorted[i], areas_sorted[i], is_geographic, dist_mpu))
                      for i in range(len(hulls_sorted))]
         _write_rows(out_hulls, hull_rows, ADAPTIVE_FIELDS)
+        _reproject_in_place(out_hulls, sr, messages)
         write_metadata_adaptive(out_hulls, in_base, a_report, report_unit, used_max,
                                 n, is_geographic, True, is_isopleth=False)
 
@@ -786,6 +832,7 @@ def run_locoh_fixed_sphere(in_features, r_meters, report_factor, report_unit,
                  _density_per_sqkm(counts[i], iso_areas[i], is_geographic, dist_mpu))
                 for i in range(len(cumulative) - 1, -1, -1)]
     _write_rows(out_isopleths, iso_rows, FIXEDSPHERE_FIELDS)
+    _reproject_in_place(out_isopleths, sr, messages)
     write_metadata_fixed_sphere(out_isopleths, in_base, r_report, report_unit, used_auto,
                                 n, is_geographic, bool(out_hulls), is_isopleth=True)
     iso_lyrx = write_layer_file(out_isopleths, messages)
@@ -804,6 +851,7 @@ def run_locoh_fixed_sphere(in_features, r_meters, report_factor, report_unit,
                       _density_per_sqkm(counts_sorted[i], areas_sorted[i], is_geographic, dist_mpu))
                      for i in range(len(hulls_sorted))]
         _write_rows(out_hulls, hull_rows, FIXEDSPHERE_FIELDS)
+        _reproject_in_place(out_hulls, sr, messages)
         write_metadata_fixed_sphere(out_hulls, in_base, r_report, report_unit, used_auto,
                                     n, is_geographic, True, is_isopleth=False)
 

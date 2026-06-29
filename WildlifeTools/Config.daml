@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.3.3" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.5.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -22,6 +22,7 @@
       <tabs>
         <tab id="WildlifeTools_Tab1" caption="Wildlife">
           <group refID="WildlifeTools_Group1"/>
+          <group refID="WildlifeTools_GroupMahalanobis"/>
           <group refID="WildlifeTools_GroupBreak"/>
         </tab>
       </tabs>
@@ -31,6 +32,10 @@
           <button refID="WildlifeTools_LoCoHStandard" size="large" />
           <button refID="WildlifeTools_LoCoHAdaptive" size="large" />
           <button refID="WildlifeTools_LoCoHFixedSphere" size="large" />
+        </group>
+        <group id="WildlifeTools_GroupMahalanobis" caption="Mahalanobis Tools" appearsOnAddInTab="false">
+          <button refID="WildlifeTools_MahalanobisRaster" size="large" />
+          <button refID="WildlifeTools_MahalanobisPoints" size="large" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -69,6 +74,28 @@
                 keytip="LF">
           <tooltip heading="Local Convex Hull (LoCoH) - Fixed Sphere">
             Opens the Fixed-sphere-of-influence (r-) Local Convex Hull home-range tool from the Jenness Enterprises toolbox.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_MahalanobisRaster"
+                caption="Mahalanobis Distance (Raster)"
+                className="MahalanobisRasterButton"
+                loadOnClick="true"
+                smallImage="Images\AddInDesktop16.png"
+                largeImage="Images\AddInDesktop32.png"
+                keytip="MR">
+          <tooltip heading="Mahalanobis Distance - Create Raster Surface">
+            Opens the Mahalanobis Distance Raster tool from the Jenness Enterprises toolbox: builds a per-cell raster of Mahalanobis distances from a set of landscape variables.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_MahalanobisPoints"
+                caption="Mahalanobis Distance (Points)"
+                className="MahalanobisPointsButton"
+                loadOnClick="true"
+                smallImage="Images\AddInDesktop16.png"
+                largeImage="Images\AddInDesktop32.png"
+                keytip="MP">
+          <tooltip heading="Mahalanobis Distance - Calculate at Points">
+            Opens the Mahalanobis at Points tool from the Jenness Enterprises toolbox: computes a Mahalanobis value at each input point from a set of landscape variables.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_ThoughtForTheDay"
