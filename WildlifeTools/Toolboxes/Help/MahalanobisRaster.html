@@ -46,9 +46,6 @@ exclude</strong> table (name the multiband raster and the band number).</p>
 and the input required by a chi-square transform; <strong>Distance (D)</strong> is its
 square root; <strong>Chi-square p-value</strong> is the upper-tail typicality probability
 (0&ndash;1, with values near 1 indicating a close match to the reference conditions).</div>
-
-<p><strong>Reference:</strong> Mahalanobis, P.C. (1936). On the generalised distance in
-statistics. <em>Proceedings of the National Institute of Sciences of India</em> 2(1):49&ndash;55.</p>
 </section>
 
 <section id="parameters">
@@ -229,6 +226,46 @@ arcpy.jenness.MahalanobisRaster(
     inversion="Pseudo-inverse (SVD)",
     out_raster=r"C:\Project\Mahalanobis.gdb\Mahal_typicality",
     out_type="Chi-square p-value")</code></pre>
+</section>
+
+<section id="references">
+<h2>References and further reading</h2>
+<p><strong>Method:</strong></p>
+<ul class="references">
+<li>Mahalanobis, P.C. (1936). On the generalised distance in statistics. <em>Proceedings of
+the National Institute of Sciences of India</em> 2(1):49&ndash;55.</li>
+</ul>
+<p><strong>Ecological applications</strong> (including the chi-square rescaling and its
+normality caveat):</p>
+<ul class="references">
+<li>Clark, J.D., Dunn, J.E. and Smith, K.G. (1993). A multivariate model of female black bear
+habitat use for a geographic information system. <em>Journal of Wildlife Management</em>
+57:519&ndash;526.</li>
+<li>Knick, S.T. and Dyer, D.L. (1997). Distribution of black-tailed jackrabbit habitat
+determined by GIS in southwestern Idaho. <em>Journal of Wildlife Management</em> 61:75&ndash;85.</li>
+<li>Farber, O. and Kadmon, R. (2002). Assessment of alternative approaches for bioclimatic
+modeling with special emphasis on the Mahalanobis distance. <em>Ecological Modelling</em>
+160:115&ndash;130.</li>
+</ul>
+<p><strong>Matrix algebra and computation:</strong></p>
+<ul class="references">
+<li>Golub, G.H. and Van Loan, C.F. (1996). <em>Matrix Computations</em>, 3rd ed. Johns Hopkins
+University Press.</li>
+<li>Meyer, C.D. (2000). <em>Matrix Analysis and Applied Linear Algebra</em>. SIAM, Philadelphia.</li>
+<li>Press, W.H., Teukolsky, S.A., Vetterling, W.T. and Flannery, B.P. (2002). <em>Numerical
+Recipes in C: The Art of Scientific Computing</em>, 2nd ed. Cambridge University Press.</li>
+</ul>
+<div class="note"><strong>Degrees of freedom:</strong> the chi-square p-value uses
+<strong>df = the number of variables</strong>, the statistically standard value (Mardia, Kent
+and Bibby 1979; Seber 1984). Some of the ecological sources above use the number of variables
+&minus; 1 (Clark et al. 1993; Farber and Kadmon 2003). Because the transform is monotonic in
+D&sup2;, this choice only rescales the p-values &mdash; it never changes the ranking of cells.</div>
+</section>
+
+<section id="cite">
+<h2>Suggested citation</h2>
+<p class="suggested-citation">Jenness, J. (2026). Mahalanobis Distance &mdash; Create Raster Surface. Jenness Enterprises
+Wildlife Tools for ArcGIS Pro. Available at: <a href="http://www.jennessent.com">http://www.jennessent.com</a>.</p>
 </section>
 
 <footer>Tool by Jeff Jenness, Jenness Enterprises (<a href="http://www.jennessent.com">www.jennessent.com</a>).

@@ -119,7 +119,7 @@ class Toolbox(object):
         self.label = "Jenness Enterprises Tools"
         self.alias = "jenness"
         self.tools = [LoCoHStandard, LoCoHAdaptive, LoCoHFixedSphere,
-                      MahalanobisRaster, MahalanobisPoints]
+                      MahalanobisRaster, MahalanobisPoints, MahalanobisChiSquare]
 
 
 class LoCoHStandard(object):
@@ -678,6 +678,11 @@ def _mahal_update(tool, P, out_name, out_base, derived_re):
     """Shared updateParameters: sample always on; output + table autofill; enabling."""
     P["sample_method"].enabled = True
 
+    source = P["stats_source"].valueAsText
+    is_pts = (source == mahalanobis.SRC_POINTS)
+    is_cat = (source == mahalanobis.SRC_CATEGORICAL)
+    is_tab = (source == mahalanobis.SRC_TABLES)
+
     p_out = P[out_name]
     cur = p_out.valueAsText or ""
     cur_name = os.path.basename(cur)
@@ -693,12 +698,15 @@ def _mahal_update(tool, P, out_name, out_base, derived_re):
     obase = os.path.splitext(os.path.basename(p_out.valueAsText or out_base))[0]
     tbl_ws = os.path.dirname(p_out.valueAsText) if p_out.valueAsText else None
     tbl_ws = tbl_ws or arcpy.env.workspace or arcpy.env.scratchGDB
+    # The output statistics tables are redundant when the stats come from existing
+    # tables, so disable the whole section in that case.
     for gen, tbl, suffix, key in _MAHAL_TABLE_SPECS:
         p_chk, p_tbl = P[gen], P[tbl]
-        p_tbl.enabled = bool(p_chk.value)
+        p_chk.enabled = not is_tab
+        p_tbl.enabled = (not is_tab) and bool(p_chk.value)
         cur_tbl = p_tbl.valueAsText or ""
         cur_tname = os.path.splitext(os.path.basename(cur_tbl))[0]
-        if p_chk.value:
+        if p_chk.value and not is_tab:
             if cur_tbl == "" or cur_tname == tool._auto_tables.get(key):
                 full = _unique_name("{}_{}".format(obase, suffix), tbl_ws)
                 p_tbl.value = full
@@ -708,18 +716,15 @@ def _mahal_update(tool, P, out_name, out_base, derived_re):
                 p_tbl.value = None
                 tool._auto_tables.pop(key, None)
 
-    source = P["stats_source"].valueAsText
-    is_pts = (source == mahalanobis.SRC_POINTS)
-    is_cat = (source == mahalanobis.SRC_CATEGORICAL)
-    is_tab = (source == mahalanobis.SRC_TABLES)
     if "points" in P:
         P["points"].enabled = is_pts
     if "stats_points" in P:
         P["stats_points"].enabled = is_pts
     P["use_selected"].enabled = is_pts
-    P["cat_raster"].enabled = is_cat
-    P["cat_field"].enabled = is_cat
-    P["cat_value"].enabled = is_cat
+    if "cat_raster" in P:
+        P["cat_raster"].enabled = is_cat
+        P["cat_field"].enabled = is_cat
+        P["cat_value"].enabled = is_cat
     P["mean_table"].enabled = is_tab
     P["cov_table"].enabled = is_tab
 
@@ -727,6 +732,12 @@ def _mahal_update(tool, P, out_name, out_base, derived_re):
 def _mahal_messages(tool, P):
     """Shared updateMessages: RAT warning, polygon-field check, source + order checks."""
     p_raster, p_poly = P["raster_vars"], P["poly_vars"]
+    if not p_raster.values:
+        p_raster.setErrorMessage(
+            "Add at least one raster. The landscape variables are always required -- they "
+            "supply each location's value vector. The mean vector and covariance (whether "
+            "computed here or read from existing tables) describe these same variables, in "
+            "this order.")
     flagged = _rat_flagged(p_raster)
     if flagged:
         p_raster.setWarningMessage(
@@ -741,7 +752,7 @@ def _mahal_messages(tool, P):
     source = P["stats_source"].valueAsText
     if "points" in P and source == mahalanobis.SRC_POINTS and not P["points"].value:
         P["points"].setErrorMessage("Select the sample point features.")
-    if source == mahalanobis.SRC_CATEGORICAL:
+    if source == mahalanobis.SRC_CATEGORICAL and "cat_raster" in P:
         if not P["cat_raster"].value:
             P["cat_raster"].setErrorMessage("Select the categorical raster.")
         if P["cat_value"].value in (None, ""):
@@ -829,6 +840,31 @@ def _out_type_param():
     return p
 
 
+# Points tool: the three output values as independent checkboxes (any or all).
+_OUT_TYPE_CHECKS = [
+    ("out_d2", "Squared distance (D2) -- traditional for ecological modeling", True),
+    ("out_d", "Distance (D)", False),
+    ("out_pval", "Chi-square p-value", False),
+]
+
+
+def _out_type_checks():
+    params = []
+    for name, label, default in _OUT_TYPE_CHECKS:
+        p = arcpy.Parameter(displayName=label, name=name, datatype="GPBoolean",
+                            parameterType="Optional", direction="Input")
+        p.value = default
+        params.append(p)
+    return params
+
+
+def _out_types_selected(P):
+    """The selected OUT_* constants, in canonical order, from the checkbox params."""
+    mapping = [("out_d2", mahalanobis.OUT_D2), ("out_d", mahalanobis.OUT_D),
+               ("out_pval", mahalanobis.OUT_PVALUE)]
+    return [const for name, const in mapping if name in P and P[name].value]
+
+
 class MahalanobisRaster(object):
     """Mahalanobis Distance Raster -- the primary tool of the Mahalanobis suite.
 
@@ -912,7 +948,8 @@ class MahalanobisRaster(object):
                 cat_value=P["cat_value"].valueAsText,
                 mean_table=P["mean_table"].valueAsText,
                 cov_table=P["cov_table"].valueAsText,
-                save_opts=(_mahal_save_opts(P) or None),
+                save_opts=(None if source == mahalanobis.SRC_TABLES
+                           else (_mahal_save_opts(P) or None)),
                 exclude_bands=_build_exclude(P["exclude_bands"]),
                 messages=messages)
             if out_lyrx:
@@ -972,9 +1009,12 @@ class MahalanobisPoints(object):
             parameterType="Required", direction="Output")
 
         sm, ss, cr, cf, cv, mt, ct, inv = _mahal_core_params()
+        # Categorical-raster statistics are not offered at points; only on-the-fly
+        # from the point sample or precomputed from existing tables.
+        ss.filter.list = [mahalanobis.SRC_POINTS, mahalanobis.SRC_TABLES]
         return [target_points, _make_raster_vars_param(), _make_poly_vars_param(),
                 _make_exclude_bands_param(), sm, ss, stats_points, use_selected,
-                cr, cf, cv, mt, ct, inv, out_points, _out_type_param()] \
+                mt, ct, inv, out_points] + _out_type_checks() \
             + _make_mahal_table_params(self.CAT)
 
     def isLicensed(self):
@@ -986,7 +1026,11 @@ class MahalanobisPoints(object):
         return
 
     def updateMessages(self, parameters):
-        _mahal_messages(self, {p.name: p for p in parameters})
+        P = {p.name: p for p in parameters}
+        _mahal_messages(self, P)
+        if not _out_types_selected(P):
+            P["out_d2"].setErrorMessage(
+                "Select at least one output value (D2, D, or p-value).")
         return
 
     def execute(self, parameters, messages):
@@ -1008,19 +1052,126 @@ class MahalanobisPoints(object):
                 var_rows=_combined_var_rows(P["raster_vars"], P["poly_vars"]),
                 sample_method=(P["sample_method"].valueAsText or mahalanobis.SAMPLE_EXACT),
                 stats_source=source,
-                out_type=P["out_type"].valueAsText,
+                out_types=_out_types_selected(P),
                 out_points=P["out_points"].valueAsText,
                 inversion=P["inversion"].valueAsText,
                 stats_points=stats_points,
                 use_selected=use_selected,
-                cat_raster=P["cat_raster"].valueAsText,
-                cat_field=P["cat_field"].valueAsText,
-                cat_value=P["cat_value"].valueAsText,
+                cat_raster=None,
+                cat_field=None,
+                cat_value=None,
                 mean_table=P["mean_table"].valueAsText,
                 cov_table=P["cov_table"].valueAsText,
-                save_opts=(_mahal_save_opts(P) or None),
+                save_opts=(None if source == mahalanobis.SRC_TABLES
+                           else (_mahal_save_opts(P) or None)),
                 exclude_bands=_build_exclude(P["exclude_bands"]),
                 messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class MahalanobisChiSquare(object):
+    """Chi-square / p-value transform of a Mahalanobis squared-distance (D2) raster.
+
+    Rescales a D2 raster to a 0-1 chi-square typicality p-value. Degrees of freedom =
+    number of variables; pre-filled from the input raster's metadata when our Mahalanobis
+    Raster tool created it.
+    """
+
+    def __init__(self):
+        self.label = "Mahalanobis Distance - Chi-Square Transform"
+        self.description = (
+            "Transforms a Mahalanobis squared-distance (D2) raster into a chi-square "
+            "typicality p-value raster. For every cell, p = P(chi-square > D2) with degrees "
+            "of freedom equal to the number of variables, producing a 0 to 1 surface where "
+            "values near 1 indicate a close match to the reference conditions. When the "
+            "input D2 raster was created by the Mahalanobis Raster tool, the degrees of "
+            "freedom are read from its metadata and pre-filled.")
+        self.category = "Mahalanobis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._df_src = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input squared-distance (D2) raster", name="in_raster",
+            datatype="GPRasterLayer", parameterType="Required", direction="Input")
+        df = arcpy.Parameter(
+            displayName="Degrees of freedom (number of variables)", name="df",
+            datatype="GPLong", parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output chi-square p-value raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required", direction="Output")
+        return [in_raster, df, out_raster]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        p_in, p_df, p_out = P["in_raster"], P["df"], P["out_raster"]
+
+        # Pre-fill df from the input raster's recorded variable count (our D2 rasters carry
+        # it). Don't clobber a value the user typed -- only fill when empty or still equal
+        # to the last value we auto-filled.
+        if p_in.value:
+            try:
+                n, _ot = mahalanobis.read_recorded_df(p_in.valueAsText)
+            except Exception:
+                n = None
+            if n and (p_df.value in (None, "") or p_df.value == self._df_src):
+                p_df.value = n
+                self._df_src = n
+
+        # Default output name "Mahalanobis_Pvalue", auto-incremented, re-defaulting while
+        # the user has not renamed it.
+        cur = p_out.valueAsText or ""
+        cur_name = os.path.basename(cur)
+        if cur_name.lower().endswith(".tif"):
+            cur_name = cur_name[:-4]
+        if cur == "" or cur_name == self._auto_out:
+            ws = arcpy.env.workspace or arcpy.env.scratchGDB
+            unique = _unique_name("Mahalanobis_Pvalue", ws)
+            p_out.value = unique
+            self._auto_out = os.path.basename(unique)
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        p_in, p_df = P["in_raster"], P["df"]
+        if p_df.value is not None and p_df.value < 1:
+            p_df.setErrorMessage(
+                "Degrees of freedom must be a positive integer (the number of variables).")
+        if p_in.value:
+            try:
+                _n, ot = mahalanobis.read_recorded_df(p_in.valueAsText)
+            except Exception:
+                ot = None
+            if ot and ot != mahalanobis.OUT_D2:
+                p_in.setWarningMessage(
+                    "This raster's metadata indicates it holds '{}', not squared distance "
+                    "(D2). The chi-square transform expects a D2 raster.".format(ot))
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(mahalanobis)
+            P = {p.name: p for p in parameters}
+            out_lyrx = mahalanobis.run_chi_square_transform(
+                in_raster=P["in_raster"].valueAsText,
+                df=int(P["df"].value),
+                out_raster=P["out_raster"].valueAsText,
+                messages=messages)
+            if out_lyrx:
+                try:
+                    P["out_raster"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage("Could not set output symbology: {}".format(e))
         except arcpy.ExecuteError:
             raise
         except Exception:

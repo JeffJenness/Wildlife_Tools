@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mahalanobis Distance - Chi-Square Transform</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="tool-help">
+
+<h1>Mahalanobis Distance &mdash; Chi-Square Transform</h1>
+<p class="subtitle">Jenness Enterprises Wildlife Tools &middot; Mahalanobis Tools</p>
+
+<section id="summary">
+<h2>Summary</h2>
+<p>Transforms a Mahalanobis squared-distance (D&sup2;) raster into a chi-square
+<strong>typicality p-value</strong> raster, rescaling the unbounded D&sup2; values onto a
+fixed 0&ndash;1 scale where values near 1 indicate a close match to the reference conditions.</p>
+</section>
+
+<section id="usage">
+<h2>Usage</h2>
+<p>For every cell the output is the upper-tail chi-square probability
+<code>p = P(&chi;&sup2; &gt; D&sup2;)</code>, evaluated with degrees of freedom equal to the
+number of variables that produced the D&sup2; raster. Mahalanobis distances have no upper
+bound; this transform recodes them onto a fixed 0&ndash;1 scale.</p>
+
+<p>Because the transform is monotonic it also <strong>inverts the order</strong>: high D&sup2;
+(dissimilar) becomes a low p-value, and low D&sup2; (similar) becomes a high p-value. The
+computation is performed cell-by-cell (block vectorized), so it stays memory-bounded for large
+rasters; NoData cells remain NoData.</p>
+
+<div class="note">The input must be a <strong>squared-distance (D&sup2;)</strong> raster &mdash;
+not a Distance (D) or an already-transformed p-value raster. When the D&sup2; raster was created
+by the <em>Mahalanobis Distance &mdash; Create Raster Surface</em> tool, its number of variables
+(the degrees of freedom) is recorded in the raster metadata and <strong>pre-filled here
+automatically</strong>; a warning is shown if the input metadata indicates it is not a D&sup2;
+raster.</div>
+</section>
+
+<section id="parameters">
+<h2>Parameters</h2>
+<table class="params">
+<thead><tr><th>Label</th><th>Explanation</th><th>Data Type</th></tr></thead>
+<tbody>
+<tr><td class="param-name">Input squared-distance (D&sup2;) raster</td>
+<td>The Mahalanobis D&sup2; raster to rescale. If it was produced by the Mahalanobis Raster
+tool, its variable count is read from the metadata to pre-fill the degrees of freedom, and a
+warning appears if the metadata shows the raster is not a D&sup2; surface.</td>
+<td class="type">Raster Layer</td></tr>
+<tr><td class="param-name">Degrees of freedom (number of variables)</td>
+<td>The chi-square degrees of freedom, equal to the number of variables used to build the
+D&sup2; raster. Pre-filled automatically when the input metadata records it; otherwise enter
+the number of variables.</td>
+<td class="type">Long</td></tr>
+<tr><td class="param-name">Output chi-square p-value raster</td>
+<td>The output p-value raster (0&ndash;1, values near 1 indicating a close match). Defaults to
+<code>Mahalanobis_Pvalue</code>, auto-incremented if taken.</td>
+<td class="type">Raster Dataset</td></tr>
+</tbody>
+</table>
+</section>
+
+<section id="environments">
+<h2>Environments</h2>
+<p>This tool reads the input raster on its own grid and does not depend on the analysis
+environments. The output matches the input raster's coordinate system, cell size, and extent.</p>
+</section>
+
+<section id="code">
+<h2>Code sample</h2>
+<h3>MahalanobisChiSquare example (stand-alone script)</h3>
+<p>Rescale a three-variable Mahalanobis D&sup2; raster to a chi-square typicality p-value
+(df = 3).</p>
+<pre><code>import arcpy
+
+arcpy.ImportToolbox(r"C:\Tools\JennessEnterprisesTools.pyt")
+
+arcpy.jenness.MahalanobisChiSquare(
+    in_raster=r"C:\Project\Mahalanobis.gdb\Mahalanobis",
+    df=3,
+    out_raster=r"C:\Project\Mahalanobis.gdb\Mahalanobis_Pvalue")</code></pre>
+</section>
+
+<section id="references">
+<h2>References and further reading</h2>
+<p><strong>Method:</strong></p>
+<ul class="references">
+<li>Mahalanobis, P.C. (1936). On the generalised distance in statistics. <em>Proceedings of
+the National Institute of Sciences of India</em> 2(1):49&ndash;55.</li>
+</ul>
+<p><strong>Chi-square rescaling in ecological applications</strong> (and its normality
+assumption):</p>
+<ul class="references">
+<li>Clark, J.D., Dunn, J.E. and Smith, K.G. (1993). A multivariate model of female black bear
+habitat use for a geographic information system. <em>Journal of Wildlife Management</em>
+57:519&ndash;526.</li>
+<li>Knick, S.T. and Dyer, D.L. (1997). Distribution of black-tailed jackrabbit habitat
+determined by GIS in southwestern Idaho. <em>Journal of Wildlife Management</em> 61:75&ndash;85.</li>
+<li>Farber, O. and Kadmon, R. (2002). Assessment of alternative approaches for bioclimatic
+modeling with special emphasis on the Mahalanobis distance. <em>Ecological Modelling</em>
+160:115&ndash;130.</li>
+</ul>
+<div class="note"><strong>Degrees of freedom:</strong> this tool uses <strong>df = the number of
+variables</strong>, the statistically standard value (Mardia, Kent and Bibby 1979; Seber 1984).
+Some of the ecological sources above use the number of variables &minus; 1 (Clark et al. 1993;
+Farber and Kadmon 2003). Because the transform is monotonic in D&sup2;, this choice only rescales
+the p-values &mdash; it never changes the ranking of cells. Set the degrees of freedom yourself
+to reproduce those sources.</div>
+</section>
+
+<section id="cite">
+<h2>Suggested citation</h2>
+<p class="suggested-citation">Jenness, J. (2026). Mahalanobis Distance &mdash; Chi-Square Transform. Jenness Enterprises
+Wildlife Tools for ArcGIS Pro. Available at: <a href="http://www.jennessent.com">http://www.jennessent.com</a>.</p>
+</section>
+
+<footer>Tool by Jeff Jenness, Jenness Enterprises (<a href="http://www.jennessent.com">www.jennessent.com</a>).
+Ported from the legacy ArcMap Land Facet Corridor Tools.</footer>
+
+</main>
+</body>
+</html>

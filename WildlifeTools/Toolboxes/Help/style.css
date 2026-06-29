@@ -64,6 +64,14 @@ table.params td.type { white-space: nowrap; color: #555; font-size: .9rem; }
   padding: 10px 14px; margin: .9em 0; border-radius: 0 4px 4px 0;
 }
 
+ul.references { list-style: none; padding-left: 0; margin: .4em 0 1em; }
+ul.references li { padding-left: 1.6em; text-indent: -1.6em; margin: .4em 0; }
+
+p.suggested-citation {
+  background: var(--code-bg); border-left: 3px solid var(--esri-blue);
+  padding: 10px 14px; margin: .6em 0; border-radius: 0 4px 4px 0; font-style: italic;
+}
+
 footer {
   margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--rule);
   color: var(--muted); font-size: .85rem;

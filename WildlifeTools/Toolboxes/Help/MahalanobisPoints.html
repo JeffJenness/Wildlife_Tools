@@ -25,13 +25,13 @@ the inverse covariance among the variables.</p>
 <code>D&sup2; = (x &minus; &mu;)' &middot; &Sigma;&#8315;&sup1; &middot; (x &minus; &mu;)</code>,
 where <code>x</code> is the point's vector of landscape-variable values, <code>&mu;</code> is
 the mean vector, and <code>&Sigma;&#8315;&sup1;</code> is the inverse covariance matrix. The
-reference mean and covariance can be computed from a point sample, from the cells of a
-categorical raster, or read from previously saved tables.</p>
+reference mean and covariance can be computed from a point sample, or read from previously
+saved tables.</p>
 
-<p>The output is a <strong>copy of the input points</strong> with one added field
-(<code>Mahal_D2</code>, <code>Mahal_D</code>, or <code>Mahal_pval</code> depending on the
-output value). Points that fall outside the extent of any landscape raster, or on a NoData
-cell, receive a <strong>null</strong> value.</p>
+<p>The output is a <strong>copy of the input points</strong> with one added field per selected
+output value (<code>Mahal_D2</code>, <code>Mahal_D</code>, and/or <code>Mahal_pval</code>) &mdash;
+you may calculate any or all of the three. Points that fall outside the extent of any landscape
+raster, or on a NoData cell, receive a <strong>null</strong> value.</p>
 
 <p>Predictor rasters always contribute their <strong>cell values</strong>, never raster
 attribute-table values. A multiband raster expands to one variable per band. A predictor may
@@ -42,9 +42,6 @@ the mean and covariance are built from the input points themselves &mdash; each 
 is then its Mahalanobis distance from the centroid of all the points, useful for flagging
 atypical observations. Provide a separate statistics sample (or existing tables) to evaluate
 the points against a different reference distribution.</div>
-
-<p><strong>Reference:</strong> Mahalanobis, P.C. (1936). On the generalised distance in
-statistics. <em>Proceedings of the National Institute of Sciences of India</em> 2(1):49&ndash;55.</p>
 </section>
 
 <section id="parameters">
@@ -77,8 +74,9 @@ ordinal, and preferably interval or ratio; it should never be used for nominal (
 categories.</td>
 <td class="type">String</td></tr>
 <tr><td class="param-name">Source of mean vector and covariance matrix</td>
-<td>Calculate from a point sample, from a categorical raster's matching cells, or read from
-existing tables.</td>
+<td>Mahalanobis distance requires a mean vector and covariance matrix. Compute them on the fly
+from the landscape values at the current points, or select <em>Existing tables</em> to read a
+mean vector and covariance matrix saved earlier from another set of points.</td>
 <td class="type">String</td></tr>
 <tr><td class="param-name">Sample points for statistics</td>
 <td>The point sample used to compute the mean and covariance. <strong>Leave empty to use the
@@ -88,10 +86,6 @@ input points being evaluated</strong> (the common case).</td>
 <td>If checked and the statistics points layer has a selection, only the selected points build
 the statistics.</td>
 <td class="type">Boolean</td></tr>
-<tr><td class="param-name">Categorical raster / field / value</td>
-<td>For the Categorical raster source: the raster, an informational field, and the cell value
-whose cells define the reference sample.</td>
-<td class="type">Raster Layer / Field / String</td></tr>
 <tr><td class="param-name">Mean vector table / Covariance matrix table</td>
 <td>For the Existing tables source: previously saved tables; the covariance table's stored variable order is used to validate the variable list.</td>
 <td class="type">Table View</td></tr>
@@ -100,13 +94,15 @@ whose cells define the reference sample.</td>
 variables. The covariance condition number is reported.</td>
 <td class="type">String</td></tr>
 <tr><td class="param-name">Output points</td>
-<td>A copy of the input points with the Mahalanobis value field. Defaults to
-<code>Mahalanobis_Points</code>, auto-incremented if taken.</td>
+<td>A copy of the input points with one Mahalanobis value field per selected output value.
+Defaults to <code>Mahalanobis_Points</code>, auto-incremented if taken.</td>
 <td class="type">Feature Class</td></tr>
-<tr><td class="param-name">Output value</td>
-<td>Squared distance (D&sup2;), Distance (D), or Chi-square p-value (degrees of freedom = number
-of variables).</td>
-<td class="type">String</td></tr>
+<tr><td class="param-name">Squared distance (D&sup2;) / Distance (D) / Chi-square p-value</td>
+<td>Three independent checkboxes &mdash; calculate any or all. Each checked value is written to its
+own field (<code>Mahal_D2</code>, <code>Mahal_D</code>, <code>Mahal_pval</code>). The p-value uses a
+chi-square distribution with degrees of freedom equal to the number of variables. At least one must
+be checked.</td>
+<td class="type">Boolean (&times;3)</td></tr>
 <tr><td class="param-name">Generate / save statistics tables</td>
 <td>Optionally write the mean vector, covariance, inverse covariance, and correlation matrices
 to tables (auto-named from the output, e.g. <code>&lt;output&gt;_Means</code>).</td>
@@ -144,7 +140,9 @@ arcpy.jenness.MahalanobisPoints(
     stats_source="Calculate directly from sample point features",
     inversion="Standard (inverse)",
     out_points=r"C:\Project\Mahalanobis.gdb\Observed_Mahal",
-    out_type="Squared distance (D2): Traditional for ecological modeling")</code></pre>
+    out_d2=True,
+    out_d=False,
+    out_pval=True)</code></pre>
 
 <h3>MahalanobisPoints example 2 (evaluate against existing tables)</h3>
 <p>Score a separate set of candidate points against a mean and covariance saved earlier,
@@ -163,7 +161,49 @@ arcpy.jenness.MahalanobisPoints(
     cov_table=gdb + r"\Observed_Mahal_Covariance",
     inversion="Standard (inverse)",
     out_points=gdb + r"\Candidate_typicality",
-    out_type="Chi-square p-value")</code></pre>
+    out_d2=False,
+    out_d=False,
+    out_pval=True)</code></pre>
+</section>
+
+<section id="references">
+<h2>References and further reading</h2>
+<p><strong>Method:</strong></p>
+<ul class="references">
+<li>Mahalanobis, P.C. (1936). On the generalised distance in statistics. <em>Proceedings of
+the National Institute of Sciences of India</em> 2(1):49&ndash;55.</li>
+</ul>
+<p><strong>Ecological applications</strong> (including the chi-square rescaling and its
+normality caveat):</p>
+<ul class="references">
+<li>Clark, J.D., Dunn, J.E. and Smith, K.G. (1993). A multivariate model of female black bear
+habitat use for a geographic information system. <em>Journal of Wildlife Management</em>
+57:519&ndash;526.</li>
+<li>Knick, S.T. and Dyer, D.L. (1997). Distribution of black-tailed jackrabbit habitat
+determined by GIS in southwestern Idaho. <em>Journal of Wildlife Management</em> 61:75&ndash;85.</li>
+<li>Farber, O. and Kadmon, R. (2002). Assessment of alternative approaches for bioclimatic
+modeling with special emphasis on the Mahalanobis distance. <em>Ecological Modelling</em>
+160:115&ndash;130.</li>
+</ul>
+<p><strong>Matrix algebra and computation:</strong></p>
+<ul class="references">
+<li>Golub, G.H. and Van Loan, C.F. (1996). <em>Matrix Computations</em>, 3rd ed. Johns Hopkins
+University Press.</li>
+<li>Meyer, C.D. (2000). <em>Matrix Analysis and Applied Linear Algebra</em>. SIAM, Philadelphia.</li>
+<li>Press, W.H., Teukolsky, S.A., Vetterling, W.T. and Flannery, B.P. (2002). <em>Numerical
+Recipes in C: The Art of Scientific Computing</em>, 2nd ed. Cambridge University Press.</li>
+</ul>
+<div class="note"><strong>Degrees of freedom:</strong> the chi-square p-value uses
+<strong>df = the number of variables</strong>, the statistically standard value (Mardia, Kent
+and Bibby 1979; Seber 1984). Some of the ecological sources above use the number of variables
+&minus; 1 (Clark et al. 1993; Farber and Kadmon 2003). Because the transform is monotonic in
+D&sup2;, this choice only rescales the p-values &mdash; it never changes the ranking of points.</div>
+</section>
+
+<section id="cite">
+<h2>Suggested citation</h2>
+<p class="suggested-citation">Jenness, J. (2026). Mahalanobis Distance &mdash; Calculate at Points. Jenness Enterprises
+Wildlife Tools for ArcGIS Pro. Available at: <a href="http://www.jennessent.com">http://www.jennessent.com</a>.</p>
 </section>
 
 <footer>Tool by Jeff Jenness, Jenness Enterprises (<a href="http://www.jennessent.com">www.jennessent.com</a>).
