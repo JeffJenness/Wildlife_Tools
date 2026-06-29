@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.7.1" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.7.2" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -79,44 +79,44 @@
           </tooltip>
         </button>
         <button id="WildlifeTools_MahalanobisRaster"
-                caption="Mahalanobis Distance (Raster)"
+                caption="Mahalanobis Distance Raster"
                 className="MahalanobisRasterButton"
                 loadOnClick="true"
-                smallImage="Images\AddInDesktop16.png"
-                largeImage="Images\AddInDesktop32.png"
+                smallImage="Images\M1_16.png"
+                largeImage="Images\M1_32.png"
                 keytip="MR">
-          <tooltip heading="Mahalanobis Distance - Create Raster Surface">
+          <tooltip heading="Mahalanobis Distance Raster">
             Opens the Mahalanobis Distance Raster tool from the Jenness Enterprises toolbox: builds a per-cell raster of Mahalanobis distances from a set of landscape variables.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_MahalanobisPoints"
-                caption="Mahalanobis Distance (Points)"
+                caption="Mahalanobis Distance at Points"
                 className="MahalanobisPointsButton"
                 loadOnClick="true"
-                smallImage="Images\AddInDesktop16.png"
-                largeImage="Images\AddInDesktop32.png"
+                smallImage="Images\Mvector_16.png"
+                largeImage="Images\Mvector_32.png"
                 keytip="MP">
-          <tooltip heading="Mahalanobis Distance - Calculate at Points">
+          <tooltip heading="Mahalanobis Distance at Points">
             Opens the Mahalanobis at Points tool from the Jenness Enterprises toolbox: computes a Mahalanobis value at each input point from a set of landscape variables.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_MahalanobisCovariance"
-                caption="Mahalanobis Covariance (Datasets)"
+                caption="Calculate Statistical Matrices"
                 className="MahalanobisCovarianceButton"
                 loadOnClick="true"
-                smallImage="Images\AddInDesktop16.png"
-                largeImage="Images\AddInDesktop32.png"
+                smallImage="Images\Stats_16b.png"
+                largeImage="Images\Stats_32.png"
                 keytip="MV">
-          <tooltip heading="Mahalanobis Distance - Covariance from Datasets">
-            Opens the Covariance from Datasets tool from the Jenness Enterprises toolbox: computes mean, covariance, inverse covariance, and correlation tables for a set of landscape variables, for reuse by the Mahalanobis Raster and at Points tools.<disabledText />
+          <tooltip heading="Calculate Statistical Matrices">
+            Opens the Calculate Statistical Matrices tool from the Jenness Enterprises toolbox: computes mean, covariance, inverse covariance, and correlation tables for a set of landscape variables, for reuse by the Mahalanobis Raster and at Points tools.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_MahalanobisChiSquare"
                 caption="Mahalanobis Chi-Square Transform"
                 className="MahalanobisChiSquareButton"
                 loadOnClick="true"
-                smallImage="Images\AddInDesktop16.png"
-                largeImage="Images\AddInDesktop32.png"
+                smallImage="Images\chi_square_symbol_16.png"
+                largeImage="Images\chi_square_symbol_32.png"
                 keytip="MC">
           <tooltip heading="Mahalanobis Distance - Chi-Square Transform">
             Opens the Chi-Square Transform tool from the Jenness Enterprises toolbox: rescales a Mahalanobis squared-distance (D2) raster to a 0-1 chi-square typicality p-value.<disabledText />

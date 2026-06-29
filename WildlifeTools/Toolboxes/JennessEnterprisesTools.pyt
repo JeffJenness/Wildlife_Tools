@@ -896,7 +896,7 @@ class MahalanobisRaster(object):
     CAT = "Optional output statistics tables"
 
     def __init__(self):
-        self.label = "Mahalanobis Distance - Create Raster Surface"
+        self.label = "Mahalanobis Distance Raster"
         self.description = (
             "Creates a raster of Mahalanobis distances: for every cell, the squared "
             "distance (x - mu)' * Sigma^-1 * (x - mu) between the cell's vector of "
@@ -998,7 +998,7 @@ class MahalanobisPoints(object):
     CAT = "Optional output statistics tables"
 
     def __init__(self):
-        self.label = "Mahalanobis Distance - Calculate at Points"
+        self.label = "Mahalanobis Distance at Points"
         self.description = (
             "Calculates a Mahalanobis value at each input point: the squared distance "
             "(x - mu)' * Sigma^-1 * (x - mu) between the point's vector of landscape-variable "
@@ -1115,7 +1115,7 @@ class MahalanobisCovariance(object):
     _DEFAULT_KEYS = ("mean", "cov")
 
     def __init__(self):
-        self.label = "Mahalanobis Distance - Covariance from Datasets"
+        self.label = "Calculate Statistical Matrices"
         self.description = (
             "Computes the mean vector, covariance matrix, inverse covariance matrix, "
             "and/or correlation matrix for a set of landscape variables, and writes them "

@@ -22,6 +22,23 @@
     <Content Include="Images\Heart_32.png" />
     <Content Include="DarkImages\Heart_16.png" />
     <Content Include="DarkImages\Heart_32.png" />
+    <!-- Mahalanobis tool button icons (light + dark theme). -->
+    <Content Include="Images\M1_16.png" />
+    <Content Include="Images\M1_32.png" />
+    <Content Include="DarkImages\M1_16.png" />
+    <Content Include="DarkImages\M1_32.png" />
+    <Content Include="Images\Mvector_16.png" />
+    <Content Include="Images\Mvector_32.png" />
+    <Content Include="DarkImages\Mvector_16.png" />
+    <Content Include="DarkImages\Mvector_32.png" />
+    <Content Include="Images\Stats_16b.png" />
+    <Content Include="Images\Stats_32.png" />
+    <Content Include="DarkImages\Stats_16b.png" />
+    <Content Include="DarkImages\Stats_32.png" />
+    <Content Include="Images\chi_square_symbol_16.png" />
+    <Content Include="Images\chi_square_symbol_32.png" />
+    <Content Include="DarkImages\chi_square_symbol_16.png" />
+    <Content Include="DarkImages\chi_square_symbol_32.png" />
     <!-- The Thought-for-the-Day card background is loaded from disk by path at run
          time, so it must sit next to the assembly (copied to the output directory). -->
     <Content Include="Images\quote_bg.png">

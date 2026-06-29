@@ -105,7 +105,7 @@ def _set_label(text):
 
 
 # ---------------------------------------------------------------------------
-# Variable-order metadata (shared with the "Covariance from Datasets" tool)
+# Variable-order metadata (shared with the "Calculate Statistical Matrices" tool)
 # ---------------------------------------------------------------------------
 def encode_variable_metadata(variables, extra=None):
     """Return a JSON blob (wrapped in markers) describing the ordered variables.
