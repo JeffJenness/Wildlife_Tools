@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.6.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.7.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -36,6 +36,7 @@
         <group id="WildlifeTools_GroupMahalanobis" caption="Mahalanobis Tools" appearsOnAddInTab="false">
           <button refID="WildlifeTools_MahalanobisRaster" size="large" />
           <button refID="WildlifeTools_MahalanobisPoints" size="large" />
+          <button refID="WildlifeTools_MahalanobisCovariance" size="large" />
           <button refID="WildlifeTools_MahalanobisChiSquare" size="large" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
@@ -97,6 +98,17 @@
                 keytip="MP">
           <tooltip heading="Mahalanobis Distance - Calculate at Points">
             Opens the Mahalanobis at Points tool from the Jenness Enterprises toolbox: computes a Mahalanobis value at each input point from a set of landscape variables.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_MahalanobisCovariance"
+                caption="Mahalanobis Covariance (Datasets)"
+                className="MahalanobisCovarianceButton"
+                loadOnClick="true"
+                smallImage="Images\AddInDesktop16.png"
+                largeImage="Images\AddInDesktop32.png"
+                keytip="MV">
+          <tooltip heading="Mahalanobis Distance - Covariance from Datasets">
+            Opens the Covariance from Datasets tool from the Jenness Enterprises toolbox: computes mean, covariance, inverse covariance, and correlation tables for a set of landscape variables, for reuse by the Mahalanobis Raster and at Points tools.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_MahalanobisChiSquare"

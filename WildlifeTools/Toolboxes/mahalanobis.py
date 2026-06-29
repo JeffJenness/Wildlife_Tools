@@ -1224,6 +1224,86 @@ def run_mahalanobis_points(target_points, var_rows, sample_method, stats_source,
 
 
 # ---------------------------------------------------------------------------
+# Statistics tables from datasets (mean / covariance / inverse / correlation)
+# ---------------------------------------------------------------------------
+def run_covariance_from_datasets(var_rows, sample_method, stats_source, out_tables,
+                                 inversion=INV_STANDARD,
+                                 points=None, use_selected=False,
+                                 cat_raster=None, cat_field=None, cat_value=None,
+                                 exclude_bands=None, messages=None):
+    """Compute mean / covariance / inverse-covariance / correlation tables for a set
+    of landscape variables, writing whichever tables were requested.
+
+    ``out_tables`` maps {'mean','cov','invcov','corr'} -> output table path; only the
+    requested keys are present. Each table embeds the ordered-variable metadata so the
+    Mahalanobis Raster / at Points tools can consume the mean + covariance pair through
+    their "Existing tables" source. Statistics come from sample points or a categorical
+    raster (not existing tables -- that would be circular). ``exclude_bands`` drops
+    specific bands of a multiband raster (see resolve_variables). Returns the list of
+    written table paths.
+    """
+    if not out_tables:
+        raise arcpy.ExecuteError(
+            "Specify at least one output table (mean, covariance, inverse covariance, "
+            "or correlation).")
+    scratch = arcpy.env.scratchFolder
+    variables = resolve_variables(var_rows, exclude_bands)
+    warn_raster_attribute_tables(variables, messages)
+    k = len(variables)
+    messages.addMessage("{} Mahalanobis variables; statistics source: {}.".format(
+        k, stats_source))
+
+    _set_label("Aligning landscape rasters to the analysis grid...")
+    vrts, geo = align_predictors(variables, sample_method, scratch, messages)
+    _set_label("Computing mean vector and covariance...")
+
+    corr = None
+    n_used = None
+    if stats_source == SRC_CATEGORICAL:
+        mean, cov, corr, n_used = stats_from_categorical(
+            vrts, geo, cat_raster, cat_value, sample_method, scratch, messages)
+    else:  # SRC_POINTS
+        xy = read_point_xy(points, geo["sr"])
+        if len(xy) == 0:
+            raise arcpy.ExecuteError("No usable sample points were found.")
+        samples, n_valid, n_total, n_outside, n_nodata = sample_vrts_at_points(
+            vrts, geo, xy, sample_method)
+        if n_outside:
+            messages.addWarningMessage(
+                "{} of {} sample points fell OUTSIDE the extent of one or more landscape "
+                "rasters and were excluded from the statistics.".format(n_outside, n_total))
+        if n_nodata:
+            messages.addWarningMessage(
+                "{} sample points were inside the extent but landed on NoData cells of at "
+                "least one landscape raster and were excluded.".format(n_nodata))
+        if n_valid < k + 1:
+            raise arcpy.ExecuteError(
+                "Only {} of {} points had valid values for all {} variables; need at "
+                "least {}.".format(n_valid, n_total, k, k + 1))
+        messages.addMessage(
+            "{} of {} sample points were used (valid for all {} variables).".format(
+                n_valid, n_total, k))
+        mean, cov, corr = stats_from_samples(samples)
+        n_used = n_valid
+
+    # The inverse is only needed -- and only worth risking a singular-matrix failure for --
+    # when the inverse-covariance table was actually requested.
+    inv_cov = None
+    if out_tables.get("invcov"):
+        inv_cov = invert_covariance(cov, inversion, messages)
+
+    _set_label("Saving statistics tables...")
+    source_extra = {"source": stats_source,
+                    "n": (int(n_used) if n_used is not None else None)}
+    save_optional_tables(out_tables, mean, cov, inv_cov, corr, variables,
+                         source_extra, messages)
+    written = [out_tables[key] for key in ("mean", "cov", "invcov", "corr")
+               if out_tables.get(key)]
+    messages.addMessage("Statistics tables complete: {}".format(", ".join(written)))
+    return written
+
+
+# ---------------------------------------------------------------------------
 # Chi-square / p-value transform of an existing squared-distance (D2) raster
 # ---------------------------------------------------------------------------
 def read_recorded_df(in_raster):

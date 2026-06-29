@@ -119,7 +119,8 @@ class Toolbox(object):
         self.label = "Jenness Enterprises Tools"
         self.alias = "jenness"
         self.tools = [LoCoHStandard, LoCoHAdaptive, LoCoHFixedSphere,
-                      MahalanobisRaster, MahalanobisPoints, MahalanobisChiSquare]
+                      MahalanobisRaster, MahalanobisPoints, MahalanobisCovariance,
+                      MahalanobisChiSquare]
 
 
 class LoCoHStandard(object):
@@ -1064,6 +1065,148 @@ class MahalanobisPoints(object):
                 cov_table=P["cov_table"].valueAsText,
                 save_opts=(None if source == mahalanobis.SRC_TABLES
                            else (_mahal_save_opts(P) or None)),
+                exclude_bands=_build_exclude(P["exclude_bands"]),
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class MahalanobisCovariance(object):
+    """Mahalanobis statistics tables from datasets -- the producer for the suite.
+
+    Computes the mean vector, covariance matrix, inverse covariance, and/or correlation
+    matrix for a set of landscape variables and writes them as tables (with embedded
+    variable-order metadata) that the Raster / at Points tools consume via their
+    "Existing tables" source. Statistics come from sample points or a categorical raster.
+    """
+
+    # The four output tables, in order: (engine key, parameter name, default base name).
+    _OUT_SPECS = [("mean", "out_mean", "Mahalanobis_Means"),
+                  ("cov", "out_cov", "Mahalanobis_Covariance"),
+                  ("invcov", "out_invcov", "Mahalanobis_Inv_Covariance"),
+                  ("corr", "out_corr", "Mahalanobis_Correlation")]
+    # Tables defaulted on first open (the mean + covariance pair the other tools need).
+    _DEFAULT_KEYS = ("mean", "cov")
+
+    def __init__(self):
+        self.label = "Mahalanobis Distance - Covariance from Datasets"
+        self.description = (
+            "Computes the mean vector, covariance matrix, inverse covariance matrix, "
+            "and/or correlation matrix for a set of landscape variables, and writes them "
+            "as tables. The mean and covariance tables can then be supplied to the "
+            "Mahalanobis Raster or at Points tools through their 'Existing tables' source, "
+            "so the statistics are computed once and reused. The statistics are derived "
+            "from sample points or from cells of a categorical raster. Each table embeds "
+            "the ordered variable list so the consuming tools can validate that the same "
+            "variables are used, in the same order.")
+        self.category = "Mahalanobis Tools"
+        self.canRunInBackground = False
+        self._auto_tables = {}
+
+    def getParameterInfo(self):
+        points = arcpy.Parameter(
+            displayName="Sample points", name="points", datatype="GPFeatureLayer",
+            parameterType="Optional", direction="Input")
+        points.filter.list = ["Point", "Multipoint"]
+        use_selected = arcpy.Parameter(
+            displayName="Use only the selected points", name="use_selected",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        use_selected.value = False
+
+        out_params = []
+        for _key, name, _base in self._OUT_SPECS:
+            label = {"out_mean": "Output mean vector table",
+                     "out_cov": "Output covariance matrix table",
+                     "out_invcov": "Output inverse covariance matrix table",
+                     "out_corr": "Output correlation matrix table"}[name]
+            out_params.append(arcpy.Parameter(
+                displayName=label, name=name, datatype="DETable",
+                parameterType="Optional", direction="Output"))
+
+        sm, ss, cr, cf, cv, mt, ct, inv = _mahal_core_params()
+        # Existing tables is not a valid source here -- this tool *produces* those tables.
+        ss.filter.list = [mahalanobis.SRC_POINTS, mahalanobis.SRC_CATEGORICAL]
+        return [_make_raster_vars_param(), _make_poly_vars_param(),
+                _make_exclude_bands_param(), sm, ss, points, use_selected,
+                cr, cf, cv, inv] + out_params
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        P["sample_method"].enabled = True
+        source = P["stats_source"].valueAsText
+        is_pts = (source == mahalanobis.SRC_POINTS)
+        is_cat = (source == mahalanobis.SRC_CATEGORICAL)
+        P["points"].enabled = is_pts
+        P["use_selected"].enabled = is_pts
+        P["cat_raster"].enabled = is_cat
+        P["cat_field"].enabled = is_cat
+        P["cat_value"].enabled = is_cat
+        # The inversion method only governs the inverse-covariance table.
+        P["inversion"].enabled = bool(P["out_invcov"].value)
+
+        # Default the mean + covariance table names on first open, and keep re-defaulting
+        # only while they still hold our auto value (so a name the user typed -- or cleared
+        # to opt out -- is left alone).
+        ws = arcpy.env.workspace or arcpy.env.scratchGDB
+        for key, name, base in self._OUT_SPECS:
+            if key not in self._DEFAULT_KEYS:
+                continue
+            p_tbl = P[name]
+            cur = p_tbl.valueAsText or ""
+            cur_name = os.path.splitext(os.path.basename(cur))[0]
+            prev = self._auto_tables.get(key)
+            if (cur == "" and prev is None) or (prev is not None and cur_name == prev):
+                full = _unique_name(base, ws)
+                p_tbl.value = full
+                self._auto_tables[key] = os.path.splitext(os.path.basename(full))[0]
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        _mahal_messages(self, P)
+        if not any(P[name].value for _key, name, _base in self._OUT_SPECS):
+            P["out_mean"].setErrorMessage(
+                "Specify at least one output table (mean vector, covariance matrix, "
+                "inverse covariance matrix, or correlation matrix).")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(mahalanobis)
+            P = {p.name: p for p in parameters}
+            source = P["stats_source"].valueAsText
+            points = P["points"].valueAsText if source == mahalanobis.SRC_POINTS else None
+            use_selected = bool(P["use_selected"].value)
+            if points and not use_selected:
+                try:
+                    points = arcpy.Describe(points).catalogPath
+                except Exception:
+                    pass
+
+            out_tables = {}
+            for key, name, _base in self._OUT_SPECS:
+                if P[name].valueAsText:
+                    out_tables[key] = P[name].valueAsText
+
+            mahalanobis.run_covariance_from_datasets(
+                var_rows=_combined_var_rows(P["raster_vars"], P["poly_vars"]),
+                sample_method=(P["sample_method"].valueAsText or mahalanobis.SAMPLE_EXACT),
+                stats_source=source,
+                out_tables=out_tables,
+                inversion=P["inversion"].valueAsText,
+                points=points,
+                use_selected=use_selected,
+                cat_raster=P["cat_raster"].valueAsText,
+                cat_field=P["cat_field"].valueAsText,
+                cat_value=P["cat_value"].valueAsText,
                 exclude_bands=_build_exclude(P["exclude_bands"]),
                 messages=messages)
         except arcpy.ExecuteError:
