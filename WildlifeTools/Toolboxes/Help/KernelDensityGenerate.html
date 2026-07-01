@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kernel Density Enhanced</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="tool-help">
+
+<h1>Kernel Density Enhanced</h1>
+<p class="subtitle">Jenness Enterprises Wildlife Tools &middot; Kernel Density Tools</p>
+
+<section id="summary">
+<h2>Summary</h2>
+<p>Creates a kernel-density surface from point features. The quartic kernel reproduces the
+Esri <em>Kernel Density</em> tool; other finite-support kernel shapes, an explicit
+planar/geodesic distance choice, and three output value types are also offered.</p>
+</section>
+
+<section id="usage">
+<h2>Usage</h2>
+<p>A kernel density surface estimates the intensity of a point pattern: each input point is
+replaced by a smooth, finite-support kernel that adds weight to nearby cells out to the
+<strong>search radius</strong> (bandwidth) and drops to zero beyond it, and the overlapping
+kernels are summed. Such surfaces are widely used to estimate animal utilization distributions
+(home ranges) and the density of mapped features.</p>
+
+<p><strong>Distance method.</strong> <em>Planar</em> measures straight-line distance in the
+projection's linear units; <em>Geodesic</em> measures true distance on the spheroid (Haversine).
+Input in a geographic (latitude&ndash;longitude) coordinate system is always analyzed
+geodesically, and the distance method is then locked to Geodesic.</p>
+
+<p><strong>Output cell values.</strong></p>
+<ul>
+<li><strong>Densities</strong> &mdash; point density per a chosen area unit (the Esri behavior).</li>
+<li><strong>Expected counts</strong> &mdash; the expected number of points per cell; the cell
+values sum to the total number of input points.</li>
+<li><strong>Proportion under curve</strong> &mdash; the cumulative proportion of the total volume
+under the surface, from about 0 at the outer edge to 1 at the peak. Contour this surface at one
+minus a target percentage to obtain home-range isopleths; the <em>Kernel Density Probability
+Contours</em> tool recognizes this output automatically.</li>
+</ul>
+
+<div class="note"><strong>Search radius.</strong> If you do not specify a bandwidth, a default is
+computed by <strong>Silverman's rule of thumb</strong> (the same default the Esri tool uses):
+<br/><code>Default = 0.9 &times; min( SD , &radic;(1/ln2) &times; D<sub>m</sub> ) &times; n<sup>&minus;1/5</sup></code><br/>
+where <code>SD</code> is the standard distance of the points about their mean center,
+<code>D<sub>m</sub></code> is the median distance from the points to the mean center, and
+<code>n</code> is the number of points (or the sum of the population field). In effect it takes
+the smaller of the standard distance and the scaled median distance, then shrinks that value by a
+factor of 0.9 and by the number of points raised to the &minus;1/5 power, so the bandwidth gets
+smaller as the number of points grows. Treat the default as a starting guess based only on the
+spatial distribution of the points, and supply your own value when you have a better one.</div>
+
+<p>The output raster carries statistics and a histogram, so it renders correctly without a
+separate Calculate Statistics step. It has a single continuous value band (no attribute table).</p>
+</section>
+
+<section id="kernels">
+<h2>Kernel shapes</h2>
+<p>Seven kernels are offered, all with <strong>finite support</strong> &mdash; they reach exactly
+zero at the search radius (infinite-support kernels such as the Gaussian, which never reach zero,
+are intentionally not offered). All are normalized so each point contributes the same total
+volume; they differ in how sharply weight falls off with distance.</p>
+<ul>
+<li><strong>Quartic (Esri KD method)</strong> &mdash; the biweight kernel used by the Esri Kernel
+Density tool; a smooth bell reaching zero at the radius.</li>
+<li><strong>Uniform</strong> &mdash; a flat disk; every location within the radius gets equal weight.</li>
+<li><strong>Triangular</strong> &mdash; weight falls off linearly with distance (a cone).</li>
+<li><strong>Epanechnikov</strong> &mdash; a gentle parabola; statistically efficient.</li>
+<li><strong>Triweight</strong> &mdash; more sharply peaked than the quartic.</li>
+<li><strong>Tricube</strong> &mdash; a sharply peaked kernel common in local regression.</li>
+<li><strong>Cosine</strong> &mdash; a raised-cosine taper to zero.</li>
+</ul>
+<figure class="kernel-figure">
+<div class="kernel-grid">
+<img src="img/Quartic.png" alt="Quartic kernel: density equation, three-bandwidth profile, and 3-D surface">
+<img src="img/Uniform.png" alt="Uniform kernel: density equation, three-bandwidth profile, and 3-D surface">
+<img src="img/Triangular.png" alt="Triangular kernel: density equation, three-bandwidth profile, and 3-D surface">
+<img src="img/Epanechnikov.png" alt="Epanechnikov kernel: density equation, three-bandwidth profile, and 3-D surface">
+<img src="img/Triweight.png" alt="Triweight kernel: density equation, three-bandwidth profile, and 3-D surface">
+<img src="img/Tricube.png" alt="Tricube kernel: density equation, three-bandwidth profile, and 3-D surface">
+<img src="img/Cosine.png" alt="Cosine kernel: density equation, three-bandwidth profile, and 3-D surface">
+</div>
+<figcaption>For each kernel shape: the density equation, the same total volume rendered at three
+bandwidths (the height drops as the bandwidth grows), and a 3-D perspective of the surface.</figcaption>
+</figure>
+
+<figure class="kernel-figure single">
+<img src="img/Kernel_Shape_Comparison.png" alt="The seven kernel profiles compared, each scaled to a peak of 1">
+<figcaption>The seven kernel profiles compared, each peak-normalized to 1, showing how sharply each
+falls off with distance from the point.</figcaption>
+</figure>
+</section>
+
+<section id="parameters">
+<h2>Parameters</h2>
+<table class="params">
+<thead><tr><th>Label</th><th>Explanation</th><th>Data Type</th></tr></thead>
+<tbody>
+<tr><td class="param-name">Input point features</td>
+<td>The points whose density is estimated. A layer selection is honored. Geographic input is
+analyzed with geodesic distances.</td>
+<td class="type">Feature Layer</td></tr>
+<tr><td class="param-name">Population field</td>
+<td>Optional numeric weight per point (for example, a count). If NONE, every point counts as 1.</td>
+<td class="type">Field</td></tr>
+<tr><td class="param-name">Output raster</td>
+<td>The output kernel density raster (single continuous band).</td>
+<td class="type">Raster Dataset</td></tr>
+<tr><td class="param-name">Output cell size</td>
+<td>A number or an existing raster. Auto-filled with the Esri default (Cell Size environment, else
+Snap Raster cell size, else the shorter side of the extent divided by 250) when you choose the input.</td>
+<td class="type">Analysis Cell Size</td></tr>
+<tr><td class="param-name">Search radius (bandwidth)</td>
+<td>The distance at which each point's kernel falls to zero. Leave empty for the Silverman default
+(see the note above).</td>
+<td class="type">Linear Unit</td></tr>
+<tr><td class="param-name">Kernel shape</td>
+<td>One of the seven finite-support kernels (see <em>Kernel shapes</em>). Quartic reproduces the
+Esri tool.</td>
+<td class="type">String</td></tr>
+<tr><td class="param-name">Distance method</td>
+<td>Planar or Geodesic. Locked to Geodesic for geographic data.</td>
+<td class="type">String</td></tr>
+<tr><td class="param-name">Output cell values</td>
+<td>Densities, Expected counts, or Proportion under curve (see <em>Usage</em>).</td>
+<td class="type">String</td></tr>
+<tr><td class="param-name">Area units</td>
+<td>The area unit for the Densities output (e.g. Square kilometers, Hectares, Acres). Used only
+when Output cell values is Densities.</td>
+<td class="type">String</td></tr>
+</tbody>
+</table>
+</section>
+
+<section id="environments">
+<h2>Environments</h2>
+<p>This tool honors the following analysis environments:</p>
+<ul>
+<li><a href="https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/output-coordinate-system.htm">Output Coordinate System</a> &mdash; the points are projected into this system and the whole surface is computed there.</li>
+<li><a href="https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/cell-size.htm">Cell Size</a></li>
+<li><a href="https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/extent.htm">Processing Extent</a> &mdash; if unset, the input bounding box expanded by the search radius (so the surface is not clipped at the points).</li>
+<li><a href="https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/snap-raster.htm">Snap Raster</a></li>
+<li><a href="https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/mask.htm">Mask</a></li>
+</ul>
+</section>
+
+<section id="code">
+<h2>Code sample</h2>
+<h3>KernelDensityEnhanced example (stand-alone script)</h3>
+<p>Build a quartic kernel density surface (densities per square kilometer) from animal relocations,
+letting Silverman's rule choose the bandwidth.</p>
+<pre><code>import arcpy
+
+arcpy.ImportToolbox(r"C:\Tools\JennessEnterprisesTools.pyt")
+
+arcpy.jenness.KernelDensityGenerate(
+    in_features="Animal_Relocations",
+    out_raster=r"C:\Project\HomeRange.gdb\KD_density",
+    kernel="Quartic (Esri KD method)",
+    distance_method="Planar",
+    out_value="Densities",
+    area_unit="Square kilometers")</code></pre>
+</section>
+
+<section id="references">
+<h2>References and further reading</h2>
+<ul class="references">
+<li>Silverman, B.W. (1986). <em>Density Estimation for Statistics and Data Analysis</em>. Chapman
+and Hall, London.</li>
+<li>Worton, B.J. (1989). Kernel methods for estimating the utilization distribution in home-range
+studies. <em>Ecology</em> 70(1):164&ndash;168.</li>
+</ul>
+</section>
+
+<section id="cite">
+<h2>Suggested citation</h2>
+<p class="suggested-citation">Jenness, J. (2026). Kernel Density Enhanced. Jenness Enterprises
+Wildlife Tools for ArcGIS Pro. Available at: <a href="http://www.jennessent.com">http://www.jennessent.com</a>.</p>
+</section>
+
+<footer>Tool by Jeff Jenness, Jenness Enterprises (<a href="http://www.jennessent.com">www.jennessent.com</a>).</footer>
+
+</main>
+</body>
+</html>

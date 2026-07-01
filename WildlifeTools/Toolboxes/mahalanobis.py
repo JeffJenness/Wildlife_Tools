@@ -41,6 +41,8 @@ from datetime import datetime
 import numpy as np
 import arcpy
 
+import tool_metadata as tmeta   # shared field-level metadata writer
+
 MAHAL_REFERENCE = ("Mahalanobis, P.C. (1936). On the generalised distance in "
                    "statistics. Proc. National Institute of Sciences of India 2(1):49-55.")
 
@@ -968,7 +970,42 @@ def compute_mahalanobis(vrts, geo, mean, inv_cov, out_type, scratch, messages):
 # ---------------------------------------------------------------------------
 # Saving statistics tables
 # ---------------------------------------------------------------------------
-def _matrix_to_table(matrix, out_table, variables, is_vector, source_extra, messages):
+_TABLE_ENTITY = {
+    "mean": "Mean vector for a Mahalanobis analysis: the multivariate mean (center) of "
+            "the landscape variables across the reference sample.",
+    "cov": "Covariance matrix of the landscape variables for a Mahalanobis analysis -- a "
+           "square, symmetric matrix whose rows and columns are the variables in the "
+           "same order.",
+    "invcov": "Inverse covariance matrix for a Mahalanobis analysis (the inverse of the "
+              "covariance matrix; square and symmetric).",
+    "corr": "Correlation matrix of the landscape variables -- a square, symmetric matrix "
+            "whose rows and columns are the variables in the same order.",
+}
+
+
+def _apply_table_field_metadata(out_table, is_vector, kind, messages):
+    """Field metadata for a Mahalanobis statistics table. Describes the 'Variable'
+    label field (and 'Mean' for the mean vector) but NOT the symmetric matrix value
+    columns (Col0, Col1, ...), whose cells stand equally for a row and a column
+    variable -- so no single field description (which also implies a row meaning) fits."""
+    if is_vector:
+        fields = [
+            {"name": "Variable", "description": "The landscape variable named in this row."},
+            {"name": "Mean", "description": "The mean (average) value of this variable across "
+                                            "the reference sample; the center used in the "
+                                            "Mahalanobis distance calculation."}]
+    else:
+        fields = [
+            {"name": "Variable",
+             "description": "The landscape variable for this row of the matrix. The matrix is "
+                            "square: the value columns (Col0, Col1, ...) are the same variables "
+                            "in the same order, so each cell is the statistic for this row "
+                            "variable paired with that column variable."}]
+    tmeta.set_entity_and_fields(out_table, entity=_TABLE_ENTITY.get(kind), fields=fields,
+                                messages=messages)
+
+
+def _matrix_to_table(matrix, out_table, variables, is_vector, source_extra, messages, kind=None):
     """Write a mean vector (is_vector) or a k x k matrix to a new table.
 
     Embeds the ordered-variable JSON block in the table metadata so the raster tool
@@ -993,6 +1030,9 @@ def _matrix_to_table(matrix, out_table, variables, is_vector, source_extra, mess
         with arcpy.da.InsertCursor(out_table, ["Variable"] + value_cols) as ins:
             for i, v in enumerate(variables):
                 ins.insertRow([v["name"]] + [float(x) for x in matrix[i]])
+    # Field-level metadata first (it synchronizes), then the dataset summary/description.
+    _apply_table_field_metadata(out_table, is_vector, kind, messages)
+
     try:
         from arcpy import metadata as md
         m = md.Metadata(out_table)
@@ -1012,16 +1052,16 @@ def save_optional_tables(opts, mean, cov, inv_cov, corr, variables, source_extra
     ``opts`` maps {'mean','cov','invcov','corr'} -> output table path or None.
     """
     if opts.get("mean"):
-        _matrix_to_table(mean, opts["mean"], variables, True, source_extra, messages)
+        _matrix_to_table(mean, opts["mean"], variables, True, source_extra, messages, kind="mean")
         messages.addMessage("Saved mean vector table: {}".format(opts["mean"]))
     if opts.get("cov"):
-        _matrix_to_table(cov, opts["cov"], variables, False, source_extra, messages)
+        _matrix_to_table(cov, opts["cov"], variables, False, source_extra, messages, kind="cov")
         messages.addMessage("Saved covariance table: {}".format(opts["cov"]))
     if opts.get("invcov"):
-        _matrix_to_table(inv_cov, opts["invcov"], variables, False, source_extra, messages)
+        _matrix_to_table(inv_cov, opts["invcov"], variables, False, source_extra, messages, kind="invcov")
         messages.addMessage("Saved inverse-covariance table: {}".format(opts["invcov"]))
     if opts.get("corr") and corr is not None:
-        _matrix_to_table(corr, opts["corr"], variables, False, source_extra, messages)
+        _matrix_to_table(corr, opts["corr"], variables, False, source_extra, messages, kind="corr")
         messages.addMessage("Saved correlation table: {}".format(opts["corr"]))
 
 
@@ -1290,8 +1330,26 @@ def _unique_field(fc, base):
         i += 1
 
 
+_POINT_FIELD_DESC = {
+    OUT_D2: "Squared Mahalanobis distance from this point's landscape-variable values to "
+            "the multivariate mean of the reference sample: D2 = (x - mu)' * Sigma^-1 * "
+            "(x - mu).",
+    OUT_D: "Mahalanobis distance: the square root of the squared distance (D2).",
+    OUT_PVALUE: "Chi-square typicality p-value -- the upper-tail probability P(chi-square "
+                "with k degrees of freedom > D2), from 0 to 1; values near 1 indicate "
+                "conditions close to the reference mean.",
+}
+
+
 def _write_points_metadata(out_points, variables, stats_source, fields, n_used):
     from arcpy import metadata as md
+    # Field-level metadata first (it synchronizes), then the dataset summary/description.
+    tmeta.set_entity_and_fields(
+        out_points,
+        entity="Input point features with per-point Mahalanobis distance values from a "
+               "multivariate habitat (Mahalanobis) analysis.",
+        fields=[{"name": f, "description": _POINT_FIELD_DESC.get(t, "Mahalanobis value.")}
+                for t, f in fields])
     now = datetime.now()
     var_list = ", ".join(v["name"] for v in variables)
     summary = ("Mahalanobis distance values at point locations, generated by the Jenness "

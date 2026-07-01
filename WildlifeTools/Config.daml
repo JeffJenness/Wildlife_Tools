@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.7.2" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.9.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -32,6 +32,9 @@
           <button refID="WildlifeTools_LoCoHStandard" size="large" />
           <button refID="WildlifeTools_LoCoHAdaptive" size="large" />
           <button refID="WildlifeTools_LoCoHFixedSphere" size="large" />
+          <button refID="WildlifeTools_KernelDensityGenerate" size="large" />
+          <button refID="WildlifeTools_KernelDensityProportion" size="large" />
+          <button refID="WildlifeTools_KernelDensityContours" size="large" />
         </group>
         <group id="WildlifeTools_GroupMahalanobis" caption="Mahalanobis Tools" appearsOnAddInTab="false">
           <button refID="WildlifeTools_MahalanobisRaster" size="large" />
@@ -76,6 +79,39 @@
                 keytip="LF">
           <tooltip heading="Local Convex Hull (LoCoH) - Fixed Sphere">
             Opens the Fixed-sphere-of-influence (r-) Local Convex Hull home-range tool from the Jenness Enterprises toolbox.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_KernelDensityGenerate"
+                caption="Kernel Density Enhanced"
+                className="KernelDensityGenerateButton"
+                loadOnClick="true"
+                smallImage="Images\AddInDesktop16.png"
+                largeImage="Images\AddInDesktop32.png"
+                keytip="KD">
+          <tooltip heading="Kernel Density Enhanced">
+            Opens the Kernel Density Enhanced tool from the Jenness Enterprises toolbox: a custom kernel-density surface from points, with selectable kernel shapes, planar/geodesic distances, and density / expected-count / proportion outputs.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_KernelDensityProportion"
+                caption="KD to Proportion Surface"
+                className="KernelDensityProportionButton"
+                loadOnClick="true"
+                smallImage="Images\AddInDesktop16.png"
+                largeImage="Images\AddInDesktop32.png"
+                keytip="KP">
+          <tooltip heading="Kernel Density to Proportion Surface">
+            Opens the Kernel Density to Proportion Surface tool from the Jenness Enterprises toolbox: converts a kernel-density raster into a volume raster (percent of volume enclosed by each cell's isopleth) ready for contouring at 50/95/99.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_KernelDensityContours"
+                caption="KD Probability Contours"
+                className="KernelDensityContoursButton"
+                loadOnClick="true"
+                smallImage="Images\AddInDesktop16.png"
+                largeImage="Images\AddInDesktop32.png"
+                keytip="KC">
+          <tooltip heading="Kernel Density Probability Contours">
+            Opens the Kernel Density Probability Contours tool from the Jenness Enterprises toolbox: generates home-range probability isopleths (5%-100%) as polylines and/or polygon areas.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_MahalanobisRaster"

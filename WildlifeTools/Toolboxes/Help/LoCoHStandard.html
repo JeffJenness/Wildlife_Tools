@@ -48,6 +48,29 @@ WGS84 spheroidal area for geographic data, planar distance and area for projecte
 </ul>
 </section>
 
+<section id="output-fields">
+<h2>Output fields</h2>
+<p>The isopleth polygons (and the optional individual hulls) carry these attribute fields. Each
+field also carries this definition in its metadata, with source &ldquo;Jenness Enterprises&rdquo;:</p>
+<table class="params">
+<thead><tr><th>Field</th><th>Definition</th></tr></thead>
+<tbody>
+<tr><td class="param-name">Area</td>
+<td>Area of this polygon, in square meters for geographic input (computed on the spheroid) or in
+square map units for projected input.</td></tr>
+<tr><td class="param-name">Point_Count</td>
+<td>Number of input points enclosed by this polygon: the cumulative count for isopleths, or the
+hull's own neighbour count for individual hulls.</td></tr>
+<tr><td class="param-name">Point_Proportion</td>
+<td>Proportion of all input points enclosed (Point_Count divided by the total number of input
+points).</td></tr>
+<tr><td class="param-name">Pts_per_SqKm</td>
+<td>Point density within this polygon, in input points per square kilometre.</td></tr>
+</tbody>
+</table>
+<p><em>Shapefile outputs use the shortened field names Point_Cnt, Point_Prop, and Pts_SqKm.</em></p>
+</section>
+
 <section id="parameters">
 <h2>Parameters</h2>
 <table class="params">

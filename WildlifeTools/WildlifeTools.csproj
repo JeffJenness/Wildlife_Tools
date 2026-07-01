@@ -61,8 +61,8 @@
        metadata sidecars, and layer templates) next to the add-in assembly so the
        ribbon buttons can locate and run it. __pycache__ is excluded. -->
   <ItemGroup>
-    <None Remove="Toolboxes\**\*.pyt;Toolboxes\**\*.py;Toolboxes\**\*.lyrx;Toolboxes\**\*.xml;Toolboxes\**\*.html;Toolboxes\**\*.css" />
-    <Content Include="Toolboxes\**\*.pyt;Toolboxes\**\*.py;Toolboxes\**\*.lyrx;Toolboxes\**\*.xml;Toolboxes\**\*.html;Toolboxes\**\*.css">
+    <None Remove="Toolboxes\**\*.pyt;Toolboxes\**\*.py;Toolboxes\**\*.lyrx;Toolboxes\**\*.xml;Toolboxes\**\*.html;Toolboxes\**\*.css;Toolboxes\**\*.png" />
+    <Content Include="Toolboxes\**\*.pyt;Toolboxes\**\*.py;Toolboxes\**\*.lyrx;Toolboxes\**\*.xml;Toolboxes\**\*.html;Toolboxes\**\*.css;Toolboxes\**\*.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

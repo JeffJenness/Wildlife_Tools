@@ -27,6 +27,7 @@ import numpy as np
 import arcpy
 
 import wildlife_geom as wg
+import tool_metadata as tmeta   # shared field-level metadata writer
 
 GETZ_WILMERS_DOI = "https://doi.org/10.1111/j.0906-7590.2004.03835.x"
 GETZ_2007_DOI = "https://doi.org/10.1371/journal.pone.0000207"
@@ -293,6 +294,42 @@ def _apply_metadata(out_path, summary, description):
     m.save()
 
 
+# Per-field descriptions for the LoCoH outputs (keyed by geodatabase field name;
+# shapefile short names are mapped to these automatically).
+_FIELD_DESCRIPTIONS = {
+    "Area": "Area of this polygon, in square meters for geographic input (computed on "
+            "the spheroid) or in square map units for projected input.",
+    "Point_Count": "Number of input points enclosed by this polygon: the cumulative "
+                   "count for isopleths, or the hull's own neighbour count for "
+                   "individual hulls.",
+    "Point_Proportion": "Proportion of all input points enclosed (Point_Count divided "
+                        "by the total number of input points).",
+    "Pts_per_SqKm": "Point density within this polygon, in input points per square "
+                    "kilometre.",
+    "Adaptive_Cumulative_Dist": "The adaptive cumulative neighbour distance (the 'a' "
+                                "length) at which this hull closed, in the chosen "
+                                "reporting unit.",
+    "Sphere_Point_Count": "Number of input points within the fixed sphere-of-influence "
+                          "radius (r) of the focal point.",
+}
+_ENTITY_ISOPLETH = ("Cumulative Local Convex Hull (LoCoH) home-range isopleths: nested "
+                    "polygons that each enclose a given proportion of the input points.")
+_ENTITY_HULLS = ("Individual Local Convex Hull (LoCoH) hulls, one per input point, each "
+                 "built from that point's local neighbourhood.")
+
+
+def _apply_field_metadata(out_path, field_defs, is_isopleth):
+    """Write entity + per-field descriptions onto a LoCoH output (handles shapefile
+    short field names)."""
+    names = _field_names(out_path, field_defs)
+    fields = [{"name": actual, "description": _FIELD_DESCRIPTIONS[gdb_name]}
+              for (gdb_name, _t, _s), actual in zip(field_defs, names)
+              if gdb_name in _FIELD_DESCRIPTIONS]
+    tmeta.set_entity_and_fields(
+        out_path, entity=(_ENTITY_ISOPLETH if is_isopleth else _ENTITY_HULLS),
+        fields=fields)
+
+
 def write_metadata(out_path, in_base_name, k, n_points, is_geographic, individual_hulls, is_isopleth):
     coord_kind = "geographic" if is_geographic else "projected"
     method = "Haversine (spherical) formula" if is_geographic else "planar (Euclidean) distance"
@@ -319,6 +356,7 @@ def write_metadata(out_path, in_base_name, k, n_points, is_geographic, individua
              k=k, km1=k - 1, n=n_points,
              hulls=("also created" if individual_hulls else "not created"))
 
+    _apply_field_metadata(out_path, STANDARD_FIELDS, is_isopleth)
     _apply_metadata(out_path, summary, description)
 
 
@@ -354,6 +392,7 @@ def write_metadata_adaptive(out_path, in_base_name, a_report, report_unit, used_
              method=method, n=n_points, unit=report_unit,
              hulls=("also created" if individual_hulls else "not created"))
 
+    _apply_field_metadata(out_path, ADAPTIVE_FIELDS, is_isopleth)
     _apply_metadata(out_path, summary, description)
 
 
@@ -775,6 +814,7 @@ def write_metadata_fixed_sphere(out_path, in_base_name, r_report, report_unit, u
              method=method, n=n_points,
              hulls=("also created" if individual_hulls else "not created"))
 
+    _apply_field_metadata(out_path, FIXEDSPHERE_FIELDS, is_isopleth)
     _apply_metadata(out_path, summary, description)
 
 

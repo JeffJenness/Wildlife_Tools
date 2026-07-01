@@ -49,6 +49,39 @@ tools need); the inverse covariance and correlation tables are written only if y
 them.</div>
 </section>
 
+<section id="output-fields">
+<h2>Output fields</h2>
+<p>Each output table carries its field definitions in its metadata, with source
+&ldquo;Jenness Enterprises&rdquo;.</p>
+
+<h3>Mean vector table</h3>
+<table class="params">
+<thead><tr><th>Field</th><th>Definition</th></tr></thead>
+<tbody>
+<tr><td class="param-name">Variable</td>
+<td>The landscape variable named in this row.</td></tr>
+<tr><td class="param-name">Mean</td>
+<td>The mean (average) value of this variable across the reference sample; the center used in the
+Mahalanobis distance calculation.</td></tr>
+</tbody>
+</table>
+
+<h3>Covariance, inverse covariance, and correlation matrix tables</h3>
+<table class="params">
+<thead><tr><th>Field</th><th>Definition</th></tr></thead>
+<tbody>
+<tr><td class="param-name">Variable</td>
+<td>The landscape variable for this row of the matrix. The matrix is square: the value columns are
+the same variables, in the same order, as the rows.</td></tr>
+<tr><td class="param-name">Col0, Col1, &hellip; Col(k&minus;1)</td>
+<td>The matrix cells &mdash; one column per variable, in variable order. These columns are
+<strong>intentionally left without field-level descriptions</strong>: because the matrix is
+symmetric, each cell represents its row variable and its column variable equally, so a single
+field description (which also implies a fixed row meaning) cannot correctly capture it.</td></tr>
+</tbody>
+</table>
+</section>
+
 <section id="parameters">
 <h2>Parameters</h2>
 <table class="params">

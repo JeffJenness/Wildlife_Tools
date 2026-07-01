@@ -44,6 +44,29 @@ atypical observations. Provide a separate statistics sample (or existing tables)
 the points against a different reference distribution.</div>
 </section>
 
+<section id="output-fields">
+<h2>Output fields</h2>
+<p>The output is a copy of the input points (all original fields are retained) with one added
+field per selected output value. Each added field carries this definition in its metadata, with
+source &ldquo;Jenness Enterprises&rdquo;:</p>
+<table class="params">
+<thead><tr><th>Field</th><th>Definition</th></tr></thead>
+<tbody>
+<tr><td class="param-name">Mahal_D2</td>
+<td>Squared Mahalanobis distance from this point's landscape-variable values to the multivariate
+reference mean: <code>D&sup2; = (x &minus; &mu;)' &middot; &Sigma;&#8315;&sup1; &middot; (x &minus; &mu;)</code>.</td></tr>
+<tr><td class="param-name">Mahal_D</td>
+<td>Mahalanobis distance: the square root of the squared distance (D&sup2;).</td></tr>
+<tr><td class="param-name">Mahal_pval</td>
+<td>Chi-square typicality p-value: the upper-tail probability that a chi-square variate with
+degrees of freedom equal to the number of variables exceeds D&sup2;. A 0 to 1 value, where numbers
+near 1 indicate conditions close to the reference mean.</td></tr>
+</tbody>
+</table>
+<p>If you also generate the mean, covariance, inverse-covariance, or correlation tables, their
+fields follow the schema documented in the <em>Calculate Statistical Matrices</em> tool help.</p>
+</section>
+
 <section id="parameters">
 <h2>Parameters</h2>
 <table class="params">

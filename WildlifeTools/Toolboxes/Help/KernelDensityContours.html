@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kernel Density Probability Contours</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="tool-help">
+
+<h1>Kernel Density Probability Contours</h1>
+<p class="subtitle">Jenness Enterprises Wildlife Tools &middot; Kernel Density Tools</p>
+
+<section id="summary">
+<h2>Summary</h2>
+<p>Generates home-range <strong>probability (volume) isopleths</strong> from a kernel-density
+surface at the standard levels (5 percent to 100 percent in 5 percent steps), as contour
+polylines and/or polygon areas.</p>
+</section>
+
+<section id="usage">
+<h2>Usage</h2>
+<p>A probability isopleth is a contour that encloses a given percentage of the total volume under
+a kernel density surface: the <em>X</em> percent isopleth bounds the smallest area containing
+<em>X</em> percent of the estimated use &mdash; the standard way to delineate kernel home ranges
+(for example, the 95 percent and 50 percent contours).</p>
+
+<p>The tool <strong>automatically recognizes</strong> what kind of raster you supply:</p>
+<ul>
+<li>A <strong>kernel density raster</strong> (the Esri Kernel Density output, or the
+<em>Densities</em> or <em>Expected counts</em> output of Kernel Density Enhanced): the tool sorts
+the cell values, accumulates the volume, and finds the density threshold that encloses each target
+percentage, then contours those thresholds.</li>
+<li>A <strong>proportion-under-the-surface raster</strong> (from the Kernel Density to Proportion
+Surface tool, or the <em>Proportion</em> output of Kernel Density Enhanced): the cumulative volume
+is already stored in the cells, so the tool simply contours the standard proportion levels
+directly. Such rasters are identified by a marker written into their metadata.</li>
+</ul>
+
+<p>You may produce contour polylines, polygon areas, or both; <strong>at least one is required</strong>.
+The polygon boundaries coincide exactly with the polylines. Both outputs carry the same attribute
+fields (see <em>Output fields</em>, below).</p>
+
+<div class="note">This tool honors the <a href="https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/output-coordinate-system.htm">Output
+Coordinate System</a> environment: contours are generated in the raster's own coordinate system,
+and the finished outputs are reprojected if an Output Coordinate System is set. No other
+environments affect it.</div>
+</section>
+
+<section id="output-fields">
+<h2>Output fields</h2>
+<p>The polyline and polygon outputs both contain these attribute fields (each field also carries
+this definition in its metadata, with source &ldquo;Jenness Enterprises&rdquo;):</p>
+<table class="params">
+<thead><tr><th>Field</th><th>Definition</th></tr></thead>
+<tbody>
+<tr><td class="param-name">Density</td>
+<td>The raster value contoured to produce this isopleth &mdash; the kernel-density threshold for a
+kernel-density input, or the cumulative proportion for a proportion-under-the-surface input.</td></tr>
+<tr><td class="param-name">Isopleth</td>
+<td>The home-range isopleth level: the proportion (0 to 1) of the total volume under the surface
+enclosed by this contour (for example, 0.95 is the 95 percent isopleth).</td></tr>
+<tr><td class="param-name">CumProportion</td>
+<td>The cumulative proportion of volume outside this isopleth (1 minus Isopleth); equivalently, the
+value at which to contour a proportion-under-the-surface raster to reproduce this isopleth.</td></tr>
+<tr><td class="param-name">Label</td>
+<td>The isopleth level as a percentage label (for example, &ldquo;95%&rdquo;).</td></tr>
+<tr><td class="param-name">Primary</td>
+<td>Whether this is a primary (more prominent) isopleth. A coded-value field:
+<ul>
+<li><strong>True</strong> &mdash; a primary isopleth (the 5, 25, 50, 75, and 95 percent levels).</li>
+<li><strong>False</strong> &mdash; a secondary (minor) isopleth.</li>
+</ul></td></tr>
+</tbody>
+</table>
+</section>
+
+<section id="parameters">
+<h2>Parameters</h2>
+<table class="params">
+<thead><tr><th>Label</th><th>Explanation</th><th>Data Type</th></tr></thead>
+<tbody>
+<tr><td class="param-name">Input kernel density raster</td>
+<td>A kernel density raster (Esri Kernel Density, or this suite's Densities or Expected counts
+output) or a proportion-under-the-surface raster. The tool detects which it is and chooses the
+correct contouring method automatically.</td>
+<td class="type">Raster Layer</td></tr>
+<tr><td class="param-name">Create contour polylines</td>
+<td>Check to produce isopleth contour polylines. At least one output is required.</td>
+<td class="type">Boolean</td></tr>
+<tr><td class="param-name">Output contour polylines</td>
+<td>The output polyline feature class of isopleth contours (with the fields above).</td>
+<td class="type">Feature Class</td></tr>
+<tr><td class="param-name">Create contour polygon areas</td>
+<td>Check to produce isopleth polygon areas (the regions enclosed by the contour loops). At least
+one output is required.</td>
+<td class="type">Boolean</td></tr>
+<tr><td class="param-name">Output contour polygon areas</td>
+<td>The output polygon feature class of isopleth areas (with the fields above); boundaries coincide
+with the polylines.</td>
+<td class="type">Feature Class</td></tr>
+</tbody>
+</table>
+</section>
+
+<section id="code">
+<h2>Code sample</h2>
+<h3>KernelDensityContours example (stand-alone script)</h3>
+<p>Generate probability isopleth polylines and polygon areas from a kernel density raster.</p>
+<pre><code>import arcpy
+
+arcpy.ImportToolbox(r"C:\Tools\JennessEnterprisesTools.pyt")
+
+arcpy.jenness.KernelDensityContours(
+    in_raster=r"C:\Project\HomeRange.gdb\KD_density",
+    make_lines=True,
+    out_lines=r"C:\Project\HomeRange.gdb\KD_isopleth_lines",
+    make_polys=True,
+    out_polys=r"C:\Project\HomeRange.gdb\KD_isopleth_areas")</code></pre>
+</section>
+
+<section id="cite">
+<h2>Suggested citation</h2>
+<p class="suggested-citation">Jenness, J. (2026). Kernel Density Probability Contours. Jenness
+Enterprises Wildlife Tools for ArcGIS Pro. Available at: <a href="http://www.jennessent.com">http://www.jennessent.com</a>.</p>
+</section>
+
+<footer>Tool by Jeff Jenness, Jenness Enterprises (<a href="http://www.jennessent.com">www.jennessent.com</a>).</footer>
+
+</main>
+</body>
+</html>

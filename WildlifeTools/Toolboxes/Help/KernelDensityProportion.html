@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kernel Density to Proportion Surface</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="tool-help">
+
+<h1>Kernel Density to Proportion Surface</h1>
+<p class="subtitle">Jenness Enterprises Wildlife Tools &middot; Kernel Density Tools</p>
+
+<section id="summary">
+<h2>Summary</h2>
+<p>Converts a kernel-density raster into a <strong>proportion-under-the-surface</strong> (volume)
+raster, where each cell holds the cumulative proportion of the total volume under the surface
+&mdash; from about 0 at the outer edge to 1 at the peak.</p>
+</section>
+
+<section id="usage">
+<h2>Usage</h2>
+<p>The &ldquo;volume&rdquo; under a kernel density surface is the sum of all cell values (the cell
+area is constant, so it cancels out of every proportion). For each cell, this tool reports the
+share of that total volume contributed by all cells whose density is less than or equal to the
+cell's own density. The result runs from about 0 at the outermost (lowest-density) boundary up to
+1.0 at the peak &mdash; oriented like the raw kernel density, but rescaled to the range 0 to 1.</p>
+
+<div class="note">The proportion surface is designed to be <strong>contoured</strong>. To draw the
+<em>X</em> percent home-range isopleth, contour the surface at the value
+(1&nbsp;&minus;&nbsp;<em>X</em>/100): for example, contour at <strong>0.05</strong> for the 95
+percent isopleth, or at <strong>0.50</strong> for the 50 percent isopleth. The <em>Kernel Density
+Probability Contours</em> tool recognizes a proportion surface automatically (by a marker written
+into its metadata) and contours the standard isopleth levels for you.</div>
+
+<p>The output raster has a single continuous value band (no attribute table) and carries statistics
+and a histogram so it renders correctly without a separate Calculate Statistics step. Zero and
+NoData cells of the input are excluded from the volume. The output remains in the
+<strong>same coordinate system</strong> as the source raster; the tool transforms the input grid
+cell-for-cell and does not honor the Output Coordinate System or other analysis environments.</p>
+</section>
+
+<section id="parameters">
+<h2>Parameters</h2>
+<table class="params">
+<thead><tr><th>Label</th><th>Explanation</th><th>Data Type</th></tr></thead>
+<tbody>
+<tr><td class="param-name">Input kernel density raster</td>
+<td>A kernel density (or any positive intensity) raster. Cell values are treated as density; zero
+and NoData cells are excluded.</td>
+<td class="type">Raster Layer</td></tr>
+<tr><td class="param-name">Output proportion raster</td>
+<td>The output proportion-under-the-surface raster (values 0 to 1), in the same coordinate system
+as the input.</td>
+<td class="type">Raster Dataset</td></tr>
+</tbody>
+</table>
+</section>
+
+<section id="environments">
+<h2>Environments</h2>
+<p>This tool does not honor analysis environments: the output mirrors the input raster's grid and
+coordinate system cell-for-cell.</p>
+</section>
+
+<section id="code">
+<h2>Code sample</h2>
+<h3>KernelDensityProportion example (stand-alone script)</h3>
+<p>Convert a kernel density raster to a proportion surface, then contour it at 0.05 for the 95
+percent home-range isopleth.</p>
+<pre><code>import arcpy
+
+arcpy.ImportToolbox(r"C:\Tools\JennessEnterprisesTools.pyt")
+
+arcpy.jenness.KernelDensityProportion(
+    in_raster=r"C:\Project\HomeRange.gdb\KD_density",
+    out_raster=r"C:\Project\HomeRange.gdb\KD_proportion")</code></pre>
+</section>
+
+<section id="cite">
+<h2>Suggested citation</h2>
+<p class="suggested-citation">Jenness, J. (2026). Kernel Density to Proportion Surface. Jenness
+Enterprises Wildlife Tools for ArcGIS Pro. Available at: <a href="http://www.jennessent.com">http://www.jennessent.com</a>.</p>
+</section>
+
+<footer>Tool by Jeff Jenness, Jenness Enterprises (<a href="http://www.jennessent.com">www.jennessent.com</a>).</footer>
+
+</main>
+</body>
+</html>

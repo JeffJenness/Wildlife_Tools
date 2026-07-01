@@ -22,6 +22,7 @@ if _HERE not in sys.path:
 
 import locoh          # noqa: E402
 import mahalanobis    # noqa: E402
+import kernel_density # noqa: E402
 import error_report   # noqa: E402
 
 import re
@@ -120,7 +121,8 @@ class Toolbox(object):
         self.alias = "jenness"
         self.tools = [LoCoHStandard, LoCoHAdaptive, LoCoHFixedSphere,
                       MahalanobisRaster, MahalanobisPoints, MahalanobisCovariance,
-                      MahalanobisChiSquare]
+                      MahalanobisChiSquare,
+                      KernelDensityGenerate, KernelDensityProportion, KernelDensityContours]
 
 
 class LoCoHStandard(object):
@@ -1338,6 +1340,324 @@ class MahalanobisChiSquare(object):
                     P["out_raster"].symbology = out_lyrx
                 except Exception as e:
                     messages.addWarningMessage("Could not set output symbology: {}".format(e))
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+# --------------------------------------------------------------------------- #
+# Kernel Density Tools
+# --------------------------------------------------------------------------- #
+def _kd_default_ws(in_raster):
+    """A writable geodatabase for suggested outputs: the input raster's geodatabase
+    if it lives in one, otherwise the scratch geodatabase."""
+    try:
+        ws = os.path.dirname(arcpy.Describe(in_raster).catalogPath)
+        d = arcpy.Describe(ws)
+        if d.dataType in ("Workspace", "FeatureDataset") and \
+                getattr(d, "workspaceType", "") in ("LocalDatabase", "RemoteDatabase"):
+            return ws
+    except Exception:
+        pass
+    return arcpy.env.scratchGDB
+
+
+def _kd_basename(in_raster):
+    try:
+        return arcpy.Describe(in_raster).baseName
+    except Exception:
+        return "KernelDensity"
+
+
+class KernelDensityGenerate(object):
+    """Kernel Density -- a custom kernel-density surface from point features.
+
+    Replicates Esri's Kernel Density for the quartic (default) planar case and adds
+    other finite-support kernel shapes, an explicit planar/geodesic distance choice
+    (forced geodesic for geographic data), and three output value types.
+    """
+
+    def __init__(self):
+        self.label = "Kernel Density Enhanced"
+        self.description = (
+            "Creates a kernel-density surface from point features. The quartic kernel "
+            "(default) reproduces the Esri Kernel Density tool; other finite-support "
+            "kernel shapes (uniform, triangular, Epanechnikov, triweight, tricube, "
+            "cosine -- all reaching zero at the search radius) are also offered. "
+            "Distances may be planar or geodesic (geodesic is required, and forced, for "
+            "geographic data). Output cell values can be densities (per a chosen area "
+            "unit), expected counts, or a proportion-under-the-curve (volume) surface. "
+            "If no search radius is given, a default is computed by Silverman's rule.")
+        self.category = "Kernel Density Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_features = arcpy.Parameter(
+            displayName="Input point features", name="in_features",
+            datatype="GPFeatureLayer", parameterType="Required", direction="Input")
+        in_features.filter.list = ["Point", "Multipoint"]
+        pop_field = arcpy.Parameter(
+            displayName="Population field", name="population_field",
+            datatype="Field", parameterType="Optional", direction="Input")
+        pop_field.filter.list = ["Short", "Long", "Float", "Double"]
+        pop_field.parameterDependencies = [in_features.name]
+        out_raster = arcpy.Parameter(
+            displayName="Output raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required", direction="Output")
+        cell_size = arcpy.Parameter(
+            displayName="Output cell size", name="cell_size",
+            datatype="analysis_cell_size", parameterType="Optional", direction="Input")
+        search_radius = arcpy.Parameter(
+            displayName="Search radius (bandwidth)", name="search_radius",
+            datatype="GPLinearUnit", parameterType="Optional", direction="Input")
+        kernel = arcpy.Parameter(
+            displayName="Kernel shape", name="kernel",
+            datatype="GPString", parameterType="Required", direction="Input")
+        kernel.filter.type = "ValueList"
+        kernel.filter.list = [lab for lab, _ in kernel_density.KERNEL_CHOICES]
+        kernel.value = kernel.filter.list[0]
+        distance_method = arcpy.Parameter(
+            displayName="Distance method", name="distance_method",
+            datatype="GPString", parameterType="Required", direction="Input")
+        distance_method.filter.type = "ValueList"
+        distance_method.filter.list = [kernel_density.DIST_PLANAR, kernel_density.DIST_GEODESIC]
+        distance_method.value = kernel_density.DIST_PLANAR
+        out_value = arcpy.Parameter(
+            displayName="Output cell values", name="out_value",
+            datatype="GPString", parameterType="Required", direction="Input")
+        out_value.filter.type = "ValueList"
+        out_value.filter.list = list(kernel_density.OUTPUT_VALUES)
+        out_value.value = kernel_density.OUTV_DENSITIES
+        area_unit = arcpy.Parameter(
+            displayName="Area units", name="area_unit",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        area_unit.filter.type = "ValueList"
+        area_unit.filter.list = [lab for lab, _ in kernel_density.AREA_UNITS]
+        area_unit.value = "Square map units"
+        return [in_features, pop_field, out_raster, cell_size, search_radius,
+                kernel, distance_method, out_value, area_unit]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inf, outr = P["in_features"], P["out_raster"]
+        if inf.valueAsText and (not outr.altered or outr.valueAsText == self._auto_out):
+            try:
+                base = _legalize(_kd_basename(inf.valueAsText) + "_KDens")
+                sug = _unique_name(base, _kd_default_ws(inf.valueAsText))
+                outr.value = sug
+                self._auto_out = sug
+            except Exception:
+                pass
+        # Auto-fill Output cell size with the Esri default logic, until the user
+        # types their own value (cell_size.altered).
+        if inf.valueAsText and not P["cell_size"].altered:
+            try:
+                v = kernel_density.default_cell_size(inf.valueAsText)
+                if v and v > 0:
+                    P["cell_size"].value = v
+            except Exception:
+                pass
+        # Geographic data must use geodesic distances; lock the control.
+        is_geographic = False
+        if inf.valueAsText:
+            try:
+                sr = arcpy.Describe(inf.valueAsText).spatialReference
+                is_geographic = (sr is not None and sr.type == "Geographic")
+            except Exception:
+                is_geographic = False
+        if is_geographic:
+            P["distance_method"].value = kernel_density.DIST_GEODESIC
+            P["distance_method"].enabled = False
+        else:
+            P["distance_method"].enabled = True
+        # Area units apply only to the Densities output.
+        P["area_unit"].enabled = (P["out_value"].value == kernel_density.OUTV_DENSITIES)
+        return
+
+    def updateMessages(self, parameters):
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(kernel_density)
+            P = {p.name: p for p in parameters}
+            kernel_density.run_kernel_density(
+                points=P["in_features"].valueAsText,
+                pop_field=P["population_field"].valueAsText,
+                out_raster=P["out_raster"].valueAsText,
+                cell_size=P["cell_size"].valueAsText,
+                search_radius=P["search_radius"].valueAsText,
+                kernel=P["kernel"].valueAsText,
+                distance_method=P["distance_method"].valueAsText,
+                out_value=P["out_value"].valueAsText,
+                area_unit=P["area_unit"].valueAsText,
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class KernelDensityProportion(object):
+    """Kernel Density to Proportion Surface -- the "volume" raster.
+
+    Each output cell holds the percent of the total volume (sum of densities)
+    enclosed by the isopleth through it. Contour the result (Esri Contour) at any
+    levels (e.g. 50, 95, 99) to get home-range isopleths directly.
+    """
+
+    def __init__(self):
+        self.label = "Kernel Density to Proportion Surface"
+        self.description = (
+            "Converts a kernel-density raster into a proportion-under-the-surface "
+            "(volume) raster: each cell holds the percent (0-100) of the total volume "
+            "contained in all cells whose density is greater than or equal to that "
+            "cell's density. Peak cells are near 0, the outer edge near 100, so "
+            "contouring the output at 50/95/99 yields the corresponding home-range "
+            "isopleths. Volume is the density sum (constant cell area cancels); zero "
+            "and NoData cells are excluded.")
+        self.category = "Kernel Density Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input kernel density raster", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output proportion raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required", direction="Output")
+        return [in_raster, out_raster]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr = P["in_raster"], P["out_raster"]
+        if inr.valueAsText and (not outr.altered or outr.valueAsText == self._auto_out):
+            try:
+                base = _legalize(_kd_basename(inr.valueAsText) + "_Proportion")
+                sug = _unique_name(base, _kd_default_ws(inr.valueAsText))
+                outr.value = sug
+                self._auto_out = sug
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(kernel_density)
+            P = {p.name: p for p in parameters}
+            kernel_density.run_proportion_surface(
+                kd=P["in_raster"].valueAsText,
+                out_raster=P["out_raster"].valueAsText,
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class KernelDensityContours(object):
+    """Kernel Density Probability Contours -- isopleth polylines and/or polygon areas
+    at the standard home-range probabilities (5%..100% in 5% steps)."""
+
+    def __init__(self):
+        self.label = "Kernel Density Probability Contours"
+        self.description = (
+            "Generates probability isopleths from a kernel-density raster at the "
+            "standard home-range levels (5% to 100% in 5% steps), as contour polylines "
+            "and/or polygon areas. Each level's density is the threshold enclosing that "
+            "percent of the total volume. Choose either or both outputs (at least one is "
+            "required); polygon boundaries coincide with the polylines. Reproduces the "
+            "legacy 'Probabilities' output.")
+        self.category = "Kernel Density Tools"
+        self.canRunInBackground = False
+        self._auto = {}
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input kernel density raster", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        make_lines = arcpy.Parameter(
+            displayName="Create contour polylines", name="make_lines",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        make_lines.value = True
+        out_lines = arcpy.Parameter(
+            displayName="Output contour polylines", name="out_lines",
+            datatype="DEFeatureClass", parameterType="Optional", direction="Output")
+        make_polys = arcpy.Parameter(
+            displayName="Create contour polygon areas", name="make_polys",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        make_polys.value = True
+        out_polys = arcpy.Parameter(
+            displayName="Output contour polygon areas", name="out_polys",
+            datatype="DEFeatureClass", parameterType="Optional", direction="Output")
+        return [in_raster, make_lines, out_lines, make_polys, out_polys]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr = P["in_raster"]
+        ws = _kd_default_ws(inr.valueAsText) if inr.valueAsText else None
+        base = _kd_basename(inr.valueAsText) if inr.valueAsText else None
+        for box, out, suffix in [("make_lines", "out_lines", "_Prob_Lines"),
+                                 ("make_polys", "out_polys", "_Prob_Areas")]:
+            on = bool(P[box].value)
+            P[out].enabled = on
+            if on and base and (not P[out].altered or P[out].valueAsText == self._auto.get(out)):
+                try:
+                    sug = _unique_name(_legalize(base + suffix), ws)
+                    P[out].value = sug
+                    self._auto[out] = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        if not P["make_lines"].value and not P["make_polys"].value:
+            P["make_lines"].setErrorMessage(
+                "Choose at least one output: contour polylines and/or polygon areas.")
+        if P["make_lines"].value and not P["out_lines"].valueAsText:
+            P["out_lines"].setErrorMessage(
+                "Specify an output polyline feature class (or uncheck this option).")
+        if P["make_polys"].value and not P["out_polys"].valueAsText:
+            P["out_polys"].setErrorMessage(
+                "Specify an output polygon feature class (or uncheck this option).")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(kernel_density)
+            P = {p.name: p for p in parameters}
+            lines = P["out_lines"].valueAsText if P["make_lines"].value else None
+            polys = P["out_polys"].valueAsText if P["make_polys"].value else None
+            kernel_density.run_probability_contours(
+                kd=P["in_raster"].valueAsText,
+                out_lines=lines, out_polys=polys, messages=messages)
         except arcpy.ExecuteError:
             raise
         except Exception:
