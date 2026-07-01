@@ -39,6 +39,30 @@
     <Content Include="Images\chi_square_symbol_32.png" />
     <Content Include="DarkImages\chi_square_symbol_16.png" />
     <Content Include="DarkImages\chi_square_symbol_32.png" />
+    <Content Include="Images\LoCoH_16.png" />
+    <Content Include="Images\LoCoH_32.png" />
+    <Content Include="DarkImages\LoCoH_16.png" />
+    <Content Include="DarkImages\LoCoH_32.png" />
+    <Content Include="Images\LoCoH_a_16.png" />
+    <Content Include="Images\LoCoH_a_32.png" />
+    <Content Include="DarkImages\LoCoH_a_16.png" />
+    <Content Include="DarkImages\LoCoH_a_32.png" />
+    <Content Include="Images\LoCoH_r_16.png" />
+    <Content Include="Images\LoCoH_r_32.png" />
+    <Content Include="DarkImages\LoCoH_r_16.png" />
+    <Content Include="DarkImages\LoCoH_r_32.png" />
+    <Content Include="Images\Normal_Curve_DarkBlue_16.png" />
+    <Content Include="Images\Kernel_Density_Enhanced_32.png" />
+    <Content Include="DarkImages\Normal_Curve_DarkBlue_16.png" />
+    <Content Include="DarkImages\Kernel_Density_Enhanced_32.png" />
+    <Content Include="Images\Normal_Curve_GanadoRed_16.png" />
+    <Content Include="Images\KD_to_Proportion_32.png" />
+    <Content Include="DarkImages\Normal_Curve_GanadoRed_16.png" />
+    <Content Include="DarkImages\KD_to_Proportion_32.png" />
+    <Content Include="Images\Normal_Curve_DarkGreen_16.png" />
+    <Content Include="Images\KD_Probability_Contours_32.png" />
+    <Content Include="DarkImages\Normal_Curve_DarkGreen_16.png" />
+    <Content Include="DarkImages\KD_Probability_Contours_32.png" />
     <!-- The Thought-for-the-Day card background is loaded from disk by path at run
          time, so it must sit next to the assembly (copied to the output directory). -->
     <Content Include="Images\quote_bg.png">
