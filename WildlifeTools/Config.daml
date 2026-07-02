@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.9.1" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.10.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -23,6 +23,8 @@
         <tab id="WildlifeTools_Tab1" caption="Wildlife">
           <group refID="WildlifeTools_Group1"/>
           <group refID="WildlifeTools_GroupMahalanobis"/>
+          <group refID="WildlifeTools_GroupGraphics"/>
+          <group refID="WildlifeTools_GroupCartography"/>
           <group refID="WildlifeTools_GroupBreak"/>
         </tab>
       </tabs>
@@ -41,6 +43,12 @@
           <button refID="WildlifeTools_MahalanobisPoints" size="large" />
           <button refID="WildlifeTools_MahalanobisCovariance" size="large" />
           <button refID="WildlifeTools_MahalanobisChiSquare" size="large" />
+        </group>
+        <group id="WildlifeTools_GroupGraphics" caption="Graphics" appearsOnAddInTab="false">
+          <tool refID="WildlifeTools_CompassRoseGraphic" size="large" />
+        </group>
+        <group id="WildlifeTools_GroupCartography" caption="Cartography" appearsOnAddInTab="false">
+          <tool refID="WildlifeTools_CompassRoseNorthArrow" size="large" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -158,6 +166,29 @@
             Opens the Chi-Square Transform tool from the Jenness Enterprises toolbox: rescales a Mahalanobis squared-distance (D2) raster to a 0-1 chi-square typicality p-value.<disabledText />
           </tooltip>
         </button>
+        <tool id="WildlifeTools_CompassRoseGraphic"
+                caption="Compass Rose Graphic"
+                className="CompassRoseGraphicTool"
+                loadOnClick="true"
+                smallImage="Images\AddInDesktop16.png"
+                largeImage="Images\AddInDesktop32.png"
+                keytip="CG">
+          <tooltip heading="Compass Rose Graphic">
+            Draw a rectangle on the active map or layout to add the Jennessent Compass Rose as a group of editable vector graphics filling that box.<disabledText />
+          </tooltip>
+        </tool>
+        <tool id="WildlifeTools_CompassRoseNorthArrow"
+                caption="Compass North Arrow"
+                className="CompassRoseNorthArrowTool"
+                loadOnClick="true"
+                smallImage="Images\AddInDesktop16.png"
+                largeImage="Images\AddInDesktop32.png"
+                condition="esri_layouts_layoutPaneCondition"
+                keytip="CN">
+          <tooltip heading="Compass Rose North Arrow">
+            Draw a rectangle on the active layout to add a north arrow, symbolized as the Jennessent Compass Rose and tied to the layout's map frame. Available only in a layout view.<disabledText />
+          </tooltip>
+        </tool>
         <button id="WildlifeTools_ThoughtForTheDay"
                 caption="Thought for the Day"
                 className="ThoughtForTheDayButton"

@@ -719,7 +719,11 @@ def _write_grid(out2d, xmin, ymax, csx, csy, sr, out_raster, messages):
 
 def _resolve_extent(x, y, sr, geographic, radius_m, mpu):
     """(xmin, ymin, xmax, ymax) in dataset coordinate units. Honors env.extent;
-    otherwise the input bounding box expanded by the search radius."""
+    otherwise the input bounding box expanded by the search radius.
+
+    LIMITATION: for geographic data this uses raw longitudes, so a kernel that straddles
+    the antimeridian (+/-180 deg) is clipped at the date line rather than wrapping. This
+    is irrelevant for typical study areas; documented as a known help-file limitation."""
     ext = arcpy.env.extent
     if ext:
         try:
@@ -738,9 +742,14 @@ def _resolve_extent(x, y, sr, geographic, radius_m, mpu):
     return xmin - ex, ymin - ey, xmax + ex, ymax + ey
 
 
-def _resolve_cell_size(cell_size, extent, geographic, mpu):
+def _resolve_cell_size(cell_size, extent, geographic, mpu, radius_units=None):
     """Cell size (csx, csy) in dataset units. Tool param -> env.cellSize ->
-    Esri default (shorter extent side / 250)."""
+    Esri default (shorter extent side / 250).
+
+    ``radius_units`` is the search radius expressed in the dataset's coordinate units;
+    it is used as a last resort when the input extent is degenerate (collinear or
+    coincident points) so the cell size never resolves to zero (which would divide by
+    zero when sizing the grid)."""
     xmin, ymin, xmax, ymax = extent
     val = None
     if cell_size:
@@ -769,7 +778,17 @@ def _resolve_cell_size(cell_size, extent, geographic, mpu):
             except Exception:
                 val = None
     if val is None or val <= 0:
-        val = min(xmax - xmin, ymax - ymin) / 250.0
+        span = min(xmax - xmin, ymax - ymin)
+        if span <= 0:                        # collinear points: use the non-zero side
+            span = max(xmax - xmin, ymax - ymin)
+        if span > 0:
+            val = span / 250.0
+        elif radius_units and radius_units > 0:   # single/coincident points: derive from radius
+            val = radius_units / 50.0
+        else:
+            raise arcpy.ExecuteError(
+                "Could not determine an output cell size: the input points have no "
+                "spatial extent. Specify an Output cell size or a search radius.")
     return val, val
 
 
@@ -793,11 +812,18 @@ def default_cell_size(in_features):
             return float(arcpy.Describe(snap).meanCellWidth)
         except Exception:
             pass
+    def _span_over_250(w, h):
+        # Shorter side / 250, but fall back to the longer side for a degenerate
+        # (zero-width or zero-height) extent; None if there is no extent at all.
+        span = min(w, h)
+        if span <= 0:
+            span = max(w, h)
+        return (span / 250.0) if span > 0 else None
     try:
         env_ext = arcpy.env.extent
         if env_ext not in (None, ""):
             try:
-                return min(float(env_ext.width), float(env_ext.height)) / 250.0
+                return _span_over_250(float(env_ext.width), float(env_ext.height))
             except Exception:
                 pass
         d = arcpy.Describe(in_features)
@@ -805,7 +831,7 @@ def default_cell_size(in_features):
         out_cs = arcpy.env.outputCoordinateSystem
         if out_cs and not _same_cs(d.spatialReference, out_cs):
             ext = ext.projectAs(out_cs)
-        return min(float(ext.width), float(ext.height)) / 250.0
+        return _span_over_250(float(ext.width), float(ext.height))
     except Exception:
         return None
 
@@ -849,6 +875,17 @@ def run_kernel_density(points, pop_field, out_raster, cell_size, search_radius,
     if not xs_l:
         raise arcpy.ExecuteError("No input points were found.")
     x = np.array(xs_l, float); y = np.array(ys_l, float); w = np.array(ws_l, float)
+    # Validate population weights up front so a bad field gives a clear, weight-specific
+    # message instead of the downstream "points may be coincident" bandwidth error.
+    if pop_field and pop_field.upper() != "NONE":
+        if np.any(w < 0):
+            raise arcpy.ExecuteError(
+                "The population field '{}' has negative values; weights must be zero or "
+                "positive.".format(pop_field))
+        if float(w.sum()) <= 0:
+            raise arcpy.ExecuteError(
+                "The population field '{}' sums to zero, so there is no weight to "
+                "distribute. Check the field values.".format(pop_field))
     messages.addMessage("Read {:,} points (total weight {:.4g}).".format(x.size, float(w.sum())))
     notes = []          # plain-English notes about data-driven choices, for the summary
 
@@ -942,7 +979,8 @@ def run_kernel_density(points, pop_field, out_raster, cell_size, search_radius,
                       else (float(x.min()), float(y.min()), float(x.max()), float(y.max())))
     else:
         cs_ext = (float(x.min()), float(y.min()), float(x.max()), float(y.max()))
-    csx, csy = _resolve_cell_size(cell_size, cs_ext, geographic, mpu)
+    radius_units = (h_m / _M_PER_DEG) if geographic else (h_m / mpu)
+    csx, csy = _resolve_cell_size(cell_size, cs_ext, geographic, mpu, radius_units)
     extent = _resolve_extent(x, y, sr, geographic, h_m, mpu)
     extent = _snap(extent, csx, csy)
     xmin, ymin, xmax, ymax = extent
@@ -1019,22 +1057,34 @@ def run_kernel_density(points, pop_field, out_raster, cell_size, search_radius,
     elif out_value == OUTV_COUNTS:
         out = dens * area2d
     else:  # proportion under curve (volume-weighted CDF from below; 0 edge -> 1 peak)
-        vol = (dens * area2d).ravel()
-        d_flat = dens.ravel()
-        uden, inv = np.unique(d_flat, return_inverse=True)
-        vsum = np.zeros(uden.size)
-        np.add.at(vsum, inv, vol)
-        cum = np.cumsum(vsum) / vsum.sum()
-        out = cum[inv].reshape(dens.shape)
+        out = np.full(dens.shape, np.nan, dtype=np.float64)   # background -> NoData
+        positive = dens > 0
+        total_vol = float((dens * area2d).sum())
+        if total_vol > 0 and positive.any():
+            vol = (dens * area2d).ravel()
+            d_flat = dens.ravel()
+            uden, inv = np.unique(d_flat, return_inverse=True)
+            vsum = np.zeros(uden.size)
+            np.add.at(vsum, inv, vol)
+            cum = (np.cumsum(vsum) / total_vol)[inv].reshape(dens.shape)
+            out[positive] = cum[positive]     # only positive-density cells carry a value
 
     _write_grid(out, xmin, ymax, csx, csy, sr, out_raster, messages)
 
-    # env.mask (applied post hoc since we write through GDAL).
+    # env.mask (applied post hoc since we write through GDAL). Extract to a scratch
+    # raster first, then copy back -- ExtractByMask cannot reliably read and overwrite
+    # the same path (a "cannot overwrite input" / lock error, silently dropping the mask).
     if arcpy.env.mask:
         try:
             from arcpy.sa import ExtractByMask
             arcpy.CheckOutExtension("Spatial")
-            ExtractByMask(out_raster, arcpy.env.mask).save(out_raster)
+            masked = ExtractByMask(out_raster, arcpy.env.mask)
+            tmp_mask = arcpy.CreateUniqueName("kd_masked.tif", arcpy.env.scratchFolder)
+            masked.save(tmp_mask)
+            del masked
+            arcpy.management.Delete(out_raster)
+            arcpy.management.CopyRaster(tmp_mask, out_raster)
+            arcpy.management.Delete(tmp_mask)
         except Exception as e:
             messages.addWarningMessage("Could not apply the mask environment: {}".format(e))
 

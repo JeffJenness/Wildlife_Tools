@@ -81,6 +81,14 @@
   <ItemGroup>
     <None Include="Properties\launchSettings.json" />
   </ItemGroup>
+  <!-- Jennessent Compass Rose vector art (SVG) used by the Graphics picture tool and
+       the Cartography north-arrow tool; deployed next to the assembly under Cartography\. -->
+  <ItemGroup>
+    <None Remove="Cartography\CompassRose.svg" />
+    <Content Include="Cartography\CompassRose.svg">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
   <!-- Deploy the Jenness Enterprises Python toolbox (the .pyt, helper modules,
        metadata sidecars, and layer templates) next to the add-in assembly so the
        ribbon buttons can locate and run it. __pycache__ is excluded. -->

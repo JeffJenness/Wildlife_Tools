@@ -576,8 +576,9 @@ def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
 
     k = len(vrts)
     n = 0
-    s1 = np.zeros(k)
-    s2 = np.zeros((k, k))
+    shift = None                    # center subtracted before accumulating (stability)
+    s1 = np.zeros(k)                # sum of (X - shift)
+    s2 = np.zeros((k, k))           # sum of (X - shift)(X - shift)^T
     bands = [v.GetRasterBand(1) for v in vrts]
     for yoff, rows in _row_strips(height, width, k):
         cat = cat_band.ReadAsArray(0, yoff, width, rows).astype(float)
@@ -588,9 +589,12 @@ def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
         if not mask.any():
             continue
         X = stack[:, mask]                  # (k, m)
+        if shift is None:
+            shift = X.mean(axis=1)          # center on the first matching block's mean
+        dev = X - shift[:, None]
         n += X.shape[1]
-        s1 += X.sum(axis=1)
-        s2 += X @ X.T
+        s1 += dev.sum(axis=1)
+        s2 += dev @ dev.T
     # The category VRT has been fully read; release it and remove any scratch copy.
     cat_band = None
     cat_vrt = None
@@ -603,8 +607,14 @@ def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
         raise arcpy.ExecuteError(
             "Only {} cells matched category {}; need at least {} for a {}-variable "
             "covariance.".format(n, cat_value, k + 1, k))
-    mean = s1 / n
-    cov = (s2 - n * np.outer(mean, mean)) / (n - 1)
+    # Covariance from the shifted sums: because the deviations are near zero, this
+    # subtraction is well-conditioned -- avoiding the catastrophic cancellation a raw
+    # one-pass X@X.T suffers on large-magnitude, small-variance data. Add the shift back
+    # to recover the true mean, and symmetrize to erase any residual round-off asymmetry.
+    mean_dev = s1 / n
+    cov = (s2 - n * np.outer(mean_dev, mean_dev)) / (n - 1)
+    cov = (cov + cov.T) / 2.0
+    mean = shift + mean_dev
     # Correlation from covariance.
     d = np.sqrt(np.diag(cov))
     with np.errstate(invalid="ignore", divide="ignore"):
@@ -640,10 +650,25 @@ def read_stats_tables(mean_table, cov_table):
         numeric = [f.name for f in arcpy.ListFields(cov_table)
                    if f.type in ("Double", "Single", "Integer", "SmallInteger")]
         cov_cols = numeric[-k:]
+    if len(cov_cols) != k:
+        raise arcpy.ExecuteError(
+            "The covariance table does not have {} value columns to match the {} "
+            "variables in the mean vector.".format(k, k))
     cov = np.empty((k, k), dtype=float)
+    rows_read = 0
     with arcpy.da.SearchCursor(cov_table, cov_cols) as cur:
         for r, row in enumerate(cur):
+            if r >= k:
+                raise arcpy.ExecuteError(
+                    "The covariance table has more rows than the mean vector ({} "
+                    "variables); the mean and covariance tables must describe the same "
+                    "variables in the same order.".format(k))
             cov[r, :] = [float(x) for x in row]
+            rows_read = r + 1
+    if rows_read != k:
+        raise arcpy.ExecuteError(
+            "The covariance table has {} rows but the mean vector has {} variables; they "
+            "must match.".format(rows_read, k))
     return mean, cov
 
 
