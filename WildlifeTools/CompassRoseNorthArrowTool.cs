@@ -1,65 +1,71 @@
 using ArcGIS.Core.Geometry;
-using ArcGIS.Desktop.Framework;
-using ArcGIS.Desktop.Framework.Contracts;
 using ArcGIS.Desktop.Framework.Dialogs;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
+using ArcGIS.Desktop.Internal.Layouts.Ribbon;
 using ArcGIS.Desktop.Layouts;
 using ArcGIS.Desktop.Mapping;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
-using System.Windows.Input;
 
 namespace WildlifeTools
 {
     /// <summary>
-    /// Cartography-group tool: single-click on the active layout to add a north arrow whose
-    /// marker symbol is the Jennessent Compass Rose, at a default size, tied to the layout's
-    /// map frame. The new arrow is selected and the tool hands off to Esri's layout Select
-    /// tool so it can be resized by its handles immediately. Enabled only in a layout view
-    /// via the built-in "esri_layouts_layoutPaneCondition" (see Config.daml).
+    /// Cartography-group tool: draw a box (or single-click for a default size) on the active
+    /// layout to add a north arrow whose marker symbol is the Jennessent Compass Rose, tied
+    /// to the layout's map frame (or unassociated, "Map frame: &lt;None&gt;", if the layout
+    /// has none yet). Enabled only in a layout view via "esri_layouts_layoutPaneCondition".
+    ///
+    /// Built on Esri's own element tool base,
+    /// ArcGIS.Desktop.Internal.Layouts.Ribbon.NewElementToolBase (see
+    /// <see cref="CompassRoseGraphicTool"/> for why — real sketch, works on frameless
+    /// layouts). Public but undocumented API: revalidate after each Pro upgrade.
     /// </summary>
-    internal class CompassRoseNorthArrowTool : MapTool
+    internal class CompassRoseNorthArrowTool : NewElementToolBase
     {
+        /// <summary>Which compass artwork this tool places; subclasses override to supply
+        /// a variant (see <see cref="CompassRoseDotNorthArrowTool"/>).</summary>
+        protected virtual CompassArt Art => CompassArt.Classic;
+
         public CompassRoseNorthArrowTool()
+            : base(SketchGeometryType.Rectangle, ServiceContracts.LayoutElementType.MarkerNorthArrow,
+                   CompassRose.InsertCursor, "Compass North Arrow")
         {
-            // Click-to-place (no draw-box sketch, which a MapTool cannot drive on a layout).
-            IsSketchTool = false;
         }
 
-        protected override void OnToolMouseDown(MapViewMouseButtonEventArgs e)
+        protected override async Task<bool> OnSketchFinished(
+            ArcGIS.Desktop.Internal.Mapping.View.ViewSketchCompleteEventArgs e)
         {
-            if (e.ChangedButton == MouseButton.Left)
-                e.Handled = true;                   // claim the click so the layout doesn't pan
-        }
-
-        protected override void OnToolMouseUp(MapViewMouseButtonEventArgs e)
-        {
-            if (e.ChangedButton == MouseButton.Left)
-                e.Handled = true;
-        }
-
-        protected override async Task HandleMouseUpAsync(MapViewMouseButtonEventArgs e)
-        {
-            LayoutView lv = LayoutView.Active;
-            if (lv?.Layout == null)
-                return;
-            System.Windows.Point clientPt = e.ClientPoint;
+            if (e != null && e.GeometryType != SketchType)
+                return false;                       // mirrors the base class's guard
+            string geomStr = e?.GeometryString;
             try
             {
                 await QueuedTask.Run(() =>
                 {
-                    // Identical points -> ClientBoxToPage returns a default-size box centered here.
-                    Envelope env = CompassRose.ClientBoxToPage(lv, clientPt, clientPt);
-                    Layout layout = lv.Layout;
-                    MapFrame mapFrame = lv.ActiveMapFrame
-                        ?? layout.GetElementsAsFlattenedList().OfType<MapFrame>().FirstOrDefault();
-                    if (mapFrame == null)
-                        throw new InvalidOperationException("The layout has no map frame to attach a north arrow to.");
+                    LayoutView lv = LayoutView.Active;
+                    if (lv?.Layout is not Layout layout)
+                        return;
+                    // Geometry XML (e.g. <PolygonN>), not JSON — see SketchGeometryFromString.
+                    Geometry sketch = CompassRose.SketchGeometryFromString(geomStr);
+                    Envelope box = CompassRose.DefaultIfTiny(sketch?.Extent, layout);
+                    Envelope env = CompassRose.FitAspect(box, Art.Aspect);
+
+                    // A null map frame is fine: the arrow is created unassociated and the
+                    // user can tie it to a map frame later via Element Properties.
+                    MapFrame mapFrame = null;
+                    try
+                    {
+                        mapFrame = lv.ActiveMapFrame
+                            ?? layout.GetElementsAsFlattenedList().OfType<MapFrame>().FirstOrDefault();
+                    }
+                    catch
+                    {
+                    }
                     MapPoint center = MapPointBuilderEx.CreateMapPoint(
                         (env.XMin + env.XMax) / 2.0, (env.YMin + env.YMax) / 2.0);
-                    var na = CompassRose.CreateNorthArrow(layout, mapFrame, center, env.Height);
-                    try { if (na != null) lv.SelectElement(na); } catch { }   // show resize handles
+                    var na = CompassRose.CreateNorthArrow(layout, mapFrame, center, env.Height, Art);
+                    try { if (na != null) lv.SelectElement(na); } catch { }
                 });
             }
             catch (Exception ex)
@@ -67,9 +73,10 @@ namespace WildlifeTools
                 MessageBox.Show("Unable to add the compass north arrow:" + Environment.NewLine + ex.Message,
                     "Wildlife Tools");
             }
-            // Hand off to Esri's layout Select tool so the user can resize the new arrow.
-            System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(() =>
-                FrameworkApplication.SetCurrentToolAsync("esri_layouts_selectByRectangleTool")));
+            // Same post-insert behavior as Esri's element tools (their FinishSketch does
+            // exactly this): switch to the element Select tool so the user can move/resize.
+            ArcGIS.Desktop.Framework.FrameworkApplication.CurrentTool = "esri_layouts_selectByRectangleTool";
+            return true;
         }
     }
 }

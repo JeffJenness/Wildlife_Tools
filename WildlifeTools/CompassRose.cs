@@ -4,39 +4,131 @@ using ArcGIS.Desktop.Core;
 using ArcGIS.Desktop.Layouts;
 using ArcGIS.Desktop.Mapping;
 using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace WildlifeTools
 {
     /// <summary>
-    /// Helpers for placing the Jennessent Compass Rose. The artwork ships as a single SVG
-    /// (Cartography\CompassRose.svg, deployed next to the assembly): the Graphics tool drops
-    /// it as one picture graphic element, and the Cartography tool uses it as the marker
-    /// symbol of a north arrow. Using the SVG (rather than dozens of individual graphics)
+    /// One compass artwork variant: which deployed SVG it uses, what its elements are named,
+    /// the relative focal point of the compass center within the SVG canvas (x from the left,
+    /// y from the BOTTOM, as fractions of the canvas), and the canvas aspect ratio
+    /// (width / height). The focal and aspect constants are printed by
+    /// DevScripts\fc_to_svg.py whenever it regenerates the SVGs — keep them in sync.
+    /// </summary>
+    internal sealed class CompassArt
+    {
+        public string FileName { get; init; }
+        public string GraphicName { get; init; }
+        public string NorthArrowName { get; init; }
+        public double FocalX { get; init; }
+        public double FocalY { get; init; }
+        public double Aspect { get; init; }
+
+        /// <summary>Full path to this variant's deployed SVG.</summary>
+        public string SvgPath => CompassRose.SvgPathFor(FileName);
+
+        /// <summary>The original compass rose: square canvas, focal at the center.</summary>
+        public static readonly CompassArt Classic = new()
+        {
+            FileName = "CompassRose.svg",
+            GraphicName = "Jennessent Compass Rose",
+            NorthArrowName = "Jennessent Compass North Arrow",
+            FocalX = 0.499987,
+            FocalY = 0.499987,
+            Aspect = 1.0,
+        };
+
+        /// <summary>Compass rose plus the black "north dot" above the north arrowhead:
+        /// taller canvas, so the focal (the compass center, feature-class origin 0,0)
+        /// sits below the canvas midpoint.</summary>
+        public static readonly CompassArt Dot = new()
+        {
+            FileName = "CompassRoseDot.svg",
+            GraphicName = "Jennessent Compass Rose with Dot",
+            NorthArrowName = "Jennessent Compass North with Dot",
+            FocalX = 0.499987,
+            FocalY = 0.448416,
+            Aspect = 0.896856,
+        };
+    }
+
+    /// <summary>
+    /// Helpers for placing the Jennessent Compass Rose. The artwork ships as SVGs
+    /// (Cartography\CompassRose*.svg, deployed next to the assembly): the Graphics tools drop
+    /// one as a picture graphic element, and the Cartography tools use one as the marker
+    /// symbol of a north arrow. Using an SVG (rather than dozens of individual graphics)
     /// keeps placement fast and the result a single, tidy element.
     /// </summary>
     internal static class CompassRose
     {
-        /// <summary>Full path to the deployed compass SVG.</summary>
-        public static string SvgPath
+        /// <summary>The insert-element crosshair cursor Esri's own element tools use.
+        /// MUST be a RELATIVE pack URI: NewElementToolBase.Init loads it via
+        /// new Uri(cursorUri, UriKind.Relative), so an absolute "pack://application..."
+        /// string throws in the tool constructor and Pro silently disables the button.</summary>
+        public const string InsertCursor =
+            "/ArcGIS.Desktop.Resources;component/Cursors/InsertRectangle.cur";
+
+        /// <summary>
+        /// Parses the geometry string delivered by NewElementToolBase's sketch-complete
+        /// event. The sketch pipeline serializes geometry as ArcObjects-style XML (root
+        /// element e.g. &lt;PolygonN&gt;) — NOT Esri JSON: Esri's own FinishSketch hands the
+        /// string verbatim to ElementFactoryInternal.CreateElement(..., string geometryXml,
+        /// ...). The public geometry builders expose matching FromXml methods; dispatch on
+        /// the root element name. Returns null for an empty string. Also accepts Esri JSON,
+        /// in case the pipeline ever changes.
+        /// </summary>
+        public static Geometry SketchGeometryFromString(string s)
         {
-            get
-            {
-                string dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-                return Path.Combine(dir, "Cartography", "CompassRose.svg");
-            }
+            if (string.IsNullOrWhiteSpace(s))
+                return null;
+            s = s.TrimStart();
+            if (s.StartsWith("{"))
+                return GeometryEngine.Instance.ImportFromJson(JsonImportFlags.JsonImportDefaults, s);
+            Match m = Regex.Match(s, @"<\s*(?:\w+:)?(\w+)");
+            string root = m.Success ? m.Groups[1].Value : string.Empty;
+            if (root.Contains("Envelope")) return EnvelopeBuilderEx.FromXml(s);
+            if (root.Contains("Multipoint")) return MultipointBuilderEx.FromXml(s);
+            if (root.Contains("Polygon")) return PolygonBuilderEx.FromXml(s);
+            if (root.Contains("Polyline")) return PolylineBuilderEx.FromXml(s);
+            if (root.Contains("Point")) return MapPointBuilderEx.FromXml(s);
+            if (root.Contains("GeometryBag")) return GeometryBagBuilderEx.FromXml(s);
+            return PolygonBuilderEx.FromXml(s);   // rectangle sketch is the expected case
+        }
+
+        /// <summary>Full path to a deployed compass SVG by file name.</summary>
+        public static string SvgPathFor(string fileName)
+        {
+            string dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            return Path.Combine(dir, "Cartography", fileName);
         }
 
         /// <summary>
-        /// A point symbol whose single layer is the compass SVG as a picture marker,
-        /// embedded as a data URI so it travels with the project.
+        /// Fraction of transparent margin added around the compass art (per side) in the
+        /// north-arrow marker. Zero = the element frame (and its selection handles) matches
+        /// the visible art exactly. (Was 0.15 when the frame needed to clear the art for
+        /// visible handles; per user preference the handles now sit at the exact extent.)
         /// </summary>
-        public static CIMPointSymbol CreatePictureMarkerSymbol(double sizePoints)
+        private const double FramePadding = 0.0;
+
+        /// <summary>
+        /// A point symbol whose single layer is a compass SVG as a picture marker,
+        /// embedded as a data URI so it travels with the project. A non-zero
+        /// <paramref name="padFraction"/> expands the SVG viewBox by that fraction per side,
+        /// adding transparent margin between the art and the marker's bounding box.
+        /// </summary>
+        public static CIMPointSymbol CreatePictureMarkerSymbol(
+            double sizePoints, double padFraction, string svgFileName)
         {
-            string dataUri = "data:image/svg+xml;base64," +
-                Convert.ToBase64String(File.ReadAllBytes(SvgPath));
+            byte[] svgBytes = File.ReadAllBytes(SvgPathFor(svgFileName));
+            if (padFraction > 0.0)
+                svgBytes = Encoding.UTF8.GetBytes(
+                    PadSvgViewBox(Encoding.UTF8.GetString(svgBytes), padFraction));
+            string dataUri = "data:image/svg+xml;base64," + Convert.ToBase64String(svgBytes);
             var marker = new CIMPictureMarker
             {
                 Enable = true,
@@ -46,36 +138,198 @@ namespace WildlifeTools
             return new CIMPointSymbol { SymbolLayers = new CIMSymbolLayer[] { marker } };
         }
 
-        /// <summary>
-        /// Adds a north arrow to the layout whose marker symbol is the compass rose, tied to
-        /// the given map frame and sized to <paramref name="sizePoints"/>. Must run on the MCT.
-        /// </summary>
-        public static NorthArrow CreateNorthArrow(Layout layout, MapFrame mapFrame, MapPoint location, double sizePageUnits)
+        /// <summary>Expands the SVG's viewBox by <paramref name="pad"/> (fraction of width /
+        /// height) on every side, so the art sits inside a transparent margin.</summary>
+        private static string PadSvgViewBox(string svg, double pad)
         {
-            // Seed a default north arrow from the ArcGIS 2D style, then swap in the compass marker.
-            var style = Project.Current.GetItems<StyleProjectItem>().FirstOrDefault(s => s.Name == "ArcGIS 2D")
-                        ?? Project.Current.GetItems<StyleProjectItem>().FirstOrDefault();
-            var naStyleItem = style?.SearchNorthArrows(string.Empty).FirstOrDefault();
+            Match m = Regex.Match(svg, "viewBox=\"([^\"]+)\"");
+            if (!m.Success)
+                return svg;
+            string[] parts = m.Groups[1].Value.Replace(",", " ")
+                .Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length != 4)
+                return svg;
+            double x = double.Parse(parts[0], CultureInfo.InvariantCulture);
+            double y = double.Parse(parts[1], CultureInfo.InvariantCulture);
+            double w = double.Parse(parts[2], CultureInfo.InvariantCulture);
+            double h = double.Parse(parts[3], CultureInfo.InvariantCulture);
+            double px = w * pad, py = h * pad;
+            string padded = string.Format(CultureInfo.InvariantCulture,
+                "viewBox=\"{0:0.###} {1:0.###} {2:0.###} {3:0.###}\"",
+                x - px, y - py, w + 2.0 * px, h + 2.0 * py);
+            return svg.Substring(0, m.Index) + padded + svg.Substring(m.Index + m.Length);
+        }
 
-            var naInfo = new NorthArrowInfo
+        /// <summary>
+        /// Adds a north arrow to the layout whose marker symbol is the given compass artwork,
+        /// sized so the visible art is <paramref name="sizePageUnits"/> tall.
+        /// <paramref name="mapFrame"/> may be null: the arrow is then created unassociated
+        /// ("Map frame: &lt;None&gt;") and the user can tie it to a map frame later via
+        /// Element Properties. Must run on the MCT.
+        /// </summary>
+        public static NorthArrow CreateNorthArrow(
+            Layout layout, MapFrame mapFrame, MapPoint location, double sizePageUnits, CompassArt art)
+        {
+            // The marker carries FramePadding of transparent margin per side so the selection
+            // handles land outside the visible art; grow the element so the art itself still
+            // renders at sizePageUnits. Marker Size is in POINTS, the box is in page units.
+            double paddedH = sizePageUnits * (1.0 + 2.0 * FramePadding);
+            double paddedW = paddedH * art.Aspect;
+            double sizePoints = paddedH * PointsPerPageUnit(layout);
+            CIMSymbolReference marker =
+                CreatePictureMarkerSymbol(sizePoints, FramePadding, art.FileName).MakeSymbolReference();
+
+            // Frame centered on the click, matching the padded marker's aspect: the visible
+            // art plus FramePadding of margin per side, which is where the handles belong.
+            Envelope frameEnv = EnvelopeBuilderEx.CreateEnvelope(
+                location.X - paddedW / 2.0, location.Y - paddedH / 2.0,
+                location.X + paddedW / 2.0, location.Y + paddedH / 2.0);
+
+            NorthArrow northArrow;
+            if (mapFrame != null)
             {
-                MapFrameName = mapFrame.Name,
-                NorthArrowStyleItem = naStyleItem
-            };
-            var northArrow = ElementFactory.Instance.CreateMapSurroundElement(
-                layout, location, naInfo, "Jennessent Compass North Arrow") as NorthArrow;
+                // Seed a default north arrow from the ArcGIS 2D style, then swap in the marker.
+                var style = Project.Current.GetItems<StyleProjectItem>().FirstOrDefault(s => s.Name == "ArcGIS 2D")
+                            ?? Project.Current.GetItems<StyleProjectItem>().FirstOrDefault();
+                var naStyleItem = style?.SearchNorthArrows(string.Empty).FirstOrDefault();
 
-            // The marker Size is in POINTS, but the drawn box height is in page units
-            // (usually inches); convert so the arrow fills the box instead of being tiny.
-            double sizePoints = sizePageUnits * PointsPerPageUnit(layout);
+                var naInfo = new NorthArrowInfo
+                {
+                    MapFrameName = mapFrame.Name,
+                    NorthArrowStyleItem = naStyleItem
+                };
+                northArrow = ElementFactory.Instance.CreateMapSurroundElement(
+                    layout, location, naInfo, art.NorthArrowName) as NorthArrow;
+            }
+            else
+            {
+                // No map frame on the layout: NorthArrowInfo needs one, so build the element
+                // directly from CIM with no map-frame association.
+                northArrow = CreateUnassociatedNorthArrow(layout, marker, frameEnv, art.NorthArrowName);
+            }
+
+            // Swap in the compass marker AND pin the frame in one definition update. Do NOT
+            // size the frame with SetHeight/SetWidth: the seeded style arrow is tall-and-
+            // narrow with a locked aspect ratio, so those calls produced a frame ~3x taller
+            // than the marker (handles far above/below the rose).
             if (northArrow?.GetDefinition() is CIMMarkerNorthArrow cim)
             {
-                cim.PointSymbol = CreatePictureMarkerSymbol(sizePoints).MakeSymbolReference();
+                cim.PointSymbol = marker;
+                cim.Frame = PolygonBuilderEx.CreatePolygon(frameEnv);
+                // Focal point (compass center) for future tools that place graphics relative
+                // to a designated point on this element. The art's focal is a fraction of the
+                // raw SVG canvas; re-express it within the padded frame.
+                cim.CustomProperties = FocalProperties(cim.CustomProperties,
+                    PaddedFocal(art.FocalX), PaddedFocal(art.FocalY));
                 northArrow.SetDefinition(cim);
             }
-            northArrow?.SetHeight(sizePageUnits);
             return northArrow;
         }
+
+        /// <summary>A focal fraction of the raw SVG canvas, re-expressed as a fraction of the
+        /// canvas padded by <see cref="FramePadding"/> per side.</summary>
+        private static double PaddedFocal(double f) =>
+            (f + FramePadding) / (1.0 + 2.0 * FramePadding);
+
+        /// <summary>
+        /// Creates a marker north arrow with no map-frame association ("Map frame: &lt;None&gt;"),
+        /// for layouts that have no map frame yet, by constructing the CIM element directly
+        /// with the given frame. Must run on the MCT.
+        /// </summary>
+        private static NorthArrow CreateUnassociatedNorthArrow(
+            Layout layout, CIMSymbolReference marker, Envelope frameEnv, string name)
+        {
+            var cim = new CIMMarkerNorthArrow
+            {
+                Name = name,
+                Visible = true,
+                MapFrame = "",                              // not tied to any map frame
+                PointSymbol = marker,
+                Frame = PolygonBuilderEx.CreatePolygon(frameEnv)
+            };
+            return ElementFactory.Instance.CreateElement(layout, cim) as NorthArrow;
+        }
+
+        // ------------------------------------------------------------------
+        //  Focal point (CustomProperties) — a designated point on the element,
+        //  stored as fractions of its bounding box, for future tools that draw
+        //  other graphics positioned relative to this element.
+        // ------------------------------------------------------------------
+
+        /// <summary>CustomProperties key for the focal point's relative X (0 = left edge,
+        /// 1 = right edge of the element's box).</summary>
+        public const string FocalXKey = "Jennessent_FocalX";
+
+        /// <summary>CustomProperties key for the focal point's relative Y (0 = bottom edge,
+        /// 1 = top edge of the element's box).</summary>
+        public const string FocalYKey = "Jennessent_FocalY";
+
+        /// <summary>The element's CustomProperties with the focal-point entries replaced.</summary>
+        private static CIMStringMap[] FocalProperties(CIMStringMap[] existing, double fx, double fy)
+        {
+            var props = (existing ?? Array.Empty<CIMStringMap>())
+                .Where(p => p.Key != FocalXKey && p.Key != FocalYKey)
+                .ToList();
+            props.Add(new CIMStringMap { Key = FocalXKey, Value = fx.ToString(CultureInfo.InvariantCulture) });
+            props.Add(new CIMStringMap { Key = FocalYKey, Value = fy.ToString(CultureInfo.InvariantCulture) });
+            return props.ToArray();
+        }
+
+        /// <summary>
+        /// Records a focal point on the element in its CustomProperties, as fractions of the
+        /// element's bounding box: (0,0) = lower-left corner, (1,1) = upper-right, (0.5,0.5)
+        /// = center. Persists in the project and stays valid when the element is moved or
+        /// resized. Read back with <see cref="TryGetFocalPoint"/>. Must run on the MCT.
+        /// </summary>
+        public static void StampFocalPoint(Element element, double fx = 0.5, double fy = 0.5)
+        {
+            CIMElement cim = element?.GetDefinition();
+            if (cim == null)
+                return;
+            cim.CustomProperties = FocalProperties(cim.CustomProperties, fx, fy);
+            element.SetDefinition(cim);
+        }
+
+        /// <summary>
+        /// Reads the focal point stamped by <see cref="StampFocalPoint"/> and converts it to
+        /// page (or map) coordinates from the element's current position and size. Anchor-
+        /// aware; element rotation is not applied (a (0.5, 0.5) center focal is unaffected by
+        /// rotation anyway). Returns false if the element carries no focal point. MCT.
+        /// </summary>
+        public static bool TryGetFocalPoint(Element element, out Coordinate2D focal)
+        {
+            focal = new Coordinate2D(0.0, 0.0);
+            CIMStringMap[] props = element?.GetDefinition()?.CustomProperties;
+            string sx = props?.FirstOrDefault(p => p.Key == FocalXKey)?.Value;
+            string sy = props?.FirstOrDefault(p => p.Key == FocalYKey)?.Value;
+            if (sx == null || sy == null)
+                return false;
+            if (!double.TryParse(sx, NumberStyles.Float, CultureInfo.InvariantCulture, out double fx) ||
+                !double.TryParse(sy, NumberStyles.Float, CultureInfo.InvariantCulture, out double fy))
+                return false;
+
+            double w = element.GetWidth(), h = element.GetHeight();
+            (double axf, double ayf) = AnchorFractions(element.GetAnchor());
+            double xmin = element.GetX() - axf * w;      // GetX/GetY report the anchor point
+            double ymin = element.GetY() - ayf * h;
+            focal = new Coordinate2D(xmin + fx * w, ymin + fy * h);
+            return true;
+        }
+
+        /// <summary>Fractions of width/height from the box's lower-left corner to its anchor.</summary>
+        private static (double, double) AnchorFractions(Anchor anchor) => anchor switch
+        {
+            Anchor.BottomLeftCorner => (0.0, 0.0),
+            Anchor.BottomMidPoint => (0.5, 0.0),
+            Anchor.BottomRightCorner => (1.0, 0.0),
+            Anchor.LeftMidPoint => (0.0, 0.5),
+            Anchor.CenterPoint => (0.5, 0.5),
+            Anchor.RightMidPoint => (1.0, 0.5),
+            Anchor.TopLeftCorner => (0.0, 1.0),
+            Anchor.TopMidPoint => (0.5, 1.0),
+            Anchor.TopRightCorner => (1.0, 1.0),
+            _ => (0.0, 0.0),
+        };
 
         /// <summary>Points (1/72 inch) per layout page unit, for sizing a point symbol to a
         /// page-unit box. Falls back to 72 (inches) if the page units can't be read.</summary>
@@ -93,37 +347,39 @@ namespace WildlifeTools
             return 72.0;
         }
 
-        /// <summary>Square envelope centered in <paramref name="env"/> (keeps the compass round).</summary>
-        public static Envelope Square(Envelope env)
+        /// <summary>
+        /// The drawn sketch box, or — for a bare click / tiny drag — a default-size box
+        /// (longest page edge / 15) centered on it (page center if there was no box at
+        /// all). Mirrors how Esri's element tools treat a single click. Must run on the MCT.
+        /// </summary>
+        public static Envelope DefaultIfTiny(Envelope box, Layout layout)
         {
-            double side = Math.Min(env.Width, env.Height);
+            CIMPage page = layout.GetPage();
+            double longSide = Math.Max(page.Width, page.Height);
+            double cx = box != null ? (box.XMin + box.XMax) / 2.0 : page.Width / 2.0;
+            double cy = box != null ? (box.YMin + box.YMax) / 2.0 : page.Height / 2.0;
+            if (box == null || box.Width < longSide * 0.02 || box.Height < longSide * 0.02)
+            {
+                double def = longSide / 15.0;
+                return EnvelopeBuilderEx.CreateEnvelope(
+                    cx - def / 2.0, cy - def / 2.0, cx + def / 2.0, cy + def / 2.0);
+            }
+            return box;
+        }
+
+        /// <summary>Largest box of the given aspect (width/height) centered in
+        /// <paramref name="env"/> — keeps the compass artwork undistorted.</summary>
+        public static Envelope FitAspect(Envelope env, double aspect)
+        {
+            double w = env.Width, h = env.Height;
+            if (w / h > aspect)
+                w = h * aspect;
+            else
+                h = w / aspect;
             double cx = (env.XMin + env.XMax) / 2.0;
             double cy = (env.YMin + env.YMax) / 2.0;
             return EnvelopeBuilderEx.CreateEnvelope(
-                cx - side / 2.0, cy - side / 2.0, cx + side / 2.0, cy + side / 2.0, env.SpatialReference);
-        }
-
-        /// <summary>
-        /// Builds a page-coordinate envelope from two client (pixel) points of a manual drag
-        /// on a layout. A click or tiny drag falls back to a sensible default size centered on
-        /// the point (like Esri's own element tools). Must run on the MCT.
-        /// </summary>
-        public static Envelope ClientBoxToPage(LayoutView layoutView, System.Windows.Point p1, System.Windows.Point p2)
-        {
-            Coordinate2D a = layoutView.ClientToPage(p1);
-            Coordinate2D b = layoutView.ClientToPage(p2);
-            double xmin = Math.Min(a.X, b.X), xmax = Math.Max(a.X, b.X);
-            double ymin = Math.Min(a.Y, b.Y), ymax = Math.Max(a.Y, b.Y);
-
-            CIMPage page = layoutView.Layout.GetPage();
-            double longSide = Math.Max(page.Width, page.Height);
-            if (xmax - xmin < longSide * 0.02 || ymax - ymin < longSide * 0.02)
-            {
-                double def = longSide / 15.0;           // default size for a click
-                xmin = a.X - def / 2.0; xmax = a.X + def / 2.0;
-                ymin = a.Y - def / 2.0; ymax = a.Y + def / 2.0;
-            }
-            return EnvelopeBuilderEx.CreateEnvelope(xmin, ymin, xmax, ymax);
+                cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0, env.SpatialReference);
         }
     }
 }

@@ -88,6 +88,10 @@
     <Content Include="Cartography\CompassRose.svg">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <None Remove="Cartography\CompassRoseDot.svg" />
+    <Content Include="Cartography\CompassRoseDot.svg">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <!-- Deploy the Jenness Enterprises Python toolbox (the .pyt, helper modules,
        metadata sidecars, and layer templates) next to the add-in assembly so the

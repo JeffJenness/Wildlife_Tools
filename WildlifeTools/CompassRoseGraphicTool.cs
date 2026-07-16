@@ -1,92 +1,112 @@
 using ArcGIS.Core.Geometry;
-using ArcGIS.Desktop.Framework;
-using ArcGIS.Desktop.Framework.Contracts;
 using ArcGIS.Desktop.Framework.Dialogs;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
+using ArcGIS.Desktop.Internal.Layouts.Ribbon;
 using ArcGIS.Desktop.Layouts;
 using ArcGIS.Desktop.Mapping;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
-using System.Windows.Input;
 
 namespace WildlifeTools
 {
     /// <summary>
     /// Graphics-group tool for placing the Jennessent Compass Rose SVG as a single picture
-    /// graphic element.
+    /// graphic element on a layout or a map's graphics layer.
     ///
-    /// * On a MAP: the built-in rectangle sketch works, so drag a box and the compass fills
-    ///   it (kept square); then the tool returns to Explore.
-    /// * On a LAYOUT: a MapTool's sketch cannot engage (and its cursor can't be controlled),
-    ///   so it is a single-click placement at a default size, after which it hands off to
-    ///   Esri's layout Select tool with the new element selected, ready to resize by handles.
+    /// Built on Esri's own element tool base,
+    /// ArcGIS.Desktop.Internal.Layouts.Ribbon.NewElementToolBase — the same class behind
+    /// Insert &gt; Rectangle etc. Unlike a MapTool, it drives the REAL element sketch:
+    /// live rubber-band box, proper insert cursor, single-click placement, and it works on
+    /// layouts with no map frame (where a MapTool receives no mouse events at all).
+    /// NOTE: the base class is public but lives in an Internal namespace — undocumented and
+    /// unsupported, so revalidate after each ArcGIS Pro upgrade.
     /// </summary>
-    internal class CompassRoseGraphicTool : MapTool
+    internal class CompassRoseGraphicTool : NewElementToolBase
     {
+        /// <summary>Which compass artwork this tool places; subclasses override to supply
+        /// a variant (see <see cref="CompassRoseDotGraphicTool"/>).</summary>
+        protected virtual CompassArt Art => CompassArt.Classic;
+
         public CompassRoseGraphicTool()
+            : base(SketchGeometryType.Rectangle, ServiceContracts.LayoutElementType.Picture,
+                   CompassRose.InsertCursor, "Compass Rose")
         {
-            IsSketchTool = true;
-            SketchType = SketchGeometryType.Rectangle;
-            SketchOutputMode = SketchOutputMode.Map;
         }
 
-        protected override Task OnToolActivateAsync(bool hasMapViewChanged)
+        protected override async Task OnActivateImpl(bool hasViewChanged)
         {
-            // Sketch (draw-a-box) only works on a map; on a layout use click-to-place, and
-            // turn the sketch off so no misleading draw-box cursor appears there.
-            IsSketchTool = LayoutView.Active == null;
-            return base.OnToolActivateAsync(hasMapViewChanged);
-        }
-
-        // ---- MAP path: built-in rectangle sketch ----
-        protected override Task<bool> OnSketchCompleteAsync(Geometry geometry)
-        {
-            if (LayoutView.Active != null)
-                return Task.FromResult(false);      // layouts handled by the mouse overrides
-            return QueuedTask.Run(() =>
+            // On a map view the element sketch targets the map's graphics layer; make sure
+            // one exists (creating it if needed) so the tool works out of the box.
+            if (LayoutView.Active == null && MapView.Active?.Map is Map map)
             {
-                MapView mv = MapView.Active;
-                Envelope env = geometry?.Extent;
-                if (mv?.Map == null || env == null || env.Width <= 0 || env.Height <= 0)
-                    return false;
-                GraphicsLayer gl = mv.Map.GetLayersAsFlattenedList().OfType<GraphicsLayer>().FirstOrDefault()
-                    ?? LayerFactory.Instance.CreateLayer<GraphicsLayer>(new GraphicsLayerCreationParams(), mv.Map);
-                ElementFactory.Instance.CreatePictureGraphicElement(
-                    gl, CompassRose.Square(env), CompassRose.SvgPath, "Jennessent Compass Rose");
-                DeferSetTool("esri_mapping_exploreTool");
-                return true;
-            });
+                try
+                {
+                    await QueuedTask.Run(() =>
+                    {
+                        if (map.TargetGraphicsLayer == null)
+                        {
+                            GraphicsLayer gl =
+                                map.GetLayersAsFlattenedList().OfType<GraphicsLayer>().FirstOrDefault()
+                                ?? LayerFactory.Instance.CreateLayer<GraphicsLayer>(
+                                       new GraphicsLayerCreationParams(), map);
+                            map.TargetGraphicsLayer = gl;
+                        }
+                    });
+                }
+                catch
+                {
+                }
+            }
+            await base.OnActivateImpl(hasViewChanged);
         }
 
-        // ---- LAYOUT path: single-click placement at a default size ----
-        protected override void OnToolMouseDown(MapViewMouseButtonEventArgs e)
+        protected override async Task<bool> OnSketchFinished(
+            ArcGIS.Desktop.Internal.Mapping.View.ViewSketchCompleteEventArgs e)
         {
-            if (LayoutView.Active != null && e.ChangedButton == MouseButton.Left)
-                e.Handled = true;                   // claim the click so the layout doesn't pan
-        }
-
-        protected override void OnToolMouseUp(MapViewMouseButtonEventArgs e)
-        {
-            if (LayoutView.Active != null && e.ChangedButton == MouseButton.Left)
-                e.Handled = true;
-        }
-
-        protected override async Task HandleMouseUpAsync(MapViewMouseButtonEventArgs e)
-        {
-            LayoutView lv = LayoutView.Active;
-            if (lv?.Layout == null)
-                return;
-            System.Windows.Point clientPt = e.ClientPoint;
+            if (e != null && e.GeometryType != SketchType)
+                return false;                       // mirrors the base class's guard
+            string geomStr = e?.GeometryString;
             try
             {
                 await QueuedTask.Run(() =>
                 {
-                    // Identical points -> ClientBoxToPage returns a default-size box centered here.
-                    Envelope env = CompassRose.ClientBoxToPage(lv, clientPt, clientPt);
-                    var el = ElementFactory.Instance.CreatePictureGraphicElement(
-                        lv.Layout, CompassRose.Square(env), CompassRose.SvgPath, "Jennessent Compass Rose");
-                    try { lv.SelectElement(el); } catch { }   // show resize handles right away
+                    // Geometry XML (e.g. <PolygonN>), not JSON — see SketchGeometryFromString.
+                    Geometry sketch = CompassRose.SketchGeometryFromString(geomStr);
+                    Envelope box = sketch?.Extent;
+
+                    LayoutView lv = LayoutView.Active;
+                    if (lv?.Layout is Layout layout)
+                    {
+                        box = CompassRose.DefaultIfTiny(box, layout);
+                        var el = ElementFactory.Instance.CreatePictureGraphicElement(
+                            layout, CompassRose.FitAspect(box, Art.Aspect), Art.SvgPath, Art.GraphicName);
+                        // Compass center, for relative-placement tools.
+                        CompassRose.StampFocalPoint(el, Art.FocalX, Art.FocalY);
+                        try { lv.SelectElement(el); } catch { }
+                    }
+                    else if (MapView.Active?.Map is Map map)
+                    {
+                        GraphicsLayer gl = map.TargetGraphicsLayer
+                            ?? map.GetLayersAsFlattenedList().OfType<GraphicsLayer>().FirstOrDefault();
+                        if (gl == null)
+                            return;
+                        // A bare click gives a degenerate box; default to view extent / 15.
+                        Envelope ve = MapView.Active.Extent;
+                        double longSide = Math.Max(ve.Width, ve.Height);
+                        if (box == null || box.Width < longSide * 0.005 || box.Height < longSide * 0.005)
+                        {
+                            double def = longSide / 15.0;
+                            double cx = box != null ? (box.XMin + box.XMax) / 2.0 : (ve.XMin + ve.XMax) / 2.0;
+                            double cy = box != null ? (box.YMin + box.YMax) / 2.0 : (ve.YMin + ve.YMax) / 2.0;
+                            box = EnvelopeBuilderEx.CreateEnvelope(
+                                cx - def / 2.0, cy - def / 2.0, cx + def / 2.0, cy + def / 2.0,
+                                ve.SpatialReference);
+                        }
+                        var el = ElementFactory.Instance.CreatePictureGraphicElement(
+                            gl, CompassRose.FitAspect(box, Art.Aspect), Art.SvgPath, Art.GraphicName);
+                        CompassRose.StampFocalPoint(el, Art.FocalX, Art.FocalY);
+                    }
                 });
             }
             catch (Exception ex)
@@ -94,16 +114,10 @@ namespace WildlifeTools
                 MessageBox.Show("Unable to add the compass rose graphic:" + Environment.NewLine + ex.Message,
                     "Wildlife Tools");
             }
-            // Hand off to Esri's layout Select tool so the user can resize the new element.
-            DeferSetTool("esri_layouts_selectByRectangleTool");
-        }
-
-        // Switch tools on the dispatcher; awaiting a tool switch inside a tool handler
-        // deadlocks the UI thread.
-        private static void DeferSetTool(string toolId)
-        {
-            System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(() =>
-                FrameworkApplication.SetCurrentToolAsync(toolId)));
+            // Same post-insert behavior as Esri's element tools (their FinishSketch does
+            // exactly this): switch to the element Select tool so the user can move/resize.
+            ArcGIS.Desktop.Framework.FrameworkApplication.CurrentTool = "esri_layouts_selectByRectangleTool";
+            return true;
         }
     }
 }

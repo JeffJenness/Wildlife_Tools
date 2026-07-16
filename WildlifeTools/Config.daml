@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.10.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.11.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -46,9 +46,11 @@
         </group>
         <group id="WildlifeTools_GroupGraphics" caption="Graphics" appearsOnAddInTab="false">
           <tool refID="WildlifeTools_CompassRoseGraphic" size="large" />
+          <tool refID="WildlifeTools_CompassRoseDotGraphic" size="large" />
         </group>
         <group id="WildlifeTools_GroupCartography" caption="Cartography" appearsOnAddInTab="false">
           <tool refID="WildlifeTools_CompassRoseNorthArrow" size="large" />
+          <tool refID="WildlifeTools_CompassRoseDotNorthArrow" size="large" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -174,7 +176,18 @@
                 largeImage="Images\AddInDesktop32.png"
                 keytip="CG">
           <tooltip heading="Compass Rose Graphic">
-            Draw a rectangle on the active map or layout to add the Jennessent Compass Rose as a group of editable vector graphics filling that box.<disabledText />
+            Adds the Jennessent Compass Rose to the active map or layout as a picture graphic. On a map, draw a box to size it; on a layout, click to place it at a default size and then resize it with the selection handles.<disabledText />
+          </tooltip>
+        </tool>
+        <tool id="WildlifeTools_CompassRoseDotGraphic"
+                caption="Compass Rose with Dot"
+                className="CompassRoseDotGraphicTool"
+                loadOnClick="true"
+                smallImage="Images\AddInDesktop16.png"
+                largeImage="Images\AddInDesktop32.png"
+                keytip="CD">
+          <tooltip heading="Compass Rose with Dot">
+            Adds the Jennessent Compass Rose with the north dot to the active map or layout as a picture graphic. On a map, draw a box to size it; on a layout, click to place it at a default size and then resize it with the selection handles.<disabledText />
           </tooltip>
         </tool>
         <tool id="WildlifeTools_CompassRoseNorthArrow"
@@ -186,7 +199,19 @@
                 condition="esri_layouts_layoutPaneCondition"
                 keytip="CN">
           <tooltip heading="Compass Rose North Arrow">
-            Draw a rectangle on the active layout to add a north arrow, symbolized as the Jennessent Compass Rose and tied to the layout's map frame. Available only in a layout view.<disabledText />
+            Click the active layout to add a north arrow symbolized as the Jennessent Compass Rose, tied to the layout's map frame (or unassociated if the layout has no map frame yet), then resize it with the selection handles. Available only in a layout view.<disabledText />
+          </tooltip>
+        </tool>
+        <tool id="WildlifeTools_CompassRoseDotNorthArrow"
+                caption="Compass North with Dot"
+                className="CompassRoseDotNorthArrowTool"
+                loadOnClick="true"
+                smallImage="Images\AddInDesktop16.png"
+                largeImage="Images\AddInDesktop32.png"
+                condition="esri_layouts_layoutPaneCondition"
+                keytip="CO">
+          <tooltip heading="Compass North with Dot">
+            Click the active layout to add a north arrow symbolized as the Jennessent Compass Rose with the north dot, tied to the layout's map frame (or unassociated if the layout has no map frame yet), then resize it with the selection handles. Available only in a layout view.<disabledText />
           </tooltip>
         </tool>
         <button id="WildlifeTools_ThoughtForTheDay"
