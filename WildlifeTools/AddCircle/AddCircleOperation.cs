@@ -202,25 +202,34 @@ namespace WildlifeTools
             GraphicElement circle = ElementFactory.Instance.CreatePredefinedShapeGraphicElement(
                 ctx.Container, PredefinedShape.Circle, circleEnv, polySym, circleName, false, null);
 
-            // New group: the circle plus the selected element(s) / their whole groups.
-            var toGroup = new List<Element>(ctx.TopLevelEntries) { circle };
-            string groupName = string.IsNullOrWhiteSpace(opt.Name)
-                ? "Graphic Circle Group"
-                : opt.Name.Trim() + " Group";
+            return GroupBehind(ctx, circle, circleName, "Graphic Circle Group");
+        }
+
+        /// <summary>
+        /// Groups the freshly created background element with the selection's top-level
+        /// entries into a new group, and sends the background to the bottom of the
+        /// group's draw order. Shared by the Circle and Rectangle Background tools. MCT.
+        /// </summary>
+        internal static GroupElement GroupBehind(AddCircleContext ctx, GraphicElement background,
+            string backgroundName, string defaultGroupName)
+        {
+            var toGroup = new List<Element>(ctx.TopLevelEntries) { background };
+            string groupName = string.IsNullOrWhiteSpace(backgroundName)
+                ? defaultGroupName
+                : backgroundName.Trim() + " Group";
             GroupElement group = ElementFactory.Instance.CreateGroupElement(
                 ctx.Container, toGroup, groupName, true, null);
 
-            // Draw the circle underneath everything else in the group (bottom of the
-            // group's TOC = back of the draw order).
+            // Bottom of the group's TOC = back of the draw order.
             try
             {
-                circle.SetTOCPositionAbsolute(group, false);
+                background.SetTOCPositionAbsolute(group, false);
             }
             catch
             {
-                // Fall back to locating the circle within the group by name.
-                if (circleName != null &&
-                    group.GetElementsAsFlattenedList().FirstOrDefault(e => e.Name == circleName) is Element c)
+                // Fall back to locating the background within the group by name.
+                if (backgroundName != null &&
+                    group.GetElementsAsFlattenedList().FirstOrDefault(e => e.Name == backgroundName) is Element c)
                     c.SetTOCPositionAbsolute(group, false);
             }
 
@@ -250,7 +259,7 @@ namespace WildlifeTools
         //  each layer color's alpha (alpha 0..100, opaque = 100).
         // ------------------------------------------------------------------
 
-        private static void ApplyTransparency(CIMPolygonSymbol sym, double fillTranspPct, double outlineTranspPct)
+        internal static void ApplyTransparency(CIMPolygonSymbol sym, double fillTranspPct, double outlineTranspPct)
         {
             if (sym?.SymbolLayers == null)
                 return;

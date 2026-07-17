@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.14.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.15.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -47,6 +47,7 @@
         <group id="WildlifeTools_GroupGraphics" caption="Graphics" appearsOnAddInTab="false">
           <toolPalette refID="WildlifeTools_AddGraphicsPalette" size="large" />
           <button refID="WildlifeTools_AddGraphicCircle" size="large" />
+          <button refID="WildlifeTools_RectangleBackground" size="large" />
         </group>
         <group id="WildlifeTools_GroupCartography" caption="Cartography" appearsOnAddInTab="false">
           <toolPalette refID="WildlifeTools_NorthArrowsPalette" size="large" />
@@ -268,6 +269,17 @@
                 keytip="CB">
           <tooltip heading="Circle Background">
             Draws a circle graphic behind the selected element or elements (graphics or layout map elements), then groups the circle and the selection into a new group with the circle underneath. Opens a dialog to set the name, polygon symbology, fill and outline transparency, and radius. Works on selected elements, not on features in a dataset.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_RectangleBackground"
+                caption="Rectangle Background"
+                className="RectangleBackgroundButton"
+                loadOnClick="true"
+                smallImage="Images\RectangleBackground_16.png"
+                largeImage="Images\RectangleBackground_32.png"
+                keytip="RB">
+          <tooltip heading="Rectangle Background">
+            Draws a rectangle graphic (with optional rounded corners) behind the selected element or elements (graphics or layout map elements), then groups the rectangle and the selection into a new group with the rectangle underneath. Opens a dialog to set the name, polygon symbology, fill and outline transparency, horizontal and vertical extent, and corner rounding. Works on selected elements, not on features in a dataset.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_ThoughtForTheDay"
