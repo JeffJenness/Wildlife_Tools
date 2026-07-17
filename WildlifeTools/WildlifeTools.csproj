@@ -63,6 +63,22 @@
     <Content Include="Images\KD_Probability_Contours_32.png" />
     <Content Include="DarkImages\Normal_Curve_DarkGreen_16.png" />
     <Content Include="DarkImages\KD_Probability_Contours_32.png" />
+    <Content Include="Images\CompassRose_16.png" />
+    <Content Include="Images\CompassRose_32.png" />
+    <Content Include="DarkImages\CompassRose_16.png" />
+    <Content Include="DarkImages\CompassRose_32.png" />
+    <Content Include="Images\CompassRoseDot_16.png" />
+    <Content Include="Images\CompassRoseDot_32.png" />
+    <Content Include="DarkImages\CompassRoseDot_16.png" />
+    <Content Include="DarkImages\CompassRoseDot_32.png" />
+    <Content Include="Images\Compass2_16.png" />
+    <Content Include="Images\Compass2_32.png" />
+    <Content Include="DarkImages\Compass2_16.png" />
+    <Content Include="DarkImages\Compass2_32.png" />
+    <Content Include="Images\Compass2Dot_16.png" />
+    <Content Include="Images\Compass2Dot_32.png" />
+    <Content Include="DarkImages\Compass2Dot_16.png" />
+    <Content Include="DarkImages\Compass2Dot_32.png" />
     <!-- The Thought-for-the-Day card background is loaded from disk by path at run
          time, so it must sit next to the assembly (copied to the output directory). -->
     <Content Include="Images\quote_bg.png">
@@ -90,6 +106,14 @@
     </Content>
     <None Remove="Cartography\CompassRoseDot.svg" />
     <Content Include="Cartography\CompassRoseDot.svg">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <None Remove="Cartography\Compass2.svg" />
+    <Content Include="Cartography\Compass2.svg">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <None Remove="Cartography\Compass2Dot.svg" />
+    <Content Include="Cartography\Compass2Dot.svg">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

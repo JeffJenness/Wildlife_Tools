@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.11.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.13.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -45,12 +45,10 @@
           <button refID="WildlifeTools_MahalanobisChiSquare" size="large" />
         </group>
         <group id="WildlifeTools_GroupGraphics" caption="Graphics" appearsOnAddInTab="false">
-          <tool refID="WildlifeTools_CompassRoseGraphic" size="large" />
-          <tool refID="WildlifeTools_CompassRoseDotGraphic" size="large" />
+          <toolPalette refID="WildlifeTools_AddGraphicsPalette" size="large" />
         </group>
         <group id="WildlifeTools_GroupCartography" caption="Cartography" appearsOnAddInTab="false">
-          <tool refID="WildlifeTools_CompassRoseNorthArrow" size="large" />
-          <tool refID="WildlifeTools_CompassRoseDotNorthArrow" size="large" />
+          <toolPalette refID="WildlifeTools_NorthArrowsPalette" size="large" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -169,49 +167,95 @@
           </tooltip>
         </button>
         <tool id="WildlifeTools_CompassRoseGraphic"
-                caption="Compass Rose Graphic"
+                caption="Compass graphic 1"
                 className="CompassRoseGraphicTool"
                 loadOnClick="true"
-                smallImage="Images\AddInDesktop16.png"
-                largeImage="Images\AddInDesktop32.png"
+                smallImage="Images\CompassRose_16.png"
+                largeImage="Images\CompassRose_32.png"
                 keytip="CG">
-          <tooltip heading="Compass Rose Graphic">
+          <tooltip heading="Compass graphic 1">
             Adds the Jennessent Compass Rose to the active map or layout as a picture graphic. On a map, draw a box to size it; on a layout, click to place it at a default size and then resize it with the selection handles.<disabledText />
           </tooltip>
         </tool>
         <tool id="WildlifeTools_CompassRoseDotGraphic"
-                caption="Compass Rose with Dot"
+                caption="Compass graphic 1 - dot"
                 className="CompassRoseDotGraphicTool"
                 loadOnClick="true"
-                smallImage="Images\AddInDesktop16.png"
-                largeImage="Images\AddInDesktop32.png"
+                smallImage="Images\CompassRoseDot_16.png"
+                largeImage="Images\CompassRoseDot_32.png"
                 keytip="CD">
-          <tooltip heading="Compass Rose with Dot">
+          <tooltip heading="Compass graphic 1 - dot">
             Adds the Jennessent Compass Rose with the north dot to the active map or layout as a picture graphic. On a map, draw a box to size it; on a layout, click to place it at a default size and then resize it with the selection handles.<disabledText />
           </tooltip>
         </tool>
+        <tool id="WildlifeTools_Compass2Graphic"
+                caption="Compass graphic 2"
+                className="Compass2GraphicTool"
+                loadOnClick="true"
+                smallImage="Images\Compass2_16.png"
+                largeImage="Images\Compass2_32.png"
+                keytip="C2">
+          <tooltip heading="Compass graphic 2">
+            Adds the Compass_2d design (black cardinal star, gray intercardinal star, twin rings) to the active map or layout as a picture graphic. On a map, draw a box to size it; on a layout, click to place it at a default size and then resize it with the selection handles.<disabledText />
+          </tooltip>
+        </tool>
+        <tool id="WildlifeTools_Compass2DotGraphic"
+                caption="Compass graphic 2 - dot"
+                className="Compass2DotGraphicTool"
+                loadOnClick="true"
+                smallImage="Images\Compass2Dot_16.png"
+                largeImage="Images\Compass2Dot_32.png"
+                keytip="C4">
+          <tooltip heading="Compass graphic 2 - dot">
+            Adds the Compass_2d design with the gradient spearhead above the north point to the active map or layout as a picture graphic. On a map, draw a box to size it; on a layout, click to place it at a default size and then resize it with the selection handles.<disabledText />
+          </tooltip>
+        </tool>
         <tool id="WildlifeTools_CompassRoseNorthArrow"
-                caption="Compass North Arrow"
+                caption="North arrow 1"
                 className="CompassRoseNorthArrowTool"
                 loadOnClick="true"
-                smallImage="Images\AddInDesktop16.png"
-                largeImage="Images\AddInDesktop32.png"
+                smallImage="Images\CompassRose_16.png"
+                largeImage="Images\CompassRose_32.png"
                 condition="esri_layouts_layoutPaneCondition"
                 keytip="CN">
-          <tooltip heading="Compass Rose North Arrow">
+          <tooltip heading="North arrow 1">
             Click the active layout to add a north arrow symbolized as the Jennessent Compass Rose, tied to the layout's map frame (or unassociated if the layout has no map frame yet), then resize it with the selection handles. Available only in a layout view.<disabledText />
           </tooltip>
         </tool>
         <tool id="WildlifeTools_CompassRoseDotNorthArrow"
-                caption="Compass North with Dot"
+                caption="North arrow 1 - dot"
                 className="CompassRoseDotNorthArrowTool"
                 loadOnClick="true"
-                smallImage="Images\AddInDesktop16.png"
-                largeImage="Images\AddInDesktop32.png"
+                smallImage="Images\CompassRoseDot_16.png"
+                largeImage="Images\CompassRoseDot_32.png"
                 condition="esri_layouts_layoutPaneCondition"
                 keytip="CO">
-          <tooltip heading="Compass North with Dot">
+          <tooltip heading="North arrow 1 - dot">
             Click the active layout to add a north arrow symbolized as the Jennessent Compass Rose with the north dot, tied to the layout's map frame (or unassociated if the layout has no map frame yet), then resize it with the selection handles. Available only in a layout view.<disabledText />
+          </tooltip>
+        </tool>
+        <tool id="WildlifeTools_Compass2NorthArrow"
+                caption="North arrow 2"
+                className="Compass2NorthArrowTool"
+                loadOnClick="true"
+                smallImage="Images\Compass2_16.png"
+                largeImage="Images\Compass2_32.png"
+                condition="esri_layouts_layoutPaneCondition"
+                keytip="N2">
+          <tooltip heading="North arrow 2">
+            Click the active layout to add a north arrow symbolized as the Compass_2d design (black cardinal star, gray intercardinal star, twin rings), tied to the layout's map frame (or unassociated if the layout has no map frame yet), then resize it with the selection handles. Available only in a layout view.<disabledText />
+          </tooltip>
+        </tool>
+        <tool id="WildlifeTools_Compass2DotNorthArrow"
+                caption="North arrow 2 - dot"
+                className="Compass2DotNorthArrowTool"
+                loadOnClick="true"
+                smallImage="Images\Compass2Dot_16.png"
+                largeImage="Images\Compass2Dot_32.png"
+                condition="esri_layouts_layoutPaneCondition"
+                keytip="N4">
+          <tooltip heading="North arrow 2 - dot">
+            Click the active layout to add a north arrow symbolized as the Compass_2d design with the gradient spearhead above the north point, tied to the layout's map frame (or unassociated if the layout has no map frame yet), then resize it with the selection handles. Available only in a layout view.<disabledText />
           </tooltip>
         </tool>
         <button id="WildlifeTools_ThoughtForTheDay"
@@ -226,6 +270,37 @@
           </tooltip>
         </button>
       </controls>
+      <palettes>
+        <!-- Dropdown palettes (same control Esri's Select tool uses): one face button
+             on the ribbon, the four compass variants in the dropdown. -->
+        <toolPalette id="WildlifeTools_AddGraphicsPalette"
+                     caption="Add Graphics"
+                     extendedCaption="Open the compass graphics tool palette"
+                     itemsInRow="1"
+                     showItemCaption="true"
+                     keytip="AG"
+                     smallImage="Images\CompassRoseDot_16.png"
+                     largeImage="Images\CompassRoseDot_32.png">
+          <tool refID="WildlifeTools_CompassRoseGraphic" />
+          <tool refID="WildlifeTools_CompassRoseDotGraphic" />
+          <tool refID="WildlifeTools_Compass2Graphic" />
+          <tool refID="WildlifeTools_Compass2DotGraphic" />
+        </toolPalette>
+        <toolPalette id="WildlifeTools_NorthArrowsPalette"
+                     caption="North Arrows"
+                     extendedCaption="Open the compass north arrow tool palette"
+                     itemsInRow="1"
+                     showItemCaption="true"
+                     keytip="NA"
+                     condition="esri_layouts_layoutPaneCondition"
+                     smallImage="Images\CompassRoseDot_16.png"
+                     largeImage="Images\CompassRoseDot_32.png">
+          <tool refID="WildlifeTools_CompassRoseNorthArrow" />
+          <tool refID="WildlifeTools_CompassRoseDotNorthArrow" />
+          <tool refID="WildlifeTools_Compass2NorthArrow" />
+          <tool refID="WildlifeTools_Compass2DotNorthArrow" />
+        </toolPalette>
+      </palettes>
 
     </insertModule>
   </modules>
