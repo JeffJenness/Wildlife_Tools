@@ -1,0 +1,68 @@
+<controls:ProWindow x:Class="WildlifeTools.AddCircleWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        Title="Circle Background"
+        WindowStartupLocation="CenterOwner"
+        SizeToContent="Height" ResizeMode="NoResize"
+        Width="380">
+  <Grid Margin="14">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="Auto" />
+      <ColumnDefinition Width="*" />
+    </Grid.ColumnDefinitions>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <!-- Graphic name (optional) -->
+    <TextBlock Grid.Row="0" Grid.Column="0" Text="Graphic name:" VerticalAlignment="Center" Margin="0,0,10,10" />
+    <TextBox Grid.Row="0" Grid.Column="1" x:Name="NameBox" Margin="0,0,0,10"
+             ToolTip="Optional. Leave blank for a default name." />
+
+    <!-- Symbology -->
+    <TextBlock Grid.Row="1" Grid.Column="0" Text="Symbology:" VerticalAlignment="Center" Margin="0,0,10,10" />
+    <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,10">
+      <Button x:Name="DesignButton" Content="Design symbology…" Click="OnDesignSymbology"
+              Padding="10,3" ToolTip="Open the Format Polygon Symbol editor." />
+      <Border x:Name="Swatch" Width="46" Height="24" Margin="10,0,0,0"
+              BorderBrush="#808080" BorderThickness="1"
+              ToolTip="Preview of the chosen symbol (before transparency).">
+        <Image x:Name="SwatchImage" Stretch="Uniform" />
+      </Border>
+    </StackPanel>
+
+    <!-- Fill transparency -->
+    <TextBlock Grid.Row="2" Grid.Column="0" Text="Fill transparency (%):" VerticalAlignment="Center" Margin="0,0,10,10" />
+    <TextBox Grid.Row="2" Grid.Column="1" x:Name="FillTranspBox" Text="0" Margin="0,0,0,10"
+             ToolTip="0–100. Applies to the interior fill only; the outline is unaffected." />
+
+    <!-- Outline transparency -->
+    <TextBlock Grid.Row="3" Grid.Column="0" Text="Outline transparency (%):" VerticalAlignment="Center" Margin="0,0,10,10" />
+    <TextBox Grid.Row="3" Grid.Column="1" x:Name="OutlineTranspBox" Text="0" Margin="0,0,0,10"
+             ToolTip="0–100. Applies to the boundary outline only; the fill is unaffected." />
+
+    <!-- Radius -->
+    <TextBlock Grid.Row="4" Grid.Column="0" Text="Radius (% of extent):" VerticalAlignment="Center" Margin="0,0,10,10" />
+    <TextBox Grid.Row="4" Grid.Column="1" x:Name="RadiusBox" Text="100" Margin="0,0,0,10"
+             ToolTip="100% draws the circle that exactly contains the selected extent." />
+
+    <!-- Focal-point option (only when a single element with a focal point is selected) -->
+    <CheckBox Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" x:Name="FocalCheck"
+              Content="Center on the element's focal point (instead of its extent center)"
+              IsChecked="True" Visibility="Collapsed" Margin="0,0,0,12" />
+
+    <!-- Buttons -->
+    <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal"
+                HorizontalAlignment="Right">
+      <Button Content="OK" Click="OnOk" Width="84" Margin="0,0,8,0" IsDefault="True" />
+      <Button Content="Cancel" Click="OnCancel" Width="84" IsCancel="True" />
+    </StackPanel>
+  </Grid>
+</controls:ProWindow>

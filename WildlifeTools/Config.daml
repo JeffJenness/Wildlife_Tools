@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.13.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.14.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -46,6 +46,7 @@
         </group>
         <group id="WildlifeTools_GroupGraphics" caption="Graphics" appearsOnAddInTab="false">
           <toolPalette refID="WildlifeTools_AddGraphicsPalette" size="large" />
+          <button refID="WildlifeTools_AddGraphicCircle" size="large" />
         </group>
         <group id="WildlifeTools_GroupCartography" caption="Cartography" appearsOnAddInTab="false">
           <toolPalette refID="WildlifeTools_NorthArrowsPalette" size="large" />
@@ -258,6 +259,17 @@
             Click the active layout to add a north arrow symbolized as the Compass_2d design with the gradient spearhead above the north point, tied to the layout's map frame (or unassociated if the layout has no map frame yet), then resize it with the selection handles. Available only in a layout view.<disabledText />
           </tooltip>
         </tool>
+        <button id="WildlifeTools_AddGraphicCircle"
+                caption="Circle Background"
+                className="AddGraphicCircleButton"
+                loadOnClick="true"
+                smallImage="Images\CircleBackground_16.png"
+                largeImage="Images\CircleBackground_32.png"
+                keytip="CB">
+          <tooltip heading="Circle Background">
+            Draws a circle graphic behind the selected element or elements (graphics or layout map elements), then groups the circle and the selection into a new group with the circle underneath. Opens a dialog to set the name, polygon symbology, fill and outline transparency, and radius. Works on selected elements, not on features in a dataset.<disabledText />
+          </tooltip>
+        </button>
         <button id="WildlifeTools_ThoughtForTheDay"
                 caption="Thought for the Day"
                 className="ThoughtForTheDayButton"
