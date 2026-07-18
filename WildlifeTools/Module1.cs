@@ -24,6 +24,27 @@ using System.Windows.Input;
 
 namespace WildlifeTools
 {
+    /// <summary>
+    /// Last-used dialog parameters of one Background tool (Circle / Rectangle /
+    /// Polygon), persisted with the project alongside the tool's symbol. The graphic
+    /// NAME is deliberately not persisted. Only the fields a given tool uses are
+    /// meaningful for it; the rest keep their defaults.
+    /// </summary>
+    public sealed class BackgroundToolPrefs
+    {
+        public double FillTransparency { get; set; }             // all tools
+        public double OutlineTransparency { get; set; }          // all tools
+        public double RadiusPercent { get; set; } = 100;         // circle
+        public bool UseFocalPoint { get; set; } = true;          // circle
+        public double HorizontalExtentPct { get; set; } = 100;   // rectangle
+        public double VerticalExtentPct { get; set; } = 100;     // rectangle
+        public double RoundingPct { get; set; }                  // rectangle
+        public bool UseSymbolizedShape { get; set; }             // polygon
+        public double BufferValue { get; set; }                  // polygon (raw value)
+        public int LayoutUnitIndex { get; set; } = 2;            // polygon (Inches)
+        public bool RemoveHoles { get; set; }                    // polygon
+    }
+
     internal class Module1 : Module
     {
         private static Module1 _this = null;
@@ -38,6 +59,84 @@ namespace WildlifeTools
         // been shown.
         private const string RecentQuoteKeysKey = "ThoughtForTheDay_RecentQuoteKeys";
         public const int MaxRecentQuotes = 100;
+
+        // Background tools: the last-used fill symbol of each tool (CIMSymbolReference
+        // as JSON), persisted with the project and reloaded as the dialog's starting
+        // symbol on the next run. Saved BEFORE the fill/outline transparencies are
+        // applied, so the stored symbol is the design as the user built it.
+        private const string CircleSymbolKey = "CircleBackground_SymbolJson";
+        private const string RectangleSymbolKey = "RectangleBackground_SymbolJson";
+        private const string PolygonSymbolKey = "PolygonBackground_SymbolJson";
+        private const string CirclePrefsKey = "CircleBackground_Prefs";
+        private const string RectanglePrefsKey = "RectangleBackground_Prefs";
+        private const string PolygonPrefsKey = "PolygonBackground_Prefs";
+        private const string McpSymbolKey = "McpBackground_SymbolJson";
+        private const string McpPrefsKey = "McpBackground_Prefs";
+
+        /// <summary>Circle Background's last-used dialog parameters (never null).</summary>
+        public static BackgroundToolPrefs CirclePrefs { get; set; } = new();
+
+        /// <summary>Rectangle Background's last-used dialog parameters (never null).</summary>
+        public static BackgroundToolPrefs RectanglePrefs { get; set; } = new();
+
+        /// <summary>Polygon Background's last-used dialog parameters (never null).</summary>
+        public static BackgroundToolPrefs PolygonPrefs { get; set; } = new();
+
+        private static BackgroundToolPrefs PrefsFromJson(string json)
+        {
+            if (string.IsNullOrEmpty(json))
+                return new BackgroundToolPrefs();
+            try
+            {
+                return System.Text.Json.JsonSerializer.Deserialize<BackgroundToolPrefs>(json)
+                       ?? new BackgroundToolPrefs();
+            }
+            catch
+            {
+                return new BackgroundToolPrefs();
+            }
+        }
+
+        /// <summary>Which background tool a persisted symbol belongs to.</summary>
+        public enum BackgroundTool { Circle, Rectangle, Polygon, Mcp }
+
+        /// <summary>Circle Background's last-used fill symbol (JSON), or null.</summary>
+        public static string CircleSymbolJson { get; set; }
+
+        /// <summary>Rectangle Background's last-used fill symbol (JSON), or null.</summary>
+        public static string RectangleSymbolJson { get; set; }
+
+        /// <summary>Polygon Background's last-used fill symbol (JSON), or null.</summary>
+        public static string PolygonSymbolJson { get; set; }
+
+        /// <summary>Minimum Convex Polygon's last-used fill symbol (JSON), or null.</summary>
+        public static string McpSymbolJson { get; set; }
+
+        /// <summary>Minimum Convex Polygon's last-used dialog parameters (never null).</summary>
+        public static BackgroundToolPrefs McpPrefs { get; set; } = new();
+
+        /// <summary>Stores a background tool's last-used symbol and marks the project
+        /// dirty so the setting is persisted on the next project save.</summary>
+        public static void SaveBackgroundSymbol(BackgroundTool tool, string symbolJson)
+        {
+            if (string.IsNullOrEmpty(symbolJson))
+                return;
+            switch (tool)
+            {
+                case BackgroundTool.Circle: CircleSymbolJson = symbolJson; break;
+                case BackgroundTool.Rectangle: RectangleSymbolJson = symbolJson; break;
+                case BackgroundTool.Polygon: PolygonSymbolJson = symbolJson; break;
+                case BackgroundTool.Mcp: McpSymbolJson = symbolJson; break;
+            }
+            try
+            {
+                Project.Current?.SetDirty(true);
+            }
+            catch
+            {
+                // Non-fatal: the symbol still persists with the next ordinary save.
+            }
+        }
 
         /// <summary>Keys of the most recently shown "Thought for the Day" quotes.</summary>
         public static List<string> RecentQuoteKeys { get; } = new List<string>();
@@ -72,7 +171,8 @@ namespace WildlifeTools
             return base.Initialize();
         }
 
-        /// <summary>Restores the recent-quote history persisted with the project.</summary>
+        /// <summary>Restores the recent-quote history and the background tools'
+        /// last-used symbols persisted with the project.</summary>
         protected override Task OnReadSettingsAsync(ModuleSettingsReader settings)
         {
             RecentQuoteKeys.Clear();
@@ -80,13 +180,34 @@ namespace WildlifeTools
             {
                 RecentQuoteKeys.AddRange(recentQuotes.Split('|', StringSplitOptions.RemoveEmptyEntries));
             }
+            CircleSymbolJson = settings?.Get(CircleSymbolKey) as string;
+            RectangleSymbolJson = settings?.Get(RectangleSymbolKey) as string;
+            PolygonSymbolJson = settings?.Get(PolygonSymbolKey) as string;
+            McpSymbolJson = settings?.Get(McpSymbolKey) as string;
+            CirclePrefs = PrefsFromJson(settings?.Get(CirclePrefsKey) as string);
+            RectanglePrefs = PrefsFromJson(settings?.Get(RectanglePrefsKey) as string);
+            PolygonPrefs = PrefsFromJson(settings?.Get(PolygonPrefsKey) as string);
+            McpPrefs = PrefsFromJson(settings?.Get(McpPrefsKey) as string);
             return Task.FromResult(0);
         }
 
-        /// <summary>Persists the recent-quote history with the project.</summary>
+        /// <summary>Persists the recent-quote history and the background tools'
+        /// last-used symbols with the project.</summary>
         protected override Task OnWriteSettingsAsync(ModuleSettingsWriter settings)
         {
             settings.Add(RecentQuoteKeysKey, string.Join("|", RecentQuoteKeys));
+            if (!string.IsNullOrEmpty(CircleSymbolJson))
+                settings.Add(CircleSymbolKey, CircleSymbolJson);
+            if (!string.IsNullOrEmpty(RectangleSymbolJson))
+                settings.Add(RectangleSymbolKey, RectangleSymbolJson);
+            if (!string.IsNullOrEmpty(PolygonSymbolJson))
+                settings.Add(PolygonSymbolKey, PolygonSymbolJson);
+            if (!string.IsNullOrEmpty(McpSymbolJson))
+                settings.Add(McpSymbolKey, McpSymbolJson);
+            settings.Add(CirclePrefsKey, System.Text.Json.JsonSerializer.Serialize(CirclePrefs));
+            settings.Add(RectanglePrefsKey, System.Text.Json.JsonSerializer.Serialize(RectanglePrefs));
+            settings.Add(PolygonPrefsKey, System.Text.Json.JsonSerializer.Serialize(PolygonPrefs));
+            settings.Add(McpPrefsKey, System.Text.Json.JsonSerializer.Serialize(McpPrefs));
             return Task.FromResult(0);
         }
 

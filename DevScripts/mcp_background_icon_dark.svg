@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Minimum Convex Polygon (dark theme)</title>
+  <path d="M 2 6.67 L 2 25.33 L 30 25.33 L 30 16 L 11.33 6.67 Z"
+        fill="#FFD400" stroke="#FFFFFF" stroke-width="2" stroke-linejoin="miter"/>
+</svg>

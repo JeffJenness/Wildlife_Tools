@@ -22,15 +22,24 @@ namespace WildlifeTools
     public partial class AddRectangleWindow : ArcGIS.Desktop.Framework.Controls.ProWindow
     {
         private CIMSymbolReference _symbol;
+        private readonly BackgroundToolPrefs _prefs;
 
         /// <summary>The collected options, valid after the dialog returns true.</summary>
         internal AddRectangleOptions Result { get; private set; }
 
         /// <param name="defaultSymbol">The starting polygon symbol reference.</param>
-        public AddRectangleWindow(CIMSymbolReference defaultSymbol)
+        /// <param name="prefs">Last-used parameters (persisted with the project);
+        /// initialized from and written back to on OK. The name is never persisted.</param>
+        public AddRectangleWindow(CIMSymbolReference defaultSymbol, BackgroundToolPrefs prefs)
         {
             InitializeComponent();
             _symbol = defaultSymbol;
+            _prefs = prefs ?? new BackgroundToolPrefs();
+            FillTranspBox.Text = _prefs.FillTransparency.ToString(CultureInfo.CurrentCulture);
+            OutlineTranspBox.Text = _prefs.OutlineTransparency.ToString(CultureInfo.CurrentCulture);
+            HorizExtentBox.Text = _prefs.HorizontalExtentPct.ToString(CultureInfo.CurrentCulture);
+            VertExtentBox.Text = _prefs.VerticalExtentPct.ToString(CultureInfo.CurrentCulture);
+            RoundingBox.Text = _prefs.RoundingPct.ToString(CultureInfo.CurrentCulture);
             UpdateSwatch();
         }
 
@@ -99,6 +108,14 @@ namespace WildlifeTools
                 VerticalExtentPct = vert,
                 RoundingPct = rounding,     // values above 50 are capped in the operation
             };
+
+            // Remember the choices (not the name) for the next run in this project.
+            _prefs.FillTransparency = fillT;
+            _prefs.OutlineTransparency = outT;
+            _prefs.HorizontalExtentPct = horiz;
+            _prefs.VerticalExtentPct = vert;
+            _prefs.RoundingPct = rounding;
+
             DialogResult = true;
         }
 

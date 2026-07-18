@@ -42,6 +42,18 @@ namespace WildlifeTools
         public CIMSymbolReference DefaultSymbol { get; set; }
         /// <summary>Selection spans more than one graphics layer (map) — unsupported.</summary>
         public bool MultiContainer { get; set; }
+
+        /// <summary>True when the container is a layout (coordinates are page units);
+        /// false for a map's graphics layer (map coordinate system units).</summary>
+        public bool IsLayout { get; set; }
+
+        /// <summary>Map only: the name of the map coordinate system's linear (or
+        /// angular, for geographic) unit — shown after the buffer text box.</summary>
+        public string MapUnitName { get; set; }
+
+        /// <summary>Layout only: meters per page unit (from the page's Units), for
+        /// converting a user buffer distance in mm/cm/inches/points to page units.</summary>
+        public double MetersPerPageUnit { get; set; } = 0.0254;
     }
 
     /// <summary>
@@ -124,6 +136,20 @@ namespace WildlifeTools
                 focal = f;
             }
 
+            // Coordinate-unit info for the Polygon Background buffer UI.
+            bool isLayout = container is Layout;
+            string mapUnitName = null;
+            double metersPerPageUnit = 0.0254;
+            if (container is Layout lay)
+            {
+                try { metersPerPageUnit = lay.GetPage().Units.ConversionFactor; } catch { }
+            }
+            else if (container is GraphicsLayer glyr)
+            {
+                try { mapUnitName = (glyr.GetSpatialReference() ?? sr)?.Unit?.Name; } catch { }
+                mapUnitName ??= sr?.Unit?.Name;
+            }
+
             return new AddCircleContext
             {
                 Container = container,
@@ -134,6 +160,9 @@ namespace WildlifeTools
                 SingleHasFocal = singleFocal,
                 Focal = focal,
                 DefaultSymbol = DefaultCircleSymbol().MakeSymbolReference(),
+                IsLayout = isLayout,
+                MapUnitName = mapUnitName,
+                MetersPerPageUnit = metersPerPageUnit,
             };
         }
 
@@ -146,6 +175,24 @@ namespace WildlifeTools
             while (cur.GetParent(false) is GroupElement grp)
                 cur = grp;
             return cur;
+        }
+
+        /// <summary>Deserializes a background tool's saved polygon-symbol reference
+        /// (CIM JSON persisted with the project via <see cref="Module1"/>); null if the
+        /// JSON is absent, invalid, or not a polygon symbol.</summary>
+        internal static CIMSymbolReference SavedSymbolOrNull(string json)
+        {
+            if (string.IsNullOrEmpty(json))
+                return null;
+            try
+            {
+                CIMSymbolReference r = CIMSymbolReference.FromJson(json, null);
+                return r?.Symbol is CIMPolygonSymbol ? r : null;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>A sensible starting polygon symbol (pale yellow fill, default

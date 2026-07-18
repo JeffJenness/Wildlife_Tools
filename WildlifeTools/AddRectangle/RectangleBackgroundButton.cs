@@ -40,15 +40,24 @@ namespace WildlifeTools
                     return;
                 }
 
-                // Collect parameters (UI thread, modal).
-                var win = new AddRectangleWindow(ctx.DefaultSymbol)
+                // Collect parameters (UI thread, modal). Start from the symbol the user
+                // last ran this tool with (persisted with the project), else the default.
+                var startSymbol = AddCircleOperation.SavedSymbolOrNull(Module1.RectangleSymbolJson)
+                                  ?? ctx.DefaultSymbol;
+                var win = new AddRectangleWindow(startSymbol, Module1.RectanglePrefs)
                 {
                     Owner = FrameworkApplication.Current.MainWindow,
                 };
                 if (win.ShowDialog() != true)
                     return;
 
+                // Serialize the chosen symbol BEFORE running: Run applies the
+                // transparencies to the same symbol instance in place, and the stored
+                // design should stay as the user built it.
+                string symbolJson = win.Result.SymbolReference?.ToJson();
+
                 await QueuedTask.Run(() => AddRectangleOperation.Run(ctx, win.Result));
+                Module1.SaveBackgroundSymbol(Module1.BackgroundTool.Rectangle, symbolJson);
             }
             catch (Exception ex)
             {

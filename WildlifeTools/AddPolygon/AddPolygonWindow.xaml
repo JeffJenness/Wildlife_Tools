@@ -1,0 +1,83 @@
+<controls:ProWindow x:Class="WildlifeTools.AddPolygonWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        Title="Polygon Background"
+        WindowStartupLocation="CenterOwner"
+        SizeToContent="Height" ResizeMode="NoResize"
+        Width="430">
+  <Grid Margin="14">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="Auto" />
+      <ColumnDefinition Width="*" />
+    </Grid.ColumnDefinitions>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <!-- Graphic name (optional) -->
+    <TextBlock Grid.Row="0" Grid.Column="0" Text="Graphic name:" VerticalAlignment="Center" Margin="0,0,10,10" />
+    <TextBox Grid.Row="0" Grid.Column="1" x:Name="NameBox" Margin="0,0,0,10"
+             ToolTip="Optional. Leave blank for a default name." />
+
+    <!-- Symbology -->
+    <TextBlock Grid.Row="1" Grid.Column="0" Text="Symbology:" VerticalAlignment="Center" Margin="0,0,10,10" />
+    <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,10">
+      <Button x:Name="DesignButton" Content="Design symbology…" Click="OnDesignSymbology"
+              Padding="10,3" ToolTip="Open the Format Polygon Symbol editor." />
+      <Border x:Name="Swatch" Width="46" Height="24" Margin="10,0,0,0"
+              BorderBrush="#808080" BorderThickness="1"
+              ToolTip="Preview of the chosen symbol (before transparency).">
+        <Image x:Name="SwatchImage" Stretch="Uniform" />
+      </Border>
+    </StackPanel>
+
+    <!-- Fill transparency -->
+    <TextBlock Grid.Row="2" Grid.Column="0" Text="Fill transparency (%):" VerticalAlignment="Center" Margin="0,0,10,10" />
+    <TextBox Grid.Row="2" Grid.Column="1" x:Name="FillTranspBox" Text="0" Margin="0,0,0,10"
+             ToolTip="0–100. Applies to the interior fill only; the outline is unaffected." />
+
+    <!-- Outline transparency -->
+    <TextBlock Grid.Row="3" Grid.Column="0" Text="Outline transparency (%):" VerticalAlignment="Center" Margin="0,0,10,10" />
+    <TextBox Grid.Row="3" Grid.Column="1" x:Name="OutlineTranspBox" Text="0" Margin="0,0,0,10"
+             ToolTip="0–100. Applies to the boundary outline only; the fill is unaffected." />
+
+    <!-- Shape source -->
+    <TextBlock Grid.Row="4" Grid.Column="0" Text="Fit polygon to:" VerticalAlignment="Top" Margin="0,2,10,10" />
+    <StackPanel Grid.Row="4" Grid.Column="1" Margin="0,0,0,10">
+      <RadioButton x:Name="SourceGeometryRadio" Content="The element's geometry" IsChecked="True"
+                   ToolTip="Trace the element's source geometry (the ArcObjects IElement.Geometry)." />
+      <RadioButton x:Name="SymbolizedRadio" Content="The symbolized shape" Margin="0,4,0,0"
+                   ToolTip="Trace the drawn shape including symbol widths (the ArcObjects QueryBounds)." />
+    </StackPanel>
+
+    <!-- Buffer size -->
+    <TextBlock Grid.Row="5" Grid.Column="0" Text="Buffer size:" VerticalAlignment="Center" Margin="0,0,10,12" />
+    <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,12">
+      <TextBox x:Name="BufferBox" Text="0" Width="100"
+               ToolTip="Optional. 0 traces the shape exactly; positive values expand it, negative values shrink it. Point and line shapes need a positive buffer." />
+      <TextBlock x:Name="MapUnitLabel" VerticalAlignment="Center" Margin="8,0,0,0"
+                 Visibility="Collapsed" />
+      <ComboBox x:Name="UnitCombo" Width="112" Margin="8,0,0,0" Visibility="Collapsed" />
+    </StackPanel>
+
+    <!-- Hole removal -->
+    <CheckBox Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" x:Name="RemoveHolesCheck"
+              Content="Remove any holes in polygon" Margin="0,0,0,12"
+              ToolTip="Fill in any interior holes so the background polygon is solid." />
+
+    <!-- Buttons -->
+    <StackPanel Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal"
+                HorizontalAlignment="Right">
+      <Button Content="OK" Click="OnOk" Width="84" Margin="0,0,8,0" IsDefault="True" />
+      <Button Content="Cancel" Click="OnCancel" Width="84" IsCancel="True" />
+    </StackPanel>
+  </Grid>
+</controls:ProWindow>

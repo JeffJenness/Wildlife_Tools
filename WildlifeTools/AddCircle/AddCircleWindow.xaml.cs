@@ -21,6 +21,7 @@ namespace WildlifeTools
     public partial class AddCircleWindow : ArcGIS.Desktop.Framework.Controls.ProWindow
     {
         private CIMSymbolReference _symbol;
+        private readonly BackgroundToolPrefs _prefs;
 
         /// <summary>The collected options, valid after the dialog returns true.</summary>
         internal AddCircleOptions Result { get; private set; }
@@ -28,11 +29,19 @@ namespace WildlifeTools
         /// <param name="showFocalOption">Show the focal-point checkbox (single element
         /// with a focal point selected).</param>
         /// <param name="defaultSymbol">The starting polygon symbol reference.</param>
-        public AddCircleWindow(bool showFocalOption, CIMSymbolReference defaultSymbol)
+        /// <param name="prefs">Last-used parameters (persisted with the project);
+        /// initialized from and written back to on OK. The name is never persisted.</param>
+        public AddCircleWindow(bool showFocalOption, CIMSymbolReference defaultSymbol,
+            BackgroundToolPrefs prefs)
         {
             InitializeComponent();
             _symbol = defaultSymbol;
+            _prefs = prefs ?? new BackgroundToolPrefs();
             FocalCheck.Visibility = showFocalOption ? Visibility.Visible : Visibility.Collapsed;
+            FillTranspBox.Text = _prefs.FillTransparency.ToString(CultureInfo.CurrentCulture);
+            OutlineTranspBox.Text = _prefs.OutlineTransparency.ToString(CultureInfo.CurrentCulture);
+            RadiusBox.Text = _prefs.RadiusPercent.ToString(CultureInfo.CurrentCulture);
+            FocalCheck.IsChecked = _prefs.UseFocalPoint;
             UpdateSwatch();
         }
 
@@ -101,6 +110,14 @@ namespace WildlifeTools
                 RadiusPercent = radius,
                 UseFocalPoint = FocalCheck.Visibility == Visibility.Visible && FocalCheck.IsChecked == true,
             };
+
+            // Remember the choices (not the name) for the next run in this project.
+            _prefs.FillTransparency = fillT;
+            _prefs.OutlineTransparency = outT;
+            _prefs.RadiusPercent = radius;
+            if (FocalCheck.Visibility == Visibility.Visible)
+                _prefs.UseFocalPoint = FocalCheck.IsChecked == true;
+
             DialogResult = true;
         }
 

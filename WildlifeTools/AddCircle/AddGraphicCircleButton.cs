@@ -39,15 +39,24 @@ namespace WildlifeTools
                     return;
                 }
 
-                // Collect parameters (UI thread, modal).
-                var win = new AddCircleWindow(ctx.SingleHasFocal, ctx.DefaultSymbol)
+                // Collect parameters (UI thread, modal). Start from the symbol the user
+                // last ran this tool with (persisted with the project), else the default.
+                var startSymbol = AddCircleOperation.SavedSymbolOrNull(Module1.CircleSymbolJson)
+                                  ?? ctx.DefaultSymbol;
+                var win = new AddCircleWindow(ctx.SingleHasFocal, startSymbol, Module1.CirclePrefs)
                 {
                     Owner = FrameworkApplication.Current.MainWindow,
                 };
                 if (win.ShowDialog() != true)
                     return;
 
+                // Serialize the chosen symbol BEFORE running: Run applies the
+                // transparencies to the same symbol instance in place, and the stored
+                // design should stay as the user built it.
+                string symbolJson = win.Result.SymbolReference?.ToJson();
+
                 await QueuedTask.Run(() => AddCircleOperation.Run(ctx, win.Result));
+                Module1.SaveBackgroundSymbol(Module1.BackgroundTool.Circle, symbolJson);
             }
             catch (Exception ex)
             {
