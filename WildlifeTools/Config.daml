@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.17.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.19.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -50,6 +50,8 @@
         </group>
         <group id="WildlifeTools_GroupCartography" caption="Cartography" appearsOnAddInTab="false">
           <toolPalette refID="WildlifeTools_NorthArrowsPalette" size="large" />
+          <button refID="WildlifeTools_RemoveSlc" size="large" />
+          <button refID="WildlifeTools_ShadowPolygons" size="large" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -303,6 +305,29 @@
             Draws a minimum convex polygon around the selected element or elements — hulled from each element's geometry or its symbolized shape, with an optional buffer — then groups the polygon and the selection into a new group with the polygon underneath. On a map the buffer is in map units; on a layout choose millimeters, centimeters, inches, or points. Works on selected elements, not on features in a dataset.<disabledText />
           </tooltip>
         </button>
+        <button id="WildlifeTools_RemoveSlc"
+                caption="Remove SLC"
+                className="RemoveSlcButton"
+                loadOnClick="true"
+                smallImage="Images\RemoveSLC_16.png"
+                largeImage="Images\RemoveSLC_32.png"
+                condition="esri_layouts_layoutPaneCondition"
+                keytip="RS">
+          <tooltip heading="Remove SLC">
+            Moves Esri's Service Layer Credits text out of the map frame by adding a Service Layer Credits dynamic text element parked below the layout page (top edge half an inch below the page bottom, left edge flush with the page), where it never prints. If the layout already has one, it is moved there instead. Available only in a layout view.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_ShadowPolygons"
+                caption="Create Shadow Polygons"
+                className="ShadowPolygonsButton"
+                loadOnClick="true"
+                smallImage="Images\ShadowPolygons_16.png"
+                largeImage="Images\ShadowPolygons_32.png"
+                keytip="SP">
+          <tooltip heading="Create Shadow Polygons">
+            Opens the Create Shadow Polygons tool from the Jenness Enterprises toolbox: concentric ring buffers around the dissolved polygons of a feature class, with a Transparency attribute that fades outward for a soft black cartographic shadow. Also available in the Cartography Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
         <button id="WildlifeTools_ThoughtForTheDay"
                 caption="Thought for the Day"
                 className="ThoughtForTheDayButton"
@@ -326,6 +351,9 @@
                      keytip="AG"
                      smallImage="Images\CompassRoseDot_16.png"
                      largeImage="Images\CompassRoseDot_32.png">
+          <tooltip heading="Jennessent Graphics">
+            Adds a Jennessent graphic to the active map or layout as a picture graphic. On a map, draw a box to size it; on a layout, click to place it at a default size and then resize it with the selection handles.<disabledText />
+          </tooltip>
           <tool refID="WildlifeTools_CompassRoseGraphic" />
           <tool refID="WildlifeTools_CompassRoseDotGraphic" />
           <tool refID="WildlifeTools_Compass2Graphic" />
@@ -339,6 +367,9 @@
                      keytip="GB"
                      smallImage="Images\CircleBackground_16.png"
                      largeImage="Images\CircleBackground_32.png">
+          <tooltip heading="Graphic Background">
+            Draws a background graphic behind the selected element or elements (graphics or layout map elements), then groups the background and the selection into a new group with the background underneath. Opens a dialog to set the name, polygon symbology, fill and outline transparency, and size. Works on selected elements, not on features in a dataset.<disabledText />
+          </tooltip>
           <button refID="WildlifeTools_AddGraphicCircle" />
           <button refID="WildlifeTools_RectangleBackground" />
           <button refID="WildlifeTools_PolygonBackground" />
@@ -353,6 +384,9 @@
                      condition="esri_layouts_layoutPaneCondition"
                      smallImage="Images\CompassRoseDot_16.png"
                      largeImage="Images\CompassRoseDot_32.png">
+          <tooltip heading="Jennessent North Arrows">
+            Click the active layout to add a north arrow symbolized as a Jennessent graphic, tied to the layout's map frame (or unassociated if the layout has no map frame yet), then resize it with the selection handles. Available only in a layout view.<disabledText />
+          </tooltip>
           <tool refID="WildlifeTools_CompassRoseNorthArrow" />
           <tool refID="WildlifeTools_CompassRoseDotNorthArrow" />
           <tool refID="WildlifeTools_Compass2NorthArrow" />

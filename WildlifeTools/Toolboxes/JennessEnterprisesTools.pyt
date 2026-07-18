@@ -23,6 +23,7 @@ if _HERE not in sys.path:
 import locoh          # noqa: E402
 import mahalanobis    # noqa: E402
 import kernel_density # noqa: E402
+import cartography_tools  # noqa: E402
 import error_report   # noqa: E402
 
 import re
@@ -122,7 +123,8 @@ class Toolbox(object):
         self.tools = [LoCoHStandard, LoCoHAdaptive, LoCoHFixedSphere,
                       MahalanobisRaster, MahalanobisPoints, MahalanobisCovariance,
                       MahalanobisChiSquare,
-                      KernelDensityGenerate, KernelDensityProportion, KernelDensityContours]
+                      KernelDensityGenerate, KernelDensityProportion, KernelDensityContours,
+                      ShadowPolygons]
 
 
 class LoCoHStandard(object):
@@ -1658,6 +1660,118 @@ class KernelDensityContours(object):
             kernel_density.run_probability_contours(
                 kd=P["in_raster"].valueAsText,
                 out_lines=lines, out_polys=polys, messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class ShadowPolygons(object):
+    """Create Shadow Polygons -- fading ring buffers for a cartographic shadow.
+
+    Dissolves the input's polygons (the selected ones if the layer has a
+    selection, else all of them) into one source polygon, then builds N ring
+    buffers around it. Each ring carries a Transparency value that increases
+    outward, so symbolizing the rings in black with per-feature transparency
+    (the delivered .lyrx does this automatically) renders a soft shadow that
+    makes the source features stand out.
+    """
+
+    def __init__(self):
+        self.label = "Create Shadow Polygons"
+        self.description = (
+            "Creates concentric ring buffers around the (dissolved) polygons of a "
+            "feature class, with a Transparency attribute that fades outward -- a "
+            "soft black cartographic shadow behind the source features. If the "
+            "input layer has selected polygons, only those are used; otherwise all "
+            "polygons are dissolved into the source. Geographic inputs are "
+            "buffered geodesically. The dissolved source polygon is included in "
+            "the output with Transparency = 100 (fully transparent). The rings "
+            "are approximate (the source is generalized before buffering) and "
+            "intended for cartographic effect, not analysis.")
+        self.category = "Cartography Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_features = arcpy.Parameter(
+            displayName="Input polygon features", name="in_features",
+            datatype="GPFeatureLayer", parameterType="Required", direction="Input")
+        in_features.filter.list = ["Polygon"]
+        out_fc = arcpy.Parameter(
+            displayName="Output shadow feature class", name="out_fc",
+            datatype="DEFeatureClass", parameterType="Required", direction="Output")
+        num_rings = arcpy.Parameter(
+            displayName="Number of buffers", name="num_rings",
+            datatype="GPLong", parameterType="Required", direction="Input")
+        num_rings.value = 10
+        size_value = arcpy.Parameter(
+            displayName="Size of outermost buffer", name="size_value",
+            datatype="GPDouble", parameterType="Required", direction="Input")
+        size_value.value = 0.25
+        size_units = arcpy.Parameter(
+            displayName="Size units", name="size_units",
+            datatype="GPString", parameterType="Required", direction="Input")
+        size_units.filter.type = "ValueList"
+        size_units.filter.list = cartography_tools.SIZE_UNITS
+        size_units.value = cartography_tools.SIZE_PROP_WIDTH
+        min_transp = arcpy.Parameter(
+            displayName="Minimum transparency (percent)", name="min_transparency",
+            datatype="GPDouble", parameterType="Required", direction="Input")
+        min_transp.value = 50.0
+        return [in_features, out_fc, num_rings, size_value, size_units, min_transp]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inf, outf = P["in_features"], P["out_fc"]
+        if inf.valueAsText and (not outf.altered or outf.valueAsText == self._auto_out):
+            try:
+                base = _legalize(os.path.splitext(
+                    os.path.basename(inf.valueAsText))[0] + "_Shadow")
+                ws = arcpy.env.workspace or os.path.dirname(
+                    arcpy.Describe(inf.valueAsText).catalogPath)
+                sug = _unique_name(base, ws)
+                outf.value = sug
+                self._auto_out = sug
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        if P["num_rings"].value is not None and P["num_rings"].value < 1:
+            P["num_rings"].setErrorMessage("The number of buffers must be at least 1.")
+        if P["size_value"].value is not None and P["size_value"].value <= 0:
+            P["size_value"].setErrorMessage("The buffer size must be positive.")
+        mt = P["min_transparency"].value
+        if mt is not None and not (0 <= mt < 100):
+            P["min_transparency"].setErrorMessage(
+                "The minimum transparency must be at least 0 and less than 100.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(cartography_tools)
+            P = {p.name: p for p in parameters}
+            lyrx = cartography_tools.run_shadow_polygons(
+                in_features=P["in_features"].valueAsText,
+                out_fc=P["out_fc"].valueAsText,
+                num_rings=P["num_rings"].value,
+                size_value=P["size_value"].value,
+                size_units=P["size_units"].valueAsText,
+                min_transparency=P["min_transparency"].value,
+                messages=messages)
+            if lyrx:
+                try:
+                    P["out_fc"].symbology = lyrx
+                except Exception:
+                    pass
         except arcpy.ExecuteError:
             raise
         except Exception:

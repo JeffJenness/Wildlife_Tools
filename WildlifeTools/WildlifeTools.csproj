@@ -95,6 +95,14 @@
     <Content Include="Images\McpBackground_32.png" />
     <Content Include="DarkImages\McpBackground_16.png" />
     <Content Include="DarkImages\McpBackground_32.png" />
+    <Content Include="Images\RemoveSLC_16.png" />
+    <Content Include="Images\RemoveSLC_32.png" />
+    <Content Include="DarkImages\RemoveSLC_16.png" />
+    <Content Include="DarkImages\RemoveSLC_32.png" />
+    <Content Include="Images\ShadowPolygons_16.png" />
+    <Content Include="Images\ShadowPolygons_32.png" />
+    <Content Include="DarkImages\ShadowPolygons_16.png" />
+    <Content Include="DarkImages\ShadowPolygons_32.png" />
     <!-- The Thought-for-the-Day card background is loaded from disk by path at run
          time, so it must sit next to the assembly (copied to the output directory). -->
     <Content Include="Images\quote_bg.png">
