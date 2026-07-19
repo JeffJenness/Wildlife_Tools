@@ -237,6 +237,7 @@ def run_proportion_surface(kd, out_raster, messages):
     Probability Contours tool reports that value in its ``CumProportion`` field.
     Writes statistics and a histogram with the raster (scratch GeoTIFF + CopyRaster)
     so it renders correctly without the slow CalculateStatistics scan."""
+    out_raster = mh.resolve_raster_output(out_raster, messages)
     scratch = arcpy.env.scratchFolder
     gdal, src, tmp = _open_kd(kd, scratch)
     try:
@@ -856,6 +857,7 @@ def run_kernel_density(points, pop_field, out_raster, cell_size, search_radius,
                        kernel, distance_method, out_value, area_unit, messages):
     """Custom kernel-density surface from point features (see module docstring and
     the tool help). Returns the output raster path."""
+    out_raster = mh.resolve_raster_output(out_raster, messages)
     key = kernel_key(kernel)
     cnorm = _kernel_norm(key)
     kfunc = _KFUNC[key]

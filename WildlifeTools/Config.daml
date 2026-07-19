@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.24.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.25.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -25,6 +25,7 @@
           <group refID="WildlifeTools_GroupMahalanobis"/>
           <group refID="WildlifeTools_GroupGraphics"/>
           <group refID="WildlifeTools_GroupCartography"/>
+          <group refID="WildlifeTools_GroupTopo"/>
           <group refID="WildlifeTools_GroupBreak"/>
         </tab>
       </tabs>
@@ -52,11 +53,10 @@
           <toolPalette refID="WildlifeTools_NorthArrowsPalette" size="large" />
           <button refID="WildlifeTools_RemoveSlc" size="large" />
           <button refID="WildlifeTools_ShadowPolygons" size="large" />
-          <button refID="WildlifeTools_EnhancedHillshade" size="large" />
-          <button refID="WildlifeTools_MDOWHillshade" size="large" />
-          <button refID="WildlifeTools_MultiSunHillshade" size="large" />
-          <button refID="WildlifeTools_BlurredHillshade" size="large" />
-          <button refID="WildlifeTools_SimpleHypsometricShading" size="large" />
+          <menu refID="WildlifeTools_HillshadeVariationsMenu" size="large" />
+        </group>
+        <group id="WildlifeTools_GroupTopo" caption="Topographic Analysis" appearsOnAddInTab="false">
+          <button refID="WildlifeTools_SurfaceAreaRatio" size="large" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -305,7 +305,7 @@
                 loadOnClick="true"
                 smallImage="Images\McpBackground_16.png"
                 largeImage="Images\McpBackground_32.png"
-                keytip="MP">
+                keytip="MB">
           <tooltip heading="Minimum Convex Polygon">
             Draws a minimum convex polygon around the selected element or elements — hulled from each element's geometry or its symbolized shape, with an optional buffer — then groups the polygon and the selection into a new group with the polygon underneath. On a map the buffer is in map units; on a layout choose millimeters, centimeters, inches, or points. Works on selected elements, not on features in a dataset.<disabledText />
           </tooltip>
@@ -375,6 +375,17 @@
                 keytip="BH">
           <tooltip heading="Blurred Hillshade">
             Opens the Blurred Hillshade tool from the Jenness Enterprises toolbox: a deliberately softened hillshade - the blurring component of the classic Swiss method - that de-emphasizes small terrain features so the shading reads as subtle and less distracting. Blur the DEM before shading or the finished hillshade after, with a radius in cells or ground units (sized geodesically on lat/long DEMs). All Enhanced Hillshade options included. Also available in the Cartography Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_SurfaceAreaRatio"
+                caption="Surface Area and Ratio"
+                className="SurfaceAreaRatioButton"
+                loadOnClick="true"
+                smallImage="Images\SurfaceArea_16.png"
+                largeImage="Images\SurfaceArea_32.png"
+                keytip="SA">
+          <tooltip heading="Surface Area and Ratio">
+            Opens the Surface Area and Ratio tool from the Jenness Enterprises toolbox: the 8-triangle surface-area method of Jenness (2004, Wildlife Society Bulletin 32:829-839). Outputs any combination of 3D surface area, surface ratio (a roughness index), and planimetric cell area; correct on geographic (lat/long) DEMs via per-row spheroidal distances and cell areas. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_SimpleHypsometricShading"
@@ -453,6 +464,26 @@
           <tool refID="WildlifeTools_Compass2DotNorthArrow" />
         </toolPalette>
       </palettes>
+      <menus>
+        <!-- A menu (not a toolPalette) so the ribbon entry stays a stable,
+             always-dropping-down "Hillshade Variations" button: palette faces
+             execute the current child on click and mutate to the last-used
+             item's identity, which is wrong for these five distinct tools. -->
+        <menu id="WildlifeTools_HillshadeVariationsMenu"
+              caption="Hillshade Variations"
+              keytip="HV"
+              smallImage="Images\EnhancedHillshade_16.png"
+              largeImage="Images\EnhancedHillshade_32.png">
+          <tooltip heading="Hillshade Variations">
+            Geodesic-correct hillshade tools from the Jenness Enterprises toolbox, including the "Swiss method" strategies for more attractive relief shading: multi-directional illumination (MDOW and Multi-Sun), blurring, and hypsometric (elevation-tinted) shading. Also available in the Cartography Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+          <button refID="WildlifeTools_EnhancedHillshade" />
+          <button refID="WildlifeTools_MDOWHillshade" />
+          <button refID="WildlifeTools_MultiSunHillshade" />
+          <button refID="WildlifeTools_BlurredHillshade" />
+          <button refID="WildlifeTools_SimpleHypsometricShading" />
+        </menu>
+      </menus>
 
     </insertModule>
   </modules>

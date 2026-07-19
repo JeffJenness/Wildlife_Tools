@@ -414,6 +414,7 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
     if target not in BLUR_TARGETS:
         raise arcpy.ExecuteError("Unknown blur target: {}.".format(target))
     dem_first = (target == BLUR_TARGETS[0])
+    out_raster = _mh.resolve_raster_output(out_raster, messages)
 
     scratch = arcpy.env.scratchFolder
     src, in_copy = _open_source(in_raster, scratch, messages)
@@ -634,6 +635,9 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
     text in messages and metadata (used when the input is a preprocessed
     scratch dataset standing in for the user's raster)."""
     gdal = _mh._gdal()
+
+    if _finalize:
+        out_raster = _mh.resolve_raster_output(out_raster, messages)
 
     azimuth = float(azimuth) % 360.0
     altitude = float(altitude)

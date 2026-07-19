@@ -815,6 +815,32 @@ class _RasterStats(object):
                 "std": float(np.sqrt(var)), "count": self.n}
 
 
+def resolve_raster_output(path, messages=None):
+    """Folder-based raster outputs default to GeoTIFF (Jeff's no-more-GRID
+    convention, 2026-07-19). Without this, CopyRaster writes an extensionless
+    name outside a geodatabase as the ancient Esri GRID format, whose
+    13-character name limit fails with ERROR 000472. Geodatabase paths
+    (.gdb/.sde) are left alone; on disk a missing extension becomes .tif
+    (ArcGIS writes a .tfw world file with it) and a user-typed extension is
+    honored. Callers should deliver to the RETURNED path and hand it back to
+    their tool's output parameter so add-to-map targets the real dataset."""
+    if not path:
+        return path
+    p = str(path)
+    low = p.lower().replace("/", "\\")
+    if ".gdb\\" in low or ".sde\\" in low:
+        return p
+    if not os.path.splitext(p)[1]:
+        if messages is not None:
+            messages.addMessage(
+                "No raster format specified for '{}' outside a geodatabase "
+                "-- saving as GeoTIFF: {}.tif (the legacy Esri GRID format "
+                "is not used).".format(os.path.basename(p),
+                                       os.path.basename(p)))
+        return p + ".tif"
+    return p
+
+
 def _apply_known_statistics(raster, stats, messages):
     """Set band statistics on ``raster`` from precomputed values (no scan).
 
@@ -1237,6 +1263,7 @@ def run_mahalanobis_raster(var_rows, sample_method, stats_source, out_type,
     (raster_catalogPath_lower, band_number)) drops specific bands.
     """
     scratch = arcpy.env.scratchFolder
+    out_raster = resolve_raster_output(out_raster, messages)
     variables = resolve_variables(var_rows, exclude_bands)
     warn_raster_attribute_tables(variables, messages)
     k = len(variables)
@@ -1702,6 +1729,7 @@ def run_chi_square_transform(in_raster, df, out_raster, messages=None):
     """
     from scipy.stats import chi2
     gdal = _gdal()
+    out_raster = resolve_raster_output(out_raster, messages)
     df = int(df)
     if df < 1:
         raise arcpy.ExecuteError(

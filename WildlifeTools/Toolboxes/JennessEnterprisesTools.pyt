@@ -24,6 +24,7 @@ import locoh          # noqa: E402
 import mahalanobis    # noqa: E402
 import kernel_density # noqa: E402
 import cartography_tools  # noqa: E402
+import topographic_tools  # noqa: E402
 import hillshade      # noqa: E402
 import error_report   # noqa: E402
 
@@ -164,6 +165,22 @@ def _save_tool_defaults(tool_name, values):
         pass
 
 
+def _writeback_resolved_raster(P, name):
+    """Point a raster output parameter at the dataset actually
+    delivered: a folder output typed without an extension becomes a
+    GeoTIFF (mahalanobis.resolve_raster_output), so Pro's add-to-map
+    must target the .tif, not the extensionless name."""
+    p = P.get(name)
+    if p is None or not p.valueAsText:
+        return
+    actual = mahalanobis.resolve_raster_output(p.valueAsText, None)
+    if actual != p.valueAsText:
+        try:
+            p.value = actual
+        except Exception:
+            pass
+
+
 class Toolbox(object):
     def __init__(self):
         self.label = "Jenness Enterprises Tools"
@@ -174,7 +191,7 @@ class Toolbox(object):
                       KernelDensityGenerate, KernelDensityProportion, KernelDensityContours,
                       ShadowPolygons, EnhancedHillshade, MDOWHillshade,
                       MultiSunHillshade, SimpleHypsometricShading,
-                      BlurredHillshade]
+                      BlurredHillshade, SurfaceAreaRatio]
 
 
 class LoCoHStandard(object):
@@ -1028,6 +1045,7 @@ class MahalanobisRaster(object):
                            else (_mahal_save_opts(P) or None)),
                 exclude_bands=_build_exclude(P["exclude_bands"]),
                 messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
             if out_lyrx:
                 try:
                     P["out_raster"].symbology = out_lyrx
@@ -1387,6 +1405,7 @@ class MahalanobisChiSquare(object):
                 df=int(P["df"].value),
                 out_raster=P["out_raster"].valueAsText,
                 messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
             if out_lyrx:
                 try:
                     P["out_raster"].symbology = out_lyrx
@@ -1552,6 +1571,7 @@ class KernelDensityGenerate(object):
                 out_value=P["out_value"].valueAsText,
                 area_unit=P["area_unit"].valueAsText,
                 messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
         except arcpy.ExecuteError:
             raise
         except Exception:
@@ -1620,6 +1640,7 @@ class KernelDensityProportion(object):
                 kd=P["in_raster"].valueAsText,
                 out_raster=P["out_raster"].valueAsText,
                 messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
         except arcpy.ExecuteError:
             raise
         except Exception:
@@ -2028,6 +2049,7 @@ class EnhancedHillshade(object):
                 shadow_dim=(P["shadow_dim"].value
                             if P["shadow_dim"].value is not None else 20.0),
                 messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
             # Remember the choices (not the datasets) with the project.
             _save_tool_defaults("EnhancedHillshade", {
                 "elev_units": P["elev_units"].valueAsText or "Meters",
@@ -2209,6 +2231,7 @@ class MDOWHillshade(object):
                 hypso_strength=P["hypso_strength"].value or 50,
                 vert_exag=P["vert_exag"].value or 1.0,
                 messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
             # Remember the choices (not the datasets) with the project.
             _save_tool_defaults("MDOWHillshade", {
                 "elev_units": P["elev_units"].valueAsText or "Meters",
@@ -2533,6 +2556,7 @@ class MultiSunHillshade(object):
                 shadow_dim=(P["shadow_dim"].value
                             if P["shadow_dim"].value is not None else 20.0),
                 messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
             # Remember the choices (not the datasets) with the project.
             saved = {"elev_units": P["elev_units"].valueAsText or "Meters",
                      "n_suns": n,
@@ -2762,6 +2786,7 @@ class BlurredHillshade(object):
                 blur_target=P["blur_target"].valueAsText or None,
                 kernel=P["kernel"].valueAsText or "Average",
                 messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
             # Remember the choices (not the datasets) with the project.
             _save_tool_defaults("BlurredHillshade", {
                 "elev_units": P["elev_units"].valueAsText or "Meters",
@@ -2897,6 +2922,165 @@ class SimpleHypsometricShading(object):
             _save_tool_defaults("SimpleHypsometricShading", {
                 "transparency": P["transparency"].value,
                 "blend_mode": P["blend_mode"].valueAsText or "Normal",
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class SurfaceAreaRatio(object):
+    """Surface Area and Ratio -- the 8-triangle surface-area method of
+    Jenness (2004, Wildlife Society Bulletin 32:829-839), with three optional
+    outputs (surface area, surface ratio, flat area; at least one required)
+    and a choice of corner-interpolation method.
+    """
+
+    def __init__(self):
+        self.label = "Surface Area and Ratio"
+        self.description = (
+            "Calculates the three-dimensional surface area of the terrain within "
+            "each cell of a DEM using the 8-triangle method of Jenness (2004, "
+            "Wildlife Society Bulletin 32:829-839), plus the surface ratio "
+            "(surface area / flat area, a roughness index) and the planimetric "
+            "(flat) cell area. Choose any combination of the three outputs. "
+            "Geographic (lat/long) DEMs are handled correctly: all distances and "
+            "cell areas are computed per row on the spheroid. Corner elevations "
+            "may be interpolated with the original diagonal-midpoint method or "
+            "with the more accurate 4-cell corner average.")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_units = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input elevation raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_area = arcpy.Parameter(
+            displayName="Output surface area raster (optional)", name="out_area",
+            datatype="DERasterDataset", parameterType="Optional",
+            direction="Output")
+        area_units = arcpy.Parameter(
+            displayName="Surface area units", name="area_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        area_units.filter.type = "ValueList"
+        area_units.filter.list = topographic_tools.AREA_UNITS
+        area_units.value = "Sq. Meters"
+        out_ratio = arcpy.Parameter(
+            displayName="Output surface ratio raster (optional)", name="out_ratio",
+            datatype="DERasterDataset", parameterType="Optional",
+            direction="Output")
+        out_flat = arcpy.Parameter(
+            displayName="Output flat area raster (optional)", name="out_flat",
+            datatype="DERasterDataset", parameterType="Optional",
+            direction="Output")
+        flat_units = arcpy.Parameter(
+            displayName="Flat area units", name="flat_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        flat_units.filter.type = "ValueList"
+        flat_units.filter.list = topographic_tools.AREA_UNITS
+        flat_units.value = "Sq. Meters"
+        elev_units = arcpy.Parameter(
+            displayName="Elevation units", name="elev_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        elev_units.filter.type = "ValueList"
+        elev_units.filter.list = hillshade.ELEV_UNITS
+        corner_method = arcpy.Parameter(
+            displayName="Corner elevation interpolation", name="corner_method",
+            datatype="GPString", parameterType="Required", direction="Input")
+        corner_method.filter.type = "ValueList"
+        corner_method.filter.list = topographic_tools.CORNER_METHODS
+        corner_method.value = topographic_tools.CORNER_METHODS[0]
+        params = [in_raster, out_area, area_units, out_ratio, out_flat,
+                  flat_units, elev_units, corner_method]
+        # Pre-select the choices from the last run saved with this project.
+        saved = _load_tool_defaults("SurfaceAreaRatio")
+        for p in (area_units, flat_units, elev_units, corner_method):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    # Same auto-detection as Enhanced Hillshade (shared helper).
+    _detect_units = EnhancedHillshade._detect_units
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, units = P["in_raster"], P["elev_units"]
+        if inr.valueAsText:
+            detected, locked = self._detect_units(inr.valueAsText)
+            if locked:
+                if not units.altered or units.valueAsText == self._auto_units:
+                    units.value = detected
+                    self._auto_units = detected
+                units.enabled = False
+            else:
+                units.enabled = True
+        P["area_units"].enabled = bool(P["out_area"].valueAsText)
+        P["flat_units"].enabled = bool(P["out_flat"].valueAsText)
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, units = P["in_raster"], P["elev_units"]
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage(
+                        "The elevation raster must be single band.")
+            except Exception:
+                pass
+            if units.enabled and not units.valueAsText:
+                units.setErrorMessage(
+                    "The DEM does not specify its elevation units; choose "
+                    "Meters or Feet.")
+        if not (P["out_area"].valueAsText or P["out_ratio"].valueAsText or
+                P["out_flat"].valueAsText):
+            P["out_area"].setErrorMessage(
+                "Specify at least one output raster (surface area, surface "
+                "ratio, or flat area).")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(topographic_tools)
+            P = {p.name: p for p in parameters}
+            delivered = topographic_tools.run_surface_area(
+                in_raster=P["in_raster"].valueAsText,
+                out_area=P["out_area"].valueAsText or None,
+                out_ratio=P["out_ratio"].valueAsText or None,
+                out_flat=P["out_flat"].valueAsText or None,
+                elev_units=P["elev_units"].valueAsText or "Meters",
+                area_units=P["area_units"].valueAsText or "Sq. Meters",
+                flat_units=P["flat_units"].valueAsText or "Sq. Meters",
+                corner_method=P["corner_method"].valueAsText or None,
+                messages=messages) or {}
+            # A folder output without an extension is delivered as .tif; point
+            # the output parameters at the real datasets so Pro adds those.
+            for key, pname in (("area", "out_area"), ("ratio", "out_ratio"),
+                               ("flat", "out_flat")):
+                actual = delivered.get(key)
+                if actual and P[pname].valueAsText and \
+                        actual != P[pname].valueAsText:
+                    try:
+                        P[pname].value = actual
+                    except Exception:
+                        pass
+            # Remember the choices (not the datasets) with the project.
+            _save_tool_defaults("SurfaceAreaRatio", {
+                "area_units": P["area_units"].valueAsText,
+                "flat_units": P["flat_units"].valueAsText,
+                "elev_units": P["elev_units"].valueAsText,
+                "corner_method": P["corner_method"].valueAsText,
             })
         except arcpy.ExecuteError:
             raise

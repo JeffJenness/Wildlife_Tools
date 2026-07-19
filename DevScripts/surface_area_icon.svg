@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Surface Area and Ratio</title>
+  <!-- The family mountain rendered as a TIN: triangular facets in graded
+       tones, echoing the 8-triangle surface-area method (Jenness 2004). -->
+  <path d="M 16 4 L 29 28 L 16 28 Z" fill="#D9D9D9" stroke="none"/>
+  <path d="M 16 4 L 3 28 L 16 28 Z" fill="#3A3A3A" stroke="none"/>
+  <path d="M 16 4 L 9.5 28 L 16 28 Z" fill="#6E6E6E" stroke="none"/>
+  <path d="M 16 4 L 22.5 28 L 16 28 Z" fill="#B0B0B0" stroke="none"/>
+  <path d="M 16 4 L 9.5 28 M 16 4 L 22.5 28 M 16 4 L 16 28" fill="none" stroke="#000000" stroke-width="0.8"/>
+  <path d="M 16 4 L 29 28 L 3 28 Z" fill="none" stroke="#000000" stroke-width="1.5" stroke-linejoin="round"/>
+</svg>
