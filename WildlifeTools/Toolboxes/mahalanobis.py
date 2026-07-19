@@ -827,15 +827,17 @@ def _apply_known_statistics(raster, stats, messages):
         arcpy.management.SetRasterProperties(
             raster,
             statistics=[[1, stats["min"], stats["max"], stats["mean"], stats["std"]]])
-        messages.addMessage(
-            "Set raster statistics from the computed values (min {:.6g}, max {:.6g}, "
-            "mean {:.6g}, std {:.6g}).".format(
-                stats["min"], stats["max"], stats["mean"], stats["std"]))
+        if messages is not None:
+            messages.addMessage(
+                "Set raster statistics from the computed values (min {:.6g}, max {:.6g}, "
+                "mean {:.6g}, std {:.6g}).".format(
+                    stats["min"], stats["max"], stats["mean"], stats["std"]))
         return True
     except Exception as e:
-        messages.addWarningMessage(
-            "Could not set precomputed statistics ({}); falling back to Calculate "
-            "Statistics.".format(e))
+        if messages is not None:
+            messages.addWarningMessage(
+                "Could not set precomputed statistics ({}); falling back to Calculate "
+                "Statistics.".format(e))
         return False
 
 

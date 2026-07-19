@@ -1,10 +1,24 @@
-"""Enhanced Hillshade for the Jenness Enterprises toolbox (Cartography Tools).
+"""Hillshade tools for the Jenness Enterprises toolbox (Cartography Tools).
 
-Port of the VB6 ``CalculateHillshadeAlternative`` in
-``Surface_Area_Functions.bas`` (Surface_Area / Surface Tools extension), using
-the fast-raster machinery established in ``mahalanobis.py`` (GDAL block I/O,
-vectorized numpy, self-computed statistics + histogram carried through
-CopyRaster).
+Ports of the VB6 hillshade functions in ``Surface_Area_Functions.bas``
+(Surface_Area / Surface Tools extension), using the fast-raster machinery
+established in ``mahalanobis.py`` (GDAL block I/O, vectorized numpy,
+self-computed statistics + histogram carried through CopyRaster):
+
+* ``run_enhanced_hillshade`` -- ``CalculateHillshadeAlternative``
+* ``run_mdow_hillshade`` -- ``CalculateJenMDOWHillshade``: the
+  Multi-Directional Oblique-Weighted hillshade of Mark (1992, USGS Open-File
+  Report 92-422). Four hillshades are computed with sun directions at the
+  user's primary azimuth -67.5, -22.5, +22.5 and +67.5 degrees (the fan is
+  centered on the primary direction) and blended per cell with weights
+  sin^2(aspect - direction), which favor the directions most oblique to each
+  slope and so bring out features a single light source washes out. Because
+  the four directions are spaced exactly 45 degrees apart the weights always
+  sum to 2, so dividing the weighted sum by 2 is an exact normalization (flat
+  cells shade to cos(zenith)). No cast-shadow option (as in the legacy tool:
+  a single shadow direction is ambiguous under four suns). The legacy
+  "ramp over full range" option only altered the ArcMap renderer stretch --
+  never the pixel values -- and is dropped (symbology is left to Pro).
 
 What makes it "enhanced" relative to Esri's Hillshade:
 
@@ -248,6 +262,9 @@ def _cast_shadow_mask(z_m, cellw_m, cellh_m, azimuth, altitude):
 #  Main engine
 # ----------------------------------------------------------------------------
 
+_MDOW_OFFSETS = (-67.5, -22.5, 22.5, 67.5)
+
+
 def run_enhanced_hillshade(in_raster, out_raster, elev_units="Meters",
                            azimuth=315.0, altitude=45.0, levels=255,
                            use_hypso=False, hypso_strength=50,
@@ -258,6 +275,30 @@ def run_enhanced_hillshade(in_raster, out_raster, elev_units="Meters",
     ``shadow_dim``: percent (0-100) of the unshadowed hillshade value that a
     shadowed cell keeps -- 0 renders shadows black, 100 disables the dimming.
     """
+    _run_hillshade("standard", in_raster, out_raster, elev_units, azimuth,
+                   altitude, levels, use_hypso, hypso_strength, vert_exag,
+                   model_shadows, shadow_dim, messages)
+
+
+def run_mdow_hillshade(in_raster, out_raster, elev_units="Meters",
+                       azimuth=270.0, altitude=30.0, levels=256,
+                       use_hypso=False, hypso_strength=50,
+                       vert_exag=1.0, messages=None):
+    """Compute the Multi-Directional Oblique-Weighted (MDOW) hillshade of
+    Mark (1992). See the module docstring. ``azimuth`` is the primary
+    illumination direction; the four blended sun directions sit at
+    -67.5/-22.5/+22.5/+67.5 degrees around it (legacy defaults 270/30/256).
+    """
+    _run_hillshade("mdow", in_raster, out_raster, elev_units, azimuth,
+                   altitude, levels, use_hypso, hypso_strength, vert_exag,
+                   False, 20.0, messages)
+
+
+def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
+                   levels, use_hypso, hypso_strength, vert_exag,
+                   model_shadows, shadow_dim, messages):
+    """Shared engine: ``mode`` is "standard" (one sun direction, optional cast
+    shadows) or "mdow" (four sine-squared-weighted directions, no shadows)."""
     gdal = _mh._gdal()
 
     azimuth = float(azimuth) % 360.0
@@ -316,6 +357,10 @@ def run_enhanced_hillshade(in_raster, out_raster, elev_units="Meters",
     az_math = (360.0 - azimuth + 90.0) % 360.0
     az_rad = math.radians(az_math)
     cosz, sinz = math.cos(zenith), math.sin(zenith)
+    if mode == "mdow":
+        mdow_azimuths = [(azimuth + off) % 360.0 for off in _MDOW_OFFSETS]
+        dir_rads = [math.radians((360.0 - a + 90.0) % 360.0)
+                    for a in mdow_azimuths]
 
     # Hypsometric weight: multiplier = t*s + (1 - s), t = normalized elevation.
     hyp_lo = hyp_range = None
@@ -362,10 +407,18 @@ def run_enhanced_hillshade(in_raster, out_raster, elev_units="Meters",
     out_band = out_ds.GetRasterBand(1)
     out_band.SetNoDataValue(NODATA_OUT)
 
-    _msg(messages, "Computing hillshade: azimuth {:.1f} deg, inclination {:.1f} deg, "
-                   "{} levels, exaggeration {:g}{}.".format(
-                       azimuth, altitude, levels, vert_exag,
-                       ", geodesic" if geographic else ""))
+    if mode == "mdow":
+        _msg(messages, "Computing MDOW hillshade: sun directions {} deg "
+                       "(sine-squared weighted; primary {:.1f}), inclination "
+                       "{:.1f} deg, {} levels, exaggeration {:g}{}.".format(
+                           "/".join("{:g}".format(a) for a in mdow_azimuths),
+                           azimuth, altitude, levels, vert_exag,
+                           ", geodesic" if geographic else ""))
+    else:
+        _msg(messages, "Computing hillshade: azimuth {:.1f} deg, inclination {:.1f} deg, "
+                       "{} levels, exaggeration {:g}{}.".format(
+                           azimuth, altitude, levels, vert_exag,
+                           ", geodesic" if geographic else ""))
     _set_label("Calculating hillshade...")
     stats = _mh._RasterStats()
     strips = [(y, min(_STRIP_ROWS, height - y)) for y in range(0, height, _STRIP_ROWS)]
@@ -412,7 +465,18 @@ def run_enhanced_hillshade(in_raster, out_raster, elev_units="Meters",
             aspect = np.arctan2(dzdy, -dzdx)
             aspect[aspect < 0] += 2.0 * math.pi
 
-            shade = cosz * np.cos(slope) + sinz * np.sin(slope) * np.cos(az_rad - aspect)
+            if mode == "mdow":
+                # Four hillshades blended with sin^2(aspect - direction)
+                # weights; the weights of 45-degree-spaced directions always
+                # sum to 2, so /2 is exact (Mark 1992).
+                cs = cosz * np.cos(slope)
+                ss = sinz * np.sin(slope)
+                shade = np.zeros_like(slope)
+                for dr in dir_rads:
+                    shade += np.sin(aspect - dr) ** 2 * (cs + ss * np.cos(dr - aspect))
+                shade *= 0.5
+            else:
+                shade = cosz * np.cos(slope) + sinz * np.sin(slope) * np.cos(az_rad - aspect)
             hs = levels * shade
             if use_hypso:
                 hs *= ((C_ - hyp_lo) / hyp_range) * s_frac + (1.0 - s_frac)
@@ -472,28 +536,52 @@ def run_enhanced_hillshade(in_raster, out_raster, elev_units="Meters",
     try:
         md = arcpy.metadata.Metadata(out_raster)
         md.title = os.path.basename(str(out_raster))
-        md.tags = "hillshade, shaded relief, cartography, Jenness Enterprises"
-        md.summary = (
-            "Created by Enhanced Hillshade from {src}: azimuth {az:g} deg, "
-            "inclination {alt:g} deg, {lev} levels, vertical exaggeration "
-            "{ex:g}, elevation units {units}{hyp}{sh}. {geo}").format(
-                src=str(in_raster), az=azimuth, alt=altitude, lev=levels,
-                ex=vert_exag, units=("Meters (geographic DEM)" if geographic
-                                     else elev_units),
-                hyp=(", hypsometric shading {:.0f}%".format(hypso_strength)
-                     if use_hypso else ""),
-                sh=(", cast shadows dimmed to {:g}%".format(shadow_dim)
-                    if model_shadows else ""),
-                geo=("Cell dimensions were computed per row on the spheroid "
-                     "(geodesic method) because the DEM is in a geographic "
-                     "coordinate system." if geographic else
-                     "Planar cell dimensions were used (projected DEM)."))
-        md.description = (
-            "Hillshade (shaded relief) raster: illumination of the terrain "
-            "surface from a hypothetical light source, from 0 (fully shaded) "
-            "to the requested number of levels (fully lit). Unlike the "
-            "standard hillshade, gradients on geographic DEMs are computed "
-            "from true spheroidal cell dimensions at each row's latitude.")
+        geo_note = ("Cell dimensions were computed per row on the spheroid "
+                    "(geodesic method) because the DEM is in a geographic "
+                    "coordinate system." if geographic else
+                    "Planar cell dimensions were used (projected DEM).")
+        hyp_note = (", hypsometric shading {:.0f}%".format(hypso_strength)
+                    if use_hypso else "")
+        units_note = "Meters (geographic DEM)" if geographic else elev_units
+        if mode == "mdow":
+            md.tags = ("MDOW hillshade, multidirectional hillshade, shaded "
+                       "relief, cartography, Jenness Enterprises")
+            md.summary = (
+                "Created by MDOW Hillshade from {src}: sun directions {dirs} "
+                "deg (primary {az:g}), inclination {alt:g} deg, {lev} levels, "
+                "vertical exaggeration {ex:g}, elevation units {units}{hyp}. "
+                "{geo}").format(
+                    src=str(in_raster),
+                    dirs="/".join("{:g}".format(a) for a in mdow_azimuths),
+                    az=azimuth, alt=altitude, lev=levels, ex=vert_exag,
+                    units=units_note, hyp=hyp_note, geo=geo_note)
+            md.description = (
+                "Multi-Directional Oblique-Weighted (MDOW) hillshade raster "
+                "(Mark 1992, USGS Open-File Report 92-422): four hillshades "
+                "with sun directions fanned around the primary illumination "
+                "direction, blended per cell with sine-squared aspect weights "
+                "so each slope is lit most strongly from the directions "
+                "oblique to it. Brings out terrain features that a "
+                "single-direction hillshade washes out. Gradients on "
+                "geographic DEMs are computed from true spheroidal cell "
+                "dimensions at each row's latitude.")
+        else:
+            md.tags = "hillshade, shaded relief, cartography, Jenness Enterprises"
+            md.summary = (
+                "Created by Enhanced Hillshade from {src}: azimuth {az:g} deg, "
+                "inclination {alt:g} deg, {lev} levels, vertical exaggeration "
+                "{ex:g}, elevation units {units}{hyp}{sh}. {geo}").format(
+                    src=str(in_raster), az=azimuth, alt=altitude, lev=levels,
+                    ex=vert_exag, units=units_note, hyp=hyp_note,
+                    sh=(", cast shadows dimmed to {:g}%".format(shadow_dim)
+                        if model_shadows else ""),
+                    geo=geo_note)
+            md.description = (
+                "Hillshade (shaded relief) raster: illumination of the terrain "
+                "surface from a hypothetical light source, from 0 (fully shaded) "
+                "to the requested number of levels (fully lit). Unlike the "
+                "standard hillshade, gradients on geographic DEMs are computed "
+                "from true spheroidal cell dimensions at each row's latitude.")
         md.save()
     except Exception:
         pass
@@ -513,4 +601,5 @@ def run_enhanced_hillshade(in_raster, out_raster, elev_units="Meters",
     except Exception as e:
         if messages is not None:
             messages.addWarningMessage("Could not build pyramids: {}".format(e))
-    _msg(messages, "Enhanced hillshade complete: {}".format(out_raster))
+    _msg(messages, "{} complete: {}".format(
+        "MDOW hillshade" if mode == "mdow" else "Enhanced hillshade", out_raster))

@@ -107,6 +107,10 @@
     <Content Include="Images\EnhancedHillshade_32.png" />
     <Content Include="DarkImages\EnhancedHillshade_16.png" />
     <Content Include="DarkImages\EnhancedHillshade_32.png" />
+    <Content Include="Images\MDOWHillshade_16.png" />
+    <Content Include="Images\MDOWHillshade_32.png" />
+    <Content Include="DarkImages\MDOWHillshade_16.png" />
+    <Content Include="DarkImages\MDOWHillshade_32.png" />
     <!-- The Thought-for-the-Day card background is loaded from disk by path at run
          time, so it must sit next to the assembly (copied to the output directory). -->
     <Content Include="Images\quote_bg.png">

@@ -172,7 +172,7 @@ class Toolbox(object):
                       MahalanobisRaster, MahalanobisPoints, MahalanobisCovariance,
                       MahalanobisChiSquare,
                       KernelDensityGenerate, KernelDensityProportion, KernelDensityContours,
-                      ShadowPolygons, EnhancedHillshade]
+                      ShadowPolygons, EnhancedHillshade, MDOWHillshade]
 
 
 class LoCoHStandard(object):
@@ -2037,6 +2037,185 @@ class EnhancedHillshade(object):
                 "vert_exag": P["vert_exag"].value,
                 "model_shadows": bool(P["model_shadows"].value),
                 "shadow_dim": P["shadow_dim"].value,
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class MDOWHillshade(object):
+    """Multi-Directional Oblique-Weighted (MDOW) hillshade -- four blended
+    sun directions bring out terrain features that a single light source
+    washes out (Mark 1992, USGS Open-File Report 92-422). Geodesic-correct
+    on geographic DEMs like Enhanced Hillshade.
+    """
+
+    def __init__(self):
+        self.label = "MDOW Hillshade"
+        self.description = (
+            "Computes a Multi-Directional Oblique-Weighted (MDOW) hillshade from a "
+            "single-band DEM (after Mark 1992, USGS Open-File Report 92-422). Four "
+            "hillshades are computed with sun directions fanned -67.5, -22.5, +22.5 "
+            "and +67.5 degrees around the primary illumination direction and blended "
+            "per cell with sine-squared aspect weights, so every slope is lit most "
+            "strongly from the directions oblique to it -- revealing terrain that a "
+            "single-direction hillshade washes out. Geographic (lat/long) DEMs are "
+            "handled correctly: cell dimensions are recomputed for every row from "
+            "the spheroid, so the shading is accurate at any latitude without "
+            "projecting first. Options include the number of hillshade levels, "
+            "hypsometric shading (darkens low elevations), and vertical exaggeration.")
+        self.category = "Cartography Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_units = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input elevation raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output hillshade raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required", direction="Output")
+        elev_units = arcpy.Parameter(
+            displayName="Elevation units", name="elev_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        elev_units.filter.type = "ValueList"
+        elev_units.filter.list = hillshade.ELEV_UNITS
+        azimuth = arcpy.Parameter(
+            displayName="Primary illumination direction (0-360 degrees)",
+            name="azimuth",
+            datatype="GPDouble", parameterType="Required", direction="Input")
+        azimuth.value = 270.0
+        altitude = arcpy.Parameter(
+            displayName="Inclination to sun, all directions (0-90 degrees)",
+            name="altitude",
+            datatype="GPDouble", parameterType="Required", direction="Input")
+        altitude.value = 30.0
+        levels = arcpy.Parameter(
+            displayName="Hillshade levels", name="levels",
+            datatype="GPLong", parameterType="Required", direction="Input")
+        levels.value = 256
+        use_hypso = arcpy.Parameter(
+            displayName="Apply hypsometric shading", name="use_hypso",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        use_hypso.value = False
+        hypso_strength = arcpy.Parameter(
+            displayName="Hypsometric strength (0-100)", name="hypso_strength",
+            datatype="GPLong", parameterType="Optional", direction="Input")
+        hypso_strength.value = 50
+        hypso_strength.enabled = False
+        vert_exag = arcpy.Parameter(
+            displayName="Vertical exaggeration factor", name="vert_exag",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        vert_exag.value = 1.0
+        params = [in_raster, out_raster, elev_units, azimuth, altitude, levels,
+                  use_hypso, hypso_strength, vert_exag]
+        # Pre-select the choices from the last run saved with this project.
+        saved = _load_tool_defaults("MDOWHillshade")
+        for p in params:
+            if p.name in saved and p.name not in ("in_raster", "out_raster"):
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        hypso_strength.enabled = bool(use_hypso.value)
+        return params
+
+    def isLicensed(self):
+        return True
+
+    # Same auto-detection as Enhanced Hillshade (shared helper).
+    _detect_units = EnhancedHillshade._detect_units
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr, units = P["in_raster"], P["out_raster"], P["elev_units"]
+        if inr.valueAsText:
+            detected, locked = self._detect_units(inr.valueAsText)
+            if locked:
+                if not units.altered or units.valueAsText == self._auto_units:
+                    units.value = detected
+                    self._auto_units = detected
+                units.enabled = False
+            else:
+                units.enabled = True
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(inr.valueAsText))[0] + "_MDOW")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        P["hypso_strength"].enabled = bool(P["use_hypso"].value)
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, units = P["in_raster"], P["elev_units"]
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage(
+                        "The elevation raster must be single band.")
+            except Exception:
+                pass
+            if units.enabled and not units.valueAsText:
+                units.setErrorMessage(
+                    "The DEM does not specify its elevation units; choose "
+                    "Meters or Feet.")
+        az = P["azimuth"].value
+        if az is not None and not (0 <= az <= 360):
+            P["azimuth"].setErrorMessage(
+                "The primary illumination direction must be 0 to 360 degrees.")
+        alt = P["altitude"].value
+        if alt is not None and not (0 <= alt <= 90):
+            P["altitude"].setErrorMessage(
+                "The inclination must be 0 to 90 degrees.")
+        if P["levels"].value is not None and P["levels"].value < 1:
+            P["levels"].setErrorMessage("There must be at least 1 hillshade level.")
+        st = P["hypso_strength"].value
+        if P["use_hypso"].value and st is not None and not (0 <= st <= 100):
+            P["hypso_strength"].setErrorMessage(
+                "The hypsometric strength must be 0 to 100.")
+        ex = P["vert_exag"].value
+        if ex is not None and ex <= 0:
+            P["vert_exag"].setErrorMessage(
+                "The vertical exaggeration must be positive.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(hillshade)
+            P = {p.name: p for p in parameters}
+            hillshade.run_mdow_hillshade(
+                in_raster=P["in_raster"].valueAsText,
+                out_raster=P["out_raster"].valueAsText,
+                elev_units=P["elev_units"].valueAsText or "Meters",
+                azimuth=P["azimuth"].value,
+                altitude=P["altitude"].value,
+                levels=P["levels"].value,
+                use_hypso=bool(P["use_hypso"].value),
+                hypso_strength=P["hypso_strength"].value or 50,
+                vert_exag=P["vert_exag"].value or 1.0,
+                messages=messages)
+            # Remember the choices (not the datasets) with the project.
+            _save_tool_defaults("MDOWHillshade", {
+                "elev_units": P["elev_units"].valueAsText or "Meters",
+                "azimuth": P["azimuth"].value,
+                "altitude": P["altitude"].value,
+                "levels": P["levels"].value,
+                "use_hypso": bool(P["use_hypso"].value),
+                "hypso_strength": P["hypso_strength"].value,
+                "vert_exag": P["vert_exag"].value,
             })
         except arcpy.ExecuteError:
             raise
