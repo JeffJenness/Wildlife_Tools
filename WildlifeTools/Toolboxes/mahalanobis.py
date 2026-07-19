@@ -528,10 +528,14 @@ def _gdal_source_path(raster, scratch):
     the native path was directly usable).
 
     GDAL cannot open every arcpy raster by its native path -- rasters inside a file
-    geodatabase, mosaic datasets, and some in-memory layers all fail. When the catalog
-    path is not directly GDAL-openable, the raster is exported to a scratch GeoTIFF (arcpy
-    can read anything) and that path is returned, with ``tmp_copy`` set so the caller can
-    clean it up once the GDAL dataset / VRT built from it has been released.
+    geodatabase, mosaic datasets, and some in-memory layers all fail on the catalog
+    path. File-geodatabase rasters ARE directly readable through the OpenFileGDB
+    driver's subdataset syntax ('OpenFileGDB:"x.gdb":name', GDAL 3.7+; also valid as
+    a gdal.Warp source), which avoids the slow whole-raster export, so that is tried
+    second. Only when neither works is the raster exported to a scratch GeoTIFF
+    (arcpy can read anything) and that path returned, with ``tmp_copy`` set so the
+    caller can clean it up once the GDAL dataset / VRT built from it has been
+    released.
     """
     gdal = _gdal()
     try:
@@ -545,6 +549,19 @@ def _gdal_source_path(raster, scratch):
     if ds is not None:
         ds = None
         return path, None
+    low = str(path).lower()
+    if ".gdb" in low:
+        i = low.rindex(".gdb")
+        gdb, name = path[:i + 4], path[i + 4:].strip("\\/")
+        if name:
+            sub = 'OpenFileGDB:"{}":{}'.format(gdb, name)
+            try:
+                ds = gdal.Open(sub)
+            except RuntimeError:
+                ds = None
+            if ds is not None:
+                ds = None
+                return sub, None
     tif = arcpy.CreateUniqueName("mahal_src.tif", scratch)
     arcpy.management.CopyRaster(raster, tif)
     return tif, tif
