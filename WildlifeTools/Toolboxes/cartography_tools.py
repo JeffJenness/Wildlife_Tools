@@ -321,3 +321,148 @@ def run_shadow_polygons(in_features, out_fc, num_rings=10, size_value=0.25,
         pass
 
     return _write_layer_file(out_fc, out_name, messages)
+
+
+# ----------------------------------------------------------------------------
+#  Simple Hypsometric Shading (group-layer composition; creates NO dataset)
+# ----------------------------------------------------------------------------
+
+def _raster_layer_cim(raster, messages):
+    """CIM layer definition (dict) for ``raster``, with the dataConnection
+    written by Esri's own code: MakeRasterLayer -> SaveToLayerFile -> parse.
+    Returns the CIMRasterLayer dict from the saved document.
+    """
+    path = arcpy.Describe(raster).catalogPath
+    name = os.path.splitext(os.path.basename(path))[0]
+    tmp_name = arcpy.CreateUniqueName("hypso_part", "memory").replace(
+        "memory\\", "jenness_hypso_")
+    lyr_obj = arcpy.management.MakeRasterLayer(path, tmp_name)[0]
+    tmp_lyrx = arcpy.CreateUniqueName("hypso_part.lyrx", arcpy.env.scratchFolder)
+    try:
+        arcpy.management.SaveToLayerFile(lyr_obj, tmp_lyrx, "ABSOLUTE")
+        with open(tmp_lyrx) as f:
+            doc = json.load(f)
+    finally:
+        try:
+            arcpy.management.Delete(lyr_obj)
+        except Exception:
+            pass
+        try:
+            os.remove(tmp_lyrx)
+        except Exception:
+            pass
+    lyr_def = doc["layerDefinitions"][0]
+    lyr_def["name"] = name
+    return lyr_def, doc.get("version"), doc.get("build")
+
+
+def run_simple_hypso_shading(dem, hillshade, transparency=50.0,
+                             blend_mode="Normal", group_name=None,
+                             out_lyrx=None, messages=None):
+    """Compose a hypsometric-shading GROUP LAYER (no new dataset): the DEM on
+    top, stretched black (lowest elevation) to white with the given percent
+    ``transparency``, over the existing ``hillshade``. Writes a .lyrx layer
+    file referencing the two existing rasters and returns its path (default:
+    a scratch-folder file, so the only lasting artifact is the group layer
+    the caller adds to the map).
+    """
+    transparency = float(transparency)
+    if not 0.0 <= transparency <= 100.0:
+        raise arcpy.ExecuteError("The transparency must be 0 to 100 percent.")
+    if blend_mode not in _BLEND_CIM:
+        raise arcpy.ExecuteError(
+            "Unknown layer blend mode: {} (choose one of {}).".format(
+                blend_mode, ", ".join(BLEND_MODE_NAMES)))
+
+    dem_def, version, build = _raster_layer_cim(dem, messages)
+    hs_def, _v, _b = _raster_layer_cim(hillshade, messages)
+
+    # Unique CIM URIs for the three layers.
+    dem_def["uRI"] = "CIMPATH=jenness_hypso_dem.xml"
+    hs_def["uRI"] = "CIMPATH=jenness_hypso_hillshade.xml"
+    group_uri = "CIMPATH=jenness_hypso_group.xml"
+
+    # DEM on top: min-max stretch, black at the minimum elevation up to
+    # white, at the requested transparency and blend mode. PATCH the
+    # Esri-generated colorizer rather than replacing it -- its
+    # stretchClasses/stretchStats are what the Contents pane renders as the
+    # layer's legend (a rebuilt colorizer without them shows no legend).
+    dem_def["transparency"] = transparency
+    dem_def["blendingMode"] = _BLEND_CIM[blend_mode]
+    col = dem_def.get("colorizer") or {}
+    if col.get("type") != "CIMRasterStretchColorizer":
+        col = {
+            "type": "CIMRasterStretchColorizer",
+            "resamplingType": "BilinearInterpolation",
+            "noDataColor": {"type": "CIMRGBColor", "values": [255, 255, 255, 0]},
+            "backgroundColor": {"type": "CIMRGBColor", "values": [255, 255, 255, 0]},
+            "colorScheme": "",
+            "hillshadeZFactor": 1,
+            "gammaValue": 1,
+            "maxPercent": 0.25,
+            "minPercent": 0.25,
+            "standardDeviationParam": 2,
+        }
+    col["stretchType"] = "MinimumMaximum"
+    col["statsType"] = "Dataset"
+    col["dra"] = False
+    col["colorRamp"] = {
+        "type": "CIMLinearContinuousColorRamp",
+        "colorSpace": {"type": "CIMICCColorSpace", "url": "Default RGB"},
+        "fromColor": {"type": "CIMRGBColor", "values": [0, 0, 0, 100]},
+        "toColor": {"type": "CIMRGBColor", "values": [255, 255, 255, 100]},
+    }
+    dem_def["colorizer"] = col
+
+    if not group_name:
+        group_name = "{} Hypsometric Shading".format(dem_def["name"])
+    group_def = {
+        "type": "CIMGroupLayer",
+        "name": group_name,
+        "uRI": group_uri,
+        "layers": [dem_def["uRI"], hs_def["uRI"]],
+        "visibility": True,
+        "expanded": True,
+    }
+
+    doc = {
+        "type": "CIMLayerDocument",
+        "version": version or "3.0.0",
+        "build": build or 0,
+        "layers": [group_uri],
+        "layerDefinitions": [group_def, dem_def, hs_def],
+    }
+
+    if not out_lyrx:
+        out_lyrx = arcpy.CreateUniqueName("hypso_group.lyrx",
+                                          arcpy.env.scratchFolder)
+    with open(out_lyrx, "w") as f:
+        json.dump(doc, f, indent=2)
+    _msg(messages, "Hypsometric shading group layer composed: '{}' (DEM "
+                   "stretched black to white at {:g}% transparency{} over "
+                   "the hillshade). No new dataset was created; the group "
+                   "layer references the existing rasters.".format(
+                       group_name, transparency,
+                       "" if blend_mode == "Normal"
+                       else ", blend mode {}".format(blend_mode)))
+    return out_lyrx
+
+
+# Layer blend modes offered by the Simple Hypsometric Shading dialog, in the
+# order of ArcGIS Pro's own Layer Blend menu: dialog name -> CIM BlendingMode
+# enum value ("Normal" is CIM "Alpha").
+BLEND_MODES = [
+    ("Normal", "Alpha"),
+    ("Screen", "Screen"), ("Color Dodge", "ColorDodge"),
+    ("Lighten", "Lighten"), ("Linear Dodge", "LinearDodge"),
+    ("Multiply", "Multiply"), ("Color Burn", "ColorBurn"),
+    ("Darken", "Darken"), ("Linear Burn", "LinearBurn"),
+    ("Difference", "Difference"), ("Exclusion", "Exclusion"),
+    ("Overlay", "Overlay"), ("Hard Light", "HardLight"),
+    ("Soft Light", "SoftLight"), ("Linear Light", "LinearLight"),
+    ("Pin Light", "PinLight"), ("Vivid Light", "VividLight"),
+    ("Luminosity", "Luminosity"), ("Saturation", "Saturation"),
+    ("Hue", "Hue"), ("Color", "Color"),
+]
+BLEND_MODE_NAMES = [n for n, _ in BLEND_MODES]
+_BLEND_CIM = dict(BLEND_MODES)

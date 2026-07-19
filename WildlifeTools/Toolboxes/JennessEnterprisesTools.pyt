@@ -173,7 +173,8 @@ class Toolbox(object):
                       MahalanobisChiSquare,
                       KernelDensityGenerate, KernelDensityProportion, KernelDensityContours,
                       ShadowPolygons, EnhancedHillshade, MDOWHillshade,
-                      MultiSunHillshade]
+                      MultiSunHillshade, SimpleHypsometricShading,
+                      BlurredHillshade]
 
 
 class LoCoHStandard(object):
@@ -2546,6 +2547,357 @@ class MultiSunHillshade(object):
                     name = "{}_{}".format(stem, i)
                     saved[name] = P[name].value
             _save_tool_defaults("MultiSunHillshade", saved)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class BlurredHillshade(object):
+    """Blurred (smoothed) hillshade -- the softening component of the Swiss
+    method: either the DEM is blurred before shading (default; generalizes
+    the terrain) or the finished hillshade image is blurred after shading.
+    Geodesic-correct on geographic DEMs like the other hillshade tools.
+    """
+
+    def __init__(self):
+        self.label = "Blurred Hillshade"
+        self.description = (
+            "Computes a deliberately softened (blurred) hillshade from a "
+            "single-band DEM -- the blurring component of the classic Swiss "
+            "method of relief presentation. A circular blur of a user-chosen "
+            "radius (cells, meters, kilometers, feet, or miles; linear radii "
+            "are sized per row on the spheroid for geographic DEMs) is applied "
+            "either to the DEM before shading (default; de-emphasizes small "
+            "terrain features) or to the finished hillshade image. All the "
+            "Enhanced Hillshade options are available: hillshade levels, "
+            "hypsometric shading, vertical exaggeration, and modeled cast "
+            "shadows.")
+        self.category = "Cartography Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_units = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input elevation raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output hillshade raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required", direction="Output")
+        elev_units = arcpy.Parameter(
+            displayName="Elevation units", name="elev_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        elev_units.filter.type = "ValueList"
+        elev_units.filter.list = hillshade.ELEV_UNITS
+        blur_radius = arcpy.Parameter(
+            displayName="Blur radius", name="blur_radius",
+            datatype="GPDouble", parameterType="Required", direction="Input")
+        blur_radius.value = 10.0
+        radius_units = arcpy.Parameter(
+            displayName="Blur radius units", name="radius_units",
+            datatype="GPString", parameterType="Required", direction="Input")
+        radius_units.filter.type = "ValueList"
+        radius_units.filter.list = hillshade.RADIUS_UNITS
+        radius_units.value = "Cells"
+        blur_target = arcpy.Parameter(
+            displayName="What to blur", name="blur_target",
+            datatype="GPString", parameterType="Required", direction="Input")
+        blur_target.filter.type = "ValueList"
+        blur_target.filter.list = hillshade.BLUR_TARGETS
+        blur_target.value = hillshade.BLUR_TARGETS[0]
+        kernel = arcpy.Parameter(
+            displayName="Kernel weighting", name="kernel",
+            datatype="GPString", parameterType="Required", direction="Input")
+        kernel.filter.type = "ValueList"
+        kernel.filter.list = hillshade.BLUR_KERNELS
+        kernel.value = "Average"
+        azimuth = arcpy.Parameter(
+            displayName="Azimuth to sun (0-360 degrees)", name="azimuth",
+            datatype="GPDouble", parameterType="Required", direction="Input")
+        azimuth.value = 315.0
+        altitude = arcpy.Parameter(
+            displayName="Inclination to sun (0-90 degrees)", name="altitude",
+            datatype="GPDouble", parameterType="Required", direction="Input")
+        altitude.value = 45.0
+        levels = arcpy.Parameter(
+            displayName="Hillshade levels (Esri hillshade = 255)", name="levels",
+            datatype="GPLong", parameterType="Required", direction="Input")
+        levels.value = 255
+        use_hypso = arcpy.Parameter(
+            displayName="Apply hypsometric shading", name="use_hypso",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        use_hypso.value = False
+        hypso_strength = arcpy.Parameter(
+            displayName="Hypsometric strength (0-100)", name="hypso_strength",
+            datatype="GPLong", parameterType="Optional", direction="Input")
+        hypso_strength.value = 50
+        hypso_strength.enabled = False
+        vert_exag = arcpy.Parameter(
+            displayName="Vertical exaggeration factor", name="vert_exag",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        vert_exag.value = 1.0
+        model_shadows = arcpy.Parameter(
+            displayName="Model cast shadows", name="model_shadows",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        model_shadows.value = False
+        shadow_dim = arcpy.Parameter(
+            displayName="Shadow brightness (percent of unshadowed value)",
+            name="shadow_dim",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        shadow_dim.value = 20.0
+        shadow_dim.enabled = False
+        params = [in_raster, out_raster, elev_units, blur_radius, radius_units,
+                  blur_target, kernel, azimuth, altitude, levels,
+                  use_hypso, hypso_strength, vert_exag, model_shadows,
+                  shadow_dim]
+        # Pre-select the choices from the last run saved with this project.
+        saved = _load_tool_defaults("BlurredHillshade")
+        for p in params:
+            if p.name in saved and p.name not in ("in_raster", "out_raster"):
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        hypso_strength.enabled = bool(use_hypso.value)
+        shadow_dim.enabled = bool(model_shadows.value)
+        return params
+
+    def isLicensed(self):
+        return True
+
+    # Same auto-detection as Enhanced Hillshade (shared helper).
+    _detect_units = EnhancedHillshade._detect_units
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr, units = P["in_raster"], P["out_raster"], P["elev_units"]
+        if inr.valueAsText:
+            detected, locked = self._detect_units(inr.valueAsText)
+            if locked:
+                if not units.altered or units.valueAsText == self._auto_units:
+                    units.value = detected
+                    self._auto_units = detected
+                units.enabled = False
+            else:
+                units.enabled = True
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(inr.valueAsText))[0] + "_Blurred")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        P["hypso_strength"].enabled = bool(P["use_hypso"].value)
+        P["shadow_dim"].enabled = bool(P["model_shadows"].value)
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, units = P["in_raster"], P["elev_units"]
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage(
+                        "The elevation raster must be single band.")
+            except Exception:
+                pass
+            if units.enabled and not units.valueAsText:
+                units.setErrorMessage(
+                    "The DEM does not specify its elevation units; choose "
+                    "Meters or Feet.")
+        br = P["blur_radius"].value
+        if br is not None and br <= 0:
+            P["blur_radius"].setErrorMessage("The blur radius must be positive.")
+        az = P["azimuth"].value
+        if az is not None and not (0 <= az <= 360):
+            P["azimuth"].setErrorMessage("The azimuth must be 0 to 360 degrees.")
+        alt = P["altitude"].value
+        if alt is not None and not (0 <= alt <= 90):
+            P["altitude"].setErrorMessage(
+                "The inclination must be 0 to 90 degrees.")
+        if P["levels"].value is not None and P["levels"].value < 1:
+            P["levels"].setErrorMessage("There must be at least 1 hillshade level.")
+        st = P["hypso_strength"].value
+        if P["use_hypso"].value and st is not None and not (0 <= st <= 100):
+            P["hypso_strength"].setErrorMessage(
+                "The hypsometric strength must be 0 to 100.")
+        ex = P["vert_exag"].value
+        if ex is not None and ex <= 0:
+            P["vert_exag"].setErrorMessage(
+                "The vertical exaggeration must be positive.")
+        sd = P["shadow_dim"].value
+        if P["model_shadows"].value and sd is not None and not (0 <= sd <= 100):
+            P["shadow_dim"].setErrorMessage(
+                "The shadow brightness must be 0 to 100 percent.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(hillshade)
+            P = {p.name: p for p in parameters}
+            hillshade.run_blurred_hillshade(
+                in_raster=P["in_raster"].valueAsText,
+                out_raster=P["out_raster"].valueAsText,
+                elev_units=P["elev_units"].valueAsText or "Meters",
+                azimuth=P["azimuth"].value,
+                altitude=P["altitude"].value,
+                levels=P["levels"].value,
+                use_hypso=bool(P["use_hypso"].value),
+                hypso_strength=P["hypso_strength"].value or 50,
+                vert_exag=P["vert_exag"].value or 1.0,
+                model_shadows=bool(P["model_shadows"].value),
+                shadow_dim=(P["shadow_dim"].value
+                            if P["shadow_dim"].value is not None else 20.0),
+                blur_radius=P["blur_radius"].value,
+                radius_units=P["radius_units"].valueAsText or "Cells",
+                blur_target=P["blur_target"].valueAsText or None,
+                kernel=P["kernel"].valueAsText or "Average",
+                messages=messages)
+            # Remember the choices (not the datasets) with the project.
+            _save_tool_defaults("BlurredHillshade", {
+                "elev_units": P["elev_units"].valueAsText or "Meters",
+                "blur_radius": P["blur_radius"].value,
+                "radius_units": P["radius_units"].valueAsText,
+                "blur_target": P["blur_target"].valueAsText,
+                "kernel": P["kernel"].valueAsText,
+                "azimuth": P["azimuth"].value,
+                "altitude": P["altitude"].value,
+                "levels": P["levels"].value,
+                "use_hypso": bool(P["use_hypso"].value),
+                "hypso_strength": P["hypso_strength"].value,
+                "vert_exag": P["vert_exag"].value,
+                "model_shadows": bool(P["model_shadows"].value),
+                "shadow_dim": P["shadow_dim"].value,
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class SimpleHypsometricShading(object):
+    """Composes a hypsometric-shading GROUP LAYER from a DEM and an existing
+    hillshade -- no new dataset is created. The DEM sits on top, stretched
+    black (lowest elevation) to white at a user-set transparency, over the
+    hillshade. The group layer is plain layers the user can freely modify.
+    """
+
+    def __init__(self):
+        self.label = "Simple Hypsometric Shading"
+        self.description = (
+            "Creates a group layer that drapes a DEM over an existing hillshade "
+            "for a classic hypsometric-shading (elevation-tinted relief) effect: "
+            "the DEM is symbolized with a black-to-white stretch (black at the "
+            "lowest elevation) and set to a chosen transparency, on top of the "
+            "hillshade. No new dataset is created -- the group layer simply "
+            "references the two existing rasters, and every part of it (ramp, "
+            "transparency, layer order) remains freely editable afterward.")
+        self.category = "Cartography Tools"
+        self.canRunInBackground = False
+        self._auto_name = None
+
+    def getParameterInfo(self):
+        in_dem = arcpy.Parameter(
+            displayName="Input elevation raster (single band)", name="in_dem",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        in_hillshade = arcpy.Parameter(
+            displayName="Input hillshade raster", name="in_hillshade",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        transparency = arcpy.Parameter(
+            displayName="DEM layer transparency (0-100 percent)",
+            name="transparency",
+            datatype="GPLong", parameterType="Required", direction="Input")
+        transparency.value = 50
+        blend_mode = arcpy.Parameter(
+            displayName="Layer blend mode (DEM layer)", name="blend_mode",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        blend_mode.filter.type = "ValueList"
+        blend_mode.filter.list = cartography_tools.BLEND_MODE_NAMES
+        blend_mode.value = "Normal"
+        group_name = arcpy.Parameter(
+            displayName="Group layer name", name="group_name",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        out_group = arcpy.Parameter(
+            displayName="Output group layer", name="out_group",
+            datatype="GPGroupLayer", parameterType="Derived", direction="Output")
+        params = [in_dem, in_hillshade, transparency, blend_mode, group_name,
+                  out_group]
+        # Pre-select the choices from the last run saved with this project.
+        saved = _load_tool_defaults("SimpleHypsometricShading")
+        for p, key in ((transparency, "transparency"), (blend_mode, "blend_mode")):
+            if key in saved:
+                try:
+                    p.value = saved[key]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        dem, name = P["in_dem"], P["group_name"]
+        if dem.valueAsText and (not name.altered or
+                                name.valueAsText == self._auto_name):
+            try:
+                base = os.path.splitext(
+                    os.path.basename(arcpy.Describe(
+                        dem.valueAsText).catalogPath))[0]
+                sug = "{} Hypsometric Shading".format(base)
+                name.value = sug
+                self._auto_name = sug
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        dem = P["in_dem"]
+        if dem.valueAsText:
+            try:
+                if arcpy.Describe(dem.valueAsText).bandCount != 1:
+                    dem.setErrorMessage(
+                        "The elevation raster must be single band.")
+            except Exception:
+                pass
+        tr = P["transparency"].value
+        if tr is not None and not (0 <= tr <= 100):
+            P["transparency"].setErrorMessage(
+                "The transparency must be 0 to 100 percent.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(cartography_tools)
+            P = {p.name: p for p in parameters}
+            lyrx = cartography_tools.run_simple_hypso_shading(
+                dem=P["in_dem"].valueAsText,
+                hillshade=P["in_hillshade"].valueAsText,
+                transparency=P["transparency"].value,
+                blend_mode=P["blend_mode"].valueAsText or "Normal",
+                group_name=P["group_name"].valueAsText or None,
+                messages=messages)
+            P["out_group"].value = lyrx
+            # Remember the choices (not the datasets) with the project.
+            _save_tool_defaults("SimpleHypsometricShading", {
+                "transparency": P["transparency"].value,
+                "blend_mode": P["blend_mode"].valueAsText or "Normal",
+            })
         except arcpy.ExecuteError:
             raise
         except Exception:

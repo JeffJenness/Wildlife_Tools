@@ -15,6 +15,16 @@ self-computed statistics + histogram carried through CopyRaster):
   shadow-brightness percent BEFORE the weighted average; hypsometric shading
   is applied once to the averaged result. With a single sun at weight 100
   this reduces exactly to the Enhanced Hillshade.
+* ``run_blurred_hillshade`` -- new tool (concept from Jeff's lab exercise
+  "Creating a Blurred Hillshade"): the softening component of the Swiss
+  method. Same options as the Enhanced Hillshade plus a circular blur of a
+  user radius (cells or linear units; linear radii are sized per row on the
+  spheroid for geographic DEMs). Either the DEM is blurred before shading
+  (default -- generalizes the terrain itself, per the lab's Focal Statistics
+  recipe and "option 1 usually looks a little better") or the finished
+  hillshade image is blurred after shading (also softens cast-shadow edges).
+  Kernel weighting: uniform Average (the lab recipe) or Gaussian
+  (sigma = radius/2, truncated at the radius; smoother falloff).
 * ``run_mdow_hillshade`` -- ``CalculateJenMDOWHillshade``: the
   Multi-Directional Oblique-Weighted hillshade of Mark (1992, USGS Open-File
   Report 92-422). Four hillshades are computed with sun directions at the
@@ -83,6 +93,13 @@ _STRIP_ROWS = 1024          # rows per processing strip (plus a 1-row halo)
 
 ELEV_UNITS = ["Meters", "Feet"]
 _ELEV_METERS = {"Meters": 1.0, "Feet": 0.3048}
+
+# Blurred Hillshade choices.
+RADIUS_UNITS = ["Cells", "Meters", "Kilometers", "Feet", "Miles"]
+_RADIUS_METERS = {"Meters": 1.0, "Kilometers": 1000.0,
+                  "Feet": 0.3048, "Miles": 1609.344}
+BLUR_TARGETS = ["DEM (blur before shading)", "Hillshade (blur after shading)"]
+BLUR_KERNELS = ["Average", "Gaussian"]
 
 
 def _open_source(in_raster, scratch, messages):
@@ -187,6 +204,55 @@ def _geographic_row_distances(gt, height, a, b):
         "vB": _dist3(focal, below),
         "hB": _dist3(below, se),
     }
+
+
+# ----------------------------------------------------------------------------
+#  Circular focal-mean blur (Blurred Hillshade)
+# ----------------------------------------------------------------------------
+
+def _blur_kernel(rx, ry, kernel):
+    """2-D convolution kernel for an elliptical neighborhood of ``rx`` x
+    ``ry`` cells: uniform weights ("Average", the lab's Focal Statistics
+    circle) or Gaussian weights with sigma = radius/2, truncated at the
+    radius. Weights need no normalization -- the caller divides by the
+    convolved valid-mask (normalized convolution)."""
+    rx = max(float(rx), 0.5)
+    ry = max(float(ry), 0.5)
+    nx, ny = int(math.ceil(rx)), int(math.ceil(ry))
+    dx = np.arange(-nx, nx + 1, dtype=np.float64)[None, :] / rx
+    dy = np.arange(-ny, ny + 1, dtype=np.float64)[:, None] / ry
+    d2 = dx * dx + dy * dy
+    inside = d2 <= 1.0 + 1e-12
+    if kernel == "Gaussian":
+        w = np.exp(-2.0 * d2) * inside          # sigma = r/2 -> exp(-d^2/(2*(r/2)^2))
+    else:
+        w = inside.astype(np.float64)
+    return w
+
+
+def _blur_grid(z, valid, rx_rows, ry, kernel):
+    """NoData-ignoring circular mean of ``z`` (full grid). ``valid`` is the
+    data mask; invalid cells are excluded from every mean and stay invalid in
+    the result (matching Focal Statistics with Ignore NoData). ``rx_rows``
+    gives each row's x-radius in cells (varies by latitude on geographic
+    rasters); rows are grouped by their rounded radius and each group is
+    convolved with its own kernel."""
+    from scipy.signal import fftconvolve
+
+    num = np.where(valid, z, 0.0)
+    den = valid.astype(np.float64)
+    out = np.full(z.shape, np.nan)
+    rx_int = np.maximum(np.rint(np.asarray(rx_rows, dtype=np.float64)), 1.0)
+    for rxi in np.unique(rx_int):
+        k = _blur_kernel(rxi, ry, kernel)
+        cn = fftconvolve(num, k, mode="same")
+        cd = fftconvolve(den, k, mode="same")
+        rows = rx_int == rxi
+        with np.errstate(invalid="ignore", divide="ignore"):
+            vals = cn / np.maximum(cd, 1e-12)
+        out[rows] = vals[rows]
+    out[~valid] = np.nan
+    return out
 
 
 # ----------------------------------------------------------------------------
@@ -321,13 +387,252 @@ def run_multisun_hillshade(in_raster, out_raster, elev_units="Meters",
                    model_shadows, shadow_dim, messages, suns=suns)
 
 
+def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
+                          azimuth=315.0, altitude=45.0, levels=255,
+                          use_hypso=False, hypso_strength=50,
+                          vert_exag=1.0, model_shadows=False,
+                          shadow_dim=20.0, blur_radius=10.0,
+                          radius_units="Cells", blur_target=None,
+                          kernel="Average", messages=None):
+    """Blurred (smoothed) hillshade -- the softening component of the Swiss
+    method. Same options as the Enhanced Hillshade, plus a circular blur of
+    the given radius: either the DEM is blurred before shading (default; the
+    lab's Focal Statistics recipe, which generalizes the terrain itself) or
+    the finished hillshade image is blurred after shading. Linear radius
+    units are converted to cells geodesically (per row) on geographic
+    rasters and planarly on projected rasters.
+    """
+    gdal = _mh._gdal()
+    blur_radius = float(blur_radius)
+    if blur_radius <= 0:
+        raise arcpy.ExecuteError("The blur radius must be positive.")
+    if radius_units not in RADIUS_UNITS:
+        raise arcpy.ExecuteError("Unknown radius unit: {}.".format(radius_units))
+    if kernel not in BLUR_KERNELS:
+        raise arcpy.ExecuteError("Unknown kernel weighting: {}.".format(kernel))
+    target = blur_target or BLUR_TARGETS[0]
+    if target not in BLUR_TARGETS:
+        raise arcpy.ExecuteError("Unknown blur target: {}.".format(target))
+    dem_first = (target == BLUR_TARGETS[0])
+
+    scratch = arcpy.env.scratchFolder
+    src, in_copy = _open_source(in_raster, scratch, messages)
+    band = src.GetRasterBand(1)
+    width, height = src.RasterXSize, src.RasterYSize
+    if width < 3 or height < 3:
+        raise arcpy.ExecuteError("The DEM must be at least 3 x 3 cells.")
+    gt = src.GetGeoTransform()
+    in_nodata = band.GetNoDataValue()
+    proj = src.GetProjection()
+    sr = arcpy.Describe(in_raster).spatialReference
+    geographic = (sr.type == "Geographic")
+
+    # Blur radius in cells, per row (x) and overall (y).
+    if radius_units == "Cells":
+        rx_rows = np.full(height, blur_radius)
+        ry = blur_radius
+        _msg(messages, "Blur radius: {:g} cells ({} kernel).".format(
+            blur_radius, kernel))
+    else:
+        radius_m = blur_radius * _RADIUS_METERS[radius_units]
+        if geographic:
+            a = float(sr.semiMajorAxis or 6378137.0)
+            b = float(sr.semiMinorAxis or 6356752.31424518)
+            dist = _geographic_row_distances(gt, height, a, b)
+            rx_rows = radius_m / np.maximum(dist["h"], 1e-9)
+            ry = radius_m / max(float(np.mean(dist["vA"])), 1e-9)
+            _msg(messages, "Blur radius: {:g} {} = {:,.1f} m, sized per row "
+                           "on the spheroid ({:.1f}-{:.1f} cells across, "
+                           "{:.1f} cells down; {} kernel).".format(
+                               blur_radius, radius_units.lower(), radius_m,
+                               float(rx_rows.min()), float(rx_rows.max()),
+                               ry, kernel))
+        else:
+            mpu = float(sr.metersPerUnit or 1.0)
+            rx_rows = np.full(height, radius_m / (gt[1] * mpu))
+            ry = radius_m / (abs(gt[5]) * mpu)
+            _msg(messages, "Blur radius: {:g} {} = {:,.1f} m = {:.1f} x {:.1f} "
+                           "cells ({} kernel).".format(
+                               blur_radius, radius_units.lower(), radius_m,
+                               float(rx_rows[0]), ry, kernel))
+    note = ", blur radius {:g} {} ({} kernel, {})".format(
+        blur_radius, radius_units.lower(), kernel,
+        "DEM blurred before shading" if dem_first
+        else "hillshade blurred after shading")
+
+    if dem_first:
+        # Blur the terrain, then run the standard pipeline on the result.
+        _set_label("Reading the DEM for blurring...")
+        z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
+        valid = np.isfinite(z)
+        if in_nodata is not None:
+            valid &= (z != in_nodata)
+        _set_label("Blurring the DEM...")
+        _msg(messages, "Blurring the DEM (circular mean of the elevations)...")
+        zb = _blur_grid(z, valid, rx_rows, ry, kernel)
+        del z
+        BLUR_ND = -3.0e38
+        tmp_dem = arcpy.CreateUniqueName("blurred_dem.tif", scratch)
+        drv = gdal.GetDriverByName("GTiff")
+        tds = drv.Create(tmp_dem, width, height, 1, gdal.GDT_Float32,
+                         options=["TILED=YES", "COMPRESS=LZW"])
+        tds.SetGeoTransform(gt)
+        try:
+            tds.SetProjection(proj)
+        except Exception:
+            pass
+        tb = tds.GetRasterBand(1)
+        tb.SetNoDataValue(BLUR_ND)
+        tb.WriteArray(np.where(valid, zb, BLUR_ND).astype(np.float32))
+        tb.FlushCache()
+        tds = None
+        del zb
+        src = None
+        try:
+            _run_hillshade("standard", tmp_dem, out_raster, elev_units,
+                           azimuth, altitude, levels, use_hypso,
+                           hypso_strength, vert_exag, model_shadows,
+                           shadow_dim, messages,
+                           tool_label="Blurred Hillshade",
+                           src_display=str(in_raster), extra_note=note)
+        finally:
+            try:
+                arcpy.management.Delete(tmp_dem)
+            except Exception:
+                pass
+            if in_copy:
+                try:
+                    arcpy.management.Delete(in_copy)
+                except Exception:
+                    pass
+        return
+
+    # Blur-after path: standard hillshade to a scratch GeoTIFF, then blur the
+    # finished image and finalize.
+    src = None
+    if in_copy:
+        try:
+            arcpy.management.Delete(in_copy)
+        except Exception:
+            pass
+    hs_tmp = _run_hillshade("standard", in_raster, None, elev_units,
+                            azimuth, altitude, levels, use_hypso,
+                            hypso_strength, vert_exag, model_shadows,
+                            shadow_dim, messages, _finalize=False)
+    hds = gdal.Open(hs_tmp)
+    arr = hds.GetRasterBand(1).ReadAsArray().astype(np.float64)
+    hgt, hproj = hds.GetGeoTransform(), hds.GetProjection()
+    hds = None
+    hvalid = arr != NODATA_OUT
+    _set_label("Blurring the hillshade...")
+    _msg(messages, "Blurring the finished hillshade (circular mean of the "
+                   "hillshade values)...")
+    hb = _blur_grid(arr, hvalid, rx_rows, ry, kernel)
+    vals = np.rint(np.where(hvalid, hb, NODATA_OUT))
+    out_arr = np.where(hvalid, vals, NODATA_OUT).astype(np.int16)
+
+    out_path = arcpy.CreateUniqueName("hillshade_blurred.tif", scratch)
+    drv = gdal.GetDriverByName("GTiff")
+    ods = drv.Create(out_path, width, height, 1, gdal.GDT_Int16,
+                     options=["TILED=YES", "COMPRESS=LZW"])
+    ods.SetGeoTransform(hgt)
+    try:
+        ods.SetProjection(hproj)
+    except Exception:
+        pass
+    ob = ods.GetRasterBand(1)
+    ob.SetNoDataValue(NODATA_OUT)
+    ob.WriteArray(out_arr)
+    ob.FlushCache()
+    stats = _mh._RasterStats()
+    if hvalid.any():
+        stats.add(vals[hvalid])
+    out_stats = _mh._finalize_stats(ob, stats, messages)
+    if out_stats is not None:
+        out_stats["on_raster"] = _mh._write_gtiff_stats(ob, out_stats)
+    ob.FlushCache()
+    ods.FlushCache()
+    ods = None
+
+    _set_label("Saving output raster...")
+    prev_pyramid = arcpy.env.pyramid
+    arcpy.env.pyramid = "NONE"
+    try:
+        arcpy.management.CopyRaster(out_path, out_raster)
+    finally:
+        arcpy.env.pyramid = prev_pyramid
+    _set_label("Setting raster statistics...")
+    if out_stats and out_stats.get("on_raster"):
+        _msg(messages, "Statistics and histogram were written with the raster "
+                       "(no scan needed).")
+    elif not _mh._apply_known_statistics(out_raster, out_stats, messages):
+        try:
+            arcpy.management.CalculateStatistics(out_raster)
+        except Exception as e:
+            if messages is not None:
+                messages.addWarningMessage(
+                    "Could not calculate raster statistics: {}".format(e))
+    try:
+        md = arcpy.metadata.Metadata(out_raster)
+        md.title = os.path.basename(str(out_raster))
+        md.tags = ("blurred hillshade, smoothed hillshade, Swiss method, "
+                   "shaded relief, cartography, Jenness Enterprises")
+        md.summary = (
+            "Created by Blurred Hillshade from {src}: azimuth {az:g} deg, "
+            "inclination {alt:g} deg, {lev} levels, vertical exaggeration "
+            "{ex:g}, elevation units {units}{hyp}{sh}{note}. {geo}").format(
+                src=str(in_raster), az=azimuth, alt=altitude, lev=levels,
+                ex=vert_exag,
+                units=("Meters (geographic DEM)" if geographic else elev_units),
+                hyp=(", hypsometric shading {:.0f}%".format(float(hypso_strength))
+                     if use_hypso else ""),
+                sh=(", cast shadows dimmed to {:g}%".format(float(shadow_dim))
+                    if model_shadows else ""),
+                note=note,
+                geo=("Cell dimensions were computed per row on the spheroid "
+                     "(geodesic method) because the DEM is in a geographic "
+                     "coordinate system." if geographic else
+                     "Planar cell dimensions were used (projected DEM)."))
+        md.description = (
+            "Blurred (smoothed) hillshade raster: a shaded-relief image "
+            "deliberately softened so small terrain features are "
+            "de-emphasized -- the blurring component of the classic Swiss "
+            "style of relief presentation. Gradients on geographic DEMs are "
+            "computed from true spheroidal cell dimensions at each row's "
+            "latitude.")
+        md.save()
+    except Exception:
+        pass
+    for p in (out_path, hs_tmp):
+        try:
+            arcpy.management.Delete(p)
+        except Exception:
+            pass
+    _set_label("Building pyramids (bilinear)...")
+    try:
+        arcpy.management.BuildPyramids(out_raster, resample_technique="BILINEAR")
+    except Exception as e:
+        if messages is not None:
+            messages.addWarningMessage("Could not build pyramids: {}".format(e))
+    _msg(messages, "Blurred Hillshade complete: {}".format(out_raster))
+
+
 def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
                    levels, use_hypso, hypso_strength, vert_exag,
-                   model_shadows, shadow_dim, messages, suns=None):
+                   model_shadows, shadow_dim, messages, suns=None,
+                   _finalize=True, tool_label=None, src_display=None,
+                   extra_note=""):
     """Shared engine: ``mode`` is "standard" (one sun direction, optional cast
     shadows), "mdow" (four sine-squared-weighted directions, no shadows), or
     "multi" (a weighted blend of standard hillshades from ``suns``, optional
-    per-sun cast shadows)."""
+    per-sun cast shadows).
+
+    ``_finalize=False`` stops after the scratch GeoTIFF is written (no
+    CopyRaster/pyramids/metadata) and returns its path -- used by the Blurred
+    Hillshade's blur-after-shading path. ``tool_label``/``src_display``/
+    ``extra_note`` override the tool name, input name, and add provenance
+    text in messages and metadata (used when the input is a preprocessed
+    scratch dataset standing in for the user's raster)."""
     gdal = _mh._gdal()
 
     azimuth = float(azimuth) % 360.0
@@ -602,6 +907,14 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
     src = None
     out_ds = None                        # closing writes the PAM (.aux.xml)
 
+    if not _finalize:
+        if in_copy:
+            try:
+                arcpy.management.Delete(in_copy)
+            except Exception:
+                pass
+        return out_path
+
     _set_label("Saving output raster...")
     prev_pyramid = arcpy.env.pyramid
     arcpy.env.pyramid = "NONE"
@@ -679,22 +992,38 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
                 "geographic DEMs are computed from true spheroidal cell "
                 "dimensions at each row's latitude.")
         else:
-            md.tags = "hillshade, shaded relief, cartography, Jenness Enterprises"
+            label = tool_label or "Enhanced Hillshade"
+            if label == "Blurred Hillshade":
+                md.tags = ("blurred hillshade, smoothed hillshade, Swiss "
+                           "method, shaded relief, cartography, "
+                           "Jenness Enterprises")
+            else:
+                md.tags = "hillshade, shaded relief, cartography, Jenness Enterprises"
             md.summary = (
-                "Created by Enhanced Hillshade from {src}: azimuth {az:g} deg, "
+                "Created by {tool} from {src}: azimuth {az:g} deg, "
                 "inclination {alt:g} deg, {lev} levels, vertical exaggeration "
-                "{ex:g}, elevation units {units}{hyp}{sh}. {geo}").format(
-                    src=str(in_raster), az=azimuth, alt=altitude, lev=levels,
+                "{ex:g}, elevation units {units}{hyp}{sh}{note}. {geo}").format(
+                    tool=label, src=src_display or str(in_raster),
+                    az=azimuth, alt=altitude, lev=levels,
                     ex=vert_exag, units=units_note, hyp=hyp_note,
                     sh=(", cast shadows dimmed to {:g}%".format(shadow_dim)
                         if model_shadows else ""),
-                    geo=geo_note)
-            md.description = (
-                "Hillshade (shaded relief) raster: illumination of the terrain "
-                "surface from a hypothetical light source, from 0 (fully shaded) "
-                "to the requested number of levels (fully lit). Unlike the "
-                "standard hillshade, gradients on geographic DEMs are computed "
-                "from true spheroidal cell dimensions at each row's latitude.")
+                    note=extra_note, geo=geo_note)
+            if label == "Blurred Hillshade":
+                md.description = (
+                    "Blurred (smoothed) hillshade raster: a shaded-relief "
+                    "image deliberately softened so small terrain features "
+                    "are de-emphasized -- the blurring component of the "
+                    "classic Swiss style of relief presentation. Gradients "
+                    "on geographic DEMs are computed from true spheroidal "
+                    "cell dimensions at each row's latitude.")
+            else:
+                md.description = (
+                    "Hillshade (shaded relief) raster: illumination of the terrain "
+                    "surface from a hypothetical light source, from 0 (fully shaded) "
+                    "to the requested number of levels (fully lit). Unlike the "
+                    "standard hillshade, gradients on geographic DEMs are computed "
+                    "from true spheroidal cell dimensions at each row's latitude.")
         md.save()
     except Exception:
         pass
@@ -715,5 +1044,6 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
         if messages is not None:
             messages.addWarningMessage("Could not build pyramids: {}".format(e))
     _msg(messages, "{} complete: {}".format(
-        {"mdow": "MDOW hillshade", "multi": "Multi-sun hillshade"}.get(
+        tool_label or {"mdow": "MDOW hillshade",
+                       "multi": "Multi-sun hillshade"}.get(
             mode, "Enhanced hillshade"), out_raster))
