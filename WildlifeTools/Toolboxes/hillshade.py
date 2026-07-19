@@ -6,6 +6,15 @@ established in ``mahalanobis.py`` (GDAL block I/O, vectorized numpy,
 self-computed statistics + histogram carried through CopyRaster):
 
 * ``run_enhanced_hillshade`` -- ``CalculateHillshadeAlternative``
+* ``run_multisun_hillshade`` -- new tool (no VB6 ancestor; concept from Jeff's
+  lab exercise "Calculate a Hillshade Based on Two Sun Locations"): a
+  weighted average of standard hillshades from up to eight user-chosen sun
+  positions, each with its own azimuth, inclination, and weight -- the
+  classic Swiss multiple-light-source strategy. Each sun's hillshade is
+  clamped at 0 and (optionally) its own cast shadows are dimmed to the
+  shadow-brightness percent BEFORE the weighted average; hypsometric shading
+  is applied once to the averaged result. With a single sun at weight 100
+  this reduces exactly to the Enhanced Hillshade.
 * ``run_mdow_hillshade`` -- ``CalculateJenMDOWHillshade``: the
   Multi-Directional Oblique-Weighted hillshade of Mark (1992, USGS Open-File
   Report 92-422). Four hillshades are computed with sun directions at the
@@ -294,11 +303,31 @@ def run_mdow_hillshade(in_raster, out_raster, elev_units="Meters",
                    False, 20.0, messages)
 
 
+def run_multisun_hillshade(in_raster, out_raster, elev_units="Meters",
+                           suns=((280.0, 35.0, 50.0), (350.0, 45.0, 50.0)),
+                           levels=255, use_hypso=False, hypso_strength=50,
+                           vert_exag=1.0, model_shadows=False,
+                           shadow_dim=20.0, messages=None):
+    """Compute a weighted blend of standard hillshades from multiple sun
+    positions. ``suns`` is a sequence of (azimuth, inclination, weight)
+    triples; weights are relative (normalized by their sum, so percentages
+    summing to 100 work naturally). Each sun's hillshade is clamped at 0 and,
+    when ``model_shadows`` is on, its own cast-shadow cells are dimmed to
+    ``shadow_dim`` percent BEFORE the weighted average; hypsometric shading
+    is applied once to the averaged result.
+    """
+    _run_hillshade("multi", in_raster, out_raster, elev_units, 315.0,
+                   45.0, levels, use_hypso, hypso_strength, vert_exag,
+                   model_shadows, shadow_dim, messages, suns=suns)
+
+
 def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
                    levels, use_hypso, hypso_strength, vert_exag,
-                   model_shadows, shadow_dim, messages):
+                   model_shadows, shadow_dim, messages, suns=None):
     """Shared engine: ``mode`` is "standard" (one sun direction, optional cast
-    shadows) or "mdow" (four sine-squared-weighted directions, no shadows)."""
+    shadows), "mdow" (four sine-squared-weighted directions, no shadows), or
+    "multi" (a weighted blend of standard hillshades from ``suns``, optional
+    per-sun cast shadows)."""
     gdal = _mh._gdal()
 
     azimuth = float(azimuth) % 360.0
@@ -309,6 +338,19 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
     shadow_dim = float(shadow_dim)
     if not 0.0 <= altitude <= 90.0:
         raise arcpy.ExecuteError("The inclination to the sun must be 0 to 90 degrees.")
+    if mode == "multi":
+        if not suns:
+            raise arcpy.ExecuteError("At least one sun position is required.")
+        suns = [(float(a) % 360.0, float(al), float(w)) for a, al, w in suns]
+        for a, al, w in suns:
+            if not 0.0 <= al <= 90.0:
+                raise arcpy.ExecuteError(
+                    "Each inclination to the sun must be 0 to 90 degrees.")
+            if w < 0.0:
+                raise arcpy.ExecuteError("Sun weights cannot be negative.")
+        wsum = sum(w for _, _, w in suns)
+        if wsum <= 0.0:
+            raise arcpy.ExecuteError("The sun weights must sum to more than 0.")
     if levels < 1:
         raise arcpy.ExecuteError("The number of hillshade levels must be at least 1.")
     if vert_exag <= 0:
@@ -361,6 +403,13 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
         mdow_azimuths = [(azimuth + off) % 360.0 for off in _MDOW_OFFSETS]
         dir_rads = [math.radians((360.0 - a + 90.0) % 360.0)
                     for a in mdow_azimuths]
+    elif mode == "multi":
+        # Per-sun geometry and normalized weights (a true weighted average).
+        sun_geom = []
+        for a, al, w in suns:
+            zen_i = math.radians(90.0 - al)
+            ar_i = math.radians((360.0 - a + 90.0) % 360.0)
+            sun_geom.append((math.cos(zen_i), math.sin(zen_i), ar_i, w / wsum))
 
     # Hypsometric weight: multiplier = t*s + (1 - s), t = normalized elevation.
     hyp_lo = hyp_range = None
@@ -374,7 +423,8 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
     s_frac = hypso_strength / 100.0
 
     # Optional cast shadows need the whole grid at once (shadows are non-local).
-    shadow_mask = None
+    shadow_mask = None                  # standard mode: one mask
+    shadow_masks = None                 # multi mode: one mask per sun
     if model_shadows:
         _set_label("Reading the DEM for the cast-shadow sweep...")
         z_full = band.ReadAsArray(0, 0, width, height).astype(np.float32)
@@ -384,14 +434,30 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
             invalid |= (z_full == in_nodata)
         z_full[invalid] = np.nan
         z_full *= zscale
-        shadow_mask = _cast_shadow_mask(z_full, cellw_m, cellh_m, azimuth, altitude)
-        n_sh = int(shadow_mask.sum())
-        _msg(messages, "Cast shadows: {:,} cells ({:.1f}%) are hidden from the "
-                       "sun and will be dimmed to {:g}% of their unshadowed "
-                       "value{}.".format(
-                           n_sh, 100.0 * n_sh / (width * height), shadow_dim,
-                           " (mean-cell-size approximation on this geographic DEM)"
-                           if geographic else ""))
+        geo_note = (" (mean-cell-size approximation on this geographic DEM)"
+                    if geographic else "")
+        if mode == "multi":
+            shadow_masks = []
+            for i, (a, al, _w) in enumerate(suns):
+                _set_label("Sweeping cast shadows (sun {} of {})...".format(
+                    i + 1, len(suns)))
+                m = _cast_shadow_mask(z_full, cellw_m, cellh_m, a, al)
+                shadow_masks.append(m)
+                n_sh = int(m.sum())
+                _msg(messages, "Cast shadows, sun {} ({:g} deg / {:g} deg): "
+                               "{:,} cells ({:.1f}%) dimmed to {:g}% before "
+                               "averaging{}.".format(
+                                   i + 1, a, al, n_sh,
+                                   100.0 * n_sh / (width * height), shadow_dim,
+                                   geo_note))
+        else:
+            shadow_mask = _cast_shadow_mask(z_full, cellw_m, cellh_m, azimuth, altitude)
+            n_sh = int(shadow_mask.sum())
+            _msg(messages, "Cast shadows: {:,} cells ({:.1f}%) are hidden from the "
+                           "sun and will be dimmed to {:g}% of their unshadowed "
+                           "value{}.".format(
+                               n_sh, 100.0 * n_sh / (width * height), shadow_dim,
+                               geo_note))
         del z_full
 
     # Output scratch GeoTIFF (Int16; NoData -9999), stats accumulated as we go.
@@ -413,6 +479,16 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
                        "{:.1f} deg, {} levels, exaggeration {:g}{}.".format(
                            "/".join("{:g}".format(a) for a in mdow_azimuths),
                            azimuth, altitude, levels, vert_exag,
+                           ", geodesic" if geographic else ""))
+    elif mode == "multi":
+        _msg(messages, "Computing multi-sun hillshade from {} sun positions: "
+                       "{}; {} levels, exaggeration {:g}{}.".format(
+                           len(suns),
+                           "; ".join(
+                               "az {:g} deg / incl {:g} deg / weight {:.1f}%".format(
+                                   a, al, 100.0 * w / wsum)
+                               for a, al, w in suns),
+                           levels, vert_exag,
                            ", geodesic" if geographic else ""))
     else:
         _msg(messages, "Computing hillshade: azimuth {:.1f} deg, inclination {:.1f} deg, "
@@ -475,6 +551,19 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
                 for dr in dir_rads:
                     shade += np.sin(aspect - dr) ** 2 * (cs + ss * np.cos(dr - aspect))
                 shade *= 0.5
+            elif mode == "multi":
+                # Weighted average of standard hillshades: each sun's shade is
+                # clamped at 0 and its own cast shadows dimmed BEFORE the
+                # average (hypsometric shading applies once, after).
+                cslope = np.cos(slope)
+                sslope = np.sin(slope)
+                shade = np.zeros_like(slope)
+                for i, (cz_i, sz_i, ar_i, w_i) in enumerate(sun_geom):
+                    sh = cz_i * cslope + sz_i * sslope * np.cos(ar_i - aspect)
+                    np.maximum(sh, 0.0, out=sh)
+                    if shadow_masks is not None:
+                        sh[shadow_masks[i][rr, 1:-1]] *= shadow_dim / 100.0
+                    shade += w_i * sh
             else:
                 shade = cosz * np.cos(slope) + sinz * np.sin(slope) * np.cos(az_rad - aspect)
             hs = levels * shade
@@ -543,7 +632,31 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
         hyp_note = (", hypsometric shading {:.0f}%".format(hypso_strength)
                     if use_hypso else "")
         units_note = "Meters (geographic DEM)" if geographic else elev_units
-        if mode == "mdow":
+        if mode == "multi":
+            md.tags = ("multi-sun hillshade, multidirectional hillshade, "
+                       "shaded relief, cartography, Jenness Enterprises")
+            md.summary = (
+                "Created by Multi-Sun Hillshade from {src}: {n} sun positions "
+                "({dirs}), {lev} levels, vertical exaggeration {ex:g}, "
+                "elevation units {units}{hyp}{sh}. {geo}").format(
+                    src=str(in_raster), n=len(suns),
+                    dirs="; ".join(
+                        "az {:g}/incl {:g}/wt {:.1f}%".format(
+                            a, al, 100.0 * w / wsum) for a, al, w in suns),
+                    lev=levels, ex=vert_exag, units=units_note, hyp=hyp_note,
+                    sh=(", per-sun cast shadows dimmed to {:g}% before "
+                        "averaging".format(shadow_dim) if model_shadows else ""),
+                    geo=geo_note)
+            md.description = (
+                "Multi-sun hillshade raster: a weighted average of standard "
+                "hillshades computed from multiple sun positions, each with "
+                "its own azimuth, inclination, and weight. Blending several "
+                "light sources brings out terrain features that a single "
+                "sun washes out (the classic Swiss multiple-light-source "
+                "relief-shading strategy). Gradients on geographic DEMs are "
+                "computed from true spheroidal cell dimensions at each row's "
+                "latitude.")
+        elif mode == "mdow":
             md.tags = ("MDOW hillshade, multidirectional hillshade, shaded "
                        "relief, cartography, Jenness Enterprises")
             md.summary = (
@@ -602,4 +715,5 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
         if messages is not None:
             messages.addWarningMessage("Could not build pyramids: {}".format(e))
     _msg(messages, "{} complete: {}".format(
-        "MDOW hillshade" if mode == "mdow" else "Enhanced hillshade", out_raster))
+        {"mdow": "MDOW hillshade", "multi": "Multi-sun hillshade"}.get(
+            mode, "Enhanced hillshade"), out_raster))

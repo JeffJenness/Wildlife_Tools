@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.21.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.22.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -54,6 +54,7 @@
           <button refID="WildlifeTools_ShadowPolygons" size="large" />
           <button refID="WildlifeTools_EnhancedHillshade" size="large" />
           <button refID="WildlifeTools_MDOWHillshade" size="large" />
+          <button refID="WildlifeTools_MultiSunHillshade" size="large" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -350,6 +351,17 @@
                 keytip="MH">
           <tooltip heading="MDOW Hillshade">
             Opens the MDOW (Multi-Directional Oblique-Weighted) Hillshade tool from the Jenness Enterprises toolbox: blends four sun directions fanned around the primary illumination direction, weighted so every slope is lit obliquely - revealing terrain that a single-direction hillshade washes out (Mark 1992). Accurate on geographic (lat/long) DEMs via per-row spheroidal cell dimensions. Also available in the Cartography Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_MultiSunHillshade"
+                caption="Multi-Sun Hillshade"
+                className="MultiSunHillshadeButton"
+                loadOnClick="true"
+                smallImage="Images\MultiSunHillshade_16.png"
+                largeImage="Images\MultiSunHillshade_32.png"
+                keytip="MS">
+          <tooltip heading="Multi-Sun Hillshade">
+            Opens the Multi-Sun Hillshade tool from the Jenness Enterprises toolbox: a weighted average of standard hillshades from two to eight sun positions, each with its own azimuth, inclination, and weight - the classic Swiss multiple-light-source strategy for bringing out terrain a single sun washes out. Optional per-sun cast shadows and hypsometric shading; accurate on geographic (lat/long) DEMs. Also available in the Cartography Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_ThoughtForTheDay"

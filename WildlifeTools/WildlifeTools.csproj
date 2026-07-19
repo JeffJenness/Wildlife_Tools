@@ -111,6 +111,10 @@
     <Content Include="Images\MDOWHillshade_32.png" />
     <Content Include="DarkImages\MDOWHillshade_16.png" />
     <Content Include="DarkImages\MDOWHillshade_32.png" />
+    <Content Include="Images\MultiSunHillshade_16.png" />
+    <Content Include="Images\MultiSunHillshade_32.png" />
+    <Content Include="DarkImages\MultiSunHillshade_16.png" />
+    <Content Include="DarkImages\MultiSunHillshade_32.png" />
     <!-- The Thought-for-the-Day card background is loaded from disk by path at run
          time, so it must sit next to the assembly (copied to the output directory). -->
     <Content Include="Images\quote_bg.png">
@@ -247,5 +251,20 @@
     <Exec Command="&quot;C:\Program Files\ArcGIS\Pro\bin\RegisterAddIn.exe&quot; &quot;$(TargetDir)$(AssemblyName).esriAddinX&quot; /s"
           ContinueOnError="true" />
     <Message Importance="high" Text="DeployAddInFallback: registered $(AssemblyName).esriAddinX to the user AddIns folder." />
+  </Target>
+  <!-- The Thought-for-the-Day quotes have ONE master list, maintained in the SSI
+       add-in. Before each build, refresh this project's bundled copy from that
+       master so newly added quotes flow into the add-in automatically. The
+       Condition keeps builds working on machines without the SSI project. -->
+  <PropertyGroup>
+    <QuotesMaster>D:\ArcGIS_stuff\consultation\Springs_Stewardship_Institute\SSI_ArcGIS_Addin\SSI_ArcGIS_Tools\Metadata\Inspirational_Quotes.json</QuotesMaster>
+  </PropertyGroup>
+  <Target Name="SyncQuotesFromMaster" BeforeTargets="BeforeBuild"
+          Condition="Exists('$(QuotesMaster)')">
+    <Copy SourceFiles="$(QuotesMaster)"
+          DestinationFiles="$(MSBuildProjectDirectory)\Metadata\Inspirational_Quotes.json"
+          SkipUnchangedFiles="true" />
+    <Message Importance="high"
+             Text="SyncQuotesFromMaster: bundled quotes refreshed from the SSI master list." />
   </Target>
 </Project>

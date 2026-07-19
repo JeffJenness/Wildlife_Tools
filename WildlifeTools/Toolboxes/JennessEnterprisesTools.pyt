@@ -172,7 +172,8 @@ class Toolbox(object):
                       MahalanobisRaster, MahalanobisPoints, MahalanobisCovariance,
                       MahalanobisChiSquare,
                       KernelDensityGenerate, KernelDensityProportion, KernelDensityContours,
-                      ShadowPolygons, EnhancedHillshade, MDOWHillshade]
+                      ShadowPolygons, EnhancedHillshade, MDOWHillshade,
+                      MultiSunHillshade]
 
 
 class LoCoHStandard(object):
@@ -2217,6 +2218,334 @@ class MDOWHillshade(object):
                 "hypso_strength": P["hypso_strength"].value,
                 "vert_exag": P["vert_exag"].value,
             })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+# Static defaults for the eight Multi-Sun Hillshade sun positions: suns 1-2
+# from Jeff's lab exercise (280/35 and 350/45); each later sun steps 45
+# degrees clockwise from sun 2 at a 45-degree inclination.
+_MULTISUN_MAX = 8
+_MULTISUN_AZ_DEFAULTS = [280.0, 350.0] + [
+    (350.0 + 45.0 * k) % 360.0 for k in range(1, _MULTISUN_MAX - 1)]
+_MULTISUN_ALT_DEFAULTS = [35.0, 45.0] + [45.0] * (_MULTISUN_MAX - 2)
+
+
+def _multisun_balanced_weights(n):
+    """Balanced weights per Jeff's rule: the first n-1 weights are 100/n
+    rounded to the nearest integer (half rounds up); the last is 100 minus
+    the others (e.g. 3 -> [33, 33, 34]; 6 -> [17, 17, 17, 17, 17, 15])."""
+    w = int(100.0 / n + 0.5)
+    return [w] * (n - 1) + [100 - w * (n - 1)]
+
+
+class MultiSunHillshade(object):
+    """Weighted blend of standard hillshades from multiple sun positions --
+    the classic Swiss multiple-light-source relief-shading strategy.
+    Geodesic-correct on geographic DEMs like the other hillshade tools.
+    """
+
+    def __init__(self):
+        self.label = "Multi-Sun Hillshade"
+        self.description = (
+            "Computes a hillshade as the weighted average of standard hillshades "
+            "from two to eight sun positions, each with its own azimuth, "
+            "inclination, and weight. Blending several light sources brings out "
+            "terrain features that a single sun washes out (the classic Swiss "
+            "multiple-light-source strategy). Optional modeled cast shadows are "
+            "computed separately for each sun and dimmed before the averaging; "
+            "optional hypsometric shading is applied once to the averaged result. "
+            "Geographic (lat/long) DEMs are handled correctly via per-row "
+            "spheroidal cell dimensions.")
+        self.category = "Cartography Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_units = None
+        self._last_n = None
+        self._seen_update = False
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input elevation raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output hillshade raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required", direction="Output")
+        elev_units = arcpy.Parameter(
+            displayName="Elevation units", name="elev_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        elev_units.filter.type = "ValueList"
+        elev_units.filter.list = hillshade.ELEV_UNITS
+        n_suns = arcpy.Parameter(
+            displayName="Number of sun positions (2-8)", name="n_suns",
+            datatype="GPLong", parameterType="Required", direction="Input")
+        n_suns.filter.type = "Range"
+        n_suns.filter.list = [2, _MULTISUN_MAX]
+        n_suns.value = 2
+
+        sun_params = []
+        for i in range(1, _MULTISUN_MAX + 1):
+            az = arcpy.Parameter(
+                displayName="Sun {}: azimuth (0-360 degrees)".format(i),
+                name="azimuth_{}".format(i),
+                datatype="GPDouble", parameterType="Optional", direction="Input")
+            az.value = _MULTISUN_AZ_DEFAULTS[i - 1]
+            alt = arcpy.Parameter(
+                displayName="Sun {}: inclination (0-90 degrees)".format(i),
+                name="altitude_{}".format(i),
+                datatype="GPDouble", parameterType="Optional", direction="Input")
+            alt.value = _MULTISUN_ALT_DEFAULTS[i - 1]
+            wt = arcpy.Parameter(
+                displayName="Sun {}: weight (percent)".format(i),
+                name="weight_{}".format(i),
+                datatype="GPDouble", parameterType="Optional", direction="Input")
+            sun_params.extend([az, alt, wt])
+
+        # Pro hides disabled parameters, so the auto-calculated last weight
+        # would be invisible; this always-visible text line shows it instead
+        # (rewritten on every validation pass, so edits never stick).
+        last_weight_info = arcpy.Parameter(
+            displayName="Automatically calculated weight",
+            name="last_weight_info",
+            datatype="GPString", parameterType="Optional", direction="Input")
+
+        levels = arcpy.Parameter(
+            displayName="Hillshade levels (Esri hillshade = 255)", name="levels",
+            datatype="GPLong", parameterType="Required", direction="Input")
+        levels.value = 255
+        use_hypso = arcpy.Parameter(
+            displayName="Apply hypsometric shading", name="use_hypso",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        use_hypso.value = False
+        hypso_strength = arcpy.Parameter(
+            displayName="Hypsometric strength (0-100)", name="hypso_strength",
+            datatype="GPLong", parameterType="Optional", direction="Input")
+        hypso_strength.value = 50
+        hypso_strength.enabled = False
+        vert_exag = arcpy.Parameter(
+            displayName="Vertical exaggeration factor", name="vert_exag",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        vert_exag.value = 1.0
+        model_shadows = arcpy.Parameter(
+            displayName="Model cast shadows (per sun, before averaging)",
+            name="model_shadows",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        model_shadows.value = False
+        shadow_dim = arcpy.Parameter(
+            displayName="Shadow brightness (percent of unshadowed value)",
+            name="shadow_dim",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        shadow_dim.value = 20.0
+        shadow_dim.enabled = False
+
+        params = ([in_raster, out_raster, elev_units, n_suns] + sun_params +
+                  [last_weight_info, levels, use_hypso, hypso_strength,
+                   vert_exag, model_shadows, shadow_dim])
+        # Pre-select the choices from the last run saved with this project.
+        saved = _load_tool_defaults("MultiSunHillshade")
+        for p in params:
+            if p.name in saved and p.name not in ("in_raster", "out_raster"):
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        hypso_strength.enabled = bool(use_hypso.value)
+        shadow_dim.enabled = bool(model_shadows.value)
+        # Show the right sun rows for the (possibly restored) count, with
+        # balanced weights where none were saved.
+        n = self._sun_count(n_suns.value)
+        self._last_n = n
+        by_name = {p.name: p for p in params}
+        weights = _multisun_balanced_weights(n)
+        for i in range(1, _MULTISUN_MAX + 1):
+            on = i <= n
+            by_name["azimuth_{}".format(i)].enabled = on
+            by_name["altitude_{}".format(i)].enabled = on
+            wt = by_name["weight_{}".format(i)]
+            wt.enabled = on and i < n
+            if on and wt.value is None:
+                wt.value = weights[i - 1]
+        self._sync_last_weight(by_name, n)
+        return params
+
+    @staticmethod
+    def _sun_count(value):
+        try:
+            return max(2, min(_MULTISUN_MAX, int(value)))
+        except Exception:
+            return 2
+
+    @staticmethod
+    def _sync_last_weight(P, n):
+        """Last enabled weight = 100 - sum of the editable ones (never below
+        0), mirrored into the always-visible info line (Pro hides the disabled
+        weight parameter itself)."""
+        others = 0.0
+        for i in range(1, n):
+            v = P["weight_{}".format(i)].value
+            others += float(v) if v is not None else 0.0
+        last = P["weight_{}".format(n)]
+        last.value = max(0.0, round(100.0 - others, 6))
+        last.enabled = False
+        info = P.get("last_weight_info")
+        if info is not None:
+            info.value = ("Sun {}: weight (percent) automatically calculated "
+                          "as {:g}".format(n, last.value))
+
+    def isLicensed(self):
+        return True
+
+    # Same auto-detection as Enhanced Hillshade (shared helper).
+    _detect_units = EnhancedHillshade._detect_units
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr, units = P["in_raster"], P["out_raster"], P["elev_units"]
+        if inr.valueAsText:
+            detected, locked = self._detect_units(inr.valueAsText)
+            if locked:
+                if not units.altered or units.valueAsText == self._auto_units:
+                    units.value = detected
+                    self._auto_units = detected
+                units.enabled = False
+            else:
+                units.enabled = True
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(inr.valueAsText))[0] + "_MultiSun")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+
+        n = self._sun_count(P["n_suns"].value)
+        if n != self._last_n:
+            # The count changed: show that many sun rows. Re-balance the
+            # weights only on a live dialog interaction -- the FIRST
+            # validation pass on a fresh instance is a scripted call (or
+            # ModelBuilder) arriving with every value already set, and its
+            # weights must be preserved.
+            rebalance = self._seen_update
+            self._last_n = n
+            weights = _multisun_balanced_weights(n)
+            for i in range(1, _MULTISUN_MAX + 1):
+                on = i <= n
+                P["azimuth_{}".format(i)].enabled = on
+                P["altitude_{}".format(i)].enabled = on
+                wt = P["weight_{}".format(i)]
+                wt.enabled = on and i < n
+                if on and (rebalance or wt.value is None):
+                    wt.value = weights[i - 1]
+        self._sync_last_weight(P, n)
+        self._seen_update = True
+
+        P["hypso_strength"].enabled = bool(P["use_hypso"].value)
+        P["shadow_dim"].enabled = bool(P["model_shadows"].value)
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, units = P["in_raster"], P["elev_units"]
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage(
+                        "The elevation raster must be single band.")
+            except Exception:
+                pass
+            if units.enabled and not units.valueAsText:
+                units.setErrorMessage(
+                    "The DEM does not specify its elevation units; choose "
+                    "Meters or Feet.")
+        n = self._sun_count(P["n_suns"].value)
+        others = 0.0
+        for i in range(1, n + 1):
+            az = P["azimuth_{}".format(i)]
+            if az.value is None:
+                az.setErrorMessage("Enter an azimuth for sun {}.".format(i))
+            elif not (0 <= az.value <= 360):
+                az.setErrorMessage("The azimuth must be 0 to 360 degrees.")
+            alt = P["altitude_{}".format(i)]
+            if alt.value is None:
+                alt.setErrorMessage("Enter an inclination for sun {}.".format(i))
+            elif not (0 <= alt.value <= 90):
+                alt.setErrorMessage("The inclination must be 0 to 90 degrees.")
+            if i < n:
+                wt = P["weight_{}".format(i)]
+                if wt.value is None:
+                    wt.setErrorMessage("Enter a weight for sun {}.".format(i))
+                elif not (0 <= wt.value <= 100):
+                    wt.setErrorMessage("Each weight must be 0 to 100 percent.")
+                else:
+                    others += float(wt.value)
+        if others > 100.0 + 1e-9:
+            P["weight_{}".format(n - 1)].setErrorMessage(
+                "The weights of suns 1 to {} total {:g} percent, leaving "
+                "nothing for sun {}. Weights must total 100.".format(
+                    n - 1, others, n))
+        if P["levels"].value is not None and P["levels"].value < 1:
+            P["levels"].setErrorMessage("There must be at least 1 hillshade level.")
+        st = P["hypso_strength"].value
+        if P["use_hypso"].value and st is not None and not (0 <= st <= 100):
+            P["hypso_strength"].setErrorMessage(
+                "The hypsometric strength must be 0 to 100.")
+        ex = P["vert_exag"].value
+        if ex is not None and ex <= 0:
+            P["vert_exag"].setErrorMessage(
+                "The vertical exaggeration must be positive.")
+        sd = P["shadow_dim"].value
+        if P["model_shadows"].value and sd is not None and not (0 <= sd <= 100):
+            P["shadow_dim"].setErrorMessage(
+                "The shadow brightness must be 0 to 100 percent.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(hillshade)
+            P = {p.name: p for p in parameters}
+            n = self._sun_count(P["n_suns"].value)
+            suns = []
+            for i in range(1, n + 1):
+                suns.append((P["azimuth_{}".format(i)].value,
+                             P["altitude_{}".format(i)].value,
+                             P["weight_{}".format(i)].value or 0.0))
+            hillshade.run_multisun_hillshade(
+                in_raster=P["in_raster"].valueAsText,
+                out_raster=P["out_raster"].valueAsText,
+                elev_units=P["elev_units"].valueAsText or "Meters",
+                suns=suns,
+                levels=P["levels"].value,
+                use_hypso=bool(P["use_hypso"].value),
+                hypso_strength=P["hypso_strength"].value or 50,
+                vert_exag=P["vert_exag"].value or 1.0,
+                model_shadows=bool(P["model_shadows"].value),
+                shadow_dim=(P["shadow_dim"].value
+                            if P["shadow_dim"].value is not None else 20.0),
+                messages=messages)
+            # Remember the choices (not the datasets) with the project.
+            saved = {"elev_units": P["elev_units"].valueAsText or "Meters",
+                     "n_suns": n,
+                     "levels": P["levels"].value,
+                     "use_hypso": bool(P["use_hypso"].value),
+                     "hypso_strength": P["hypso_strength"].value,
+                     "vert_exag": P["vert_exag"].value,
+                     "model_shadows": bool(P["model_shadows"].value),
+                     "shadow_dim": P["shadow_dim"].value}
+            for i in range(1, _MULTISUN_MAX + 1):
+                for stem in ("azimuth", "altitude", "weight"):
+                    name = "{}_{}".format(stem, i)
+                    saved[name] = P[name].value
+            _save_tool_defaults("MultiSunHillshade", saved)
         except arcpy.ExecuteError:
             raise
         except Exception:
