@@ -191,7 +191,7 @@ class Toolbox(object):
                       KernelDensityGenerate, KernelDensityProportion, KernelDensityContours,
                       ShadowPolygons, EnhancedHillshade, MDOWHillshade,
                       MultiSunHillshade, SimpleHypsometricShading,
-                      BlurredHillshade, SurfaceAreaRatio]
+                      BlurredHillshade, SurfaceAreaRatio, VRM]
 
 
 class LoCoHStandard(object):
@@ -3081,6 +3081,139 @@ class SurfaceAreaRatio(object):
                 "flat_units": P["flat_units"].valueAsText,
                 "elev_units": P["elev_units"].valueAsText,
                 "corner_method": P["corner_method"].valueAsText,
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class VRM(object):
+    """Vector Ruggedness Measure -- terrain roughness from the 3-D dispersion
+    of unit vectors orthogonal to the surface (Sappington et al. 2007),
+    the spherical analog of Fisher's (1993) circular variance.
+    """
+
+    def __init__(self):
+        self.label = "VRM"
+        self.description = (
+            "Computes the Vector Ruggedness Measure (VRM), a topographic "
+            "roughness index (Sappington et al. 2007) that quantifies the "
+            "three-dimensional dispersion of the vectors orthogonal to the "
+            "terrain surface within a circular neighborhood of each cell -- "
+            "the spherical analog of circular variance (Fisher 1993). Unlike "
+            "slope alone, VRM distinguishes steep-but-even terrain from "
+            "steep, broken terrain. Values range from 0 (flat and/or "
+            "uniformly sloped) to 1 (maximally rugged).")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_units = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input elevation raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output VRM raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required", direction="Output")
+        elev_units = arcpy.Parameter(
+            displayName="Elevation units", name="elev_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        elev_units.filter.type = "ValueList"
+        elev_units.filter.list = hillshade.ELEV_UNITS
+        radius = arcpy.Parameter(
+            displayName="Neighborhood radius", name="radius",
+            datatype="GPDouble", parameterType="Required", direction="Input")
+        radius.value = 1.5
+        radius_units = arcpy.Parameter(
+            displayName="Neighborhood radius units", name="radius_units",
+            datatype="GPString", parameterType="Required", direction="Input")
+        radius_units.filter.type = "ValueList"
+        radius_units.filter.list = topographic_tools.RADIUS_UNITS
+        radius_units.value = "Cells"
+        params = [in_raster, out_raster, elev_units, radius, radius_units]
+        # Pre-select the choices from the last run saved with this project.
+        saved = _load_tool_defaults("VRM")
+        for p in (radius, radius_units, elev_units):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    # Same auto-detection as Enhanced Hillshade (shared helper).
+    _detect_units = EnhancedHillshade._detect_units
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr, units = P["in_raster"], P["out_raster"], P["elev_units"]
+        if inr.valueAsText:
+            detected, locked = self._detect_units(inr.valueAsText)
+            if locked:
+                if not units.altered or units.valueAsText == self._auto_units:
+                    units.value = detected
+                    self._auto_units = detected
+                units.enabled = False
+            else:
+                units.enabled = True
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(inr.valueAsText))[0] + "_VRM")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, units = P["in_raster"], P["elev_units"]
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage(
+                        "The elevation raster must be single band.")
+            except Exception:
+                pass
+            if units.enabled and not units.valueAsText:
+                units.setErrorMessage(
+                    "The DEM does not specify its elevation units; choose "
+                    "Meters or Feet.")
+        r = P["radius"].value
+        if r is not None and r <= 0:
+            P["radius"].setErrorMessage("The radius must be positive.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(topographic_tools)
+            P = {p.name: p for p in parameters}
+            topographic_tools.run_vrm(
+                in_raster=P["in_raster"].valueAsText,
+                out_raster=P["out_raster"].valueAsText,
+                elev_units=P["elev_units"].valueAsText or "Meters",
+                radius=P["radius"].value,
+                radius_units=P["radius_units"].valueAsText or "Cells",
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+            # Remember the choices (not the datasets) with the project.
+            _save_tool_defaults("VRM", {
+                "radius": P["radius"].value,
+                "radius_units": P["radius_units"].valueAsText,
+                "elev_units": P["elev_units"].valueAsText,
             })
         except arcpy.ExecuteError:
             raise

@@ -66,7 +66,9 @@ What makes it "enhanced" relative to Esri's Hillshade:
   dimensions (the shadow option is aesthetic; the hillshade itself remains
   per-row exact).
 
-The gradient is Horn's method with the legacy distance table::
+The gradient is Horn's method (Horn, B. K. P. 1981. Hill shading and the
+reflectance map. Proceedings of the IEEE 69:14-47) with the legacy distance
+table::
 
     dZ/dx = ((NE + 2E + SE) - (NW + 2W + SW)) / (2*hA + 4*h + 2*hB)
     dZ/dy = ((SW + 2S + SE) - (NW + 2N + NE)) / (4*vA + 4*vB)
@@ -77,7 +79,9 @@ with hA/h/hB the horizontal cell spans of the row above / at / below the
 focal row and vA/vB the vertical spans (all meters), and
 ``azR = radians((360 - azimuth + 90) mod 360)``, ``aspect = atan2(dZdy, -dZdx)``
 wrapped to 0..2pi -- identical to the legacy conventions. Any 3x3 window
-touching NoData (or the raster edge) is NoData in the output.
+touching NoData (or the raster edge) is NoData in the output. This same Horn
+gradient (via the unit normal vector it implies) underlies the VRM tool in
+``topographic_tools.py``.
 """
 
 import math
@@ -90,6 +94,11 @@ import mahalanobis as _mh
 
 NODATA_OUT = -9999
 _STRIP_ROWS = 1024          # rows per processing strip (plus a 1-row halo)
+
+# The Horn gradient used by every hillshade mode below (and, via the unit
+# normal vector it implies, by the VRM tool in topographic_tools.py).
+_HORN_CITATION = ("Horn, B. K. P. 1981. Hill shading and the reflectance "
+                  "map. Proceedings of the IEEE 69:14-47.")
 
 ELEV_UNITS = ["Meters", "Feet"]
 _ELEV_METERS = {"Meters": 1.0, "Feet": 0.3048}
@@ -230,24 +239,44 @@ def _blur_kernel(rx, ry, kernel):
     return w
 
 
+def _row_kernel_groups(rx_rows, ry, kernel):
+    """Yields (kernel_array, row_selector) pairs partitioning a grid's rows
+    by circular-neighborhood radius, for the row-varying-radius convolution
+    used by the blur and VRM tools.
+
+    When ``rx_rows`` is CONSTANT across all rows (a projected raster, or any
+    raster with radius given in Cells) this yields exactly one group built
+    from the EXACT requested radius -- no rounding. Rounding here would be a
+    real bug, not just an approximation: ``np.rint`` rounds half-to-even, so
+    a radius of 1.5 (the VRM default, chosen specifically to reproduce a
+    literal 3x3 neighborhood) would silently become 2.0, quietly changing
+    which cells are included. When ``rx_rows`` genuinely VARIES by row (a
+    geographic DEM with a linear-unit radius, where cell size itself varies
+    continuously by latitude), rows are grouped by whole-cell radius so the
+    tool does not build one FFT kernel per row -- an already-documented
+    approximation in that case, unlike the constant-radius case above."""
+    rx_rows = np.asarray(rx_rows, dtype=np.float64)
+    if float(np.ptp(rx_rows)) < 1e-9:
+        yield _blur_kernel(rx_rows[0], ry, kernel), slice(None)
+        return
+    rx_int = np.maximum(np.rint(rx_rows), 1.0)
+    for rxi in np.unique(rx_int):
+        yield _blur_kernel(rxi, ry, kernel), (rx_int == rxi)
+
+
 def _blur_grid(z, valid, rx_rows, ry, kernel):
     """NoData-ignoring circular mean of ``z`` (full grid). ``valid`` is the
     data mask; invalid cells are excluded from every mean and stay invalid in
-    the result (matching Focal Statistics with Ignore NoData). ``rx_rows``
-    gives each row's x-radius in cells (varies by latitude on geographic
-    rasters); rows are grouped by their rounded radius and each group is
-    convolved with its own kernel."""
+    the result (matching Focal Statistics with Ignore NoData). See
+    ``_row_kernel_groups`` for how rows are grouped by radius."""
     from scipy.signal import fftconvolve
 
     num = np.where(valid, z, 0.0)
     den = valid.astype(np.float64)
     out = np.full(z.shape, np.nan)
-    rx_int = np.maximum(np.rint(np.asarray(rx_rows, dtype=np.float64)), 1.0)
-    for rxi in np.unique(rx_int):
-        k = _blur_kernel(rxi, ry, kernel)
+    for k, rows in _row_kernel_groups(rx_rows, ry, kernel):
         cn = fftconvolve(num, k, mode="same")
         cd = fftconvolve(den, k, mode="same")
-        rows = rx_int == rxi
         with np.errstate(invalid="ignore", divide="ignore"):
             vals = cn / np.maximum(cd, 1e-12)
         out[rows] = vals[rows]
@@ -601,6 +630,9 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
             "style of relief presentation. Gradients on geographic DEMs are "
             "computed from true spheroidal cell dimensions at each row's "
             "latitude.")
+        md.credits = ("Tool by Jeff Jenness, Jenness Enterprises "
+                      "(http://www.jennessent.com). Gradient method: " +
+                      _HORN_CITATION)
         md.save()
     except Exception:
         pass
@@ -782,6 +814,7 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
     out_band = out_ds.GetRasterBand(1)
     out_band.SetNoDataValue(NODATA_OUT)
 
+    _msg(messages, "Gradient method: {}".format(_HORN_CITATION))
     if mode == "mdow":
         _msg(messages, "Computing MDOW hillshade: sun directions {} deg "
                        "(sine-squared weighted; primary {:.1f}), inclination "
@@ -1028,6 +1061,13 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
                     "to the requested number of levels (fully lit). Unlike the "
                     "standard hillshade, gradients on geographic DEMs are computed "
                     "from true spheroidal cell dimensions at each row's latitude.")
+        md.credits = ("Tool by Jeff Jenness, Jenness Enterprises "
+                      "(http://www.jennessent.com). Gradient method: " +
+                      _HORN_CITATION +
+                      (" Multi-directional method: Mark, R. K. 1992. A "
+                       "multidirectional, oblique-weighted, shaded-relief "
+                       "image of the Island of Hawaii. USGS Open-File "
+                       "Report 92-422." if mode == "mdow" else ""))
         md.save()
     except Exception:
         pass

@@ -148,7 +148,7 @@ def _make_output(gdal, path, gt, proj, width, height):
 
 
 def _deliver_output(out_scratch, out_raster, out_stats, messages,
-                    title, summary, description, tags):
+                    title, summary, description, tags, citation=None):
     """CopyRaster to the destination, apply stats, metadata, pyramids."""
     prev_pyramid = arcpy.env.pyramid
     arcpy.env.pyramid = "NONE"
@@ -183,7 +183,8 @@ def _deliver_output(out_scratch, out_raster, out_stats, messages,
         md.summary = summary
         md.description = description
         md.credits = ("Tool by Jeff Jenness, Jenness Enterprises "
-                      "(http://www.jennessent.com). Method: " + _CITATION)
+                      "(http://www.jennessent.com). Method: " +
+                      (citation or _CITATION))
         md.save()
     except Exception:
         pass
@@ -455,3 +456,257 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
             {"area": "Surface area", "ratio": "Surface ratio",
              "flat": "Flat area"}[key], dest))
     return delivered
+
+
+# ----------------------------------------------------------------------------
+#  Vector Ruggedness Measure (VRM)
+# ----------------------------------------------------------------------------
+
+RADIUS_UNITS = _hs.RADIUS_UNITS          # ["Cells", "Meters", "Kilometers", "Feet", "Miles"]
+_RADIUS_METERS = _hs._RADIUS_METERS
+
+_VRM_CITATION = (
+    "Sappington, J. M., K. M. Longshore, and D. B. Thompson. 2007. "
+    "Quantifying landscape ruggedness for animal habitat analysis: a case "
+    "study using bighorn sheep in the Mojave Desert. Journal of Wildlife "
+    "Management 71(5):1419-1426.")
+
+
+def _row_gradient_geometry(gt, height, sr, elev_mpu):
+    """Per-row Horn-gradient geometry (NOT half/squared, unlike the surface-
+    area table): a dict of arrays (length ``height``) with keys hA/h/hB
+    (horizontal spans of the row above/at/below) and vA/vB (vertical spans up/
+    down), all in meters -- exactly the table Enhanced Hillshade uses.
+    Returns (geom, geographic, zscale)."""
+    geographic = (sr.type == "Geographic")
+    zscale = float(elev_mpu)
+    if geographic:
+        a = float(sr.semiMajorAxis or 6378137.0)
+        b = float(sr.semiMinorAxis or 6356752.31424518)
+        geom = _hs._geographic_row_distances(gt, height, a, b)
+    else:
+        mpu = float(sr.metersPerUnit or 1.0)
+        cw = gt[1] * mpu
+        ch = abs(gt[5]) * mpu
+        const = np.full(height, 1.0)
+        geom = {"hA": const * cw, "h": const * cw, "hB": const * cw,
+                "vA": const * ch, "vB": const * ch}
+    return geom, geographic, zscale
+
+
+def _unit_normals(z, valid, geom):
+    """Unit normal vectors (nx, ny, nz) for the WHOLE grid ``z`` (meters,
+    already z-scaled), via the Horn gradient: n = (-dz/dx, -dz/dy, 1) /
+    ||...||. This is the same vector Sappington's slope/aspect trig
+    decomposition produces (a global rotation of coordinate convention
+    changes no vector's length, and VRM depends only on the length of the
+    SUM of these vectors) -- but reuses the toolbox's tested, geodesic-correct
+    per-row gradient. Returns (nx, ny, nz, ok) full-grid arrays; ``ok`` is
+    False wherever the cell's own 3x3 window touches invalid/out-of-bounds
+    data (NaN elsewhere in nx/ny/nz)."""
+    H, W = z.shape
+    zp = np.full((H + 2, W + 2), np.nan)
+    zp[1:-1, 1:-1] = z
+    vp = np.zeros((H + 2, W + 2), dtype=bool)
+    vp[1:-1, 1:-1] = valid
+
+    NW, N_, NE = zp[:-2, :-2], zp[:-2, 1:-1], zp[:-2, 2:]
+    W_, C_, E_ = zp[1:-1, :-2], zp[1:-1, 1:-1], zp[1:-1, 2:]
+    SW, S_, SE = zp[2:, :-2], zp[2:, 1:-1], zp[2:, 2:]
+
+    hA = geom["hA"][:, None]
+    h = geom["h"][:, None]
+    hB = geom["hB"][:, None]
+    vA = geom["vA"][:, None]
+    vB = geom["vB"][:, None]
+
+    with np.errstate(invalid="ignore"):
+        dzdx = ((NE + 2.0 * E_ + SE) - (NW + 2.0 * W_ + SW)) / \
+               (2.0 * hA + 4.0 * h + 2.0 * hB)
+        dzdy = ((SW + 2.0 * S_ + SE) - (NW + 2.0 * N_ + NE)) / (4.0 * vA + 4.0 * vB)
+        norm = np.sqrt(dzdx * dzdx + dzdy * dzdy + 1.0)
+        nx = -dzdx / norm
+        ny = -dzdy / norm
+        nz = 1.0 / norm
+
+    ok = (vp[:-2, :-2] & vp[:-2, 1:-1] & vp[:-2, 2:] &
+          vp[1:-1, :-2] & vp[1:-1, 1:-1] & vp[1:-1, 2:] &
+          vp[2:, :-2] & vp[2:, 1:-1] & vp[2:, 2:])
+    nx = np.where(ok, nx, np.nan)
+    ny = np.where(ok, ny, np.nan)
+    nz = np.where(ok, nz, np.nan)
+    return nx, ny, nz, ok
+
+
+def _circular_vector_sums(nx, ny, nz, ok, rx_rows, ry):
+    """Per-cell resultant-vector sums (Rx, Ry, Rz) and valid-neighbor count
+    (n) over a circular, NoData-ignoring neighborhood -- the multi-field
+    analog of ``hillshade._blur_grid``, sharing one uniform kernel per
+    distinct row-radius group via ``hillshade._row_kernel_groups`` (only
+    "Average" weighting makes sense for a vector resultant sum; VRM's
+    definition has no concept of distance weighting). Row grouping uses the
+    EXACT radius when it is constant across rows (Cells units or a projected
+    raster) -- see ``_row_kernel_groups`` for why naive rounding there would
+    be a real bug, not just an approximation."""
+    from scipy.signal import fftconvolve
+
+    fields = [np.where(ok, nx, 0.0), np.where(ok, ny, 0.0),
+              np.where(ok, nz, 0.0), ok.astype(np.float64)]
+    outs = [np.zeros_like(f) for f in fields]
+    for k, rows in _hs._row_kernel_groups(rx_rows, ry, "Average"):
+        for f, out in zip(fields, outs):
+            c = fftconvolve(f, k, mode="same")
+            out[rows] = c[rows]
+    return outs[0], outs[1], outs[2], outs[3]
+
+
+def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
+           radius_units="Cells", messages=None):
+    """Vector Ruggedness Measure (VRM): the 3-D analog of Fisher's circular
+    variance (1993, eq. 2.10-2.11) applied to unit vectors orthogonal to the
+    terrain surface, after Sappington et al. (2007) and Hobson (1972). See
+    the module docstring.
+
+    For each cell, the unit normal vectors of every valid cell within
+    ``radius`` (in ``radius_units``; a circular, NoData-ignoring
+    neighborhood, geodesic per row on geographic DEMs) are summed; the
+    output is 1 minus the length of that resultant divided by the number of
+    vectors -- 0 where the neighborhood is flat and uniformly oriented, up
+    to 1 where it is maximally dispersed. The neighborhood is CIRCULAR
+    (Euclidean distance), matching the Blurred Hillshade radius convention,
+    rather than Sappington's original literal N x N square; because a
+    diagonal neighbor sits sqrt(2) cells away, a radius of 1.5 cells (the
+    default) is the smallest that reproduces their classic 3x3 neighborhood
+    exactly (all 8 surrounding cells plus the focal cell) -- radius = 1
+    cells is a smaller "plus" shape (4 orthogonal neighbors only). Elevation
+    data is read out to ``radius`` + 1 cell so every neighbor's own
+    orthogonal vector (which needs its own 3x3 window) can be computed.
+    """
+    gdal = _mh._gdal()
+    radius = float(radius)
+    if radius <= 0:
+        raise arcpy.ExecuteError("The radius must be positive.")
+    if radius_units not in RADIUS_UNITS:
+        raise arcpy.ExecuteError("Unknown radius unit: {}.".format(radius_units))
+    out_raster = _mh.resolve_raster_output(out_raster, messages)
+
+    scratch = arcpy.env.scratchFolder
+    src, in_copy = _hs._open_source(in_raster, scratch, messages)
+    band = src.GetRasterBand(1)
+    width, height = src.RasterXSize, src.RasterYSize
+    if width < 3 or height < 3:
+        raise arcpy.ExecuteError("The DEM must be at least 3 x 3 cells.")
+    gt = src.GetGeoTransform()
+    proj = src.GetProjection()
+    in_nodata = band.GetNoDataValue()
+    sr = arcpy.Describe(in_raster).spatialReference
+
+    elev_mpu = 1.0 if sr.type == "Geographic" else _hs._ELEV_METERS.get(elev_units, 1.0)
+    geom, geographic, zscale = _row_gradient_geometry(gt, height, sr, elev_mpu)
+    if geographic:
+        _hs._msg(messages, "Geographic DEM: gradients computed per row on the "
+                           "spheroid.")
+    else:
+        _hs._msg(messages, "Projected DEM: cell = {:.3f} x {:.3f} m; "
+                           "elevation units = {}.".format(
+                               float(geom["h"][0]), float(geom["vA"][0]),
+                               elev_units))
+
+    if radius_units == "Cells":
+        rx_rows = np.full(height, radius)
+        ry = radius
+        _hs._msg(messages, "VRM radius: {:g} cells.".format(radius))
+    else:
+        radius_m = radius * _RADIUS_METERS[radius_units]
+        if geographic:
+            rx_rows = radius_m / np.maximum(geom["h"], 1e-9)
+            ry = radius_m / max(float(np.mean(geom["vA"])), 1e-9)
+            _hs._msg(messages, "VRM radius: {:g} {} = {:,.1f} m, sized per row "
+                               "on the spheroid ({:.1f}-{:.1f} cells across, "
+                               "{:.1f} cells down).".format(
+                                   radius, radius_units.lower(), radius_m,
+                                   float(rx_rows.min()), float(rx_rows.max()),
+                                   ry))
+        else:
+            rx_rows = np.full(height, radius_m / geom["h"][0])
+            ry = radius_m / geom["vA"][0]
+            _hs._msg(messages, "VRM radius: {:g} {} = {:,.1f} m = {:.1f} x "
+                               "{:.1f} cells.".format(
+                                   radius, radius_units.lower(), radius_m,
+                                   float(rx_rows[0]), ry))
+
+    _hs._set_label("Reading the DEM...")
+    z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
+    valid = np.isfinite(z)
+    if in_nodata is not None:
+        valid &= (z != in_nodata)
+    z = np.where(valid, z * zscale, 0.0)
+    src = None
+    if in_copy:
+        try:
+            arcpy.management.Delete(in_copy)
+        except Exception:
+            pass
+
+    _hs._set_label("Computing orthogonal vectors...")
+    nx, ny, nz, ok = _unit_normals(z, valid, geom)
+    del z
+
+    _hs._set_label("Calculating vector dispersion...")
+    Rx, Ry, Rz, n = _circular_vector_sums(nx, ny, nz, ok, rx_rows, ry)
+    del nx, ny, nz, ok
+    # n is an exact integer count of contributing cells; fftconvolve leaves
+    # ~1e-16-scale roundoff noise that a bare `n > 0` test cannot distinguish
+    # from a true zero, so round before testing (otherwise a handful of
+    # cells with NO valid neighbor get a spurious, numerically unstable
+    # "valid" VRM value from dividing by that noise).
+    n = np.rint(n)
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        R = np.sqrt(Rx * Rx + Ry * Ry + Rz * Rz)
+        vrm = 1.0 - R / n
+    np.clip(vrm, 0.0, 1.0, out=vrm)
+    out_valid = n > 0.0
+    n_out = int(out_valid.sum())
+    _hs._msg(messages, "Vector Ruggedness Measure ({}): {:,} of {:,} cells "
+                       "have at least one valid neighbor vector.".format(
+                           _VRM_CITATION, n_out, width * height))
+
+    out_path = arcpy.CreateUniqueName("vrm.tif", scratch)
+    ds, oband = _make_output(gdal, out_path, gt, proj, width, height)
+    oband.WriteArray(np.where(out_valid, vrm, NODATA_OUT).astype(np.float32))
+    oband.FlushCache()
+    ds.FlushCache()
+    stats = _mh._RasterStats()
+    if out_valid.any():
+        stats.add(vrm[out_valid].astype(np.float64))
+    out_stats = _mh._finalize_stats(oband, stats, messages)
+    if out_stats is not None:
+        out_stats["on_raster"] = _mh._write_gtiff_stats(oband, out_stats)
+    oband.FlushCache()
+    ds.FlushCache()
+    oband = None
+    ds = None                            # close -> flush tiles + write PAM
+
+    _hs._set_label("Saving VRM raster...")
+    _deliver_output(
+        out_path, out_raster, out_stats, messages,
+        title=os.path.basename(str(out_raster)),
+        summary=("Created by Vector Ruggedness Measure from {src}: radius "
+                 "{r:g} {u}, elevation units {e}.").format(
+                     src=str(in_raster), r=radius, u=radius_units.lower(),
+                     e=("Meters (geographic DEM)" if geographic else elev_units)),
+        description=(
+            "Vector Ruggedness Measure (VRM) raster: a topographic "
+            "roughness index (Sappington et al. 2007) that quantifies the "
+            "3-D dispersion of the unit vectors orthogonal to the terrain "
+            "surface within a neighborhood of each cell -- the spherical "
+            "analog of circular variance (Fisher 1993). Values range from "
+            "0 (a flat and/or uniformly sloped neighborhood) to 1 "
+            "(maximally rugged); unlike slope alone, VRM distinguishes "
+            "steep-but-even terrain from steep, broken terrain. " +
+            _VRM_CITATION),
+        tags=("vector ruggedness measure, VRM, terrain ruggedness, "
+             "roughness, topography, Jenness Enterprises"),
+        citation=_VRM_CITATION)
+    _hs._msg(messages, "Vector Ruggedness Measure complete: {}".format(out_raster))
