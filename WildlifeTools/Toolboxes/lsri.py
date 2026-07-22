@@ -75,14 +75,28 @@ NODATA_OUT = -9999.0
 _MAX_SEGMENTS = 5_000_000
 
 # Memory safety valve for _RadiusLengthEngine.query(): caps how many
-# (center, candidate-segment) pairs are materialized into flat arrays at
-# once. A dense contour network can otherwise blow past available memory
-# building these arrays in one shot for an entire strip's worth of
-# centers -- see _RadiusLengthEngine.query docstring for the real crash
-# this was found from. ~200-250 bytes live per pair across the several
-# same-length arrays in play, so 10 million keeps peak usage in the
-# low single-digit GiB regardless of raster size or contour density.
+# (center, candidate-segment) pairs are materialized at once -- BOTH the
+# flat numpy work arrays (~200-250 bytes/pair across the several
+# same-length arrays in play) AND scipy's list-of-lists candidate result
+# (measured ~41 bytes/pair of pure Python-object overhead), which is why
+# query() fetches candidate indices per block rather than for all centers
+# up front. See the query() docstring for the real crash this was found
+# from. 10 million keeps peak usage in the low single-digit GiB
+# regardless of raster size or contour density.
 _MAX_PAIRS_PER_CHUNK = 10_000_000
+
+# Defense-in-depth cap on subdivided pieces (the KD-tree points). The
+# input-segment cap above does not bound these: subdivision multiplies,
+# and an input with very long segments (roads, transmission lines --
+# "LSRI on Contours" accepts any polylines) combined with a small radius
+# could otherwise explode into billions of pieces and exhaust memory in
+# _subdivide or the KD-tree build.
+_MAX_PIECES = 20_000_000
+
+# Defense-in-depth cap on output raster cells. A mistyped cell size, an
+# output cell size much finer than the DEM, or a stray Extent environment
+# in the wrong units could otherwise request an absurd grid.
+_MAX_OUT_CELLS = 2_000_000_000
 
 CITATION = ("Beasom, S. L., E. P. Wiggers, and J. R. Giardino. 1983. A "
            "technique for assessing land surface ruggedness. Journal of "
@@ -113,17 +127,17 @@ def _subdivide(p0s, p1s, max_len):
     ``_RadiusLengthEngine``).
 
     Fully vectorized (no per-segment Python loop) -- a per-segment loop
-    here was found to dominate total run time on a real-world DEM with a
-    fine contour interval over a large elevation range (hundreds of
-    thousands of contour segments), since it ran even for the (usual)
-    majority of segments that don't need subdividing at all."""
+    here was measurably slow at millions of segments (~2.6 s at 1.5M),
+    since it ran even for the (usual) majority of segments that don't
+    need subdividing at all."""
     ndim = p0s.shape[1] if len(p0s) else 2
     n = len(p0s)
     if n == 0:
         return p0s, p1s
     seg = p1s - p0s
     seg_len = np.sqrt(np.sum(seg * seg, axis=1))
-    short = (seg_len <= max_len) | (seg_len == 0)
+    # Zero-length segments fall in 'short' automatically (0 <= max_len).
+    short = seg_len <= max_len
     out0 = [p0s[short]]
     out1 = [p1s[short]]
 
@@ -131,6 +145,14 @@ def _subdivide(p0s, p1s, max_len):
     if np.any(long):
         n_pieces = np.ceil(seg_len[long] / max_len).astype(np.int64)
         total = int(n_pieces.sum())
+        if total + int(short.sum()) > _MAX_PIECES:
+            raise arcpy.ExecuteError(
+                "Preparing the neighborhood search would subdivide the "
+                "input's long segments into more than {:,} pieces (pieces "
+                "are capped at the neighborhood radius, and this radius is "
+                "very small relative to the input's segment lengths). Use "
+                "a larger neighborhood radius, or simplify the input to "
+                "fewer/shorter line segments.".format(_MAX_PIECES))
         piece_starts = np.concatenate(([0], np.cumsum(n_pieces)[:-1]))
         local_idx = np.arange(total) - np.repeat(piece_starts, n_pieces)
         n_rep = np.repeat(n_pieces, n_pieces).astype(np.float64)
@@ -187,64 +209,80 @@ class _RadiusLengthEngine(object):
     def query(self, centers):
         """``centers``: (M, ndim) array, same ndim as this engine's segments.
 
-        Processes ``centers`` in cumulative-pair-count chunks (bounded by
-        ``_MAX_PAIRS_PER_CHUNK``) rather than materializing every
-        (center, candidate-segment) pair for all of ``centers`` at once.
-        REAL CRASH this guards against: a rugged, geographic DEM with a
-        fine (10 m) contour interval generated 4.2 million contour
-        segments; a single 1024-row strip's worth of centers produced
-        2.69 BILLION candidate pairs, requesting 60+ GiB for one of
-        several same-sized arrays needed at once -- an unbounded-memory
-        bug, not a slowness issue (the whole computation is otherwise
-        fast once bounded)."""
+        TWO-PASS, memory-bounded design. Pass 1 asks the KD-tree only for
+        per-center candidate COUNTS (``return_length=True`` -- a plain int
+        array, no Python lists). Those counts split ``centers`` into
+        blocks of at most ``_MAX_PAIRS_PER_CHUNK`` total pairs; pass 2
+        then fetches actual candidate indices and runs the closed-form
+        circle-clip math one block at a time. EVERY per-pair structure is
+        bounded by the block budget -- including scipy's list-of-lists
+        candidate result, whose pure Python-object overhead measures ~41
+        bytes/pair and therefore must never be materialized for all
+        centers at once. (REAL CRASH this design guards against: a
+        rugged, geographic DEM with a fine 10 m contour interval
+        generated 4.2 million contour segments, and a single 1024-row
+        strip produced 2.69 BILLION candidate pairs -- ~60 GiB for one
+        flat work array alone, plus ~110 GB of candidate lists. The tree
+        is traversed twice per block-set, but the traversals run on all
+        cores and are far cheaper than unbounded memory.)"""
         n_out = len(centers)
         result = np.zeros(n_out, dtype=np.float64)
         if self.tree is None or n_out == 0:
             return result
-        query_r = self.radius + self.max_piece_len
-        # workers=-1: use all available cores -- this query was previously
-        # single-threaded (scipy's default).
-        candidates = self.tree.query_ball_point(centers, r=query_r, workers=-1)
-        counts = np.fromiter((len(c) for c in candidates), dtype=np.int64, count=n_out)
-        total_pairs = int(counts.sum())
-        if total_pairs == 0:
+        # Every point of a piece lies within HALF the piece's length of
+        # the piece's midpoint (the KD-tree point), so radius +
+        # max_piece_len/2 provably catches every piece that can touch the
+        # circle. The previous full-length slack searched ~(4/2.25)x the
+        # necessary area at the piece-length == radius cap, i.e. ~40%
+        # more candidate pairs than needed -- verified identical results.
+        query_r = self.radius + self.max_piece_len / 2.0
+        counts = self.tree.query_ball_point(
+            centers, r=query_r, workers=-1, return_length=True).astype(np.int64)
+        if int(counts.sum()) == 0:
             return result
 
         cum = np.cumsum(counts)
         lo = 0
         while lo < n_out:
-            prev = cum[lo - 1] if lo > 0 else 0
+            prev = int(cum[lo - 1]) if lo > 0 else 0
             hi = int(np.searchsorted(cum, prev + _MAX_PAIRS_PER_CHUNK, side="right"))
             hi = min(max(hi, lo + 1), n_out)   # always make progress
 
             chunk_counts = counts[lo:hi]
             chunk_total = int(chunk_counts.sum())
-            if chunk_total > 0:
-                cell_idx = np.repeat(np.arange(lo, hi, dtype=np.int64), chunk_counts)
-                piece_idx = np.fromiter(
-                    (j for c in candidates[lo:hi] for j in c),
-                    dtype=np.int64, count=chunk_total)
+            if chunk_total == 0:
+                lo = hi
+                continue
+            # Candidate indices for THIS block only (bounded lists).
+            cand = self.tree.query_ball_point(
+                centers[lo:hi], r=query_r, workers=-1)
+            cell_idx = np.repeat(np.arange(lo, hi, dtype=np.int64), chunk_counts)
+            piece_idx = np.fromiter(
+                (j for c in cand for j in c), dtype=np.int64, count=chunk_total)
+            del cand
 
-                P0 = self.p0s[piece_idx]
-                P1 = self.p1s[piece_idx]
-                C = centers[cell_idx]
-                d = P1 - P0
-                f = P0 - C
-                a = np.sum(d * d, axis=1)
-                b = 2.0 * np.sum(f * d, axis=1)
-                c = np.sum(f * f, axis=1) - self.radius * self.radius
-                disc = b * b - 4.0 * a * c
-                valid = disc >= 0.0
-                sq = np.sqrt(np.maximum(disc, 0.0))
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    t1 = (-b - sq) / (2.0 * a)
-                    t2 = (-b + sq) / (2.0 * a)
-                t_lo = np.clip(np.minimum(t1, t2), 0.0, 1.0)
-                t_hi = np.clip(np.maximum(t1, t2), 0.0, 1.0)
-                frac = np.where(valid & (t_hi > t_lo) & (a > 0), t_hi - t_lo, 0.0)
-                clip_len = frac * np.sqrt(np.maximum(a, 0.0))
+            P0 = self.p0s[piece_idx]
+            P1 = self.p1s[piece_idx]
+            C = centers[cell_idx]
+            d = P1 - P0
+            f = P0 - C
+            a = np.sum(d * d, axis=1)
+            b = 2.0 * np.sum(f * d, axis=1)
+            c = np.sum(f * f, axis=1) - self.radius * self.radius
+            disc = b * b - 4.0 * a * c
+            valid = disc >= 0.0
+            sq = np.sqrt(np.maximum(disc, 0.0))
+            with np.errstate(divide="ignore", invalid="ignore"):
+                t1 = (-b - sq) / (2.0 * a)
+                t2 = (-b + sq) / (2.0 * a)
+            t_lo = np.clip(np.minimum(t1, t2), 0.0, 1.0)
+            t_hi = np.clip(np.maximum(t1, t2), 0.0, 1.0)
+            frac = np.where(valid & (t_hi > t_lo) & (a > 0), t_hi - t_lo, 0.0)
+            clip_len = frac * np.sqrt(np.maximum(a, 0.0))
 
-                np.add.at(result, cell_idx, clip_len)
+            # np.add.at is fine here: numpy 2.x's indexed-loop fastpath
+            # makes it as fast as bincount for this pattern (measured).
+            np.add.at(result, cell_idx, clip_len)
             lo = hi
         return result
 
@@ -319,29 +357,36 @@ def _contour_segments_from_band(gdal, ogr, band, proj_wkt, nodata,
     gdal.ContourGenerate(band, float(interval), float(base), [],
                         use_nodata, nodata_val, layer, 0, 1)
 
-    p0s, p1s = [], []
+    # Per-FEATURE numpy slicing (arr[:-1] / arr[1:]) instead of a
+    # per-vertex Python append loop -- a multi-million-segment contour
+    # network spends several seconds in the loop version.
+    p0_parts, p1_parts = [], []
+    n_segments = 0
     layer.ResetReading()
     for feat in layer:
         geom = feat.GetGeometryRef()
         if geom is None:
             continue
         pts = geom.GetPoints()
-        for i in range(len(pts) - 1):
-            # Defense-in-depth cap (see _polyline_segments): a pathological
-            # DEM/interval combination (e.g. an absurdly fine interval over
-            # dense noise) could otherwise generate an unbounded number of
-            # contour segments and exhaust memory building these lists.
-            if len(p0s) >= _MAX_SEGMENTS:
-                raise arcpy.ExecuteError(
-                    "Contouring this DEM at this interval produced more than "
-                    "{:,} segments, which this tool does not support in one "
-                    "run. Use a larger contour interval, or a smaller "
-                    "processing extent.".format(_MAX_SEGMENTS))
-            p0s.append(pts[i][:2])
-            p1s.append(pts[i + 1][:2])
+        if pts is None or len(pts) < 2:
+            continue
+        n_segments += len(pts) - 1
+        # Defense-in-depth cap (see _polyline_segments): a pathological
+        # DEM/interval combination (e.g. an absurdly fine interval over
+        # dense noise) could otherwise generate an unbounded number of
+        # contour segments and exhaust memory building these arrays.
+        if n_segments > _MAX_SEGMENTS:
+            raise arcpy.ExecuteError(
+                "Contouring this DEM at this interval produced more than "
+                "{:,} segments, which this tool does not support in one "
+                "run. Use a larger contour interval, or a smaller "
+                "processing extent.".format(_MAX_SEGMENTS))
+        arr = np.asarray(pts, dtype=np.float64)[:, :2]
+        p0_parts.append(arr[:-1])
+        p1_parts.append(arr[1:])
     layer.ResetReading()
-    return (np.array(p0s, dtype=np.float64) if p0s else np.zeros((0, 2)),
-           np.array(p1s, dtype=np.float64) if p1s else np.zeros((0, 2)),
+    return (np.concatenate(p0_parts) if p0_parts else np.zeros((0, 2)),
+           np.concatenate(p1_parts) if p1_parts else np.zeros((0, 2)),
            ogr_ds, layer)
 
 
@@ -388,6 +433,18 @@ def _save_contours(out_fc, ogr_layer, sr, messages):
 # Shared output-raster writer.
 # ---------------------------------------------------------------------------
 
+def _check_output_size(width, height):
+    """Defense-in-depth guard on the output raster size (see
+    ``_MAX_OUT_CELLS``)."""
+    if int(width) * int(height) > _MAX_OUT_CELLS:
+        raise arcpy.ExecuteError(
+            "The output raster would have {:,} cells ({:,} columns x {:,} "
+            "rows), more than this tool supports ({:,}). Check the cell "
+            "size and any Extent environment setting.".format(
+                int(width) * int(height), int(width), int(height),
+                _MAX_OUT_CELLS))
+
+
 def _write_lsri_raster(gdal, engine, mult, valid_mask, gt, proj_wkt,
                        width, height, scratch, messages,
                        geographic=False, semi_major=None, semi_minor=None):
@@ -412,31 +469,41 @@ def _write_lsri_raster(gdal, engine, mult, valid_mask, gt, proj_wkt,
     band.SetNoDataValue(NODATA_OUT)
 
     stats = _mh._RasterStats()
+    # Pixel-center x coordinates; assumes a north-up, non-rotated grid
+    # (gt[2] == gt[4] == 0), like every other raster tool in this toolbox.
+    xs = gt[0] + (np.arange(width) + 0.5) * gt[1]
     strips = [(y, min(_STRIP_ROWS, height - y)) for y in range(0, height, _STRIP_ROWS)]
     for idx, (yoff, rows) in enumerate(strips):
-        # Pixel-center coordinates; assumes a north-up, non-rotated grid
-        # (gt[2] == gt[4] == 0), like every other raster tool in this toolbox.
-        xs = gt[0] + (np.arange(width) + 0.5) * gt[1]
         row_idx = yoff + np.arange(rows)
         ys = gt[3] + (row_idx + 0.5) * gt[5]
         gx, gy = np.meshgrid(xs, ys)
         cx = gx.ravel()
         cy = gy.ravel()
+        flat_valid = None
+        if valid_mask is not None:
+            # Skip NoData cells BEFORE the (expensive) neighborhood query
+            # instead of querying everything and masking afterward --
+            # study-area DEMs clipped to a boundary are routinely 30-60%
+            # NoData, and this cuts the query (and any ECEF conversion)
+            # cost proportionally.
+            flat_valid = valid_mask[yoff:yoff + rows, :].ravel()
+            cx = cx[flat_valid]
+            cy = cy[flat_valid]
         if geographic:
             ex, ey, ez = _hs._ecef(cx, cy, semi_major, semi_minor)
             centers = np.column_stack([ex, ey, ez])
         else:
             centers = np.column_stack([cx, cy])
-        lens = engine.query(centers) * mult
-        out_arr = lens.reshape(rows, width)
-        if valid_mask is not None:
-            row_valid = valid_mask[yoff:yoff + rows, :]
-            out_arr = np.where(row_valid, out_arr, NODATA_OUT).astype(np.float32)
-            if row_valid.any():
-                stats.add(out_arr[row_valid])
+        lens = (engine.query(centers) * mult).astype(np.float32)
+        if flat_valid is None:
+            out_arr = lens.reshape(rows, width)
+            stats.add(lens)
         else:
-            out_arr = out_arr.astype(np.float32)
-            stats.add(out_arr.ravel())
+            out_flat = np.full(rows * width, NODATA_OUT, dtype=np.float32)
+            out_flat[flat_valid] = lens
+            out_arr = out_flat.reshape(rows, width)
+            if lens.size:
+                stats.add(lens)
         band.WriteArray(out_arr, 0, yoff)
         _mh.phase_step(idx + 1, len(strips))
     band.FlushCache()
@@ -582,6 +649,7 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
     if in_nodata is not None:
         valid &= (arr != in_nodata)
     scaled = np.where(valid, arr * z_factor, NODATA_OUT)
+    del arr   # only 'scaled' and the boolean 'valid' mask are needed now
     src = None
     if in_copy:
         try:
@@ -601,9 +669,14 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
     z_band.SetNoDataValue(NODATA_OUT)
     z_band.WriteArray(scaled)
     z_band.FlushCache()
+    del scaled   # the MEM dataset holds its own copy now
 
     p0s, p1s, ogr_ds, ogr_layer = _contour_segments_from_band(
         gdal, ogr, z_band, proj_wkt, NODATA_OUT, contour_interval, base_contour)
+    # Contouring is done -- release the whole-DEM float64 MEM copy before
+    # the memory-heavy neighborhood-query phase.
+    z_band = None
+    z_ds = None
     _hs._msg(messages, "Generated {:,} contour segments: interval {:g}, "
                        "base {:g}, z-factor {:g}{}.".format(
                            len(p0s), contour_interval, base_contour, z_factor,
@@ -613,6 +686,10 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
     if out_contours:
         _mh.phase_advance("Saving the contour feature class...")
         _save_contours(out_contours, ogr_layer, sr, messages)
+    # Segment arrays are extracted (and any requested save is done) --
+    # release the OGR in-memory contour geometries too.
+    ogr_layer = None
+    ogr_ds = None
 
     _mh.phase_advance("Preparing contour segments...")
     if geographic:
@@ -636,8 +713,15 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
         out_gt = (gt[0], out_cell_size, 0.0, gt[3], 0.0, -out_cell_size)
         out_width = max(1, int(math.ceil(width / scale_x)))
         out_height = max(1, int(math.ceil(height / scale_y)))
-        row_src = np.clip((np.arange(out_height) * scale_y).astype(np.int64), 0, height - 1)
-        col_src = np.clip((np.arange(out_width) * scale_x).astype(np.int64), 0, width - 1)
+        _check_output_size(out_width, out_height)
+        # Sample the native valid-mask at the native cell CONTAINING each
+        # output cell's CENTER (+0.5) -- the same location the length
+        # engine is queried at -- so the NoData flag and the queried
+        # point always agree along NoData boundaries.
+        row_src = np.clip(((np.arange(out_height) + 0.5) * scale_y).astype(np.int64),
+                          0, height - 1)
+        col_src = np.clip(((np.arange(out_width) + 0.5) * scale_x).astype(np.int64),
+                          0, width - 1)
         out_valid = valid[row_src][:, col_src]
         _hs._msg(messages, "Output raster cell size: {:g} (input DEM: "
                            "{:g} x {:g}) -- {:,} output cells instead of "
@@ -689,21 +773,23 @@ def default_cell_size_from_extent(fc):
     return None
 
 
-def _polyline_segments(fc, sr, messages):
+def _polyline_segments(fc, messages):
     """Flatten every part of every feature in ``fc`` into (p0s, p1s)
     segment endpoint arrays, in the feature class's own spatial reference.
     Passing a Feature LAYER with an active selection restricts this to the
     selected features (standard arcpy Feature Layer behavior).
 
-    Stops with a clear error past ``_MAX_SEGMENTS`` segments, checked
-    incrementally as they're read (not after building the whole list) --
-    a defense-in-depth cap against a feature class engineered (or simply
-    malformed) to have an absurd vertex count, which would otherwise grow
-    these lists without bound and could exhaust memory. 5 million segments
-    is already far beyond any realistic contour/habitat dataset this tool
-    is meant for."""
-    p0s, p1s = [], []
+    Per-PART numpy slicing (arr[:-1] / arr[1:]) instead of a per-vertex
+    Python append loop. Stops with a clear error past ``_MAX_SEGMENTS``
+    segments, checked incrementally as they're read (not after building
+    the whole set) -- a defense-in-depth cap against a feature class
+    engineered (or simply malformed) to have an absurd vertex count,
+    which would otherwise grow these arrays without bound and could
+    exhaust memory. 5 million segments is already far beyond any
+    realistic contour/habitat dataset this tool is meant for."""
+    p0_parts, p1_parts = [], []
     n_features = 0
+    n_segments = 0
     with arcpy.da.SearchCursor(fc, ["SHAPE@"]) as cur:
         for (shape,) in cur:
             if shape is None:
@@ -711,23 +797,29 @@ def _polyline_segments(fc, sr, messages):
             n_features += 1
             for part in shape:
                 pts = [(pt.X, pt.Y) for pt in part if pt is not None]
-                for i in range(len(pts) - 1):
-                    if len(p0s) >= _MAX_SEGMENTS:
-                        raise arcpy.ExecuteError(
-                            "The input has more than {:,} polyline segments, "
-                            "which this tool does not support in one run. "
-                            "Select a subset of features, split the data, or "
-                            "generalize/simplify it first.".format(_MAX_SEGMENTS))
-                    p0s.append(pts[i])
-                    p1s.append(pts[i + 1])
+                if len(pts) < 2:
+                    continue
+                n_segments += len(pts) - 1
+                if n_segments > _MAX_SEGMENTS:
+                    raise arcpy.ExecuteError(
+                        "The input has more than {:,} polyline segments, "
+                        "which this tool does not support in one run. "
+                        "Select a subset of features, split the data, or "
+                        "generalize/simplify it first.".format(_MAX_SEGMENTS))
+                arr = np.asarray(pts, dtype=np.float64)
+                p0_parts.append(arr[:-1])
+                p1_parts.append(arr[1:])
     _hs._msg(messages, "Read {:,} polyline feature(s), {:,} segments.".format(
-        n_features, len(p0s)))
+        n_features, n_segments))
     if n_features == 0:
         raise arcpy.ExecuteError(
             "No input polylines were found (check the feature selection, "
             "if any).")
-    return (np.array(p0s, dtype=np.float64) if p0s else np.zeros((0, 2)),
-           np.array(p1s, dtype=np.float64) if p1s else np.zeros((0, 2)))
+    if n_segments == 0:
+        raise arcpy.ExecuteError(
+            "The input features contain no line segments (all geometries "
+            "are empty or single-vertex), so there is nothing to measure.")
+    return np.concatenate(p0_parts), np.concatenate(p1_parts)
 
 
 def run_lsri_on_contours(in_polylines, out_raster, cell_size, radius,
@@ -763,7 +855,7 @@ def run_lsri_on_contours(in_polylines, out_raster, cell_size, radius,
         ("Building pyramids...", 1),
     ])
 
-    p0s, p1s = _polyline_segments(in_polylines, sr, messages)
+    p0s, p1s = _polyline_segments(in_polylines, messages)
 
     # Representative ground cell size at the data's own center latitude
     # (geographic only) -- used both for a Cells-unit radius and to buffer
@@ -808,6 +900,7 @@ def run_lsri_on_contours(in_polylines, out_raster, cell_size, radius,
 
     width = max(1, int(math.ceil((xmax - xmin) / cell_size)))
     height = max(1, int(math.ceil((ymax - ymin) / cell_size)))
+    _check_output_size(width, height)
     gt = (xmin, cell_size, 0.0, ymax, 0.0, -cell_size)
     try:
         from osgeo import osr

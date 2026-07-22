@@ -204,7 +204,7 @@ class LoCoHStandard(object):
             "2004). Builds the convex hull of each point's k nearest neighbours, "
             "sorts the hulls by area, and unions them cumulatively into "
             "utilization isopleths.")
-        self.category = "Wildlife Tools"
+        self.category = "Local Convex Hull Tools"
         self.canRunInBackground = False
         self._auto_name = None
 
@@ -327,7 +327,7 @@ class LoCoHAdaptive(object):
             "order of increasing distance until their cumulative distance reaches the "
             "maximum cumulative length a; hulls are sorted by point count and unioned "
             "cumulatively into utilization isopleths.")
-        self.category = "Wildlife Tools"
+        self.category = "Local Convex Hull Tools"
         self.canRunInBackground = False
         self._auto_name = None
 
@@ -474,7 +474,7 @@ class LoCoHFixedSphere(object):
             "points within radius r (always including the focal point and its two nearest "
             "neighbours); hulls are sorted by point count and unioned cumulatively into "
             "utilization isopleths.")
-        self.category = "Wildlife Tools"
+        self.category = "Local Convex Hull Tools"
         self.canRunInBackground = False
         self._auto_name = None
 
