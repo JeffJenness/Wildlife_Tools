@@ -74,8 +74,15 @@ NODATA_OUT = -9999.0
 # dataset this tool is meant for.
 _MAX_SEGMENTS = 5_000_000
 
-# Beasom et al.'s own sample unit: a 40-ha circle. r = sqrt(area / pi).
-BEASOM_RADIUS_M = math.sqrt(400000.0 / math.pi)   # ~356.8 m
+# Memory safety valve for _RadiusLengthEngine.query(): caps how many
+# (center, candidate-segment) pairs are materialized into flat arrays at
+# once. A dense contour network can otherwise blow past available memory
+# building these arrays in one shot for an entire strip's worth of
+# centers -- see _RadiusLengthEngine.query docstring for the real crash
+# this was found from. ~200-250 bytes live per pair across the several
+# same-length arrays in play, so 10 million keeps peak usage in the
+# low single-digit GiB regardless of raster size or contour density.
+_MAX_PAIRS_PER_CHUNK = 10_000_000
 
 CITATION = ("Beasom, S. L., E. P. Wiggers, and J. R. Giardino. 1983. A "
            "technique for assessing land surface ruggedness. Journal of "
@@ -103,25 +110,40 @@ def _subdivide(p0s, p1s, max_len):
     end. Preprocessing over the INPUT geometry only (small), never called
     per output cell. Works in any number of dimensions (2 for planar map
     units, 3 for ECEF meters on geographic DEMs -- see
-    ``_RadiusLengthEngine``)."""
+    ``_RadiusLengthEngine``).
+
+    Fully vectorized (no per-segment Python loop) -- a per-segment loop
+    here was found to dominate total run time on a real-world DEM with a
+    fine contour interval over a large elevation range (hundreds of
+    thousands of contour segments), since it ran even for the (usual)
+    majority of segments that don't need subdividing at all."""
     ndim = p0s.shape[1] if len(p0s) else 2
-    if len(p0s) == 0:
+    n = len(p0s)
+    if n == 0:
         return p0s, p1s
     seg = p1s - p0s
     seg_len = np.sqrt(np.sum(seg * seg, axis=1))
-    out0, out1 = [], []
-    for i in range(len(p0s)):
-        L = seg_len[i]
-        if L <= max_len or L == 0:
-            out0.append(p0s[i]); out1.append(p1s[i])
-            continue
-        n_pieces = int(math.ceil(L / max_len))
-        pts = np.linspace(p0s[i], p1s[i], n_pieces + 1)
-        for k in range(n_pieces):
-            out0.append(pts[k])
-            out1.append(pts[k + 1])
-    return (np.array(out0, dtype=np.float64) if out0 else np.zeros((0, ndim)),
-           np.array(out1, dtype=np.float64) if out1 else np.zeros((0, ndim)))
+    short = (seg_len <= max_len) | (seg_len == 0)
+    out0 = [p0s[short]]
+    out1 = [p1s[short]]
+
+    long = ~short
+    if np.any(long):
+        n_pieces = np.ceil(seg_len[long] / max_len).astype(np.int64)
+        total = int(n_pieces.sum())
+        piece_starts = np.concatenate(([0], np.cumsum(n_pieces)[:-1]))
+        local_idx = np.arange(total) - np.repeat(piece_starts, n_pieces)
+        n_rep = np.repeat(n_pieces, n_pieces).astype(np.float64)
+        t0 = (local_idx / n_rep)[:, None]
+        t1 = ((local_idx + 1) / n_rep)[:, None]
+        seg_of_piece = np.repeat(np.arange(len(n_pieces)), n_pieces)
+        p0_long = p0s[long][seg_of_piece]
+        d_long = seg[long][seg_of_piece]
+        out0.append(p0_long + d_long * t0)
+        out1.append(p0_long + d_long * t1)
+
+    return (np.concatenate(out0, axis=0) if out0 else np.zeros((0, ndim)),
+           np.concatenate(out1, axis=0) if out1 else np.zeros((0, ndim)))
 
 
 class _RadiusLengthEngine(object):
@@ -145,6 +167,13 @@ class _RadiusLengthEngine(object):
         self.radius = float(radius)
         max_piece = max(self.radius, 1e-9)
         self.p0s, self.p1s = _subdivide(p0s, p1s, max_piece)
+        # Coarse progress within the "Preparing contour segments..." phase
+        # -- subdivision is now vectorized and fast even for millions of
+        # segments, but cKDTree construction is an opaque scipy call with
+        # no progress hook of its own, so this at least shows the bar
+        # advance once subdivision is done and again once the tree (the
+        # part that can't report finer detail) is built.
+        _mh.phase_step(1, 2)
         if len(self.p0s):
             d = self.p1s - self.p0s
             self.max_piece_len = float(np.sqrt(np.sum(d * d, axis=1)).max())
@@ -153,44 +182,70 @@ class _RadiusLengthEngine(object):
         else:
             self.tree = None
             self.max_piece_len = 0.0
+        _mh.phase_step(2, 2)
 
     def query(self, centers):
-        """``centers``: (M, ndim) array, same ndim as this engine's segments."""
+        """``centers``: (M, ndim) array, same ndim as this engine's segments.
+
+        Processes ``centers`` in cumulative-pair-count chunks (bounded by
+        ``_MAX_PAIRS_PER_CHUNK``) rather than materializing every
+        (center, candidate-segment) pair for all of ``centers`` at once.
+        REAL CRASH this guards against: a rugged, geographic DEM with a
+        fine (10 m) contour interval generated 4.2 million contour
+        segments; a single 1024-row strip's worth of centers produced
+        2.69 BILLION candidate pairs, requesting 60+ GiB for one of
+        several same-sized arrays needed at once -- an unbounded-memory
+        bug, not a slowness issue (the whole computation is otherwise
+        fast once bounded)."""
         n_out = len(centers)
         result = np.zeros(n_out, dtype=np.float64)
         if self.tree is None or n_out == 0:
             return result
         query_r = self.radius + self.max_piece_len
-        candidates = self.tree.query_ball_point(centers, r=query_r)
+        # workers=-1: use all available cores -- this query was previously
+        # single-threaded (scipy's default).
+        candidates = self.tree.query_ball_point(centers, r=query_r, workers=-1)
         counts = np.fromiter((len(c) for c in candidates), dtype=np.int64, count=n_out)
         total_pairs = int(counts.sum())
         if total_pairs == 0:
             return result
 
-        cell_idx = np.repeat(np.arange(n_out, dtype=np.int64), counts)
-        piece_idx = np.fromiter(
-            (j for c in candidates for j in c), dtype=np.int64, count=total_pairs)
+        cum = np.cumsum(counts)
+        lo = 0
+        while lo < n_out:
+            prev = cum[lo - 1] if lo > 0 else 0
+            hi = int(np.searchsorted(cum, prev + _MAX_PAIRS_PER_CHUNK, side="right"))
+            hi = min(max(hi, lo + 1), n_out)   # always make progress
 
-        P0 = self.p0s[piece_idx]
-        P1 = self.p1s[piece_idx]
-        C = centers[cell_idx]
-        d = P1 - P0
-        f = P0 - C
-        a = np.sum(d * d, axis=1)
-        b = 2.0 * np.sum(f * d, axis=1)
-        c = np.sum(f * f, axis=1) - self.radius * self.radius
-        disc = b * b - 4.0 * a * c
-        valid = disc >= 0.0
-        sq = np.sqrt(np.maximum(disc, 0.0))
-        with np.errstate(divide="ignore", invalid="ignore"):
-            t1 = (-b - sq) / (2.0 * a)
-            t2 = (-b + sq) / (2.0 * a)
-        t_lo = np.clip(np.minimum(t1, t2), 0.0, 1.0)
-        t_hi = np.clip(np.maximum(t1, t2), 0.0, 1.0)
-        frac = np.where(valid & (t_hi > t_lo) & (a > 0), t_hi - t_lo, 0.0)
-        clip_len = frac * np.sqrt(np.maximum(a, 0.0))
+            chunk_counts = counts[lo:hi]
+            chunk_total = int(chunk_counts.sum())
+            if chunk_total > 0:
+                cell_idx = np.repeat(np.arange(lo, hi, dtype=np.int64), chunk_counts)
+                piece_idx = np.fromiter(
+                    (j for c in candidates[lo:hi] for j in c),
+                    dtype=np.int64, count=chunk_total)
 
-        np.add.at(result, cell_idx, clip_len)
+                P0 = self.p0s[piece_idx]
+                P1 = self.p1s[piece_idx]
+                C = centers[cell_idx]
+                d = P1 - P0
+                f = P0 - C
+                a = np.sum(d * d, axis=1)
+                b = 2.0 * np.sum(f * d, axis=1)
+                c = np.sum(f * f, axis=1) - self.radius * self.radius
+                disc = b * b - 4.0 * a * c
+                valid = disc >= 0.0
+                sq = np.sqrt(np.maximum(disc, 0.0))
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    t1 = (-b - sq) / (2.0 * a)
+                    t2 = (-b + sq) / (2.0 * a)
+                t_lo = np.clip(np.minimum(t1, t2), 0.0, 1.0)
+                t_hi = np.clip(np.maximum(t1, t2), 0.0, 1.0)
+                frac = np.where(valid & (t_hi > t_lo) & (a > 0), t_hi - t_lo, 0.0)
+                clip_len = frac * np.sqrt(np.maximum(a, 0.0))
+
+                np.add.at(result, cell_idx, clip_len)
+            lo = hi
         return result
 
 
@@ -450,13 +505,20 @@ def _deliver_lsri(out_scratch, out_raster, out_stats, messages, summary, tags):
 
 def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
                     z_factor=1.0, radius=None, radius_units="Meters",
-                    length_units="Meters", out_contours=None, messages=None):
+                    length_units="Meters", out_contours=None,
+                    out_cell_size=None, messages=None):
     """Generate contours from ``in_raster`` on the fly (matching Esri's own
     Contour tool's interval/base/z-factor logic, unsmoothed), then compute
     the Land Surface Ruggedness Index (Beasom et al. 1983): total contour
     length within a circular neighborhood of each cell. Optionally saves
-    the derived contours to ``out_contours``. Returns the output raster's
-    default-symbology .lyrx path (or None)."""
+    the derived contours to ``out_contours``. ``out_cell_size``, if given,
+    computes the output raster at a coarser (or finer) cell size than the
+    input DEM -- in the DEM's own map units -- WITHOUT affecting contour
+    accuracy (contours are always traced at the DEM's native resolution;
+    only the output query grid changes), a real lever for cutting run time
+    on a large, fine-resolution DEM: the query grid is what scales with the
+    number of output cells, not the contour tracing itself. Returns the
+    output raster's default-symbology .lyrx path (or None)."""
     gdal = _mh._gdal()
     from osgeo import ogr
 
@@ -470,6 +532,8 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
         raise arcpy.ExecuteError("Unknown radius unit: {}.".format(radius_units))
     if length_units not in LENGTH_UNITS:
         raise arcpy.ExecuteError("Unknown length unit: {}.".format(length_units))
+    if out_cell_size is not None and out_cell_size <= 0:
+        raise arcpy.ExecuteError("The output cell size must be positive.")
     out_raster = _mh.resolve_raster_output(out_raster, messages)
 
     sr = arcpy.Describe(in_raster).spatialReference
@@ -478,7 +542,8 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
     phases = [("Reading the DEM...", 1), ("Generating contours...", 3)]
     if out_contours:
         phases.append(("Saving the contour feature class...", 1))
-    phases += [("Calculating total contour length within radius...", 8),
+    phases += [("Preparing contour segments...", 1),
+              ("Calculating total contour length within radius...", 7),
               ("Saving output raster...", 2),
               ("Setting raster statistics...", 1),
               ("Creating layer file and symbology...", 1),
@@ -549,7 +614,7 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
         _mh.phase_advance("Saving the contour feature class...")
         _save_contours(out_contours, ogr_layer, sr, messages)
 
-    _mh.phase_advance("Calculating total contour length within radius...")
+    _mh.phase_advance("Preparing contour segments...")
     if geographic:
         e0, e1 = _to_ecef_xy(p0s, p1s, semi_major, semi_minor)
         engine = _RadiusLengthEngine(e0, e1, radius_map)
@@ -557,8 +622,34 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
         engine = _RadiusLengthEngine(p0s, p1s, radius_map)
     mult = _LENGTH_MULT[length_units] * (1.0 if geographic else mpu)
 
+    # Decouple the OUTPUT query grid from the DEM's native resolution.
+    # Contours above were already traced at full native resolution (so
+    # accuracy is unaffected); only the grid of cells the length engine is
+    # queried at changes here. A coarser out_cell_size is the single
+    # biggest lever for cutting run time on a large, fine-resolution DEM,
+    # since the query grid (not the contour tracing) is what scales with
+    # cell count.
+    if out_cell_size:
+        native_cw, native_ch = abs(gt[1]), abs(gt[5])
+        scale_x = out_cell_size / native_cw
+        scale_y = out_cell_size / native_ch
+        out_gt = (gt[0], out_cell_size, 0.0, gt[3], 0.0, -out_cell_size)
+        out_width = max(1, int(math.ceil(width / scale_x)))
+        out_height = max(1, int(math.ceil(height / scale_y)))
+        row_src = np.clip((np.arange(out_height) * scale_y).astype(np.int64), 0, height - 1)
+        col_src = np.clip((np.arange(out_width) * scale_x).astype(np.int64), 0, width - 1)
+        out_valid = valid[row_src][:, col_src]
+        _hs._msg(messages, "Output raster cell size: {:g} (input DEM: "
+                           "{:g} x {:g}) -- {:,} output cells instead of "
+                           "{:,}.".format(out_cell_size, native_cw, native_ch,
+                                          out_width * out_height, width * height))
+    else:
+        out_gt, out_width, out_height, out_valid = gt, width, height, valid
+
+    _mh.phase_advance("Calculating total contour length within radius...")
     out_path, out_stats = _write_lsri_raster(
-        gdal, engine, mult, valid, gt, proj_wkt, width, height, scratch, messages,
+        gdal, engine, mult, out_valid, out_gt, proj_wkt, out_width, out_height,
+        scratch, messages,
         geographic=geographic, semi_major=semi_major, semi_minor=semi_minor)
 
     _mh.phase_advance("Saving output raster...")
@@ -566,9 +657,12 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
         out_path, out_raster, out_stats, messages,
         summary=("Created by LSRI on DEM from {src}: contour interval "
                  "{ci:g}, base contour {bc:g}, z-factor {zf:g}, "
-                 "neighborhood radius {r:g} {ru}, length units {lu}.").format(
+                 "neighborhood radius {r:g} {ru}, length units {lu}{cs}.").format(
                      src=str(in_raster), ci=contour_interval, bc=base_contour,
-                     zf=z_factor, r=radius, ru=radius_units.lower(), lu=length_units.lower()),
+                     zf=z_factor, r=radius, ru=radius_units.lower(), lu=length_units.lower(),
+                     cs=(", output cell size {:g} (input DEM cell size {:g} x "
+                         "{:g})".format(out_cell_size, abs(gt[1]), abs(gt[5]))
+                         if out_cell_size else "")),
         tags="land surface ruggedness index, LSRI, contour density, terrain ruggedness, "
              "Jenness Enterprises")
     _mh.end_phases()
@@ -661,7 +755,8 @@ def run_lsri_on_contours(in_polylines, out_raster, cell_size, radius,
 
     _mh.begin_phases([
         ("Reading contour polylines...", 1),
-        ("Calculating total contour length within radius...", 8),
+        ("Preparing contour segments...", 1),
+        ("Calculating total contour length within radius...", 7),
         ("Saving output raster...", 2),
         ("Setting raster statistics...", 1),
         ("Creating layer file and symbology...", 1),
@@ -722,7 +817,7 @@ def run_lsri_on_contours(in_polylines, out_raster, cell_size, radius,
     except Exception:
         proj_wkt = None
 
-    _mh.phase_advance("Calculating total contour length within radius...")
+    _mh.phase_advance("Preparing contour segments...")
     if geographic:
         e0, e1 = _to_ecef_xy(p0s, p1s, semi_major, semi_minor)
         engine = _RadiusLengthEngine(e0, e1, radius_map)
@@ -730,6 +825,7 @@ def run_lsri_on_contours(in_polylines, out_raster, cell_size, radius,
         engine = _RadiusLengthEngine(p0s, p1s, radius_map)
     mult = _LENGTH_MULT[length_units] * (1.0 if geographic else mpu)
 
+    _mh.phase_advance("Calculating total contour length within radius...")
     scratch = arcpy.env.scratchFolder
     out_path, out_stats = _write_lsri_raster(
         gdal, engine, mult, None, gt, proj_wkt, width, height, scratch, messages,

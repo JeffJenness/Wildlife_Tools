@@ -3303,7 +3303,6 @@ class LSRIOnDEM(object):
         radius = arcpy.Parameter(
             displayName="Neighborhood radius", name="radius",
             datatype="GPDouble", parameterType="Required", direction="Input")
-        radius.value = round(lsri.BEASOM_RADIUS_M, 1)
         radius_units = arcpy.Parameter(
             displayName="Neighborhood radius units", name="radius_units",
             datatype="GPString", parameterType="Required", direction="Input")
@@ -3316,6 +3315,10 @@ class LSRIOnDEM(object):
         length_units.filter.type = "ValueList"
         length_units.filter.list = lsri.LENGTH_UNITS
         length_units.value = "Meters"
+        out_cell_size = arcpy.Parameter(
+            displayName="Output cell size (default: same as input DEM)",
+            name="out_cell_size", datatype="GPDouble", parameterType="Optional",
+            direction="Input", category="Output options")
         save_contours = arcpy.Parameter(
             displayName="Save the contour feature class", name="save_contours",
             datatype="GPBoolean", parameterType="Optional", direction="Input")
@@ -3325,7 +3328,7 @@ class LSRIOnDEM(object):
             datatype="DEFeatureClass", parameterType="Optional", direction="Output")
         out_contours.enabled = False
         params = [in_raster, out_raster, contour_interval, base_contour,
-                  z_factor, radius, radius_units, length_units,
+                  z_factor, radius, radius_units, length_units, out_cell_size,
                   save_contours, out_contours]
         saved = _load_tool_defaults("LSRIOnDEM")
         for p in (contour_interval, base_contour, z_factor, radius,
@@ -3385,6 +3388,9 @@ class LSRIOnDEM(object):
         r = P["radius"].value
         if r is not None and r <= 0:
             P["radius"].setErrorMessage("The neighborhood radius must be positive.")
+        ocs = P["out_cell_size"].value
+        if ocs is not None and ocs <= 0:
+            P["out_cell_size"].setErrorMessage("The output cell size must be positive.")
         if P["save_contours"].value and not P["out_contours"].valueAsText:
             P["out_contours"].setErrorMessage(
                 "Specify an output contour feature class (or uncheck "
@@ -3406,6 +3412,7 @@ class LSRIOnDEM(object):
                 length_units=P["length_units"].valueAsText or "Meters",
                 out_contours=(P["out_contours"].valueAsText
                              if P["save_contours"].value else None),
+                out_cell_size=P["out_cell_size"].value,
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
             if out_lyrx:
@@ -3463,7 +3470,6 @@ class LSRIOnContourPolylines(object):
         radius = arcpy.Parameter(
             displayName="Neighborhood radius", name="radius",
             datatype="GPDouble", parameterType="Required", direction="Input")
-        radius.value = round(lsri.BEASOM_RADIUS_M, 1)
         radius_units = arcpy.Parameter(
             displayName="Neighborhood radius units", name="radius_units",
             datatype="GPString", parameterType="Required", direction="Input")
