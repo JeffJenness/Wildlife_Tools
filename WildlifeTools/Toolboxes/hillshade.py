@@ -111,6 +111,51 @@ BLUR_TARGETS = ["DEM (blur before shading)", "Hillshade (blur after shading)"]
 BLUR_KERNELS = ["Average", "Gaussian"]
 
 
+# Cells above this get a warning + confirm prompt, not a hard block --
+# some of this toolbox's own real-world DEMs (e.g. a full-CONUS raster)
+# run to ~21 BILLION cells, so this is deliberately set well above that;
+# it exists to catch a corrupt/implausible file (or a genuine accidental
+# mistake, like the wrong raster selected), not to gate legitimate large
+# data. See _check_raster_plausible.
+_WARN_RASTER_CELLS = 2_000_000_000
+
+
+def _check_raster_plausible(ds, in_raster, messages=None):
+    """Defense-in-depth plausibility check on a just-opened raster's
+    DECLARED dimensions, before any tool reads its pixel data. Not a
+    guarantee against a malicious/malformed file -- a crafted file can
+    have entirely plausible metadata and still trigger a bug deep in a
+    format decoder -- but it costs nothing and catches obviously-absurd
+    claimed dimensions (which many crafted/corrupt files do have) before
+    this toolbox tries to allocate arrays sized from them. The real
+    protection against decoder vulnerabilities is keeping ArcGIS Pro (and
+    its bundled GDAL) up to date.
+
+    Negative/zero dimensions (never legitimate) are a hard stop. A very
+    large but otherwise plausible raster only warns and asks to confirm --
+    it may simply be genuinely large data, and this toolbox has real users
+    with real continental-scale rasters."""
+    w, h, bands = ds.RasterXSize, ds.RasterYSize, ds.RasterCount
+    if w <= 0 or h <= 0 or bands <= 0:
+        raise arcpy.ExecuteError(
+            "The raster {} reports implausible dimensions ({} x {}, {} "
+            "band(s)) and was not opened.".format(in_raster, w, h, bands))
+    if w * h > _WARN_RASTER_CELLS:
+        warning = (
+            "The raster {} is very large ({:,} x {:,} = {:,} cells). "
+            "Processing may take a long time and use a large amount of "
+            "memory, depending on the tool. Continue?").format(
+                in_raster, w, h, w * h)
+        if messages is not None:
+            messages.addWarningMessage(warning)
+        if not _mh._confirm(warning, caption="Large Raster"):
+            raise arcpy.ExecuteError(
+                "Cancelled: {} exceeds the {:,}-cell size check and "
+                "continuing was not confirmed.".format(
+                    in_raster, _WARN_RASTER_CELLS))
+    return ds
+
+
 def _open_source(in_raster, scratch, messages):
     """Open ``in_raster`` with GDAL: ``(dataset, tmp_copy_or_None)``.
 
@@ -124,29 +169,45 @@ def _open_source(in_raster, scratch, messages):
         path = arcpy.Describe(in_raster).catalogPath
     except Exception:
         path = str(in_raster)
+
+    # Each `gdal.Open` attempt is narrowly wrapped -- catching only GDAL's
+    # own open failure -- so _check_raster_plausible's ExecuteError (a
+    # hard-block on corrupt dimensions, or the user declining a large-
+    # raster confirm prompt) propagates immediately instead of being
+    # treated as "this method failed, try the next fallback" (arcpy's
+    # ExecuteError IS a RuntimeError subclass, so a wider try/except would
+    # silently swallow it and mask it behind a generic error, or worse,
+    # silently retry after a "no" answer).
     try:
-        return gdal.Open(path), None
+        ds = gdal.Open(path)
     except RuntimeError:
-        pass
+        ds = None
+    if ds is not None:
+        return _check_raster_plausible(ds, in_raster, messages), None
+
     low = path.lower()
     if ".gdb" in low:
         i = low.rindex(".gdb")
         gdb, name = path[:i + 4], path[i + 4:].strip("\\/")
         if name:
             try:
-                return gdal.Open('OpenFileGDB:"{}":{}'.format(gdb, name)), None
+                ds = gdal.Open('OpenFileGDB:"{}":{}'.format(gdb, name))
             except RuntimeError:
-                pass
+                ds = None
+            if ds is not None:
+                return _check_raster_plausible(ds, in_raster, messages), None
+
     _set_label("Exporting the DEM to a scratch GeoTIFF (GDAL cannot read this "
                "format directly; this can take a while for large rasters)...")
     _msg(messages, "Exporting the DEM to a scratch GeoTIFF for processing...")
     tif = arcpy.CreateUniqueName("hillshade_src.tif", scratch)
     arcpy.management.CopyRaster(in_raster, tif)
     try:
-        return gdal.Open(tif), tif
+        ds = gdal.Open(tif)
     except RuntimeError:
         raise arcpy.ExecuteError(
             "Could not open the input raster: {}".format(in_raster))
+    return _check_raster_plausible(ds, in_raster, messages), tif
 
 
 def _msg(messages, text):
@@ -159,6 +220,33 @@ def _set_label(text):
         arcpy.SetProgressorLabel(text)
     except Exception:
         pass
+
+
+def _hillshade_phase_segment(mode, suns, use_hypso, model_shadows):
+    """The ordered (label, weight) phases ``_run_hillshade`` will pass
+    through for the shading computation itself (everything up to but not
+    including delivery) -- factored out so a wrapper (Blurred Hillshade)
+    that prepends its own phases and calls ``_run_hillshade`` with
+    ``own_phases=False`` can declare this same segment up front."""
+    seg = []
+    if use_hypso:
+        seg.append(("Scanning elevation statistics for hypsometric "
+                    "shading...", 1))
+    if model_shadows:
+        n_suns = len(suns) if mode == "multi" else 1
+        seg.append(("Reading the DEM for the cast-shadow sweep...", 1))
+        seg.append(("Sweeping cast shadows...", 4 * n_suns))
+    seg.append(("Calculating hillshade...", 6))
+    return seg
+
+
+# Shared finalize phases: CopyRaster -> stats -> metadata/symbology -> pyramids.
+_FINALIZE_PHASES = [
+    ("Saving output raster...", 2),
+    ("Setting raster statistics...", 1),
+    ("Creating layer file and symbology...", 1),
+    ("Building pyramids (bilinear)...", 2),
+]
 
 
 # ----------------------------------------------------------------------------
@@ -288,13 +376,18 @@ def _blur_grid(z, valid, rx_rows, ry, kernel):
 #  Cast-shadow sweep
 # ----------------------------------------------------------------------------
 
-def _cast_shadow_mask(z_m, cellw_m, cellh_m, azimuth, altitude):
+def _cast_shadow_mask(z_m, cellw_m, cellh_m, azimuth, altitude, sun_progress=(0, 1)):
     """Boolean mask of cells hidden from the sun (True = in shadow).
 
     ``z_m``: full elevation grid in meters (NaN = NoData; NaN cells neither
     cast nor receive shadows). Single-pass sweep marching away from the sun:
     the carried "shadow surface" drops by tan(altitude) x step distance each
     row and rises to any terrain above it. O(cells).
+
+    ``sun_progress``: ``(i, n)`` -- this is sun ``i`` of ``n`` sharing the
+    run's single "Sweeping cast shadows..." phase (multi-sun mode sweeps
+    once per sun); used to interpolate this sweep's row position into that
+    phase's overall share of the whole-run progress bar.
     """
     tan_alt = math.tan(math.radians(altitude))
     z = np.where(np.isnan(z_m), -np.inf, z_m).astype(np.float64)
@@ -330,11 +423,8 @@ def _cast_shadow_mask(z_m, cellw_m, cellh_m, azimuth, altitude):
     mask = np.zeros((nrows, ncols), dtype=bool)
     carry = z[0].copy()               # first row cannot be shadowed
     shifted = np.empty(ncols, dtype=np.float64)
-    try:
-        arcpy.SetProgressor("step", "Sweeping cast shadows...", 0, nrows, 1)
-    except Exception:
-        pass
     tick = max(1, nrows // 100)
+    sun_i, sun_n = sun_progress
     for r in range(1, nrows):
         # shifted[j] = carry[j - shift] via linear interpolation; off-grid = -inf.
         shifted.fill(-np.inf)
@@ -347,10 +437,7 @@ def _cast_shadow_mask(z_m, cellw_m, cellh_m, azimuth, altitude):
         mask[r] = row < (cur - 1e-6)
         np.maximum(row, cur, out=carry)
         if r % tick == 0:
-            try:
-                arcpy.SetProgressorPosition(r)
-            except Exception:
-                pass
+            _mh.phase_step(sun_i * nrows + r, sun_n * nrows)
 
     for op in reversed(flips):
         if op == "T":
@@ -379,9 +466,9 @@ def run_enhanced_hillshade(in_raster, out_raster, elev_units="Meters",
     ``shadow_dim``: percent (0-100) of the unshadowed hillshade value that a
     shadowed cell keeps -- 0 renders shadows black, 100 disables the dimming.
     """
-    _run_hillshade("standard", in_raster, out_raster, elev_units, azimuth,
-                   altitude, levels, use_hypso, hypso_strength, vert_exag,
-                   model_shadows, shadow_dim, messages)
+    return _run_hillshade("standard", in_raster, out_raster, elev_units, azimuth,
+                          altitude, levels, use_hypso, hypso_strength, vert_exag,
+                          model_shadows, shadow_dim, messages)
 
 
 def run_mdow_hillshade(in_raster, out_raster, elev_units="Meters",
@@ -393,9 +480,9 @@ def run_mdow_hillshade(in_raster, out_raster, elev_units="Meters",
     illumination direction; the four blended sun directions sit at
     -67.5/-22.5/+22.5/+67.5 degrees around it (legacy defaults 270/30/256).
     """
-    _run_hillshade("mdow", in_raster, out_raster, elev_units, azimuth,
-                   altitude, levels, use_hypso, hypso_strength, vert_exag,
-                   False, 20.0, messages)
+    return _run_hillshade("mdow", in_raster, out_raster, elev_units, azimuth,
+                          altitude, levels, use_hypso, hypso_strength, vert_exag,
+                          False, 20.0, messages)
 
 
 def run_multisun_hillshade(in_raster, out_raster, elev_units="Meters",
@@ -411,9 +498,9 @@ def run_multisun_hillshade(in_raster, out_raster, elev_units="Meters",
     ``shadow_dim`` percent BEFORE the weighted average; hypsometric shading
     is applied once to the averaged result.
     """
-    _run_hillshade("multi", in_raster, out_raster, elev_units, 315.0,
-                   45.0, levels, use_hypso, hypso_strength, vert_exag,
-                   model_shadows, shadow_dim, messages, suns=suns)
+    return _run_hillshade("multi", in_raster, out_raster, elev_units, 315.0,
+                          45.0, levels, use_hypso, hypso_strength, vert_exag,
+                          model_shadows, shadow_dim, messages, suns=suns)
 
 
 def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
@@ -444,6 +531,16 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
         raise arcpy.ExecuteError("Unknown blur target: {}.".format(target))
     dem_first = (target == BLUR_TARGETS[0])
     out_raster = _mh.resolve_raster_output(out_raster, messages)
+
+    if dem_first:
+        phases = [("Reading the DEM for blurring...", 1),
+                 ("Blurring the DEM...", 3)]
+        phases += _hillshade_phase_segment("standard", None, use_hypso, model_shadows)
+    else:
+        phases = _hillshade_phase_segment("standard", None, use_hypso, model_shadows)
+        phases.append(("Blurring the hillshade...", 3))
+    phases += _FINALIZE_PHASES
+    _mh.begin_phases(phases)
 
     scratch = arcpy.env.scratchFolder
     src, in_copy = _open_source(in_raster, scratch, messages)
@@ -497,7 +594,7 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
         valid = np.isfinite(z)
         if in_nodata is not None:
             valid &= (z != in_nodata)
-        _set_label("Blurring the DEM...")
+        _mh.phase_advance("Blurring the DEM...")
         _msg(messages, "Blurring the DEM (circular mean of the elevations)...")
         zb = _blur_grid(z, valid, rx_rows, ry, kernel)
         del z
@@ -519,12 +616,14 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
         del zb
         src = None
         try:
-            _run_hillshade("standard", tmp_dem, out_raster, elev_units,
-                           azimuth, altitude, levels, use_hypso,
-                           hypso_strength, vert_exag, model_shadows,
-                           shadow_dim, messages,
-                           tool_label="Blurred Hillshade",
-                           src_display=str(in_raster), extra_note=note)
+            out_lyrx = _run_hillshade(
+                "standard", tmp_dem, out_raster, elev_units,
+                azimuth, altitude, levels, use_hypso,
+                hypso_strength, vert_exag, model_shadows,
+                shadow_dim, messages,
+                tool_label="Blurred Hillshade",
+                src_display=str(in_raster), extra_note=note,
+                own_phases=False, first_phase=False)
         finally:
             try:
                 arcpy.management.Delete(tmp_dem)
@@ -535,7 +634,7 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
                     arcpy.management.Delete(in_copy)
                 except Exception:
                     pass
-        return
+        return out_lyrx
 
     # Blur-after path: standard hillshade to a scratch GeoTIFF, then blur the
     # finished image and finalize.
@@ -548,13 +647,14 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
     hs_tmp = _run_hillshade("standard", in_raster, None, elev_units,
                             azimuth, altitude, levels, use_hypso,
                             hypso_strength, vert_exag, model_shadows,
-                            shadow_dim, messages, _finalize=False)
+                            shadow_dim, messages, _finalize=False,
+                            own_phases=False)
     hds = gdal.Open(hs_tmp)
     arr = hds.GetRasterBand(1).ReadAsArray().astype(np.float64)
     hgt, hproj = hds.GetGeoTransform(), hds.GetProjection()
     hds = None
     hvalid = arr != NODATA_OUT
-    _set_label("Blurring the hillshade...")
+    _mh.phase_advance("Blurring the hillshade...")
     _msg(messages, "Blurring the finished hillshade (circular mean of the "
                    "hillshade values)...")
     hb = _blur_grid(arr, hvalid, rx_rows, ry, kernel)
@@ -584,14 +684,14 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
     ods.FlushCache()
     ods = None
 
-    _set_label("Saving output raster...")
+    _mh.phase_advance("Saving output raster...")
     prev_pyramid = arcpy.env.pyramid
     arcpy.env.pyramid = "NONE"
     try:
         arcpy.management.CopyRaster(out_path, out_raster)
     finally:
         arcpy.env.pyramid = prev_pyramid
-    _set_label("Setting raster statistics...")
+    _mh.phase_advance("Setting raster statistics...")
     if out_stats and out_stats.get("on_raster"):
         _msg(messages, "Statistics and histogram were written with the raster "
                        "(no scan needed).")
@@ -636,25 +736,32 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
         md.save()
     except Exception:
         pass
+    # Black (most shaded) to white (highest hillshade value in this
+    # raster) output-parameter symbology.
+    _mh.phase_advance("Creating layer file and symbology...")
+    out_lyrx = _mh.default_stretch_lyrx(
+        out_raster, [(0, 0, 0), (255, 255, 255)], messages=messages)
     for p in (out_path, hs_tmp):
         try:
             arcpy.management.Delete(p)
         except Exception:
             pass
-    _set_label("Building pyramids (bilinear)...")
+    _mh.phase_advance("Building pyramids (bilinear)...")
     try:
         arcpy.management.BuildPyramids(out_raster, resample_technique="BILINEAR")
     except Exception as e:
         if messages is not None:
             messages.addWarningMessage("Could not build pyramids: {}".format(e))
+    _mh.end_phases()
     _msg(messages, "Blurred Hillshade complete: {}".format(out_raster))
+    return out_lyrx
 
 
 def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
                    levels, use_hypso, hypso_strength, vert_exag,
                    model_shadows, shadow_dim, messages, suns=None,
                    _finalize=True, tool_label=None, src_display=None,
-                   extra_note=""):
+                   extra_note="", own_phases=True, first_phase=True):
     """Shared engine: ``mode`` is "standard" (one sun direction, optional cast
     shadows), "mdow" (four sine-squared-weighted directions, no shadows), or
     "multi" (a weighted blend of standard hillshades from ``suns``, optional
@@ -665,7 +772,14 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
     Hillshade's blur-after-shading path. ``tool_label``/``src_display``/
     ``extra_note`` override the tool name, input name, and add provenance
     text in messages and metadata (used when the input is a preprocessed
-    scratch dataset standing in for the user's raster)."""
+    scratch dataset standing in for the user's raster). ``own_phases=False``
+    skips declaring the whole-run progress phases (the Blurred Hillshade
+    wrapper already declared a bigger list of its own, covering the blur
+    step plus this same shading segment -- see ``_hillshade_phase_segment``).
+    ``first_phase=False`` means this call's own shading phases are NOT the
+    first in the whole-run phase list (the blur-before-shading path already
+    consumed 2 phases ahead of them), so every phase transition below must
+    advance rather than assume it's already sitting at the active phase 0."""
     gdal = _mh._gdal()
 
     if _finalize:
@@ -700,6 +814,12 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
         raise arcpy.ExecuteError("The hypsometric strength must be 0 to 100.")
     if model_shadows and not 0.0 <= shadow_dim <= 100.0:
         raise arcpy.ExecuteError("The shadow brightness must be 0 to 100 percent.")
+
+    if own_phases:
+        phases = _hillshade_phase_segment(mode, suns, use_hypso, model_shadows)
+        if _finalize:
+            phases += _FINALIZE_PHASES
+        _mh.begin_phases(phases)
 
     scratch = arcpy.env.scratchFolder
     src, in_copy = _open_source(in_raster, scratch, messages)
@@ -755,7 +875,10 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
     # Hypsometric weight: multiplier = t*s + (1 - s), t = normalized elevation.
     hyp_lo = hyp_range = None
     if use_hypso:
-        _set_label("Scanning elevation statistics for hypsometric shading...")
+        if first_phase:
+            _set_label("Scanning elevation statistics for hypsometric shading...")
+        else:
+            _mh.phase_advance("Scanning elevation statistics for hypsometric shading...")
         s_min, s_max = band.GetStatistics(0, 1)[:2]
         hyp_lo = s_min * zscale
         hyp_range = max((s_max - s_min) * zscale, 1e-30)
@@ -767,7 +890,10 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
     shadow_mask = None                  # standard mode: one mask
     shadow_masks = None                 # multi mode: one mask per sun
     if model_shadows:
-        _set_label("Reading the DEM for the cast-shadow sweep...")
+        if first_phase and not use_hypso:
+            _set_label("Reading the DEM for the cast-shadow sweep...")
+        else:
+            _mh.phase_advance("Reading the DEM for the cast-shadow sweep...")
         z_full = band.ReadAsArray(0, 0, width, height).astype(np.float32)
         z_full = z_full.astype(np.float64)
         invalid = ~np.isfinite(z_full)
@@ -778,11 +904,13 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
         geo_note = (" (mean-cell-size approximation on this geographic DEM)"
                     if geographic else "")
         if mode == "multi":
+            _mh.phase_advance("Sweeping cast shadows...")
             shadow_masks = []
             for i, (a, al, _w) in enumerate(suns):
                 _set_label("Sweeping cast shadows (sun {} of {})...".format(
                     i + 1, len(suns)))
-                m = _cast_shadow_mask(z_full, cellw_m, cellh_m, a, al)
+                m = _cast_shadow_mask(z_full, cellw_m, cellh_m, a, al,
+                                      sun_progress=(i, len(suns)))
                 shadow_masks.append(m)
                 n_sh = int(m.sum())
                 _msg(messages, "Cast shadows, sun {} ({:g} deg / {:g} deg): "
@@ -792,6 +920,7 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
                                    100.0 * n_sh / (width * height), shadow_dim,
                                    geo_note))
         else:
+            _mh.phase_advance("Sweeping cast shadows...")
             shadow_mask = _cast_shadow_mask(z_full, cellw_m, cellh_m, azimuth, altitude)
             n_sh = int(shadow_mask.sum())
             _msg(messages, "Cast shadows: {:,} cells ({:.1f}%) are hidden from the "
@@ -837,13 +966,12 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
                        "{} levels, exaggeration {:g}{}.".format(
                            azimuth, altitude, levels, vert_exag,
                            ", geodesic" if geographic else ""))
-    _set_label("Calculating hillshade...")
+    if first_phase and not use_hypso and not model_shadows:
+        _set_label("Calculating hillshade...")
+    else:
+        _mh.phase_advance("Calculating hillshade...")
     stats = _mh._RasterStats()
     strips = [(y, min(_STRIP_ROWS, height - y)) for y in range(0, height, _STRIP_ROWS)]
-    try:
-        arcpy.SetProgressor("step", "Calculating hillshade...", 0, len(strips), 1)
-    except Exception:
-        pass
 
     for idx, (yoff, rows) in enumerate(strips):
         # Read the strip plus a 1-row halo on each side (clamped at the edges).
@@ -925,14 +1053,7 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
             if ok.any():
                 stats.add(vals[ok])
         out_band.WriteArray(out, 0, yoff)
-        try:
-            arcpy.SetProgressorPosition(idx + 1)
-        except Exception:
-            pass
-    try:
-        arcpy.ResetProgressor()
-    except Exception:
-        pass
+        _mh.phase_step(idx + 1, len(strips))
 
     out_band.FlushCache()
     out_ds.FlushCache()
@@ -952,14 +1073,14 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
                 pass
         return out_path
 
-    _set_label("Saving output raster...")
+    _mh.phase_advance("Saving output raster...")
     prev_pyramid = arcpy.env.pyramid
     arcpy.env.pyramid = "NONE"
     try:
         arcpy.management.CopyRaster(out_path, out_raster)
     finally:
         arcpy.env.pyramid = prev_pyramid
-    _set_label("Setting raster statistics...")
+    _mh.phase_advance("Setting raster statistics...")
     if out_stats and out_stats.get("on_raster"):
         _msg(messages, "Statistics and histogram were written with the raster "
                        "(no scan needed).")
@@ -1071,6 +1192,11 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
         md.save()
     except Exception:
         pass
+    # Black (most shaded) to white (highest hillshade value in this
+    # raster) output-parameter symbology.
+    _mh.phase_advance("Creating layer file and symbology...")
+    out_lyrx = _mh.default_stretch_lyrx(
+        out_raster, [(0, 0, 0), (255, 255, 255)], messages=messages)
 
     try:
         arcpy.management.Delete(out_path)
@@ -1081,13 +1207,15 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
             arcpy.management.Delete(in_copy)
         except Exception:
             pass
-    _set_label("Building pyramids (bilinear)...")
+    _mh.phase_advance("Building pyramids (bilinear)...")
     try:
         arcpy.management.BuildPyramids(out_raster, resample_technique="BILINEAR")
     except Exception as e:
         if messages is not None:
             messages.addWarningMessage("Could not build pyramids: {}".format(e))
+    _mh.end_phases()
     _msg(messages, "{} complete: {}".format(
         tool_label or {"mdow": "MDOW hillshade",
                        "multi": "Multi-sun hillshade"}.get(
             mode, "Enhanced hillshade"), out_raster))
+    return out_lyrx

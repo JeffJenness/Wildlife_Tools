@@ -131,6 +131,14 @@
     <Content Include="Images\VRM_32.png" />
     <Content Include="DarkImages\VRM_16.png" />
     <Content Include="DarkImages\VRM_32.png" />
+    <Content Include="Images\LSRI_DEM_16.png" />
+    <Content Include="Images\LSRI_DEM_32.png" />
+    <Content Include="DarkImages\LSRI_DEM_16.png" />
+    <Content Include="DarkImages\LSRI_DEM_32.png" />
+    <Content Include="Images\LSRI_Contours_16.png" />
+    <Content Include="Images\LSRI_Contours_32.png" />
+    <Content Include="DarkImages\LSRI_Contours_16.png" />
+    <Content Include="DarkImages\LSRI_Contours_32.png" />
     <!-- The Thought-for-the-Day card background is loaded from disk by path at run
          time, so it must sit next to the assembly (copied to the output directory). -->
     <Content Include="Images\quote_bg.png">

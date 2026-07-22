@@ -106,6 +106,110 @@ def _set_label(text):
         pass
 
 
+def _confirm(text, caption="Wildlife Tools"):
+    """Show a Yes/No confirmation dialog; return True if the user confirms.
+
+    Uses the native Windows dialog. If no UI is available (e.g. a headless
+    script), returns True so batch runs are not blocked. Same helper as the
+    .pyt's own ``_confirm`` (duplicated here, not imported, since the engine
+    modules are imported BY the .pyt, never the other way around) -- used
+    by the shared raster-open helper (``hillshade._open_source``) to ask
+    before proceeding on an implausibly large raster."""
+    try:
+        import ctypes
+        MB_YESNO = 0x4
+        MB_ICONQUESTION = 0x20
+        MB_SETFOREGROUND = 0x10000
+        MB_TOPMOST = 0x40000
+        IDYES = 6
+        flags = MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND | MB_TOPMOST
+        return ctypes.windll.user32.MessageBoxW(0, text, caption, flags) == IDYES
+    except Exception:
+        return True
+
+
+# ---------------------------------------------------------------------------
+# Whole-run progress bar: replaces Pro's indeterminate marquee with one real
+# "step" progressor spanning a tool's entire execute(), so the bar always
+# advances instead of animating in place. Deliberately GLOBAL, not an object
+# threaded through call args -- arcpy itself only ever drives one progress
+# bar per GP run, so a module-level singleton mirrors that reality and lets
+# any nested helper (e.g. a shared delivery routine several calls deep)
+# advance it without a `progress` parameter threaded through every signature.
+#
+# A caller declares its run's phases up front as an ordered list of
+# (label, weight) pairs -- weight is a rough relative-cost share, not a
+# measured time -- via begin_phases(). phase_advance() jumps to the next
+# declared phase (for a step with no internal loop); phase_step() reports
+# real fractional progress within the CURRENT phase for a step built around
+# an actual N-item loop. end_phases() parks the bar at 100%.
+# ---------------------------------------------------------------------------
+_PHASE_RESOLUTION = 1000
+_phase_bounds = []
+_phase_i = -1
+
+
+def begin_phases(phases):
+    """Start a whole-run step progressor. ``phases``: ordered list of
+    ``(label, weight)`` -- call once, before any work starts, listing every
+    phase the run will actually pass through (branch the list at
+    construction time; don't call this more than once per run)."""
+    global _phase_bounds, _phase_i
+    total_w = float(sum(w for _, w in phases)) or 1.0
+    _phase_bounds = []
+    acc = 0.0
+    for label, w in phases:
+        start = acc / total_w
+        acc += w
+        _phase_bounds.append((label, start, acc / total_w))
+    _phase_i = 0
+    try:
+        arcpy.SetProgressor("step", phases[0][0], 0, _PHASE_RESOLUTION, 1)
+    except Exception:
+        pass
+
+
+def phase_advance(label=None):
+    """Move to the next declared phase and jump the bar to its start.
+    ``label`` overrides the phase's declared text; otherwise that text is
+    used. Safe to call with no active run (no-op)."""
+    global _phase_i
+    if not _phase_bounds:
+        _set_label(label or "")
+        return
+    _phase_i = min(_phase_i + 1, len(_phase_bounds) - 1)
+    declared, start, _ = _phase_bounds[_phase_i]
+    try:
+        arcpy.SetProgressorLabel(label or declared)
+        arcpy.SetProgressorPosition(int(start * _PHASE_RESOLUTION))
+    except Exception:
+        pass
+
+
+def phase_step(done, total):
+    """Report real fractional progress (``done``/``total``, e.g. a strip or
+    row index) within the CURRENT phase's share of the bar."""
+    if not _phase_bounds:
+        return
+    _, start, end = _phase_bounds[_phase_i]
+    frac = start + (end - start) * (min(done, total) / total if total else 1.0)
+    try:
+        arcpy.SetProgressorPosition(int(frac * _PHASE_RESOLUTION))
+    except Exception:
+        pass
+
+
+def end_phases():
+    """Park the bar at 100% and clear the run's phase list."""
+    global _phase_bounds, _phase_i
+    try:
+        arcpy.SetProgressorPosition(_PHASE_RESOLUTION)
+    except Exception:
+        pass
+    _phase_bounds = []
+    _phase_i = -1
+
+
 # ---------------------------------------------------------------------------
 # Variable-order metadata (shared with the "Calculate Statistical Matrices" tool)
 # ---------------------------------------------------------------------------
@@ -839,6 +943,101 @@ def resolve_raster_output(path, messages=None):
                                        os.path.basename(p)))
         return p + ".tif"
     return p
+
+
+def default_stretch_lyrx(out_raster, colors, messages=None):
+    """Create a .lyrx beside ``out_raster`` with a linear multi-stop stretch
+    (minimum-maximum off the dataset's own stored statistics) running low to
+    high through ``colors``, a sequence of >=2 ``(r, g, b)`` tuples. Returns
+    the .lyrx path -- set it as the tool's output parameter ``.symbology`` in
+    the .pyt (the officially documented way a GP tool colors its own output
+    the moment it's added to the map at the end of the run) -- or None on
+    failure. Never raises.
+
+    Same proven pattern as ``write_raster_layer_file`` (MakeRasterLayer ->
+    SaveToLayerFile -> patch colorRamp/stretchType/statsType, keeping the
+    real stretchStats SaveToLayerFile captured -- a colorizer with no stats
+    will not render).
+
+    **2026-07-20 HISTORY:** an earlier version of this helper
+    (``embed_default_symbology``, since removed) tried to persist an
+    equivalent colorizer into the output raster's own METADATA, on the
+    theory that this is the mechanism behind ArcGIS Pro auto-symbolizing an
+    Aspect/Slope/Hillshade raster with built-in symbology every time it's
+    added to ANY future map, including a brand-new one long after the tool
+    ran. That theory was FALSIFIED by a controlled experiment: embedding the
+    exact, byte-for-byte metadata captured from a real auto-symbolizing
+    Aspect raster onto a different (VRM) raster, in a fresh Pro session,
+    fresh map, first touch -- and it still did not auto-symbolize, while the
+    original Aspect raster (added to the very same map) did. So whatever
+    actually drives Aspect's behavior is NOT the metadata LayerFile block;
+    it lives somewhere else undiscovered. Do not resurrect the
+    metadata-embedding approach without first re-establishing causation the
+    same way (a controlled swap test), not correlation.
+    """
+    try:
+        path = arcpy.Describe(out_raster).catalogPath
+        name = os.path.splitext(os.path.basename(path))[0]
+    except Exception as e:
+        if messages is not None:
+            messages.addWarningMessage("Could not create layer file: {}".format(e))
+        return None
+    ws = os.path.dirname(path)
+    lyr_dir = os.path.dirname(ws) if ws.lower().endswith((".gdb", ".sde")) else ws
+    out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
+    tmp = "jenness_symb_tmp"
+    try:
+        try:
+            arcpy.management.Delete(tmp)
+        except Exception:
+            pass
+        arcpy.management.MakeRasterLayer(path, tmp)
+        arcpy.management.SaveToLayerFile(tmp, out_lyrx, "ABSOLUTE")
+    except Exception as e:
+        if messages is not None:
+            messages.addWarningMessage("Could not create layer file: {}".format(e))
+        return None
+    finally:
+        try:
+            arcpy.management.Delete(tmp)
+        except Exception:
+            pass
+
+    try:
+        with open(out_lyrx, encoding="utf-8") as f:
+            lyr = json.load(f)
+        out_ld = lyr["layerDefinitions"][0]
+        out_ld["name"] = name
+        col = out_ld.get("colorizer") or {}
+        col["stretchType"] = "MinimumMaximum"
+        col["statsType"] = "Dataset"
+        col["dra"] = False
+        col["colorScheme"] = ""
+        space = {"type": "CIMICCColorSpace", "url": "Default RGB"}
+        segments = [
+            {
+                "type": "CIMLinearContinuousColorRamp",
+                "colorSpace": space,
+                "fromColor": {"type": "CIMRGBColor",
+                             "values": list(colors[i]) + [100]},
+                "toColor": {"type": "CIMRGBColor",
+                           "values": list(colors[i + 1]) + [100]},
+            }
+            for i in range(len(colors) - 1)
+        ]
+        col["colorRamp"] = segments[0] if len(segments) == 1 else {
+            "type": "CIMMultipartColorRamp",
+            "colorRamps": segments,
+            "weights": [1] * len(segments),
+        }
+        out_ld["colorizer"] = col
+        with open(out_lyrx, "w", encoding="utf-8") as f:
+            json.dump(lyr, f)
+    except Exception as e:
+        if messages is not None:
+            messages.addWarningMessage(
+                "Layer file created but symbology could not be applied: {}".format(e))
+    return out_lyrx
 
 
 def _apply_known_statistics(raster, stats, messages):

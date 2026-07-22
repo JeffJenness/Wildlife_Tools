@@ -192,6 +192,7 @@ def _deliver_output(out_scratch, out_raster, out_stats, messages,
         arcpy.management.Delete(out_scratch)
     except Exception:
         pass
+    _mh.phase_advance()
     try:
         arcpy.management.BuildPyramids(out_raster,
                                        resample_technique="BILINEAR")
@@ -225,6 +226,18 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
     out_area = _resolve_output(out_area, messages)
     out_ratio = _resolve_output(out_ratio, messages)
     out_flat = _resolve_output(out_flat, messages)
+
+    phases = [("Calculating surface areas...", 8)]
+    for key, wanted, name in (("area", out_area, "surface area"),
+                              ("ratio", out_ratio, "surface ratio"),
+                              ("flat", out_flat, "flat area")):
+        if wanted:
+            phases.append(("Saving the {} raster...".format(name), 1))
+            phases.append(("Building pyramids for the {} raster...".format(name), 1))
+            if key in ("area", "ratio"):
+                phases.append(("Creating layer file and symbology for the "
+                               "{} raster...".format(name), 1))
+    _mh.begin_phases(phases)
 
     scratch = arcpy.env.scratchFolder
     src, in_copy = _hs._open_source(in_raster, scratch, messages)
@@ -269,14 +282,8 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
     # whose tiles were still in GDAL's block cache (all-NoData on disk).
     ds = oband = None
 
-    _hs._set_label("Calculating surface areas...")
     strips = [(y, min(_STRIP_ROWS, height - y))
               for y in range(0, height, _STRIP_ROWS)]
-    try:
-        arcpy.SetProgressor("step", "Calculating surface areas...", 0,
-                            len(strips), 1)
-    except Exception:
-        pass
 
     for idx, (yoff, rows) in enumerate(strips):
         top = max(yoff - 1, 0)
@@ -381,14 +388,7 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
 
         for k in outputs:
             outputs[k]["band"].WriteArray(out_arrs[k], 0, yoff)
-        try:
-            arcpy.SetProgressorPosition(idx + 1)
-        except Exception:
-            pass
-    try:
-        arcpy.ResetProgressor()
-    except Exception:
-        pass
+        _mh.phase_step(idx + 1, len(strips))
 
     src = None
     if in_copy:
@@ -430,7 +430,9 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
                  "spheroid. " + _CITATION),
     }
     unit_for = {"area": area_units, "ratio": "", "flat": flat_units}
+    name_for = {"area": "surface area", "ratio": "surface ratio", "flat": "flat area"}
     delivered = {"area": out_area, "ratio": out_ratio, "flat": out_flat}
+    lyrx = {}
     for key, info in outputs.items():
         info["band"].FlushCache()
         info["ds"].FlushCache()
@@ -443,7 +445,7 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
         info["band"] = None
         info["ds"] = None               # close -> flush tiles + write PAM
         dest, tags, summary_fmt, description = deliveries[key]
-        _hs._set_label("Saving {} raster...".format(key))
+        _mh.phase_advance("Saving the {} raster...".format(name_for[key]))
         _deliver_output(
             info["scratch"], dest, out_stats, messages,
             title=os.path.basename(str(dest)),
@@ -452,10 +454,20 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
                 e=("Meters (geographic DEM)" if geographic else elev_units),
                 c=corner_note, g=geo_note),
             description=description, tags=tags)
+        if key in ("area", "ratio"):
+            # Blue (low) -> yellow -> red (high) output-parameter symbology.
+            # Flat area isn't a measure of ruggedness/magnitude in the same
+            # sense, so it's left with no special default symbology.
+            _mh.phase_advance("Creating layer file and symbology for the "
+                              "{} raster...".format(name_for[key]))
+            lyrx[key] = _mh.default_stretch_lyrx(
+                dest, [(95, 135, 193), (249, 254, 204), (224, 70, 53)],
+                messages=messages)
         _hs._msg(messages, "{} raster complete: {}".format(
             {"area": "Surface area", "ratio": "Surface ratio",
              "flat": "Flat area"}[key], dest))
-    return delivered
+    _mh.end_phases()
+    return delivered, lyrx
 
 
 # ----------------------------------------------------------------------------
@@ -590,6 +602,15 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
         raise arcpy.ExecuteError("Unknown radius unit: {}.".format(radius_units))
     out_raster = _mh.resolve_raster_output(out_raster, messages)
 
+    _mh.begin_phases([
+        ("Reading the DEM...", 1),
+        ("Computing orthogonal vectors...", 3),
+        ("Calculating vector dispersion...", 5),
+        ("Saving the VRM raster...", 1),
+        ("Building pyramids...", 1),
+        ("Creating layer file and symbology...", 1),
+    ])
+
     scratch = arcpy.env.scratchFolder
     src, in_copy = _hs._open_source(in_raster, scratch, messages)
     band = src.GetRasterBand(1)
@@ -635,7 +656,6 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
                                    radius, radius_units.lower(), radius_m,
                                    float(rx_rows[0]), ry))
 
-    _hs._set_label("Reading the DEM...")
     z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
     valid = np.isfinite(z)
     if in_nodata is not None:
@@ -648,11 +668,11 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
         except Exception:
             pass
 
-    _hs._set_label("Computing orthogonal vectors...")
+    _mh.phase_advance("Computing orthogonal vectors...")
     nx, ny, nz, ok = _unit_normals(z, valid, geom)
     del z
 
-    _hs._set_label("Calculating vector dispersion...")
+    _mh.phase_advance("Calculating vector dispersion...")
     Rx, Ry, Rz, n = _circular_vector_sums(nx, ny, nz, ok, rx_rows, ry)
     del nx, ny, nz, ok
     # n is an exact integer count of contributing cells; fftconvolve leaves
@@ -688,7 +708,7 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
     oband = None
     ds = None                            # close -> flush tiles + write PAM
 
-    _hs._set_label("Saving VRM raster...")
+    _mh.phase_advance("Saving the VRM raster...")
     _deliver_output(
         out_path, out_raster, out_stats, messages,
         title=os.path.basename(str(out_raster)),
@@ -709,4 +729,12 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
         tags=("vector ruggedness measure, VRM, terrain ruggedness, "
              "roughness, topography, Jenness Enterprises"),
         citation=_VRM_CITATION)
+    # Blue (low ruggedness) -> yellow -> red (high ruggedness) output-
+    # parameter symbology.
+    _mh.phase_advance("Creating layer file and symbology...")
+    out_lyrx = _mh.default_stretch_lyrx(
+        out_raster, [(95, 135, 193), (249, 254, 204), (224, 70, 53)],
+        messages=messages)
+    _mh.end_phases()
     _hs._msg(messages, "Vector Ruggedness Measure complete: {}".format(out_raster))
+    return out_lyrx

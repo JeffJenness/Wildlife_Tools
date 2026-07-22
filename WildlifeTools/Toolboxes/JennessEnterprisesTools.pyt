@@ -26,6 +26,7 @@ import kernel_density # noqa: E402
 import cartography_tools  # noqa: E402
 import topographic_tools  # noqa: E402
 import hillshade      # noqa: E402
+import lsri           # noqa: E402
 import error_report   # noqa: E402
 
 import re
@@ -191,7 +192,8 @@ class Toolbox(object):
                       KernelDensityGenerate, KernelDensityProportion, KernelDensityContours,
                       ShadowPolygons, EnhancedHillshade, MDOWHillshade,
                       MultiSunHillshade, SimpleHypsometricShading,
-                      BlurredHillshade, SurfaceAreaRatio, VRM]
+                      BlurredHillshade, SurfaceAreaRatio, VRM,
+                      LSRIOnDEM, LSRIOnContourPolylines]
 
 
 class LoCoHStandard(object):
@@ -2035,7 +2037,7 @@ class EnhancedHillshade(object):
         try:
             importlib.reload(hillshade)
             P = {p.name: p for p in parameters}
-            hillshade.run_enhanced_hillshade(
+            out_lyrx = hillshade.run_enhanced_hillshade(
                 in_raster=P["in_raster"].valueAsText,
                 out_raster=P["out_raster"].valueAsText,
                 elev_units=P["elev_units"].valueAsText or "Meters",
@@ -2050,6 +2052,11 @@ class EnhancedHillshade(object):
                             if P["shadow_dim"].value is not None else 20.0),
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
+            if out_lyrx:
+                try:
+                    P["out_raster"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage("Could not set output symbology: {}".format(e))
             # Remember the choices (not the datasets) with the project.
             _save_tool_defaults("EnhancedHillshade", {
                 "elev_units": P["elev_units"].valueAsText or "Meters",
@@ -2220,7 +2227,7 @@ class MDOWHillshade(object):
         try:
             importlib.reload(hillshade)
             P = {p.name: p for p in parameters}
-            hillshade.run_mdow_hillshade(
+            out_lyrx = hillshade.run_mdow_hillshade(
                 in_raster=P["in_raster"].valueAsText,
                 out_raster=P["out_raster"].valueAsText,
                 elev_units=P["elev_units"].valueAsText or "Meters",
@@ -2232,6 +2239,11 @@ class MDOWHillshade(object):
                 vert_exag=P["vert_exag"].value or 1.0,
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
+            if out_lyrx:
+                try:
+                    P["out_raster"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage("Could not set output symbology: {}".format(e))
             # Remember the choices (not the datasets) with the project.
             _save_tool_defaults("MDOWHillshade", {
                 "elev_units": P["elev_units"].valueAsText or "Meters",
@@ -2543,7 +2555,7 @@ class MultiSunHillshade(object):
                 suns.append((P["azimuth_{}".format(i)].value,
                              P["altitude_{}".format(i)].value,
                              P["weight_{}".format(i)].value or 0.0))
-            hillshade.run_multisun_hillshade(
+            out_lyrx = hillshade.run_multisun_hillshade(
                 in_raster=P["in_raster"].valueAsText,
                 out_raster=P["out_raster"].valueAsText,
                 elev_units=P["elev_units"].valueAsText or "Meters",
@@ -2557,6 +2569,11 @@ class MultiSunHillshade(object):
                             if P["shadow_dim"].value is not None else 20.0),
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
+            if out_lyrx:
+                try:
+                    P["out_raster"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage("Could not set output symbology: {}".format(e))
             # Remember the choices (not the datasets) with the project.
             saved = {"elev_units": P["elev_units"].valueAsText or "Meters",
                      "n_suns": n,
@@ -2768,7 +2785,7 @@ class BlurredHillshade(object):
         try:
             importlib.reload(hillshade)
             P = {p.name: p for p in parameters}
-            hillshade.run_blurred_hillshade(
+            out_lyrx = hillshade.run_blurred_hillshade(
                 in_raster=P["in_raster"].valueAsText,
                 out_raster=P["out_raster"].valueAsText,
                 elev_units=P["elev_units"].valueAsText or "Meters",
@@ -2787,6 +2804,11 @@ class BlurredHillshade(object):
                 kernel=P["kernel"].valueAsText or "Average",
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
+            if out_lyrx:
+                try:
+                    P["out_raster"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage("Could not set output symbology: {}".format(e))
             # Remember the choices (not the datasets) with the project.
             _save_tool_defaults("BlurredHillshade", {
                 "elev_units": P["elev_units"].valueAsText or "Meters",
@@ -3054,7 +3076,7 @@ class SurfaceAreaRatio(object):
         try:
             importlib.reload(topographic_tools)
             P = {p.name: p for p in parameters}
-            delivered = topographic_tools.run_surface_area(
+            delivered, lyrx = topographic_tools.run_surface_area(
                 in_raster=P["in_raster"].valueAsText,
                 out_area=P["out_area"].valueAsText or None,
                 out_ratio=P["out_ratio"].valueAsText or None,
@@ -3063,7 +3085,9 @@ class SurfaceAreaRatio(object):
                 area_units=P["area_units"].valueAsText or "Sq. Meters",
                 flat_units=P["flat_units"].valueAsText or "Sq. Meters",
                 corner_method=P["corner_method"].valueAsText or None,
-                messages=messages) or {}
+                messages=messages)
+            delivered = delivered or {}
+            lyrx = lyrx or {}
             # A folder output without an extension is delivered as .tif; point
             # the output parameters at the real datasets so Pro adds those.
             for key, pname in (("area", "out_area"), ("ratio", "out_ratio"),
@@ -3075,6 +3099,12 @@ class SurfaceAreaRatio(object):
                         P[pname].value = actual
                     except Exception:
                         pass
+                if lyrx.get(key):
+                    try:
+                        P[pname].symbology = lyrx[key]
+                    except Exception as e:
+                        messages.addWarningMessage(
+                            "Could not set output symbology: {}".format(e))
             # Remember the choices (not the datasets) with the project.
             _save_tool_defaults("SurfaceAreaRatio", {
                 "area_units": P["area_units"].valueAsText,
@@ -3201,7 +3231,7 @@ class VRM(object):
         try:
             importlib.reload(topographic_tools)
             P = {p.name: p for p in parameters}
-            topographic_tools.run_vrm(
+            out_lyrx = topographic_tools.run_vrm(
                 in_raster=P["in_raster"].valueAsText,
                 out_raster=P["out_raster"].valueAsText,
                 elev_units=P["elev_units"].valueAsText or "Meters",
@@ -3209,11 +3239,315 @@ class VRM(object):
                 radius_units=P["radius_units"].valueAsText or "Cells",
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
+            if out_lyrx:
+                try:
+                    P["out_raster"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage("Could not set output symbology: {}".format(e))
             # Remember the choices (not the datasets) with the project.
             _save_tool_defaults("VRM", {
                 "radius": P["radius"].value,
                 "radius_units": P["radius_units"].valueAsText,
                 "elev_units": P["elev_units"].valueAsText,
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class LSRIOnDEM(object):
+    """Land Surface Ruggedness Index (LSRI), computed on the fly from a DEM:
+    generates contours (matching Esri's own Contour tool's interval / base /
+    z-factor logic, unsmoothed), then reports total contour length within a
+    circular neighborhood of each cell (Beasom et al. 1983)."""
+
+    def __init__(self):
+        self.label = "LSRI on DEM"
+        self.description = (
+            "Computes the Land Surface Ruggedness Index (LSRI) directly from "
+            "a DEM: generates contours on the fly (the same Contour interval "
+            "/ Base contour / Z factor logic as Esri's own Contour tool, "
+            "unsmoothed), then reports the total length of contour line "
+            "within a circular neighborhood of each cell (Beasom, Wiggers, "
+            "and Giardino 1983) -- higher values mean more, or more "
+            "convoluted, contour line nearby, i.e. more rugged terrain. The "
+            "derived contours may optionally be saved.")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_contours = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input elevation raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output LSRI raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required", direction="Output")
+        contour_interval = arcpy.Parameter(
+            displayName="Contour interval", name="contour_interval",
+            datatype="GPDouble", parameterType="Required", direction="Input")
+        base_contour = arcpy.Parameter(
+            displayName="Base contour", name="base_contour",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        base_contour.value = 0.0
+        z_factor = arcpy.Parameter(
+            displayName="Z factor", name="z_factor",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        z_factor.value = 1.0
+        radius = arcpy.Parameter(
+            displayName="Neighborhood radius", name="radius",
+            datatype="GPDouble", parameterType="Required", direction="Input")
+        radius.value = round(lsri.BEASOM_RADIUS_M, 1)
+        radius_units = arcpy.Parameter(
+            displayName="Neighborhood radius units", name="radius_units",
+            datatype="GPString", parameterType="Required", direction="Input")
+        radius_units.filter.type = "ValueList"
+        radius_units.filter.list = lsri.RADIUS_UNITS
+        radius_units.value = "Meters"
+        length_units = arcpy.Parameter(
+            displayName="Length units", name="length_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        length_units.filter.type = "ValueList"
+        length_units.filter.list = lsri.LENGTH_UNITS
+        length_units.value = "Meters"
+        save_contours = arcpy.Parameter(
+            displayName="Save the contour feature class", name="save_contours",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        save_contours.value = False
+        out_contours = arcpy.Parameter(
+            displayName="Output contour feature class", name="out_contours",
+            datatype="DEFeatureClass", parameterType="Optional", direction="Output")
+        out_contours.enabled = False
+        params = [in_raster, out_raster, contour_interval, base_contour,
+                  z_factor, radius, radius_units, length_units,
+                  save_contours, out_contours]
+        saved = _load_tool_defaults("LSRIOnDEM")
+        for p in (contour_interval, base_contour, z_factor, radius,
+                  radius_units, length_units):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr = P["in_raster"], P["out_raster"]
+        if inr.valueAsText and (not outr.altered or outr.valueAsText == self._auto_out):
+            try:
+                base = _legalize(os.path.splitext(
+                    os.path.basename(inr.valueAsText))[0] + "_LSRI")
+                ws = arcpy.env.workspace or os.path.dirname(
+                    arcpy.Describe(inr.valueAsText).catalogPath)
+                sug = _unique_name(base, ws)
+                outr.value = sug
+                self._auto_out = sug
+            except Exception:
+                pass
+        on = bool(P["save_contours"].value)
+        P["out_contours"].enabled = on
+        if on and inr.valueAsText and (not P["out_contours"].altered or
+                                       P["out_contours"].valueAsText == self._auto_contours):
+            try:
+                base = _legalize(os.path.splitext(
+                    os.path.basename(inr.valueAsText))[0] + "_Contours")
+                ws = arcpy.env.workspace or os.path.dirname(
+                    arcpy.Describe(inr.valueAsText).catalogPath)
+                sug = _unique_name(base, ws)
+                P["out_contours"].value = sug
+                self._auto_contours = sug
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        if P["in_raster"].valueAsText:
+            try:
+                if arcpy.Describe(P["in_raster"].valueAsText).bandCount != 1:
+                    P["in_raster"].setErrorMessage(
+                        "The elevation raster must be single band.")
+            except Exception:
+                pass
+        ci = P["contour_interval"].value
+        if ci is not None and ci <= 0:
+            P["contour_interval"].setErrorMessage("The contour interval must be positive.")
+        r = P["radius"].value
+        if r is not None and r <= 0:
+            P["radius"].setErrorMessage("The neighborhood radius must be positive.")
+        if P["save_contours"].value and not P["out_contours"].valueAsText:
+            P["out_contours"].setErrorMessage(
+                "Specify an output contour feature class (or uncheck "
+                "'Save the contour feature class').")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(lsri)
+            P = {p.name: p for p in parameters}
+            out_lyrx = lsri.run_lsri_on_dem(
+                in_raster=P["in_raster"].valueAsText,
+                out_raster=P["out_raster"].valueAsText,
+                contour_interval=P["contour_interval"].value,
+                base_contour=P["base_contour"].value,
+                z_factor=P["z_factor"].value,
+                radius=P["radius"].value,
+                radius_units=P["radius_units"].valueAsText or "Meters",
+                length_units=P["length_units"].valueAsText or "Meters",
+                out_contours=(P["out_contours"].valueAsText
+                             if P["save_contours"].value else None),
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+            if out_lyrx:
+                try:
+                    P["out_raster"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage("Could not set output symbology: {}".format(e))
+            _save_tool_defaults("LSRIOnDEM", {
+                "contour_interval": P["contour_interval"].value,
+                "base_contour": P["base_contour"].value,
+                "z_factor": P["z_factor"].value,
+                "radius": P["radius"].value,
+                "radius_units": P["radius_units"].valueAsText,
+                "length_units": P["length_units"].valueAsText,
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class LSRIOnContourPolylines(object):
+    """Land Surface Ruggedness Index (LSRI), computed directly from an
+    existing contour (or any polyline) feature class: total polyline length
+    within a circular neighborhood of each cell (Beasom et al. 1983)."""
+
+    def __init__(self):
+        self.label = "LSRI on Contours"
+        self.description = (
+            "Computes the Land Surface Ruggedness Index (LSRI) directly from "
+            "an existing contour (or any polyline) feature class: the total "
+            "length of polyline within a circular neighborhood of each cell "
+            "(Beasom, Wiggers, and Giardino 1983) -- higher values mean "
+            "more, or more convoluted, line nearby. If the input has a "
+            "selection, only the selected features are used.")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_cell_size = None
+
+    def getParameterInfo(self):
+        in_polylines = arcpy.Parameter(
+            displayName="Input polyline features", name="in_polylines",
+            datatype="GPFeatureLayer", parameterType="Required", direction="Input")
+        in_polylines.filter.list = ["Polyline"]
+        out_raster = arcpy.Parameter(
+            displayName="Output LSRI raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required", direction="Output")
+        cell_size = arcpy.Parameter(
+            displayName="Cell size", name="cell_size",
+            datatype="GPDouble", parameterType="Required", direction="Input")
+        radius = arcpy.Parameter(
+            displayName="Neighborhood radius", name="radius",
+            datatype="GPDouble", parameterType="Required", direction="Input")
+        radius.value = round(lsri.BEASOM_RADIUS_M, 1)
+        radius_units = arcpy.Parameter(
+            displayName="Neighborhood radius units", name="radius_units",
+            datatype="GPString", parameterType="Required", direction="Input")
+        radius_units.filter.type = "ValueList"
+        radius_units.filter.list = lsri.RADIUS_UNITS
+        radius_units.value = "Meters"
+        length_units = arcpy.Parameter(
+            displayName="Length units", name="length_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        length_units.filter.type = "ValueList"
+        length_units.filter.list = lsri.LENGTH_UNITS
+        length_units.value = "Meters"
+        params = [in_polylines, out_raster, cell_size, radius, radius_units,
+                  length_units]
+        saved = _load_tool_defaults("LSRIOnContourPolylines")
+        for p in (radius, radius_units, length_units):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inl, outr, cs = P["in_polylines"], P["out_raster"], P["cell_size"]
+        if inl.valueAsText:
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(inl.valueAsText))[0] + "_LSRI")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inl.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+            if not cs.altered or cs.value == self._auto_cell_size:
+                try:
+                    importlib.reload(lsri)
+                    sug = lsri.default_cell_size_from_extent(inl.valueAsText)
+                    if sug:
+                        cs.value = sug
+                        self._auto_cell_size = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        cs = P["cell_size"].value
+        if cs is not None and cs <= 0:
+            P["cell_size"].setErrorMessage("The cell size must be positive.")
+        r = P["radius"].value
+        if r is not None and r <= 0:
+            P["radius"].setErrorMessage("The neighborhood radius must be positive.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(lsri)
+            P = {p.name: p for p in parameters}
+            out_lyrx = lsri.run_lsri_on_contours(
+                in_polylines=P["in_polylines"].valueAsText,
+                out_raster=P["out_raster"].valueAsText,
+                cell_size=P["cell_size"].value,
+                radius=P["radius"].value,
+                radius_units=P["radius_units"].valueAsText or "Meters",
+                length_units=P["length_units"].valueAsText or "Meters",
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+            if out_lyrx:
+                try:
+                    P["out_raster"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage("Could not set output symbology: {}".format(e))
+            _save_tool_defaults("LSRIOnContourPolylines", {
+                "radius": P["radius"].value,
+                "radius_units": P["radius_units"].valueAsText,
+                "length_units": P["length_units"].valueAsText,
             })
         except arcpy.ExecuteError:
             raise
