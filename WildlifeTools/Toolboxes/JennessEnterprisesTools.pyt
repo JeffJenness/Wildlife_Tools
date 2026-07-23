@@ -193,7 +193,7 @@ class Toolbox(object):
                       ShadowPolygons, EnhancedHillshade, MDOWHillshade,
                       MultiSunHillshade, SimpleHypsometricShading,
                       BlurredHillshade, SurfaceAreaRatio, VRM, TRI,
-                      LSRIOnDEM, LSRIOnContourPolylines]
+                      FractalDimension, LSRIOnDEM, LSRIOnContourPolylines]
 
 
 class LoCoHStandard(object):
@@ -3394,6 +3394,155 @@ class TRI(object):
                 "method": P["method"].valueAsText,
                 "radius": P["radius"].value,
                 "radius_units": P["radius_units"].valueAsText,
+                "elev_units": P["elev_units"].valueAsText,
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class FractalDimension(object):
+    """Local fractal dimension (surface roughness, D in [2, 3]) of the terrain
+    over a moving window, by a selectable method: triangular prism (Clarke
+    1986; Ju & Lam 2009), variogram or madogram (Gneiting, Sevcikova &
+    Percival 2012 / fractaldim), or differential box counting (Sarkar &
+    Chaudhuri 1994)."""
+
+    def __init__(self):
+        self.label = "Fractal Dimension"
+        self.description = (
+            "Computes the local fractal dimension (surface roughness) of a "
+            "DEM: for each cell, the fractal dimension D of the terrain "
+            "within a moving window, from 2 (smooth -- flat or a smoothly "
+            "tilted plane) to 3 (space-filling, maximally rough). Like the "
+            "Vector Ruggedness Measure, it is independent of overall slope; "
+            "it measures how roughness varies across scales. Four methods are "
+            "offered (triangular prism, variogram, madogram, differential box "
+            "counting); all estimate the same D but can give somewhat "
+            "different values on real terrain.")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_units = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input elevation raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output fractal-dimension raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required", direction="Output")
+        method = arcpy.Parameter(
+            displayName="Method", name="method",
+            datatype="GPString", parameterType="Required", direction="Input")
+        method.filter.type = "ValueList"
+        method.filter.list = topographic_tools.FD_METHODS
+        method.value = topographic_tools.FD_METHODS[1]   # variogram (recommended default)
+        window_size = arcpy.Parameter(
+            displayName="Window size (cells, odd)", name="window_size",
+            datatype="GPLong", parameterType="Required", direction="Input")
+        window_size.value = 25
+        elev_units = arcpy.Parameter(
+            displayName="Elevation units", name="elev_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        elev_units.filter.type = "ValueList"
+        elev_units.filter.list = hillshade.ELEV_UNITS
+        params = [in_raster, out_raster, method, window_size, elev_units]
+        saved = _load_tool_defaults("FractalDimension")
+        for p in (method, window_size, elev_units):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    _detect_units = EnhancedHillshade._detect_units
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr, units = P["in_raster"], P["out_raster"], P["elev_units"]
+        if inr.valueAsText:
+            detected, locked = self._detect_units(inr.valueAsText)
+            if locked:
+                if not units.altered or units.valueAsText == self._auto_units:
+                    units.value = detected
+                    self._auto_units = detected
+                units.enabled = False
+            else:
+                units.enabled = True
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(inr.valueAsText))[0] + "_FD")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        # Elevation units don't affect the variogram/madogram (amplitude-
+        # invariant); they only rescale the prism / box-counting methods.
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, units = P["in_raster"], P["elev_units"]
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage("The elevation raster must be single band.")
+            except Exception:
+                pass
+            if units.enabled and not units.valueAsText:
+                units.setErrorMessage(
+                    "The DEM does not specify its elevation units; choose "
+                    "Meters or Feet.")
+        w = P["window_size"].value
+        if w is not None:
+            if w < 9 or w % 2 == 0:
+                P["window_size"].setErrorMessage(
+                    "The window size must be an odd number of cells, at least "
+                    "9 (e.g. 13, 17, 25, 33, 37, 49, or 61).")
+            elif (P["method"].valueAsText == topographic_tools.FD_METHODS[0]
+                  and len(topographic_tools._fd_divisor_steps(int(w))) < 3):
+                P["window_size"].setErrorMessage(
+                    "The triangular prism method needs several step sizes that "
+                    "divide the window evenly, so (window size minus 1) must "
+                    "have several whole-number factors; {} does not. You do "
+                    "not enter the step sizes -- the tool derives them. Try "
+                    "13, 17, 25, 33, 37, 49, or 61.".format(int(w)))
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(topographic_tools)
+            P = {p.name: p for p in parameters}
+            out_lyrx = topographic_tools.run_fractal_dimension(
+                in_raster=P["in_raster"].valueAsText,
+                out_raster=P["out_raster"].valueAsText,
+                method=P["method"].valueAsText or topographic_tools.FD_METHODS[1],
+                window_size=P["window_size"].value,
+                elev_units=P["elev_units"].valueAsText or "Meters",
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+            if out_lyrx:
+                try:
+                    P["out_raster"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage("Could not set output symbology: {}".format(e))
+            _save_tool_defaults("FractalDimension", {
+                "method": P["method"].valueAsText,
+                "window_size": P["window_size"].value,
                 "elev_units": P["elev_units"].valueAsText,
             })
         except arcpy.ExecuteError:

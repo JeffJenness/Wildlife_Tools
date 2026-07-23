@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Fractal Dimension (surface roughness)</title>
+  <defs>
+    <linearGradient id="fdramp" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#5f87c1"/>
+      <stop offset="0.5" stop-color="#e9dca0"/>
+      <stop offset="1" stop-color="#cf5a44"/>
+    </linearGradient>
+  </defs>
+  <!-- A self-affine terrain silhouette: big peaks that carry small
+       serrations (roughness repeating across scales), filled with the blue
+       (low D, smooth) to red (high D, rough) ramp used for the tool output. -->
+  <path d="M 2 29 L 2 19 L 4 21 L 5 14 L 7 17 L 8 9 L 10 13 L 11 6 L 13 12 L 15 4 L 16 9 L 18 6 L 19 12 L 21 8 L 22 14 L 24 10 L 25 16 L 27 12 L 28 18 L 30 15 L 30 29 Z"
+        fill="url(#fdramp)" stroke="#1a1a1a" stroke-width="0.8" stroke-linejoin="round"/>
+</svg>

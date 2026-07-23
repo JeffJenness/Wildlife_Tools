@@ -135,6 +135,10 @@
     <Content Include="Images\TRI_32.png" />
     <Content Include="DarkImages\TRI_16.png" />
     <Content Include="DarkImages\TRI_32.png" />
+    <Content Include="Images\FD_16.png" />
+    <Content Include="Images\FD_32.png" />
+    <Content Include="DarkImages\FD_16.png" />
+    <Content Include="DarkImages\FD_32.png" />
     <Content Include="Images\LSRI_DEM_16.png" />
     <Content Include="Images\LSRI_DEM_32.png" />
     <Content Include="DarkImages\LSRI_DEM_16.png" />

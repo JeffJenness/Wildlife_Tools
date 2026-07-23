@@ -1034,3 +1034,395 @@ def run_tri(in_raster, out_raster, method=None, radius=1.5,
     _mh.end_phases()
     _hs._msg(messages, "Terrain Ruggedness Index complete: {}".format(out_raster))
     return out_lyrx
+
+
+# ----------------------------------------------------------------------------
+#  Fractal Dimension (surface roughness, D in [2, 3])
+# ----------------------------------------------------------------------------
+#
+# Per-cell LOCAL fractal dimension of the terrain surface over a moving square
+# window: D = 2 for a smooth surface (a flat OR a smoothly-tilted plane), up
+# to 3 for space-filling / infinitely rough. Like VRM (and unlike TRI), FD
+# ignores overall slope; it measures how roughness CHANGES ACROSS SCALES
+# (self-affine complexity), a different axis than the single-scale ruggedness
+# tools. All methods estimate the SAME quantity D but by different models, so
+# they agree on ideal fractal surfaces and differ somewhat on real terrain --
+# Ju & Lam (2009): "the problem of inconsistent results derived from different
+# fractal calculation algorithms remains." Four selectable methods:
+#
+#   Triangular prism  : how 3-D surface area shrinks toward the flat area as
+#                       the measuring square grows (Clarke 1986; local moving-
+#                       window / divisor-step sampling per Ju & Lam 2009).
+#                       D = 2 - slope of log(area) vs log(step size).
+#   Variogram (p=2) /  : how elevation increments grow with lag h,
+#   Madogram  (p=1)      V_p(h) = mean |dz|^p ~ h^(p*H); D = 3 - H,
+#                       H = slope/p (Gneiting, Sevcikova & Percival 2012; their
+#                       R package fractaldim -- a reimplementation of THEIR
+#                       method). Madogram (p=1) is their recommended, more
+#                       efficient estimator. Amplitude-invariant (needs no
+#                       vertical-scale handling).
+#   Diff. box counting : box-counting -- N(s) boxes to cover the surface at
+#                       box size s; D = -slope of log N vs log s (Sarkar &
+#                       Chaudhuri 1994; improved box height Li/Du/Sun 2009,
+#                       Liu et al. 2014). The WEAKEST/noisiest local estimator
+#                       (few box sizes fit a window, coarse integer counts);
+#                       its raw slope can imply D just under 2 -- clipped.
+#
+# TPM and DBC use true 1:1 ground units (elevation scaled to the horizontal
+# ground unit; NO vertical exaggeration, NO per-window normalization); the
+# variogram/madogram are amplitude-invariant. All output is clipped to [2, 3]
+# (a surface's D is geometrically in that range; values outside are estimation
+# artifacts). A window needs its full extent of valid data (NoData anywhere in
+# the window -> NoData output).
+
+FD_METHODS = [
+    "Triangular prism (Clarke 1986; Ju & Lam 2009)",
+    "Variogram (Gneiting, Sevcikova & Percival 2012)",
+    "Madogram (Gneiting, Sevcikova & Percival 2012)",
+    "Differential box counting (Sarkar & Chaudhuri 1994)",
+]
+
+_FD_TPM_CIT = (
+    "Clarke, K. C. 1986. Computation of the fractal dimension of topographic "
+    "surfaces using the triangular prism surface area method. Computers & "
+    "Geosciences 12(5):713-722. Local moving-window / divisor-step method: "
+    "Ju, W., and N. S.-N. Lam. 2009. An improved algorithm for computing "
+    "local fractal dimension using the triangular prism method. Computers & "
+    "Geosciences 35(6):1224-1233 "
+    "(https://doi.org/10.1016/j.cageo.2008.09.008).")
+_FD_VARIO_CIT = (
+    "Gneiting, T., H. Sevcikova, and D. B. Percival. 2012. Estimators of "
+    "fractal dimension: assessing the roughness of time series and spatial "
+    "data. Statistical Science 27(2):247-277 "
+    "(https://doi.org/10.1214/11-STS370); implemented in their R package "
+    "fractaldim (https://CRAN.R-project.org/package=fractaldim). This tool "
+    "reimplements their published variation estimator.")
+_FD_DBC_CIT = (
+    "Sarkar, N., and B. B. Chaudhuri. 1994. An efficient differential "
+    "box-counting approach to compute fractal dimension of image. IEEE "
+    "Transactions on Systems, Man, and Cybernetics 24(1):115-120 "
+    "(https://doi.org/10.1109/21.259692). Improved box height / count: Li, "
+    "J., Q. Du, and C. Sun. 2009. An improved box-counting method for image "
+    "fractal dimension estimation. Pattern Recognition 42(11):2460-2469; and "
+    "Liu, Y., et al. 2014. An improved differential box counting method to "
+    "estimate fractal dimensions of gray-level images. Journal of Visual "
+    "Communication and Image Representation 25(5):1102-1111.")
+_FD_CITATION = {0: _FD_TPM_CIT, 1: _FD_VARIO_CIT, 2: _FD_VARIO_CIT,
+                3: _FD_DBC_CIT}
+
+
+def _fd_cell_meters(gt, sr, height):
+    """A single representative horizontal cell size in meters. Projected:
+    exact (mean of the x/y cell dimensions). Geographic: the ground cell size
+    at the DEM's centre latitude -- a documented approximation, since FD is a
+    scale analysis and the small variation of cell size across a moving window
+    is immaterial. Returns (cell_m, geographic)."""
+    if sr.type == "Geographic":
+        a = float(sr.semiMajorAxis or 6378137.0)
+        b = float(sr.semiMinorAxis or 6356752.31424518)
+        lon0 = gt[0] + 0.5 * gt[1]
+        lat0 = gt[3] + (height // 2 + 0.5) * gt[5]
+        pc = np.array(_hs._ecef(np.array([lon0]), np.array([lat0]), a, b)).ravel()
+        pe = np.array(_hs._ecef(np.array([lon0 + gt[1]]), np.array([lat0]), a, b)).ravel()
+        ps = np.array(_hs._ecef(np.array([lon0]), np.array([lat0 - abs(gt[5])]), a, b)).ravel()
+        cw = float(np.sqrt(((pe - pc) ** 2).sum()))
+        ch = float(np.sqrt(((ps - pc) ** 2).sum()))
+        return 0.5 * (cw + ch), True
+    mpu = float(sr.metersPerUnit or 1.0)
+    return 0.5 * (abs(gt[1]) + abs(gt[5])) * mpu, False
+
+
+def _fd_divisor_steps(wsize):
+    """Ju & Lam (2009) divisor steps: step sizes S dividing (wsize-1) so each
+    fully tiles the window, with at least a 2x2 tiling."""
+    m = wsize - 1
+    return [S for S in range(1, m // 2 + 1) if m % S == 0]
+
+
+def _fd_progress(total):
+    """A work-weighted sub-progress reporter for the current phase. `total` is
+    the total number of work units; the returned ``step(units)`` advances the
+    bar. Work is very uneven across step sizes (a step size of 1 tiles the
+    window far more finely than 12), so progress is weighted by actual tile
+    count rather than by step index."""
+    state = {"done": 0.0, "total": float(max(total, 1))}
+
+    def step(units):
+        state["done"] += units
+        _mh.phase_step(state["done"], state["total"])
+    return step
+
+
+def _fd_comb_sum(grid, stride, n, wsize, H, W, prog=None):
+    """Sum `grid` (keyed by tile top-left) over the n x n tiles at `stride`
+    that fill each focal cell's window. Returns the (nrf, ncf) valid-focal
+    block. Shared by the triangular-prism and box-counting methods. Reports
+    `n` work units per outer row to `prog` (so the whole call is n^2 units)."""
+    nrf, ncf = H - wsize + 1, W - wsize + 1
+    out = np.zeros((nrf, ncf))
+    for k in range(n):
+        ks = k * stride
+        for l in range(n):
+            ls = l * stride
+            out += grid[ks:ks + nrf, ls:ls + ncf]
+        if prog is not None:
+            prog(n)
+    return out
+
+
+def _fd_box_sum(a, bh, bw):
+    """Sum of every bh x bw block of `a`, keyed by top-left (summed-area
+    table). Used by the variation estimator."""
+    C = np.zeros((a.shape[0] + 1, a.shape[1] + 1))
+    C[1:, 1:] = np.cumsum(np.cumsum(a, axis=0), axis=1)
+    H2, W2 = a.shape[0] - bh + 1, a.shape[1] - bw + 1
+    return (C[bh:bh + H2, bw:bw + W2] - C[0:H2, bw:bw + W2]
+            - C[bh:bh + H2, 0:W2] + C[0:H2, 0:W2])
+
+
+def _fd_block_range(z, s):
+    """Max - min over every s x s block of `z`, keyed by top-left (O(s)
+    sliding reductions, not a Python per-window loop). shape (H-s+1, W-s+1)."""
+    H, W = z.shape
+    mr = z[:, :W - s + 1].copy()
+    nr = mr.copy()
+    for k in range(1, s):
+        col = z[:, k:W - s + 1 + k]
+        mr = np.maximum(mr, col)
+        nr = np.minimum(nr, col)
+    mx = mr[:H - s + 1, :].copy()
+    mn = nr[:H - s + 1, :].copy()
+    for k in range(1, s):
+        mx = np.maximum(mx, mr[k:H - s + 1 + k, :])
+        mn = np.minimum(mn, nr[k:H - s + 1 + k, :])
+    return mx - mn
+
+
+def _fd_heron(a, b, c):
+    s = 0.5 * (a + b + c)
+    return np.sqrt(np.maximum(s * (s - a) * (s - b) * (s - c), 0.0))
+
+
+def _fd_prism_area(z, S, cell):
+    """Total 4-triangle prism top area of every S x S square (side S*cell,
+    center = mean of the 4 corners), keyed by top-left. Clarke (1986)."""
+    L = S * cell
+    zA, zB = z[:-S, :-S], z[:-S, S:]
+    zC, zD = z[S:, S:], z[S:, :-S]
+    zE = 0.25 * (zA + zB + zC + zD)
+    e2, sp2 = L * L, 0.5 * L * L
+
+    def tri(zP, zQ):
+        pq = np.sqrt(e2 + (zP - zQ) ** 2)
+        pe = np.sqrt(sp2 + (zP - zE) ** 2)
+        qe = np.sqrt(sp2 + (zQ - zE) ** 2)
+        return _fd_heron(pq, pe, qe)
+
+    return tri(zA, zB) + tri(zB, zC) + tri(zC, zD) + tri(zD, zA)
+
+
+def _fd_tpm(z, wsize, cell, H, W):
+    steps = _fd_divisor_steps(wsize)
+    logS = np.log(np.asarray(steps, float))
+    prog = _fd_progress(sum(((wsize - 1) // S) ** 2 for S in steps))
+    logA = None
+    for i, S in enumerate(steps):
+        A = _fd_comb_sum(_fd_prism_area(z, S, cell), S, (wsize - 1) // S,
+                         wsize, H, W, prog)
+        if logA is None:
+            logA = np.empty((len(steps),) + A.shape)
+        logA[i] = np.log(A)
+    dx = logS - logS.mean()
+    slope = (dx[:, None, None] * (logA - logA.mean(axis=0))).sum(axis=0) / \
+        float((dx * dx).sum())
+    return 2.0 - slope
+
+
+def _fd_variation(z, wsize, p, H, W):
+    hmax = max(2, wsize // 3)
+    lags = list(range(1, hmax + 1))
+    logh = np.log(np.asarray(lags, float))
+    nrf, ncf = H - wsize + 1, W - wsize + 1
+    logV = np.empty((len(lags), nrf, ncf))
+    maxvar = np.zeros((nrf, ncf))
+    prog = _fd_progress(len(lags))
+    for i, h in enumerate(lags):
+        dh = np.abs(z[:, h:] - z[:, :-h]) ** p
+        dv = np.abs(z[h:, :] - z[:-h, :]) ** p
+        Vp = (_fd_box_sum(dh, wsize, wsize - h)
+              + _fd_box_sum(dv, wsize - h, wsize)) / (2.0 * wsize * (wsize - h))
+        maxvar = np.maximum(maxvar, Vp)
+        logV[i] = np.log(np.maximum(Vp, 1e-300))
+        prog(1)
+    dx = logh - logh.mean()
+    slope = (dx[:, None, None] * (logV - logV.mean(axis=0))).sum(axis=0) / \
+        float((dx * dx).sum())
+    D = 3.0 - slope / p
+    D[maxvar <= 1e-12] = 2.0                 # flat window -> D = 2
+    return D
+
+
+def _fd_dbc(z, wsize, cell, H, W):
+    box_sizes = [s for s in (2, 3, 4, 6, 8, 12, 16, 24)
+                 if s <= wsize // 2 and wsize // s >= 2]
+    logS = np.log(np.asarray(box_sizes, float))
+    prog = _fd_progress(sum((wsize // s) ** 2 for s in box_sizes))
+    logN = None
+    for i, s in enumerate(box_sizes):
+        rng = _fd_block_range(z, s)
+        nr = np.where(rng > 1e-12, np.ceil(rng / (s * cell)), 1.0)
+        N = _fd_comb_sum(nr, s, wsize // s, wsize, H, W, prog)
+        if logN is None:
+            logN = np.empty((len(box_sizes),) + N.shape)
+        logN[i] = np.log(N)
+    dx = logS - logS.mean()
+    slope = (dx[:, None, None] * (logN - logN.mean(axis=0))).sum(axis=0) / \
+        float((dx * dx).sum())
+    return -slope
+
+
+def run_fractal_dimension(in_raster, out_raster, method=None, window_size=25,
+                          elev_units="Meters", messages=None):
+    """Per-cell local fractal dimension (surface roughness, D in [2, 3]) by a
+    selectable method over a moving square window. See ``FD_METHODS`` and the
+    module comment. Returns the output's default-symbology .lyrx path."""
+    gdal = _mh._gdal()
+    method = method or FD_METHODS[0]
+    if method not in FD_METHODS:
+        raise arcpy.ExecuteError("Unknown fractal-dimension method: {}.".format(method))
+    m_idx = FD_METHODS.index(method)
+    is_tpm, is_vario, is_mado, is_dbc = (m_idx == 0, m_idx == 1,
+                                         m_idx == 2, m_idx == 3)
+    try:
+        wsize = int(window_size)
+    except (TypeError, ValueError):
+        raise arcpy.ExecuteError("The window size must be a whole number of cells.")
+    if wsize < 9 or wsize % 2 == 0:
+        raise arcpy.ExecuteError(
+            "The window size must be an odd number of cells, at least 9 "
+            "(e.g. 13, 17, 25, 33, 37, 49, or 61).")
+    if is_tpm and len(_fd_divisor_steps(wsize)) < 3:
+        raise arcpy.ExecuteError(
+            "The triangular prism method needs several step sizes that divide "
+            "the window evenly, so (window size minus 1) must have several "
+            "whole-number factors; {} does not. You do not enter the step "
+            "sizes -- the tool derives them; just pick a good window size. "
+            "Try 13, 17, 25, 33, 37, 49, or 61.".format(wsize))
+    out_raster = _mh.resolve_raster_output(out_raster, messages)
+
+    _mh.begin_phases([
+        ("Reading the DEM...", 1),
+        ("Calculating fractal dimension...", 6),
+        ("Saving the fractal-dimension raster...", 1),
+        ("Building pyramids...", 1),
+        ("Creating layer file and symbology...", 1),
+    ])
+
+    scratch = arcpy.env.scratchFolder
+    src, in_copy = _hs._open_source(in_raster, scratch, messages)
+    band = src.GetRasterBand(1)
+    width, height = src.RasterXSize, src.RasterYSize
+    if width < wsize or height < wsize:
+        raise arcpy.ExecuteError(
+            "The DEM must be at least {0} x {0} cells for a window of {0}.".format(wsize))
+    gt = src.GetGeoTransform()
+    proj = src.GetProjection()
+    in_nodata = band.GetNoDataValue()
+    sr = arcpy.Describe(in_raster).spatialReference
+
+    cell_m, geographic = _fd_cell_meters(gt, sr, height)
+    elev_mpu = 1.0 if geographic else _hs._ELEV_METERS.get(elev_units, 1.0)
+    _hs._msg(messages, "FD method: {}. Window {} x {} cells. {} Cell size "
+                       "{:.3f} m; elevation {}.".format(
+                           method, wsize, wsize,
+                           "Geographic DEM: representative cell size at the "
+                           "centre latitude." if geographic else "Projected DEM.",
+                           cell_m,
+                           "assumed meters" if geographic else elev_units))
+
+    z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
+    valid = np.isfinite(z)
+    if in_nodata is not None:
+        valid &= (z != in_nodata)
+    # Fill NoData with the valid mean so the vectorized math never sees NaN;
+    # any window touching NoData is masked out of the result below, so the
+    # fill value never reaches the output.
+    fill = float(z[valid].mean()) if valid.any() else 0.0
+    z = np.where(valid, z, fill) * elev_mpu
+    src = None
+    if in_copy:
+        try:
+            arcpy.management.Delete(in_copy)
+        except Exception:
+            pass
+
+    _mh.phase_advance("Calculating fractal dimension...")
+    if is_tpm:
+        Dblk = _fd_tpm(z, wsize, cell_m, height, width)
+    elif is_vario:
+        Dblk = _fd_variation(z, wsize, 2.0, height, width)
+    elif is_mado:
+        Dblk = _fd_variation(z, wsize, 1.0, height, width)
+    else:
+        Dblk = _fd_dbc(z, wsize, cell_m, height, width)
+    np.clip(Dblk, 2.0, 3.0, out=Dblk)        # a surface's D is in [2, 3]
+
+    # A window is usable only if it has no NoData cell anywhere inside it.
+    hw = (wsize - 1) // 2
+    inv_win = _fd_box_sum((~valid).astype(np.float64), wsize, wsize)
+    ok = inv_win < 0.5
+    out = np.full((height, width), NODATA_OUT, dtype=np.float32)
+    center = out[hw:hw + Dblk.shape[0], hw:hw + Dblk.shape[1]]
+    center[ok] = Dblk[ok].astype(np.float32)
+    out_valid = np.zeros((height, width), dtype=bool)
+    out_valid[hw:hw + Dblk.shape[0], hw:hw + Dblk.shape[1]] = ok
+    n_out = int(out_valid.sum())
+    _hs._msg(messages, "{:,} of {:,} cells have a fully-valid window ({}).".format(
+        n_out, width * height, _FD_CITATION[m_idx]))
+
+    out_path = arcpy.CreateUniqueName("fd.tif", scratch)
+    ds, oband = _make_output(gdal, out_path, gt, proj, width, height)
+    oband.WriteArray(out)
+    oband.FlushCache()
+    ds.FlushCache()
+    stats = _mh._RasterStats()
+    if out_valid.any():
+        stats.add(out[out_valid].astype(np.float64))
+    out_stats = _mh._finalize_stats(oband, stats, messages)
+    if out_stats is not None:
+        out_stats["on_raster"] = _mh._write_gtiff_stats(oband, out_stats)
+    oband.FlushCache()
+    ds.FlushCache()
+    oband = None
+    ds = None
+
+    _mh.phase_advance("Saving the fractal-dimension raster...")
+    _deliver_output(
+        out_path, out_raster, out_stats, messages,
+        title=os.path.basename(str(out_raster)),
+        summary=("Created by Fractal Dimension from {src}: method = {m}; "
+                 "window {w} x {w} cells; elevation units {e}.").format(
+                     src=str(in_raster), m=method, w=wsize,
+                     e=("Meters (geographic DEM)" if geographic else elev_units)),
+        description=(
+            "Local fractal dimension (surface roughness) raster: for each "
+            "cell, the fractal dimension D of the terrain within a {w} x {w} "
+            "cell window, by the {m} method. D ranges from 2 (a smooth "
+            "surface -- flat OR a smoothly tilted plane) to 3 (space-filling, "
+            "maximally rough); like the Vector Ruggedness Measure, it is "
+            "independent of overall slope and instead measures how roughness "
+            "varies across scales. Values are clipped to [2, 3]. All methods "
+            "estimate the same D by different models and can give somewhat "
+            "different values on real terrain. {c}").format(
+                w=wsize, m=method, c=_FD_CITATION[m_idx]),
+        tags=("fractal dimension, surface roughness, terrain ruggedness, "
+              "self-affine, topographic complexity, topography, "
+              "Jenness Enterprises"),
+        citation=_FD_CITATION[m_idx])
+    _mh.phase_advance("Creating layer file and symbology...")
+    out_lyrx = _mh.default_stretch_lyrx(
+        out_raster, [(95, 135, 193), (249, 254, 204), (224, 70, 53)],
+        messages=messages)
+    _mh.end_phases()
+    _hs._msg(messages, "Fractal Dimension complete: {}".format(out_raster))
+    return out_lyrx
