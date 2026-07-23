@@ -738,3 +738,299 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
     _mh.end_phases()
     _hs._msg(messages, "Vector Ruggedness Measure complete: {}".format(out_raster))
     return out_lyrx
+
+
+# ----------------------------------------------------------------------------
+#  Terrain Ruggedness Index (TRI)
+# ----------------------------------------------------------------------------
+#
+# One tool, four selectable measures of how much a cell's neighborhood
+# departs from flat -- deliberately offered together because "ruggedness"
+# means different things (see the tool help). All share one CIRCULAR moving
+# neighborhood, radius in cells or ground units (geodesic per row on
+# geographic DEMs, exactly like VRM). The default radius 1.5 cells reproduces
+# the classic 3x3 (8-neighbor) definitions (the four diagonals sit sqrt(2)
+# ~= 1.41 cells away, so 1.5 includes them; a radius of 1 gives a 4-neighbor
+# "plus").
+#
+#   Riley et al. 1999  : sqrt( sum_i (z_i - z0)^2 )         [DEM elev. units]
+#   Wilson et al. 2007 : mean_i |z_i - z0|                  [DEM elev. units]
+#   Slope (Jenness)    : sqrt( sum_i ((z_i - z0)/d_i)^2 )   [dimensionless]
+#   Std. deviation     : population SD of the window elevs  [DEM elev. units]
+#
+# where z0 is the focal cell, z_i a neighbor, and d_i the ground distance
+# between their centers. The three elevation-unit methods keep the DEM's own
+# z-units (meters or feet -- we do NOT force meters, so a feet DEM yields a
+# feet output, labeled as such in the metadata). The Slope method scales
+# elevations to meters internally so its rise/run is a correct dimensionless
+# ratio regardless of the DEM's units. The Slope method is Jeff's own idea
+# (lecture slides 62-63): dividing each elevation difference by the distance
+# to that neighbor turns it into the actual slope toward that neighbor,
+# correcting the standard TRI's habit of counting a difference to a far
+# (diagonal) cell the same as a difference to a near (orthogonal) one.
+# Dividing by distance IS taking the slope, so slides 62 and 63 are the same
+# measure.
+
+TRI_METHODS = [
+    "Riley et al. 1999 (root of summed squared differences)",
+    "Wilson et al. 2007 (mean absolute difference)",
+    "Slope (distance-weighted, Jenness)",
+    "Standard deviation of neighborhood elevations",
+]
+
+_TRI_LECTURE = ("https://docs.google.com/presentation/d/"
+                "179rA7gG0r11feha-xtizP18XytDU3I7H")
+_TRI_RILEY_CIT = (
+    "Riley, S. J., S. D. DeGloria, and R. Elliot. 1999. A terrain ruggedness "
+    "index that quantifies topographic heterogeneity. Intermountain Journal "
+    "of Sciences 5(1-4):23-27.")
+_TRI_WILSON_CIT = (
+    "Wilson, M. F. J., B. O'Connell, C. Brown, J. C. Guinan, and A. J. "
+    "Grehan. 2007. Multiscale terrain analysis of multibeam bathymetry data "
+    "for habitat mapping on the continental slope. Marine Geodesy "
+    "30(1-2):3-35 (https://doi.org/10.1080/01490410701295962).")
+_TRI_SLOPE_CIT = (
+    "Slope / distance-weighted variant: Jenness, J. Topographic ruggedness "
+    "[lecture]. Jenness Enterprises (" + _TRI_LECTURE + ").")
+_TRI_STD_CIT = (
+    "Neighborhood standard deviation is a common ruggedness measure; see "
+    "Jenness, J. Topographic ruggedness [lecture]. Jenness Enterprises (" +
+    _TRI_LECTURE + ").")
+_TRI_CITATION = {0: _TRI_RILEY_CIT, 1: _TRI_WILSON_CIT,
+                 2: _TRI_SLOPE_CIT, 3: _TRI_STD_CIT}
+
+
+def _tri_row_cell_dims(gt, height, sr):
+    """(cw_row, ch_row): per-row horizontal and vertical cell dimensions in
+    meters (arrays length ``height``), for the Slope method's neighbor
+    distances. Constant on projected rasters; per-row on the spheroid for a
+    geographic DEM (the neighbor distance a diagonal cell away then correctly
+    grows toward the poles). The vertical span (degrees of latitude) is very
+    nearly constant, so the focal row's value is used for the small vertical
+    offsets of a local window -- the same per-row approximation the other
+    tools use for geographic neighborhoods."""
+    if sr.type == "Geographic":
+        a = float(sr.semiMajorAxis or 6378137.0)
+        b = float(sr.semiMinorAxis or 6356752.31424518)
+        g = _hs._geographic_row_distances(gt, height, a, b)
+        return g["h"], g["vA"]
+    mpu = float(sr.metersPerUnit or 1.0)
+    cw = np.full(height, abs(gt[1]) * mpu)
+    ch = np.full(height, abs(gt[5]) * mpu)
+    return cw, ch
+
+
+_TRI_MAX_R = 500          # bounding cell radius cap (a ~1000-cell-wide window)
+
+
+def run_tri(in_raster, out_raster, method=None, radius=1.5,
+            radius_units="Cells", elev_units="Meters", messages=None):
+    """Terrain Ruggedness Index: one of four neighborhood ruggedness measures
+    (see ``TRI_METHODS`` and the module comment) over a CIRCULAR neighborhood
+    of ``radius`` in ``radius_units`` (Cells / Meters / Kilometers / Feet /
+    Miles; geodesic per row on geographic DEMs, like VRM). The Riley, Wilson,
+    and standard-deviation outputs are in the DEM's own elevation units (feet
+    stays feet); the Slope output is a dimensionless rise/run. Returns the
+    output's default-symbology .lyrx path (or None)."""
+    gdal = _mh._gdal()
+
+    method = method or TRI_METHODS[0]
+    if method not in TRI_METHODS:
+        raise arcpy.ExecuteError("Unknown TRI method: {}.".format(method))
+    m_idx = TRI_METHODS.index(method)
+    is_riley, is_wilson, is_slope, is_std = (m_idx == 0, m_idx == 1,
+                                             m_idx == 2, m_idx == 3)
+    radius = float(radius) if radius else 0.0
+    if radius <= 0:
+        raise arcpy.ExecuteError("The neighborhood radius must be positive.")
+    if radius_units not in RADIUS_UNITS:
+        raise arcpy.ExecuteError(
+            "Unknown radius unit: {}.".format(radius_units))
+    out_raster = _mh.resolve_raster_output(out_raster, messages)
+
+    _mh.begin_phases([
+        ("Reading the DEM...", 1),
+        ("Calculating terrain ruggedness...", 6),
+        ("Saving the TRI raster...", 1),
+        ("Building pyramids...", 1),
+        ("Creating layer file and symbology...", 1),
+    ])
+
+    scratch = arcpy.env.scratchFolder
+    src, in_copy = _hs._open_source(in_raster, scratch, messages)
+    band = src.GetRasterBand(1)
+    width, height = src.RasterXSize, src.RasterYSize
+    if width < 3 or height < 3:
+        raise arcpy.ExecuteError("The DEM must be at least 3 x 3 cells.")
+    gt = src.GetGeoTransform()
+    proj = src.GetProjection()
+    in_nodata = band.GetNoDataValue()
+    sr = arcpy.Describe(in_raster).spatialReference
+    geographic = (sr.type == "Geographic")
+
+    elev_mpu = 1.0 if geographic else _hs._ELEV_METERS.get(elev_units, 1.0)
+    # Per-row cell dimensions in meters -- for the circular ground-distance
+    # neighborhood and for the Slope method's neighbor distances.
+    cw_row, ch_row = _tri_row_cell_dims(gt, height, sr)
+
+    # Neighborhood geometry. "Cells" -> a fixed cell-space circle (same
+    # everywhere, di^2 + dj^2 <= radius^2). A linear unit -> a true ground
+    # circle of radius_m meters, tested per row on the spheroid so it stays
+    # the right size at any latitude (matching VRM).
+    cells_mode = (radius_units == "Cells")
+    if cells_mode:
+        radius_m = None
+        big_r = int(math.ceil(radius))
+    else:
+        radius_m = radius * _RADIUS_METERS[radius_units]
+        min_cell = max(min(float(cw_row.min()), float(ch_row.min())), 1e-9)
+        big_r = int(math.ceil(radius_m / min_cell))
+    big_r = max(big_r, 1)
+    if big_r > _TRI_MAX_R:
+        raise arcpy.ExecuteError(
+            "The neighborhood radius works out to about {:,} cells across, "
+            "which is too large for this tool. Use a smaller radius or a "
+            "coarser DEM.".format(2 * big_r + 1))
+    if cells_mode:
+        _hs._msg(messages, "TRI method: {}. Circular neighborhood radius "
+                           "{:g} cells. {}".format(
+                               method, radius,
+                               "Elevation assumed meters (geographic DEM)."
+                               if geographic else
+                               "Elevation units: {}.".format(elev_units)))
+    else:
+        _hs._msg(messages, "TRI method: {}. Circular neighborhood radius "
+                           "{:g} {} = {:,.1f} m ({}up to {} cells across). "
+                           "{}".format(
+                               method, radius, radius_units.lower(), radius_m,
+                               "geodesic per row, " if geographic else "",
+                               2 * big_r + 1,
+                               "Elevation assumed meters (geographic DEM)."
+                               if geographic else
+                               "Elevation units: {}.".format(elev_units)))
+
+    z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
+    valid = np.isfinite(z)
+    if in_nodata is not None:
+        valid &= (z != in_nodata)
+    # Elevation-unit methods keep the DEM's native z-units; the Slope method
+    # needs meters so its rise/run is dimensionless.
+    zwork = np.where(valid, z * elev_mpu if is_slope else z, np.nan)
+    src = None
+    if in_copy:
+        try:
+            arcpy.management.Delete(in_copy)
+        except Exception:
+            pass
+
+    _mh.phase_advance("Calculating terrain ruggedness...")
+    R = big_r
+    zp = np.full((height + 2 * R, width + 2 * R), np.nan)
+    zp[R:R + height, R:R + width] = zwork
+    vp = np.zeros((height + 2 * R, width + 2 * R), dtype=bool)
+    vp[R:R + height, R:R + width] = valid
+    need_d = is_slope or not cells_mode
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        if is_std:
+            s1 = np.zeros((height, width))
+            s2 = np.zeros((height, width))
+            cnt = np.zeros((height, width))
+        else:
+            acc = np.zeros((height, width))
+            ncnt = np.zeros((height, width))   # valid NEIGHBORS (excl. focal)
+
+        for di in range(-R, R + 1):
+            for dj in range(-R, R + 1):
+                if not is_std and di == 0 and dj == 0:
+                    continue
+                d_row = (np.sqrt((dj * cw_row) ** 2 + (di * ch_row) ** 2)
+                         if need_d else None)      # meters, per row
+                if cells_mode:
+                    if di * di + dj * dj > radius * radius:
+                        continue
+                    row_mask = None                # every row in the circle
+                else:
+                    row_in = d_row <= radius_m
+                    if not row_in.any():
+                        continue
+                    row_mask = row_in[:, None]
+                nz = zp[R + di:R + di + height, R + dj:R + dj + width]
+                nv = vp[R + di:R + di + height, R + dj:R + dj + width]
+                member = nv if row_mask is None else (nv & row_mask)
+                if is_std:
+                    s1 += np.where(member, nz, 0.0)
+                    s2 += np.where(member, nz * nz, 0.0)
+                    cnt += member
+                else:
+                    pair = member & valid
+                    dz = np.where(pair, nz - zwork, 0.0)
+                    if is_wilson:
+                        acc += np.abs(dz)
+                    elif is_slope:
+                        acc += np.where(pair, (dz / d_row[:, None]) ** 2, 0.0)
+                    else:                          # Riley
+                        acc += dz * dz
+                    ncnt += pair
+
+        if is_std:
+            mean = s1 / cnt
+            result = np.sqrt(np.maximum(s2 / cnt - mean * mean, 0.0))
+            out_valid = valid & (cnt >= 2)     # focal + >=1 more
+        else:
+            result = acc / ncnt if is_wilson else np.sqrt(acc)
+            out_valid = valid & (ncnt >= 1)
+
+    n_out = int(out_valid.sum())
+    _hs._msg(messages, "{:,} of {:,} cells have a defined value ({}).".format(
+        n_out, width * height, _TRI_CITATION[m_idx]))
+
+    out_path = arcpy.CreateUniqueName("tri.tif", scratch)
+    ds, oband = _make_output(gdal, out_path, gt, proj, width, height)
+    oband.WriteArray(np.where(out_valid, result, NODATA_OUT).astype(np.float32))
+    oband.FlushCache()
+    ds.FlushCache()
+    stats = _mh._RasterStats()
+    if out_valid.any():
+        stats.add(result[out_valid].astype(np.float64))
+    out_stats = _mh._finalize_stats(oband, stats, messages)
+    if out_stats is not None:
+        out_stats["on_raster"] = _mh._write_gtiff_stats(oband, out_stats)
+    oband.FlushCache()
+    ds.FlushCache()
+    oband = None
+    ds = None
+
+    elev_label = "Meters (geographic DEM)" if geographic else elev_units
+    out_units = ("a dimensionless rise/run (slope)" if is_slope else
+                 "the DEM's elevation units ({})".format(elev_label))
+    radius_desc = ("{:g} cells".format(radius) if cells_mode else
+                   "{:g} {}".format(radius, radius_units.lower()))
+    _mh.phase_advance("Saving the TRI raster...")
+    _deliver_output(
+        out_path, out_raster, out_stats, messages,
+        title=os.path.basename(str(out_raster)),
+        summary=("Created by Terrain Ruggedness Index from {src}: method = "
+                 "{m}; circular neighborhood radius {rd}; elevation units "
+                 "{e}; output in {u}.").format(
+                     src=str(in_raster), m=method, rd=radius_desc,
+                     e=elev_label, u=out_units),
+        description=(
+            "Terrain Ruggedness Index (TRI) raster measuring how much each "
+            "cell's neighborhood departs from flat, by the {m} method over a "
+            "circular neighborhood of radius {rd}. Higher values are more "
+            "rugged. Output is in {u}. NoData cells and the raster edge are "
+            "handled by ignoring missing neighbors (a value is produced "
+            "wherever the focal cell and at least one neighbor are valid). "
+            "{c}").format(m=method, rd=radius_desc, u=out_units,
+                          c=_TRI_CITATION[m_idx]),
+        tags=("terrain ruggedness index, TRI, ruggedness, roughness, "
+              "topographic heterogeneity, topography, Jenness Enterprises"),
+        citation=_TRI_CITATION[m_idx])
+    _mh.phase_advance("Creating layer file and symbology...")
+    out_lyrx = _mh.default_stretch_lyrx(
+        out_raster, [(95, 135, 193), (249, 254, 204), (224, 70, 53)],
+        messages=messages)
+    _mh.end_phases()
+    _hs._msg(messages, "Terrain Ruggedness Index complete: {}".format(out_raster))
+    return out_lyrx

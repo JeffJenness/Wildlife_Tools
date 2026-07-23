@@ -192,7 +192,7 @@ class Toolbox(object):
                       KernelDensityGenerate, KernelDensityProportion, KernelDensityContours,
                       ShadowPolygons, EnhancedHillshade, MDOWHillshade,
                       MultiSunHillshade, SimpleHypsometricShading,
-                      BlurredHillshade, SurfaceAreaRatio, VRM,
+                      BlurredHillshade, SurfaceAreaRatio, VRM, TRI,
                       LSRIOnDEM, LSRIOnContourPolylines]
 
 
@@ -3246,6 +3246,152 @@ class VRM(object):
                     messages.addWarningMessage("Could not set output symbology: {}".format(e))
             # Remember the choices (not the datasets) with the project.
             _save_tool_defaults("VRM", {
+                "radius": P["radius"].value,
+                "radius_units": P["radius_units"].valueAsText,
+                "elev_units": P["elev_units"].valueAsText,
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class TRI(object):
+    """Terrain Ruggedness Index -- one of four selectable neighborhood
+    measures of how much a cell's surroundings depart from flat (Riley et al.
+    1999; Wilson et al. 2007; a slope/distance-weighted variant; or the
+    standard deviation of neighborhood elevations)."""
+
+    def __init__(self):
+        self.label = "TRI"
+        self.description = (
+            "Computes a Terrain Ruggedness Index (TRI): how much each cell's "
+            "neighborhood departs from flat, by one of four methods -- Riley "
+            "et al. (1999) root of summed squared differences, Wilson et al. "
+            "(2007) mean absolute difference, a slope (distance-weighted) "
+            "variant that corrects for diagonal neighbors being farther away, "
+            "or the standard deviation of the neighborhood elevations. Higher "
+            "values are more rugged. Different methods capture different "
+            "notions of ruggedness; see the tool help.")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_units = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input elevation raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output TRI raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required", direction="Output")
+        method = arcpy.Parameter(
+            displayName="Method", name="method",
+            datatype="GPString", parameterType="Required", direction="Input")
+        method.filter.type = "ValueList"
+        method.filter.list = topographic_tools.TRI_METHODS
+        method.value = topographic_tools.TRI_METHODS[0]
+        radius = arcpy.Parameter(
+            displayName="Neighborhood radius", name="radius",
+            datatype="GPDouble", parameterType="Required", direction="Input")
+        radius.value = 1.5
+        radius_units = arcpy.Parameter(
+            displayName="Neighborhood radius units", name="radius_units",
+            datatype="GPString", parameterType="Required", direction="Input")
+        radius_units.filter.type = "ValueList"
+        radius_units.filter.list = topographic_tools.RADIUS_UNITS
+        radius_units.value = "Cells"
+        elev_units = arcpy.Parameter(
+            displayName="Elevation units", name="elev_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        elev_units.filter.type = "ValueList"
+        elev_units.filter.list = hillshade.ELEV_UNITS
+        params = [in_raster, out_raster, method, radius, radius_units, elev_units]
+        saved = _load_tool_defaults("TRI")
+        for p in (method, radius, radius_units, elev_units):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    _detect_units = EnhancedHillshade._detect_units
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr, units = P["in_raster"], P["out_raster"], P["elev_units"]
+        if inr.valueAsText:
+            detected, locked = self._detect_units(inr.valueAsText)
+            if locked:
+                if not units.altered or units.valueAsText == self._auto_units:
+                    units.value = detected
+                    self._auto_units = detected
+                units.enabled = False
+            else:
+                units.enabled = True
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(inr.valueAsText))[0] + "_TRI")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        # The Slope method's output is a dimensionless rise/run, so elevation
+        # units don't affect it (they only rescale the elevation-unit methods).
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, units = P["in_raster"], P["elev_units"]
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage(
+                        "The elevation raster must be single band.")
+            except Exception:
+                pass
+            if units.enabled and not units.valueAsText:
+                units.setErrorMessage(
+                    "The DEM does not specify its elevation units; choose "
+                    "Meters or Feet.")
+        r = P["radius"].value
+        if r is not None and r <= 0:
+            P["radius"].setErrorMessage(
+                "The neighborhood radius must be positive.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(topographic_tools)
+            P = {p.name: p for p in parameters}
+            out_lyrx = topographic_tools.run_tri(
+                in_raster=P["in_raster"].valueAsText,
+                out_raster=P["out_raster"].valueAsText,
+                method=P["method"].valueAsText or topographic_tools.TRI_METHODS[0],
+                radius=P["radius"].value,
+                radius_units=P["radius_units"].valueAsText or "Cells",
+                elev_units=P["elev_units"].valueAsText or "Meters",
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+            if out_lyrx:
+                try:
+                    P["out_raster"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage("Could not set output symbology: {}".format(e))
+            _save_tool_defaults("TRI", {
+                "method": P["method"].valueAsText,
                 "radius": P["radius"].value,
                 "radius_units": P["radius_units"].valueAsText,
                 "elev_units": P["elev_units"].valueAsText,

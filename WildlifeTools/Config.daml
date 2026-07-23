@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.27.3" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.28.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -48,6 +48,7 @@
         <group id="WildlifeTools_GroupTopo" caption="Topographic Analysis" appearsOnAddInTab="false">
           <button refID="WildlifeTools_SurfaceAreaRatio" size="large" />
           <button refID="WildlifeTools_VRM" size="large" />
+          <button refID="WildlifeTools_TRI" size="large" />
           <button refID="WildlifeTools_LSRIOnDEM" size="large" />
           <button refID="WildlifeTools_LSRIOnContourPolylines" size="large" />
         </group>
@@ -390,6 +391,17 @@
                 keytip="VR">
           <tooltip heading="VRM (Vector Ruggedness Measure)">
             Opens the VRM tool from the Jenness Enterprises toolbox: a topographic roughness index (Sappington et al. 2007) measuring the 3D dispersion of unit vectors orthogonal to the terrain surface within a neighborhood of each cell - the spherical analog of circular variance (Fisher 1993). Distinguishes steep-but-even terrain from steep, broken terrain; correct on geographic (lat/long) DEMs. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_TRI"
+                caption="TRI"
+                className="TRIButton"
+                loadOnClick="true"
+                smallImage="Images\TRI_16.png"
+                largeImage="Images\TRI_32.png"
+                keytip="TR">
+          <tooltip heading="TRI (Terrain Ruggedness Index)">
+            Opens the TRI tool from the Jenness Enterprises toolbox: a neighborhood terrain-ruggedness index with four selectable methods -- the root of summed squared differences (Riley, DeGloria, and Elliot 1999), the mean absolute difference (Wilson et al. 2007), a slope (distance-weighted) variant that corrects for diagonal neighbors being farther away, or the standard deviation of the neighborhood elevations. Different methods capture different notions of ruggedness. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_LSRIOnDEM"

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Terrain Ruggedness Index (TRI)</title>
+  <!-- A 3x3 neighborhood: the focal (center) cell connected to its 8
+       neighbors, shaded from blue (low) to red (high) for varying elevation,
+       i.e. the differences a TRI sums. -->
+  <g>
+    <rect x="2.5"  y="2.5"  width="9" height="9" rx="1" fill="#6f97c9"/>
+    <rect x="12"   y="2.5"  width="9" height="9" rx="1" fill="#a6c0da"/>
+    <rect x="21.5" y="2.5"  width="9" height="9" rx="1" fill="#d98b6a"/>
+    <rect x="2.5"  y="12"   width="9" height="9" rx="1" fill="#c7d6e6"/>
+    <rect x="21.5" y="12"   width="9" height="9" rx="1" fill="#e0b0a0"/>
+    <rect x="2.5"  y="21.5" width="9" height="9" rx="1" fill="#88a9d0"/>
+    <rect x="12"   y="21.5" width="9" height="9" rx="1" fill="#e6c39a"/>
+    <rect x="21.5" y="21.5" width="9" height="9" rx="1" fill="#cf7b56"/>
+  </g>
+  <g stroke="#2a2a2a" stroke-width="1" opacity="0.75">
+    <line x1="16.5" y1="16.5" x2="7"    y2="7"/>
+    <line x1="16.5" y1="16.5" x2="16.5" y2="7"/>
+    <line x1="16.5" y1="16.5" x2="26"   y2="7"/>
+    <line x1="16.5" y1="16.5" x2="7"    y2="16.5"/>
+    <line x1="16.5" y1="16.5" x2="26"   y2="16.5"/>
+    <line x1="16.5" y1="16.5" x2="7"    y2="26"/>
+    <line x1="16.5" y1="16.5" x2="16.5" y2="26"/>
+    <line x1="16.5" y1="16.5" x2="26"   y2="26"/>
+  </g>
+  <rect x="12" y="12" width="9" height="9" rx="1" fill="#f4f4f4" stroke="#1a1a1a" stroke-width="1.6"/>
+  <circle cx="16.5" cy="16.5" r="1.9" fill="#1a1a1a"/>
+</svg>
