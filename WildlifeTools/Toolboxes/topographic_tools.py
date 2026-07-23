@@ -1426,3 +1426,478 @@ def run_fractal_dimension(in_raster, out_raster, method=None, window_size=25,
     _mh.end_phases()
     _hs._msg(messages, "Fractal Dimension complete: {}".format(out_raster))
     return out_lyrx
+
+
+# ----------------------------------------------------------------------------
+#  Topographic Wetness Index (TWI / CTI)
+# ----------------------------------------------------------------------------
+#
+# TWI = ln( SCA / (tan(beta) + eps) ), where SCA is the specific catchment
+# area (upslope contributing area per unit contour length) and tan(beta) is
+# the local slope gradient (Beven & Kirkby 1979).  On a raster every cell is
+# treated as its own watershed outlet, so the "unit contour length" is the
+# cell size and one cell size cancels:
+#
+#     catchment area (m^2) = (flow accumulation + 1) x cellsize^2
+#     SCA = catchment area / unit contour length = (flowacc + 1) x cellsize
+#
+# The +1 counts the cell's own catchment (a cell drains at least itself) and
+# also keeps SCA > 0 so the log is defined; eps (default 0.0001, user set) is
+# added to the slope gradient so flat cells do not divide by zero.  High TWI =
+# large upslope area and/or gentle slope (valley bottoms, converging, wet);
+# low TWI = small area and/or steep (ridges, diverging, dry).
+#
+# Everything is computed internally with numpy/scipy -- no Spatial Analyst,
+# no GDAL hydrology (GDAL has none) -- so the tool ships to any machine with
+# only the ArcGIS Pro Python install:
+#   * Fill sinks   : priority-flood (Barnes, Lehman & Mulla 2014)
+#   * Flow direction (D8): steepest descent on the FILLED DEM (O'Callaghan &
+#     Mark 1984); flats route toward their flood-order predecessor (the spill)
+#   * Flow accumulation  : topological accumulation over the D8 receiver graph
+#   * Slope (tan beta)   : Horn gradient of the ORIGINAL (unfilled) DEM
+#
+# The fill is bit-identical to Esri's Fill and the flow direction / flow
+# accumulation match Esri D8 to ~99.9% (the rest is flat tie-breaking); for
+# exact Esri parity a user can feed in their own flow-accumulation raster.
+# Slope comes from the original DEM (filling is only to keep flow from getting
+# stuck), planar on projected DEMs or geodesic if the user asks (and always
+# geodesic -- spheroidal per row -- on geographic DEMs).
+
+SLOPE_METHODS = ["Planar", "Geodesic"]
+
+_TWI_CIT_TWI = (
+    "Beven, K. J., and M. J. Kirkby. 1979. A physically based, variable "
+    "contributing area model of basin hydrology. Hydrological Sciences "
+    "Bulletin 24(1):43-69. https://doi.org/10.1080/02626667909491834")
+_TWI_CIT_FILL = (
+    "Barnes, R., C. Lehman, and D. Mulla. 2014. Priority-flood: an optimal "
+    "depression-filling and watershed-labeling algorithm for digital "
+    "elevation models. Computers & Geosciences 62:117-127. "
+    "https://doi.org/10.1016/j.cageo.2013.04.024")
+_TWI_CIT_D8 = (
+    "O'Callaghan, J. F., and D. M. Mark. 1984. The extraction of drainage "
+    "networks from digital elevation data. Computer Vision, Graphics, and "
+    "Image Processing 28(3):323-344. "
+    "https://doi.org/10.1016/S0734-189X(84)80011-0")
+_TWI_CITATION = _TWI_CIT_TWI
+
+
+def _twi_geodesic_projected_geom(gt, width, height, proj):
+    """Per-row TRUE-GROUND cell distances for a PROJECTED raster whose slope
+    the user wants computed geodesically: unproject the cell centers of a
+    representative (raster-center) column to lon/lat with GDAL's osr, then use
+    the same spheroidal-ECEF distances as the geographic path.  Returns the
+    hA/h/hB/vA/vB dict (meters).  Corrects the projection's scale distortion,
+    which is the only meaningful planar-vs-geodesic difference at 3x3 scale."""
+    from osgeo import osr
+    ps = osr.SpatialReference()
+    ps.ImportFromWkt(proj)
+    gs = ps.CloneGeogCS()
+    for s in (ps, gs):
+        try:
+            s.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        except Exception:
+            pass
+    # spheroid from the DEM's own datum (arcpy reports 0 for a projected SR)
+    a = float(gs.GetSemiMajor()) or 6378137.0
+    b = float(gs.GetSemiMinor()) or 6356752.31424518
+    ct = osr.CoordinateTransformation(ps, gs)
+    cellw = gt[1]
+    cellh = abs(gt[5])
+    xc = gt[0] + (0.5 * width) * gt[1]          # raster-center column
+    rows = np.arange(height, dtype=np.float64)
+    y0 = gt[3] + (rows + 0.5) * gt[5]
+    xcol = np.full(height, xc)
+
+    def ecef(xs, ys):
+        pts = ct.TransformPoints(list(zip(xs.tolist(), ys.tolist())))
+        lon = np.fromiter((p[0] for p in pts), np.float64, len(pts))
+        lat = np.fromiter((p[1] for p in pts), np.float64, len(pts))
+        return _hs._ecef(lon, lat, a, b)
+
+    above = ecef(xcol, y0 + cellh)
+    below = ecef(xcol, y0 - cellh)
+    right = ecef(xcol + cellw, y0)
+    nw = ecef(xcol - cellw, y0 + cellh)
+    ne = ecef(xcol + cellw, y0 + cellh)
+    sw = ecef(xcol - cellw, y0 - cellh)
+    se = ecef(xcol + cellw, y0 - cellh)
+    focal = tuple((nw[i] + ne[i] + sw[i] + se[i]) / 4.0 for i in range(3))
+    return {"vA": _hs._dist3(focal, above), "hA": _hs._dist3(above, ne),
+            "h": _hs._dist3(focal, right), "vB": _hs._dist3(focal, below),
+            "hB": _hs._dist3(below, se)}
+
+
+def _twi_tanbeta(z, valid, geom):
+    """tan(beta) = Horn gradient magnitude of ``z`` (meters, z-scaled) over the
+    per-row geometry ``geom`` (meters).  NoData neighbors fall back to the
+    focal value so the gradient is defined for every valid cell."""
+    H, W = z.shape
+    zp = np.full((H + 2, W + 2), np.nan)
+    zp[1:-1, 1:-1] = np.where(valid, z, np.nan)
+    NW, N_, NE = zp[:-2, :-2], zp[:-2, 1:-1], zp[:-2, 2:]
+    W_, C_, E_ = zp[1:-1, :-2], zp[1:-1, 1:-1], zp[1:-1, 2:]
+    SW, S_, SE = zp[2:, :-2], zp[2:, 1:-1], zp[2:, 2:]
+    ctr = np.where(valid, z, np.nan)
+    parts = [NW, N_, NE, W_, E_, SW, S_, SE]
+    parts = [np.where(np.isnan(p), ctr, p) for p in parts]
+    NW, N_, NE, W_, E_, SW, S_, SE = parts
+    hA = geom["hA"][:, None]; h = geom["h"][:, None]; hB = geom["hB"][:, None]
+    vA = geom["vA"][:, None]; vB = geom["vB"][:, None]
+    with np.errstate(invalid="ignore"):
+        dzdx = ((NE + 2.0 * E_ + SE) - (NW + 2.0 * W_ + SW)) / \
+               (2.0 * hA + 4.0 * h + 2.0 * hB)
+        dzdy = ((SW + 2.0 * S_ + SE) - (NW + 2.0 * N_ + NE)) / \
+               (4.0 * vA + 4.0 * vB)
+        tanb = np.hypot(dzdx, dzdy)
+    tanb[~valid] = np.nan
+    return tanb
+
+
+def _twi_priority_flood(z, valid, messages=None):
+    """Barnes et al. 2014 priority-flood. Returns (filled, order): the
+    depression-filled surface (same units as ``z``) and each cell's pop-order
+    (int64, -1 where invalid), used to route flow across flats."""
+    import heapq
+    from scipy.ndimage import binary_dilation
+    H, W = z.shape
+    Wp = W + 2
+    zpad = np.full((H + 2, Wp), np.inf, dtype=np.float64)
+    zpad[1:-1, 1:-1] = np.where(valid, z, np.inf)
+    vpad = np.zeros((H + 2, Wp), dtype=bool)
+    vpad[1:-1, 1:-1] = valid
+    closed2d = ~vpad
+    seed2d = binary_dilation(closed2d, structure=np.ones((3, 3), bool)) & vpad
+
+    filledL = zpad.ravel().tolist()
+    closedL = closed2d.ravel().tolist()
+    orderL = [-1] * ((H + 2) * Wp)
+    deltas = (-Wp - 1, -Wp, -Wp + 1, -1, 1, Wp - 1, Wp, Wp + 1)
+    heap = []
+    push = heapq.heappush
+    pop = heapq.heappop
+    cnt = 0
+    for i in np.flatnonzero(seed2d.ravel()).tolist():
+        push(heap, (filledL[i], cnt, i))
+        cnt += 1
+        closedL[i] = True
+
+    total = int(valid.sum()) or 1
+    step = max(1, total // 40)
+    o = 0
+    while heap:
+        e, _, idx = pop(heap)
+        orderL[idx] = o
+        o += 1
+        if messages is not None and o % step == 0:
+            _mh.phase_step(o, total)
+        for d in deltas:
+            n = idx + d
+            if not closedL[n]:
+                closedL[n] = True
+                if filledL[n] < e:
+                    filledL[n] = e
+                push(heap, (filledL[n], cnt, n))
+                cnt += 1
+    filled = np.array(filledL, dtype=np.float64).reshape(H + 2, Wp)[1:-1, 1:-1]
+    order = np.array(orderL, dtype=np.int64).reshape(H + 2, Wp)[1:-1, 1:-1]
+    return filled, order
+
+
+def _twi_receivers(filled, order, valid, geom):
+    """D8 receiver (flat downstream index, -1 = terminal) for every cell:
+    steepest descent on the FILLED surface; flats route to the valid neighbor
+    with the smallest flood ``order`` (toward the spill).  ``geom`` supplies
+    the true per-row ground distances (planar projected / geodesic
+    geographic)."""
+    H, W = filled.shape
+    fp = np.full((H + 2, W + 2), np.inf)
+    fp[1:-1, 1:-1] = np.where(valid, filled, np.inf)
+    BIG = np.iinfo(np.int64).max
+    op = np.full((H + 2, W + 2), BIG, dtype=np.int64)
+    op[1:-1, 1:-1] = np.where(valid, order, BIG)
+    fc = fp[1:-1, 1:-1]
+    oc = op[1:-1, 1:-1]
+    h = geom["h"]; vU = geom["vA"]; vB = geom["vB"]
+    dU = np.hypot(h, vU); dB = np.hypot(h, vB)
+    dirs = [(0, 1, h), (0, -1, h), (-1, 0, vU), (1, 0, vB),
+            (-1, 1, dU), (-1, -1, dU), (1, 1, dB), (1, -1, dB)]
+
+    best_s = np.zeros((H, W))
+    bdr = np.zeros((H, W), np.int64)
+    bdc = np.zeros((H, W), np.int64)
+    has = np.zeros((H, W), bool)
+    for dr, dc, dist in dirs:
+        nf = fp[1 + dr:1 + dr + H, 1 + dc:1 + dc + W]
+        with np.errstate(invalid="ignore"):
+            drop = fc - nf
+            s = np.where(drop > 0, drop / dist[:, None], -1.0)
+        upd = s > best_s
+        best_s = np.where(upd, s, best_s)
+        bdr = np.where(upd, dr, bdr)
+        bdc = np.where(upd, dc, bdc)
+        has |= upd
+
+    flat = valid & (~has)
+    best_o = oc.copy()
+    fdr = np.zeros((H, W), np.int64)
+    fdc = np.zeros((H, W), np.int64)
+    fhas = np.zeros((H, W), bool)
+    for dr, dc, _dist in dirs:
+        no = op[1 + dr:1 + dr + H, 1 + dc:1 + dc + W]
+        cand = flat & (no < best_o)
+        best_o = np.where(cand, no, best_o)
+        fdr = np.where(cand, dr, fdr)
+        fdc = np.where(cand, dc, fdc)
+        fhas |= cand
+    take = flat & fhas
+    bdr = np.where(take, fdr, bdr)
+    bdc = np.where(take, fdc, bdc)
+    has = has | take
+
+    rows = np.arange(H)[:, None]
+    cols = np.arange(W)[None, :]
+    rr = rows + bdr
+    cc = cols + bdc
+    recv = np.where(has & valid, rr * W + cc, -1).astype(np.int64)
+    return recv.ravel()
+
+
+def _twi_accumulate(recv, order, valid):
+    """Flow accumulation = number of upstream cells (excl. self), matching Esri
+    FlowAccumulation.  Processes valid cells in DECREASING flood order so each
+    cell is summed before its (always lower-order) receiver -- O(n), no queue
+    bookkeeping."""
+    H, W = order.shape
+    of = order.ravel()
+    vf = valid.ravel()
+    idx = np.flatnonzero(vf)
+    idx_sorted = idx[np.argsort(of[idx], kind="stable")[::-1]]
+    accL = [0.0] * (H * W)
+    recvA = recv.tolist()
+    for i in idx_sorted.tolist():
+        r = recvA[i]
+        if r >= 0:
+            accL[r] += accL[i] + 1.0
+    return np.array(accL, dtype=np.float64).reshape(H, W)
+
+
+def _twi_read_aligned(path, width, height, scratch, messages, what):
+    """Read an optional pre-computed raster that must share the DEM's grid."""
+    gdal = _mh._gdal()
+    src, copy = _hs._open_source(path, scratch, messages)
+    try:
+        if src.RasterXSize != width or src.RasterYSize != height:
+            raise arcpy.ExecuteError(
+                "The {w} raster is {a} x {b} but the DEM is {c} x {d}; they "
+                "must share the same grid (extent, cell size, alignment)."
+                .format(w=what, a=src.RasterXSize, b=src.RasterYSize,
+                        c=width, d=height))
+        band = src.GetRasterBand(1)
+        arr = band.ReadAsArray(0, 0, width, height).astype(np.float64)
+        nod = band.GetNoDataValue()
+    finally:
+        src = None
+        if copy:
+            try:
+                arcpy.management.Delete(copy)
+            except Exception:
+                pass
+    return arr, nod
+
+
+def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
+            slope_epsilon=0.0001, in_filled_dem=None, in_flow_accumulation=None,
+            out_filled_dem=None, out_flow_accumulation=None, messages=None):
+    """Topographic Wetness Index (TWI / CTI): TWI = ln(SCA / (tan(beta) +
+    eps)).  See the section header for the full method and citations."""
+    gdal = _mh._gdal()
+    eps = float(slope_epsilon)
+    if eps <= 0:
+        raise arcpy.ExecuteError("The slope epsilon must be positive.")
+    have_fac = bool(in_flow_accumulation)
+    have_fill = bool(in_filled_dem)
+    save_fill = bool(out_filled_dem) and not have_fill and not have_fac
+    save_fac = bool(out_flow_accumulation) and not have_fac
+    out_raster = _mh.resolve_raster_output(out_raster, messages)
+    if save_fill:
+        out_filled_dem = _mh.resolve_raster_output(out_filled_dem, messages)
+    if save_fac:
+        out_flow_accumulation = _mh.resolve_raster_output(
+            out_flow_accumulation, messages)
+
+    phases = [("Reading the DEM...", 1)]
+    if not have_fac:
+        phases += [("Filling sinks (priority-flood)...", 6),
+                   ("Tracing D8 flow directions...", 2),
+                   ("Accumulating flow...", 2)]
+    phases += [("Computing slope and TWI...", 2),
+               ("Saving the TWI raster...", 1),
+               ("Building pyramids...", 1),
+               ("Creating layer file and symbology...", 1)]
+    _mh.begin_phases(phases)
+
+    scratch = arcpy.env.scratchFolder
+    src, in_copy = _hs._open_source(in_raster, scratch, messages)
+    band = src.GetRasterBand(1)
+    width, height = src.RasterXSize, src.RasterYSize
+    if width < 3 or height < 3:
+        raise arcpy.ExecuteError("The DEM must be at least 3 x 3 cells.")
+    gt = src.GetGeoTransform()
+    proj = src.GetProjection()
+    in_nodata = band.GetNoDataValue()
+    sr = arcpy.Describe(in_raster).spatialReference
+    geographic = (sr.type == "Geographic")
+
+    elev_mpu = _hs._ELEV_METERS.get(elev_units, 1.0)
+    base_geom, _geo, zscale = _row_gradient_geometry(gt, height, sr, elev_mpu)
+    # slope geometry: geodesic on geographic always; on projected, honor choice
+    if geographic:
+        slope_geom = base_geom
+        slope_used = "Geodesic (spheroidal, per row)"
+    elif str(slope_method) == "Geodesic":
+        slope_geom = _twi_geodesic_projected_geom(gt, width, height, proj)
+        slope_used = "Geodesic (true ground distances)"
+    else:
+        slope_geom = base_geom
+        slope_used = "Planar"
+    # planimetric ground cell size (m) per row for the specific catchment area
+    sca_cell = np.sqrt(base_geom["h"] * base_geom["vA"])
+
+    zraw = band.ReadAsArray(0, 0, width, height).astype(np.float64)
+    valid = np.isfinite(zraw)
+    if in_nodata is not None:
+        valid &= (zraw != in_nodata)
+    src = None
+    if in_copy:
+        try:
+            arcpy.management.Delete(in_copy)
+        except Exception:
+            pass
+    nvalid = int(valid.sum())
+    if nvalid == 0:
+        raise arcpy.ExecuteError("The DEM has no valid cells.")
+    _hs._msg(messages, "DEM: {:,} x {:,} cells ({:,} valid); {}; slope "
+             "method: {}.".format(width, height, nvalid,
+             "geographic" if geographic else "projected", slope_used))
+
+    # ---- flow accumulation (supplied, or fill -> D8 -> accumulate) ----
+    filled = None
+    if have_fac:
+        acc, _n = _twi_read_aligned(in_flow_accumulation, width, height,
+                                    scratch, messages, "flow-accumulation")
+        acc = np.where(np.isfinite(acc) & (acc >= 0), acc, 0.0)
+        _hs._msg(messages, "Using supplied flow-accumulation raster (skipping "
+                 "fill, flow direction, and accumulation).")
+    else:
+        fill_input = zraw
+        if have_fill:
+            farr, fnod = _twi_read_aligned(in_filled_dem, width, height,
+                                           scratch, messages, "filled-DEM")
+            fmask = np.isfinite(farr)
+            if fnod is not None:
+                fmask &= (farr != fnod)
+            fill_input = np.where(fmask, farr, zraw)
+            _hs._msg(messages, "Using supplied filled DEM as the routing "
+                     "surface.")
+        _mh.phase_advance("Filling sinks (priority-flood)...")
+        filled, order = _twi_priority_flood(fill_input, valid, messages)
+        _mh.phase_advance("Tracing D8 flow directions...")
+        recv = _twi_receivers(filled, order, valid, base_geom)
+        _mh.phase_advance("Accumulating flow...")
+        acc = _twi_accumulate(recv, order, valid)
+        del recv, order
+
+    # ---- slope (original DEM) and TWI ----
+    _mh.phase_advance("Computing slope and TWI...")
+    zm = np.where(valid, zraw * zscale, np.nan)
+    tanb = _twi_tanbeta(zm, valid, slope_geom)
+    del zm
+    sca = (acc + 1.0) * sca_cell[:, None]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        twi = np.log(sca / (tanb + eps))
+    out_valid = valid & np.isfinite(twi)
+    twi = np.where(out_valid, twi, NODATA_OUT).astype(np.float32)
+    _hs._msg(messages, "TWI ({}): {:,} cells; SCA = (flow accumulation + 1) x "
+             "cell size, slope epsilon {:g}.".format(
+                 _TWI_CITATION, int(out_valid.sum()), eps))
+
+    def _write(arr, path, valid_mask, kind):
+        op = arcpy.CreateUniqueName("twi_%s.tif" % kind, scratch)
+        ds, ob = _make_output(gdal, op, gt, proj, width, height)
+        ob.WriteArray(np.where(valid_mask, arr, NODATA_OUT).astype(np.float32))
+        st = _mh._RasterStats()
+        if valid_mask.any():
+            st.add(arr[valid_mask].astype(np.float64))
+        os_ = _mh._finalize_stats(ob, st, messages)
+        if os_ is not None:
+            os_["on_raster"] = _mh._write_gtiff_stats(ob, os_)
+        ob.FlushCache(); ds.FlushCache(); ob = None; ds = None
+        return op, os_
+
+    out_path, out_stats = _write(twi.astype(np.float64), None, out_valid, "twi")
+
+    _mh.phase_advance("Saving the TWI raster...")
+    _deliver_output(
+        out_path, out_raster, out_stats, messages,
+        title=os.path.basename(str(out_raster)),
+        summary=("Created by Topographic Wetness Index from {src}: SCA = "
+                 "(flow accumulation + 1) x cell size, slope epsilon {e:g}, "
+                 "slope method {sm}. Flow: {fl}.").format(
+                     src=str(in_raster), e=eps, sm=slope_used,
+                     fl=("supplied flow accumulation" if have_fac else
+                         "internal priority-flood fill + D8")),
+        description=(
+            "Topographic Wetness Index (TWI), also called the Compound "
+            "Topographic Index (CTI): ln( specific catchment area / (tan(slope)"
+            " + epsilon) ). High values mark cells with large upslope "
+            "contributing area and/or gentle slope (valley bottoms, "
+            "convergence zones -- prone to wetness); low values mark small "
+            "area and/or steep slope (ridges, divergence zones -- drier). "
+            "Specific catchment area = (flow accumulation + 1) x cell size, "
+            "with the unit contour length taken as the cell size (each cell is "
+            "its own outlet). " + _TWI_CITATION),
+        tags=("topographic wetness index, TWI, compound topographic index, "
+              "CTI, specific catchment area, wetness, hydrology, topography, "
+              "Jenness Enterprises"),
+        citation=_TWI_CITATION)
+
+    if save_fac:
+        fp, fs = _write(acc, None, valid, "fac")
+        _deliver_output(
+            fp, out_flow_accumulation, fs, messages,
+            title=os.path.basename(str(out_flow_accumulation)),
+            summary=("Created by Topographic Wetness Index from {src}: D8 flow "
+                     "accumulation (upstream cell count, excl. self).").format(
+                         src=str(in_raster)),
+            description=("D8 flow accumulation (number of upstream cells "
+                         "draining to each cell, excluding the cell itself), "
+                         "from a priority-flood-filled DEM. " + _TWI_CIT_D8),
+            tags=("flow accumulation, D8, upslope area, hydrology, topography, "
+                  "Jenness Enterprises"),
+            citation=_TWI_CIT_D8)
+    if save_fill and filled is not None:
+        pp, ps = _write(filled, None, valid, "fill")
+        _deliver_output(
+            pp, out_filled_dem, ps, messages,
+            title=os.path.basename(str(out_filled_dem)),
+            summary=("Created by Topographic Wetness Index from {src}: "
+                     "depression-filled DEM (priority-flood).").format(
+                         src=str(in_raster)),
+            description=("Depression-filled (hydrologically conditioned) DEM "
+                         "produced by the priority-flood algorithm; sinks are "
+                         "raised to their lowest spill point so flow routing "
+                         "does not get stuck. " + _TWI_CIT_FILL),
+            tags=("filled DEM, fill sinks, priority-flood, depression filling, "
+                  "hydrology, topography, Jenness Enterprises"),
+            citation=_TWI_CIT_FILL)
+
+    _mh.phase_advance("Creating layer file and symbology...")
+    # dry (low TWI) tan -> pale -> wet (high TWI) blue
+    out_lyrx = _mh.default_stretch_lyrx(
+        out_raster, [(198, 153, 86), (238, 238, 210), (33, 102, 172)],
+        messages=messages)
+    _mh.end_phases()
+    _hs._msg(messages, "Topographic Wetness Index complete: {}".format(
+        out_raster))
+    return out_lyrx

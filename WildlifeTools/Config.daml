@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.29.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.30.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -52,6 +52,7 @@
           <button refID="WildlifeTools_FractalDimension" size="large" />
           <button refID="WildlifeTools_LSRIOnDEM" size="large" />
           <button refID="WildlifeTools_LSRIOnContourPolylines" size="large" />
+          <button refID="WildlifeTools_TopographicWetnessIndex" size="large" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -436,6 +437,17 @@
                 keytip="LP">
           <tooltip heading="LSRI on Contours (Land Surface Ruggedness Index)">
             Opens the LSRI on Contours tool from the Jenness Enterprises toolbox: the Land Surface Ruggedness Index (Beasom, Wiggers, and Giardino 1983), computed directly from an existing contour (or any polyline) feature class by measuring total line length within a circular neighborhood of each cell. Honors the input's current selection. Similar in spirit to Esri's Line Density tool, but reports total length rather than density. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_TopographicWetnessIndex"
+                caption="Topographic Wetness Index"
+                className="TWIButton"
+                loadOnClick="true"
+                smallImage="Images\TWI_16.png"
+                largeImage="Images\TWI_32.png"
+                keytip="TW">
+          <tooltip heading="Topographic Wetness Index (TWI / CTI)">
+            Opens the Topographic Wetness Index tool from the Jenness Enterprises toolbox: TWI (also called the Compound Topographic Index) = ln( specific catchment area / (tan(slope) + epsilon) ), marking cells with large upslope area and/or gentle slope (wet valley bottoms and convergence zones) versus dry ridges and steep, diverging slopes (Beven and Kirkby 1979). Sink filling (priority-flood; Barnes, Lehman, and Mulla 2014), D8 flow direction (O'Callaghan and Mark 1984), and flow accumulation are computed internally -- no Spatial Analyst required -- or you can supply a pre-filled DEM and/or flow-accumulation raster. Slope comes from the original DEM. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_SimpleHypsometricShading"

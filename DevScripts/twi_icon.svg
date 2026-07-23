@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Topographic Wetness Index (TWI / CTI)</title>
+  <!-- A waterfall cross-section: a body of water on a flat, lit PLATEAU spills
+       over the lip and falls down a shadowed vertical CLIFF face into a pool
+       sitting on the flat, lit valley FLOOR. The gray matrix is shaded in
+       three tonal bands (light plateau / dark cliff / light floor) so the
+       terrain reads as a real cliff with flats above and below. -->
+  <defs>
+    <linearGradient id="twicliff" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#727272"/>
+      <stop offset="1" stop-color="#545454"/>
+    </linearGradient>
+    <linearGradient id="twifall" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3f8ed6"/>
+      <stop offset="1" stop-color="#2166ac"/>
+    </linearGradient>
+  </defs>
+  <!-- terrain block -->
+  <rect x="2" y="3" width="28" height="26" rx="1.2" fill="#9a9a9a"
+        stroke="#1a1a1a" stroke-width="1.2"/>
+  <!-- flat, lit plateau on top -->
+  <rect x="2.6" y="3.6" width="26.8" height="6.1" fill="#ADADAD"/>
+  <!-- shadowed vertical cliff face -->
+  <rect x="2.6" y="9.7" width="26.8" height="11.6" fill="url(#twicliff)"/>
+  <!-- bright cliff lip catching the light -->
+  <rect x="2.6" y="9.1" width="26.8" height="0.9" fill="#C9C9C9"/>
+  <!-- flat, lit valley floor -->
+  <rect x="2.6" y="21.3" width="26.8" height="7.1" fill="#ADADAD"/>
+  <!-- shadow where the cliff base meets the floor -->
+  <rect x="2.6" y="21.3" width="26.8" height="1.0" fill="#666666"/>
+
+  <!-- body of water on the plateau -->
+  <rect x="5" y="4.5" width="22" height="4.6" rx="2.3" fill="#2166ac"
+        stroke="#0d3b66" stroke-width="0.5"/>
+  <!-- waterfall over the lip and down the cliff -->
+  <path d="M 13.4 8.4 L 18.6 8.4 L 17.5 21.6 L 14.5 21.6 Z" fill="url(#twifall)"/>
+  <rect x="15.1" y="10" width="1.0" height="10.5" fill="#9fccf0" opacity="0.85"/>
+  <!-- pool on the valley floor, with a splash -->
+  <ellipse cx="16" cy="24.4" rx="10" ry="2.7" fill="#2166ac"
+           stroke="#0d3b66" stroke-width="0.5"/>
+  <path d="M 12.4 22.8 Q 16 20.5 19.6 22.8" fill="none" stroke="#9fccf0"
+        stroke-width="1.0" stroke-linecap="round"/>
+</svg>

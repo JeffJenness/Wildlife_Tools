@@ -193,7 +193,8 @@ class Toolbox(object):
                       ShadowPolygons, EnhancedHillshade, MDOWHillshade,
                       MultiSunHillshade, SimpleHypsometricShading,
                       BlurredHillshade, SurfaceAreaRatio, VRM, TRI,
-                      FractalDimension, LSRIOnDEM, LSRIOnContourPolylines]
+                      FractalDimension, TopographicWetnessIndex,
+                      LSRIOnDEM, LSRIOnContourPolylines]
 
 
 class LoCoHStandard(object):
@@ -3544,6 +3545,224 @@ class FractalDimension(object):
                 "method": P["method"].valueAsText,
                 "window_size": P["window_size"].value,
                 "elev_units": P["elev_units"].valueAsText,
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class TopographicWetnessIndex(object):
+    """Topographic Wetness Index (TWI / CTI): ln(SCA / (tan(beta) + eps)),
+    with specific catchment area SCA = (flow accumulation + 1) x cell size and
+    slope from the original DEM. Fill (priority-flood), D8 flow direction, and
+    flow accumulation are computed internally (no Spatial Analyst); a user may
+    supply their own filled DEM and/or flow-accumulation raster to skip those
+    steps. Beven & Kirkby 1979."""
+
+    def __init__(self):
+        self.label = "Topographic Wetness Index"
+        self.description = (
+            "Computes the Topographic Wetness Index (TWI), also called the "
+            "Compound Topographic Index (CTI): ln( specific catchment area / "
+            "(tan(slope) + epsilon) ). High values mark cells with large "
+            "upslope area and/or gentle slope (valley bottoms, convergence "
+            "zones -- prone to wetness); low values mark ridges and steep, "
+            "diverging slopes. Sink filling (priority-flood), D8 flow "
+            "direction, and flow accumulation are computed internally -- no "
+            "Spatial Analyst required -- or you can supply a pre-filled DEM "
+            "and/or flow-accumulation raster. Beven & Kirkby 1979.")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_units = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input elevation raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output TWI raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required", direction="Output")
+        slope_method = arcpy.Parameter(
+            displayName="Slope method (projected DEMs)", name="slope_method",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        slope_method.filter.type = "ValueList"
+        slope_method.filter.list = topographic_tools.SLOPE_METHODS
+        slope_method.value = topographic_tools.SLOPE_METHODS[0]   # Planar
+        elev_units = arcpy.Parameter(
+            displayName="Elevation units", name="elev_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        elev_units.filter.type = "ValueList"
+        elev_units.filter.list = hillshade.ELEV_UNITS
+        slope_epsilon = arcpy.Parameter(
+            displayName="Value added to slope (avoids divide-by-zero)",
+            name="slope_epsilon", datatype="GPDouble",
+            parameterType="Required", direction="Input")
+        slope_epsilon.value = 0.0001
+        in_filled_dem = arcpy.Parameter(
+            displayName="Existing filled DEM (optional)", name="in_filled_dem",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Optional", direction="Input",
+            category="Use existing intermediate rasters (optional)")
+        in_flow_accumulation = arcpy.Parameter(
+            displayName="Existing flow-accumulation raster (optional)",
+            name="in_flow_accumulation",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Optional", direction="Input",
+            category="Use existing intermediate rasters (optional)")
+        out_filled_dem = arcpy.Parameter(
+            displayName="Output filled DEM", name="out_filled_dem",
+            datatype="DERasterDataset", parameterType="Optional",
+            direction="Output",
+            category="Save computed intermediate rasters (optional)")
+        out_flow_accumulation = arcpy.Parameter(
+            displayName="Output flow-accumulation raster",
+            name="out_flow_accumulation", datatype="DERasterDataset",
+            parameterType="Optional", direction="Output",
+            category="Save computed intermediate rasters (optional)")
+        params = [in_raster, out_raster, slope_method, elev_units,
+                  slope_epsilon, in_filled_dem, in_flow_accumulation,
+                  out_filled_dem, out_flow_accumulation]
+        saved = _load_tool_defaults("TopographicWetnessIndex")
+        for p in (slope_method, elev_units, slope_epsilon):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    _detect_units = EnhancedHillshade._detect_units
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr, units = P["in_raster"], P["out_raster"], P["elev_units"]
+        smeth = P["slope_method"]
+        if inr.valueAsText:
+            detected, locked = self._detect_units(inr.valueAsText)
+            if locked:
+                if not units.altered or units.valueAsText == self._auto_units:
+                    units.value = detected
+                    self._auto_units = detected
+                units.enabled = False
+            else:
+                units.enabled = True
+            # slope method only applies to projected DEMs (geographic is always
+            # geodesic -- spheroidal per row)
+            try:
+                geo = arcpy.Describe(inr.valueAsText).spatialReference.type \
+                    == "Geographic"
+            except Exception:
+                geo = False
+            smeth.enabled = not geo
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(inr.valueAsText))[0] + "_TWI")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        # Do not offer to save an intermediate the user is supplying: a filled
+        # DEM is only computed when neither a filled DEM nor a flow-accumulation
+        # raster is supplied; flow accumulation is computed unless supplied.
+        have_fac = bool(P["in_flow_accumulation"].valueAsText)
+        have_fill = bool(P["in_filled_dem"].valueAsText)
+        P["in_filled_dem"].enabled = not have_fac
+        ofill, ofac = P["out_filled_dem"], P["out_flow_accumulation"]
+        ofill.enabled = not (have_fill or have_fac)
+        ofac.enabled = not have_fac
+        if not ofill.enabled and (not ofill.altered):
+            ofill.value = None
+        if not ofac.enabled and (not ofac.altered):
+            ofac.value = None
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, units = P["in_raster"], P["elev_units"]
+        w = h = None
+        if inr.valueAsText:
+            try:
+                d = arcpy.Describe(inr.valueAsText)
+                if d.bandCount != 1:
+                    inr.setErrorMessage("The elevation raster must be single band.")
+                w, h = d.width, d.height
+            except Exception:
+                pass
+            if units.enabled and not units.valueAsText:
+                units.setErrorMessage(
+                    "The DEM does not specify its elevation units; choose "
+                    "Meters or Feet.")
+        eps = P["slope_epsilon"].value
+        if eps is not None and eps <= 0:
+            P["slope_epsilon"].setErrorMessage(
+                "Enter a small positive number (the default 0.0001 is typical).")
+        for nm, lbl in (("in_filled_dem", "filled DEM"),
+                        ("in_flow_accumulation", "flow-accumulation raster")):
+            v = P[nm].valueAsText
+            if v and w is not None:
+                try:
+                    d2 = arcpy.Describe(v)
+                    if d2.width != w or d2.height != h:
+                        P[nm].setErrorMessage(
+                            "This {l} ({a} x {b}) must share the DEM's grid "
+                            "({c} x {d}: same extent, cell size, and "
+                            "alignment).".format(l=lbl, a=d2.width, b=d2.height,
+                                                  c=w, d=h))
+                except Exception:
+                    pass
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(topographic_tools)
+            P = {p.name: p for p in parameters}
+            geo = False
+            try:
+                geo = arcpy.Describe(P["in_raster"].valueAsText) \
+                    .spatialReference.type == "Geographic"
+            except Exception:
+                pass
+            out_lyrx = topographic_tools.run_twi(
+                in_raster=P["in_raster"].valueAsText,
+                out_raster=P["out_raster"].valueAsText,
+                elev_units=P["elev_units"].valueAsText or "Meters",
+                slope_method=(P["slope_method"].valueAsText
+                              or topographic_tools.SLOPE_METHODS[0]),
+                slope_epsilon=P["slope_epsilon"].value,
+                in_filled_dem=P["in_filled_dem"].valueAsText or None,
+                in_flow_accumulation=P["in_flow_accumulation"].valueAsText or None,
+                out_filled_dem=(P["out_filled_dem"].valueAsText
+                                if P["out_filled_dem"].enabled else None),
+                out_flow_accumulation=(P["out_flow_accumulation"].valueAsText
+                                       if P["out_flow_accumulation"].enabled
+                                       else None),
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+            _writeback_resolved_raster(P, "out_filled_dem")
+            _writeback_resolved_raster(P, "out_flow_accumulation")
+            if out_lyrx:
+                try:
+                    P["out_raster"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage(
+                        "Could not set output symbology: {}".format(e))
+            _save_tool_defaults("TopographicWetnessIndex", {
+                "slope_method": P["slope_method"].valueAsText,
+                "elev_units": P["elev_units"].valueAsText,
+                "slope_epsilon": P["slope_epsilon"].value,
             })
         except arcpy.ExecuteError:
             raise

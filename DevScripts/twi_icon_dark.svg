@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Topographic Wetness Index (TWI / CTI) - dark</title>
+  <!-- Dark-theme variant: same waterfall/cliff motif, white terrain outline so
+       it reads on a dark ribbon; the cliff band is lifted a shade so it stays
+       distinct from the dark background, and the water uses a brighter blue. -->
+  <defs>
+    <linearGradient id="twicliffd" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8a8a8a"/>
+      <stop offset="1" stop-color="#6a6a6a"/>
+    </linearGradient>
+    <linearGradient id="twifalld" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5aa6e6"/>
+      <stop offset="1" stop-color="#3d8bd4"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="3" width="28" height="26" rx="1.2" fill="#b0b0b0"
+        stroke="#f5f5f5" stroke-width="1.2"/>
+  <rect x="2.6" y="3.6" width="26.8" height="6.1" fill="#c4c4c4"/>
+  <rect x="2.6" y="9.7" width="26.8" height="11.6" fill="url(#twicliffd)"/>
+  <rect x="2.6" y="9.1" width="26.8" height="0.9" fill="#e2e2e2"/>
+  <rect x="2.6" y="21.3" width="26.8" height="7.1" fill="#c4c4c4"/>
+  <rect x="2.6" y="21.3" width="26.8" height="1.0" fill="#7c7c7c"/>
+
+  <rect x="5" y="4.5" width="22" height="4.6" rx="2.3" fill="#3d8bd4"
+        stroke="#0d3b66" stroke-width="0.5"/>
+  <path d="M 13.4 8.4 L 18.6 8.4 L 17.5 21.6 L 14.5 21.6 Z" fill="url(#twifalld)"/>
+  <rect x="15.1" y="10" width="1.0" height="10.5" fill="#c9e6fb" opacity="0.85"/>
+  <ellipse cx="16" cy="24.4" rx="10" ry="2.7" fill="#3d8bd4"
+           stroke="#0d3b66" stroke-width="0.5"/>
+  <path d="M 12.4 22.8 Q 16 20.5 19.6 22.8" fill="none" stroke="#c9e6fb"
+        stroke-width="1.0" stroke-linecap="round"/>
+</svg>
