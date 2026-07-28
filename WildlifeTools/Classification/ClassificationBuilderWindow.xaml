@@ -1,0 +1,158 @@
+<controls:ProWindow x:Class="WildlifeTools.Classification.ClassificationBuilderWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        xmlns:local="clr-namespace:WildlifeTools.Classification"
+        Title="Classification System Builder"
+        WindowStartupLocation="CenterOwner"
+        Width="880" Height="620" MinWidth="720" MinHeight="480">
+  <controls:ProWindow.Resources>
+    <local:RgbToBrushConverter x:Key="RgbToBrush" />
+  </controls:ProWindow.Resources>
+  <Grid Margin="10">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="240" />
+      <ColumnDefinition Width="8" />
+      <ColumnDefinition Width="*" />
+    </Grid.ColumnDefinitions>
+
+    <!-- Left: saved systems -->
+    <DockPanel Grid.Column="0">
+      <TextBlock DockPanel.Dock="Top" Text="Saved classification systems"
+                 FontWeight="Bold" Margin="0,0,0,4" />
+      <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,6,0,0">
+        <Button x:Name="NewBtn" Content="New" Width="52" Click="OnNew" Margin="0,0,4,0" />
+        <Button x:Name="DupBtn" Content="Duplicate" Width="70" Click="OnDuplicate" Margin="0,0,4,0" />
+        <Button x:Name="DelBtn" Content="Delete" Width="56" Click="OnDelete" />
+      </StackPanel>
+      <ListBox x:Name="SystemList" SelectionChanged="OnSystemSelected"
+               DisplayMemberPath="Name" />
+    </DockPanel>
+
+    <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Center"
+                  VerticalAlignment="Stretch" Background="Transparent" />
+
+    <!-- Right: editor -->
+    <DockPanel Grid.Column="2" x:Name="Editor">
+      <Grid DockPanel.Dock="Top" Margin="0,0,0,6">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Grid.Column="0" Text="Name" VerticalAlignment="Center" Margin="0,0,6,4" />
+        <TextBox   Grid.Row="0" Grid.Column="1" x:Name="NameBox" Margin="0,0,10,4" />
+        <TextBlock Grid.Row="0" Grid.Column="2" Text="Family" VerticalAlignment="Center" Margin="0,0,6,4" />
+        <ComboBox  Grid.Row="0" Grid.Column="3" x:Name="FamilyBox" Width="140" Margin="0,0,0,4"
+                   SelectionChanged="OnFamilyChanged" />
+        <TextBlock Grid.Row="1" Grid.Column="0" Text="Description" VerticalAlignment="Center" Margin="0,0,6,4" />
+        <TextBox   Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" x:Name="DescBox" Margin="0,0,0,4" />
+        <TextBlock Grid.Row="2" Grid.Column="0" Text="Slope units" VerticalAlignment="Center" Margin="0,0,6,0" />
+        <StackPanel Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Orientation="Horizontal">
+          <ComboBox x:Name="SlopeUnitsBox" Width="140"
+                    ItemsSource="{x:Static local:ClassificationStore.SlopeUnitsBlank}" />
+          <TextBlock Text="Assumed by this system's slope thresholds; only used to warn about mismatched slope rasters."
+                     Foreground="Gray" VerticalAlignment="Center" Margin="8,0,0,0" TextWrapping="Wrap" />
+        </StackPanel>
+      </Grid>
+
+      <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+                  HorizontalAlignment="Right" Margin="0,8,0,0">
+        <TextBlock x:Name="RolesHint" VerticalAlignment="Center" Foreground="Gray"
+                   Margin="0,0,12,0" />
+        <Button x:Name="SaveBtn" Content="Save" Width="80" Click="OnSave" Margin="0,0,6,0"
+                IsDefault="True" />
+        <Button Content="Close" Width="80" Click="OnClose" IsCancel="True" />
+      </StackPanel>
+
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="*" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Classes -->
+        <DockPanel Grid.Row="0">
+          <DockPanel DockPanel.Dock="Top">
+            <TextBlock Text="Classes" FontWeight="Bold" VerticalAlignment="Center" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+              <Button Content="Add class" Click="OnAddClass" Margin="0,0,4,0" />
+              <Button Content="Remove class" Click="OnRemoveClass" />
+            </StackPanel>
+          </DockPanel>
+          <DataGrid x:Name="ClassGrid" AutoGenerateColumns="False"
+                    CanUserAddRows="False" SelectionMode="Single"
+                    SelectionChanged="OnClassSelected" HeadersVisibility="Column"
+                    Margin="0,4,0,0">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="55" />
+              <DataGridTextColumn Header="Class name" Binding="{Binding Name}" Width="*" />
+              <DataGridTextColumn Header="R" Binding="{Binding R}" Width="38" />
+              <DataGridTextColumn Header="G" Binding="{Binding G}" Width="38" />
+              <DataGridTextColumn Header="B" Binding="{Binding B}" Width="38" />
+              <DataGridTemplateColumn Header="Color" Width="52">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Border Height="16" Margin="3" CornerRadius="2"
+                            BorderBrush="#888" BorderThickness="1">
+                      <Border.Background>
+                        <MultiBinding Converter="{StaticResource RgbToBrush}">
+                          <Binding Path="R" /><Binding Path="G" /><Binding Path="B" />
+                        </MultiBinding>
+                      </Border.Background>
+                    </Border>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+            </DataGrid.Columns>
+          </DataGrid>
+        </DockPanel>
+
+        <GridSplitter Grid.Row="1" Height="6" HorizontalAlignment="Stretch"
+                      Background="Transparent" />
+
+        <!-- Criteria for selected class -->
+        <DockPanel Grid.Row="2">
+          <DockPanel DockPanel.Dock="Top">
+            <TextBlock x:Name="CritHeader" Text="Criteria (select a class above)"
+                       FontWeight="Bold" VerticalAlignment="Center" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+              <Button Content="Add criterion" Click="OnAddCriterion" Margin="0,0,4,0" />
+              <Button Content="Remove criterion" Click="OnRemoveCriterion" />
+            </StackPanel>
+          </DockPanel>
+          <DataGrid x:Name="CritGrid" AutoGenerateColumns="False"
+                    CanUserAddRows="False" SelectionMode="Single"
+                    HeadersVisibility="Column" Margin="0,4,0,0">
+            <DataGrid.Columns>
+              <DataGridComboBoxColumn Header="Input" Width="120"
+                  SelectedItemBinding="{Binding Input}"
+                  ItemsSource="{x:Static local:ClassificationStore.AllRoles}" />
+              <DataGridComboBoxColumn Header="Units" Width="100"
+                  SelectedItemBinding="{Binding Units}"
+                  ItemsSource="{x:Static local:ClassificationStore.UnitsList}" />
+              <DataGridComboBoxColumn Header="Op" Width="55"
+                  SelectedItemBinding="{Binding Op1}"
+                  ItemsSource="{x:Static local:ClassificationStore.Operators}" />
+              <DataGridTextColumn Header="Value" Binding="{Binding Val1}" Width="70" />
+              <DataGridComboBoxColumn Header="And/Or" Width="65"
+                  SelectedItemBinding="{Binding Join}"
+                  ItemsSource="{x:Static local:ClassificationStore.JoinOptions}" />
+              <DataGridComboBoxColumn Header="Op 2" Width="55"
+                  SelectedItemBinding="{Binding Op2}"
+                  ItemsSource="{x:Static local:ClassificationStore.OperatorsBlank}" />
+              <DataGridTextColumn Header="Value 2" Binding="{Binding Val2}" Width="70" />
+            </DataGrid.Columns>
+          </DataGrid>
+        </DockPanel>
+      </Grid>
+    </DockPanel>
+  </Grid>
+</controls:ProWindow>

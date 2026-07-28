@@ -143,6 +143,26 @@
     <Content Include="Images\TWI_32.png" />
     <Content Include="DarkImages\TWI_16.png" />
     <Content Include="DarkImages\TWI_32.png" />
+    <Content Include="Images\TPI_16.png" />
+    <Content Include="Images\TPI_32.png" />
+    <Content Include="DarkImages\TPI_16.png" />
+    <Content Include="DarkImages\TPI_32.png" />
+    <Content Include="Images\SlopePos_16.png" />
+    <Content Include="Images\SlopePos_32.png" />
+    <Content Include="DarkImages\SlopePos_16.png" />
+    <Content Include="DarkImages\SlopePos_32.png" />
+    <Content Include="Images\Landform_16.png" />
+    <Content Include="Images\Landform_32.png" />
+    <Content Include="DarkImages\Landform_16.png" />
+    <Content Include="DarkImages\Landform_32.png" />
+    <Content Include="Images\GenClass_16.png" />
+    <Content Include="Images\GenClass_32.png" />
+    <Content Include="DarkImages\GenClass_16.png" />
+    <Content Include="DarkImages\GenClass_32.png" />
+    <Content Include="Images\ClassBuilder_16.png" />
+    <Content Include="Images\ClassBuilder_32.png" />
+    <Content Include="DarkImages\ClassBuilder_16.png" />
+    <Content Include="DarkImages\ClassBuilder_32.png" />
     <Content Include="Images\LSRI_DEM_16.png" />
     <Content Include="Images\LSRI_DEM_32.png" />
     <Content Include="DarkImages\LSRI_DEM_16.png" />
@@ -193,8 +213,8 @@
        metadata sidecars, and layer templates) next to the add-in assembly so the
        ribbon buttons can locate and run it. __pycache__ is excluded. -->
   <ItemGroup>
-    <None Remove="Toolboxes\**\*.pyt;Toolboxes\**\*.py;Toolboxes\**\*.lyrx;Toolboxes\**\*.xml;Toolboxes\**\*.html;Toolboxes\**\*.css;Toolboxes\**\*.png" />
-    <Content Include="Toolboxes\**\*.pyt;Toolboxes\**\*.py;Toolboxes\**\*.lyrx;Toolboxes\**\*.xml;Toolboxes\**\*.html;Toolboxes\**\*.css;Toolboxes\**\*.png">
+    <None Remove="Toolboxes\**\*.pyt;Toolboxes\**\*.py;Toolboxes\**\*.lyrx;Toolboxes\**\*.xml;Toolboxes\**\*.html;Toolboxes\**\*.css;Toolboxes\**\*.png;Toolboxes\**\*.json" />
+    <Content Include="Toolboxes\**\*.pyt;Toolboxes\**\*.py;Toolboxes\**\*.lyrx;Toolboxes\**\*.xml;Toolboxes\**\*.html;Toolboxes\**\*.css;Toolboxes\**\*.png;Toolboxes\**\*.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

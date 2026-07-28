@@ -1040,6 +1040,88 @@ def default_stretch_lyrx(out_raster, colors, messages=None):
     return out_lyrx
 
 
+def default_unique_value_lyrx(out_raster, classes, field="Class_Name",
+                              messages=None):
+    """Create a .lyrx beside ``out_raster`` with a UNIQUE VALUES renderer keyed
+    on ``field`` (default the Class_Name string field of the raster's attribute
+    table), one entry per class -- ``classes`` is a list of dicts with 'value',
+    'name', and optional 'color' [r, g, b]. Returns the .lyrx path (set it as the
+    tool's output parameter ``.symbology`` in the .pyt), or None. Never raises.
+
+    A GDAL colormap on a Byte raster is inherently a full 0-255 table, so every
+    value with no class shows as a black legend swatch under Colormap symbology.
+    A unique-value renderer on Class_Name lists only the classes that exist.
+    Same MakeRasterLayer -> SaveToLayerFile -> patch-colorizer pattern as
+    ``default_stretch_lyrx``."""
+    try:
+        path = arcpy.Describe(out_raster).catalogPath
+        name = os.path.splitext(os.path.basename(path))[0]
+    except Exception as e:
+        if messages is not None:
+            messages.addWarningMessage("Could not create layer file: {}".format(e))
+        return None
+    ws = os.path.dirname(path)
+    lyr_dir = os.path.dirname(ws) if ws.lower().endswith((".gdb", ".sde")) else ws
+    out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
+    tmp = "jenness_uv_tmp"
+    try:
+        try:
+            arcpy.management.Delete(tmp)
+        except Exception:
+            pass
+        arcpy.management.MakeRasterLayer(path, tmp)
+        arcpy.management.SaveToLayerFile(tmp, out_lyrx, "ABSOLUTE")
+    except Exception as e:
+        if messages is not None:
+            messages.addWarningMessage("Could not create layer file: {}".format(e))
+        return None
+    finally:
+        try:
+            arcpy.management.Delete(tmp)
+        except Exception:
+            pass
+
+    try:
+        with open(out_lyrx, encoding="utf-8") as f:
+            lyr = json.load(f)
+        out_ld = lyr["layerDefinitions"][0]
+        out_ld["name"] = name
+
+        def _rgb(c):
+            c = list(c) if c else [156, 156, 156]
+            return {"type": "CIMRGBColor",
+                    "values": [int(c[0]), int(c[1]), int(c[2]), 100]}
+
+        uv_classes = []
+        for c in sorted(classes, key=lambda c: int(c["value"])):
+            label = str(c.get("name", c["value"]))
+            uv_classes.append({
+                "type": "CIMRasterUniqueValueClass",
+                "values": [label],
+                "label": label,
+                "color": _rgb(c.get("color")),
+                "editable": True,
+            })
+        out_ld["colorizer"] = {
+            "type": "CIMRasterUniqueValueColorizer",
+            "resamplingType": "NearestNeighbor",
+            "noDataColor": {"type": "CIMRGBColor", "values": [255, 255, 255, 0]},
+            "fieldName": field,
+            "groups": [{
+                "type": "CIMRasterUniqueValueGroup",
+                "classes": uv_classes,
+            }],
+        }
+        with open(out_lyrx, "w", encoding="utf-8") as f:
+            json.dump(lyr, f)
+    except Exception as e:
+        if messages is not None:
+            messages.addWarningMessage(
+                "Layer file created but unique-value symbology could not be "
+                "applied: {}".format(e))
+    return out_lyrx
+
+
 def _apply_known_statistics(raster, stats, messages):
     """Set band statistics on ``raster`` from precomputed values (no scan).
 

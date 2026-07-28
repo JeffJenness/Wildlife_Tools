@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Landform Classification</title>
+  <!-- A small landform map patch: tan uplands with a blue drainage network
+       (Y-shaped) and a red ridge crest: the canyon, slope, and ridge landform
+       categories seen from above. -->
+  <rect x="2.5" y="2.5" width="27" height="27" rx="2" fill="#e6d8a8"
+        stroke="#1a1a1a" stroke-width="1.2"/>
+  <!-- open slopes / mesas patches -->
+  <path d="M 3.5 3.5 L 12 3.5 L 7 12 Z" fill="#c8c88c" opacity="0.8"/>
+  <path d="M 28.5 15 L 28.5 28.5 L 20 24 Z" fill="#d2b48c" opacity="0.8"/>
+  <!-- blue drainage network (dendritic Y) -->
+  <g stroke="#2166ac" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 6 5 L 15 16 L 13 28"/>
+    <path d="M 15 16 L 24 6"/>
+  </g>
+  <!-- red ridge crest -->
+  <path d="M 4 27 L 10 15 L 19 26" fill="none" stroke="#d7191c"
+        stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

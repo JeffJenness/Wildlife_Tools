@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "name": "Basic 7-Class (Standardized Bands)",
+  "family": "general",
+  "builtin": true,
+  "description": "A generic starting template: classifies any single grid into seven classes by standardized (z-score) bands. Edit the thresholds, units, names, and colors for your data.",
+  "inputs": [
+    { "role": "grid", "kind": "external", "label": "Input grid" }
+  ],
+  "classes": [
+    { "value": 1, "name": "Very Low", "color": [69, 117, 180],
+      "criteria": [ { "input": "grid", "units": "standardized", "conditions": [ {"op": "<=", "value": -1.5} ] } ] },
+    { "value": 2, "name": "Low", "color": [145, 191, 219],
+      "criteria": [ { "input": "grid", "units": "standardized", "conditions": [ {"op": ">", "value": -1.5}, {"join": "and", "op": "<=", "value": -0.75} ] } ] },
+    { "value": 3, "name": "Below Average", "color": [224, 243, 248],
+      "criteria": [ { "input": "grid", "units": "standardized", "conditions": [ {"op": ">", "value": -0.75}, {"join": "and", "op": "<=", "value": -0.25} ] } ] },
+    { "value": 4, "name": "Average", "color": [255, 255, 191],
+      "criteria": [ { "input": "grid", "units": "standardized", "conditions": [ {"op": ">", "value": -0.25}, {"join": "and", "op": "<=", "value": 0.25} ] } ] },
+    { "value": 5, "name": "Above Average", "color": [254, 224, 144],
+      "criteria": [ { "input": "grid", "units": "standardized", "conditions": [ {"op": ">", "value": 0.25}, {"join": "and", "op": "<=", "value": 0.75} ] } ] },
+    { "value": 6, "name": "High", "color": [252, 141, 89],
+      "criteria": [ { "input": "grid", "units": "standardized", "conditions": [ {"op": ">", "value": 0.75}, {"join": "and", "op": "<=", "value": 1.5} ] } ] },
+    { "value": 7, "name": "Very High", "color": [215, 48, 39],
+      "criteria": [ { "input": "grid", "units": "standardized", "conditions": [ {"op": ">", "value": 1.5} ] } ] }
+  ]
+}

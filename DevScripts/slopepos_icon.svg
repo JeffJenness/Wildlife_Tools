@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Slope Position Classification</title>
+  <!-- A single hill in cross-section split into DISCRETE slope-position
+       classes: blue valley at the bottom, then green, yellow, and orange
+       toward the ridge at the top. -->
+  <defs>
+    <clipPath id="hillclip">
+      <path d="M 2 29 C 8 28 11 8 16 6.5 C 21 8 24 28 30 29 Z"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#hillclip)">
+    <rect x="0" y="23"   width="32" height="8"   fill="#2c7bb6"/>
+    <rect x="0" y="17.5" width="32" height="5.5" fill="#91cf60"/>
+    <rect x="0" y="12"   width="32" height="5.5" fill="#fee08b"/>
+    <rect x="0" y="0"    width="32" height="12"  fill="#fc8d59"/>
+  </g>
+  <path d="M 2 29 C 8 28 11 8 16 6.5 C 21 8 24 28 30 29 Z"
+        fill="none" stroke="#1a1a1a" stroke-width="1.2" stroke-linejoin="round"/>
+</svg>

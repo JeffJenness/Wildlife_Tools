@@ -27,6 +27,8 @@ import cartography_tools  # noqa: E402
 import topographic_tools  # noqa: E402
 import hillshade      # noqa: E402
 import lsri           # noqa: E402
+import tpi_tools      # noqa: E402
+import classification_store  # noqa: E402
 import error_report   # noqa: E402
 
 import re
@@ -182,6 +184,36 @@ def _writeback_resolved_raster(P, name):
             pass
 
 
+def _resolve_raster_path(param):
+    """A usable catalog path for a raster input parameter. A GPRasterLayer bound
+    to a map layer can report its value as a 'CIMPATH=...' string (or a bare
+    layer name) that arcpy.Describe/CopyRaster cannot open, so resolve through
+    the value OBJECT first and fall back to the text. Returns None if empty."""
+    if param is None or not param.valueAsText:
+        return None
+    try:
+        cp = getattr(arcpy.Describe(param.value), "catalogPath", None)
+        if cp:
+            return cp
+    except Exception:
+        pass
+    return param.valueAsText
+
+
+def _writeback_saved_output(P, name):
+    """After an optional intermediate save: point the output parameter at the
+    delivered dataset ONLY if it actually exists on disk; otherwise clear it, so
+    a failed save never hands Pro a broken layer to add to the map."""
+    p = P.get(name)
+    if p is None or not p.valueAsText:
+        return
+    resolved = mahalanobis.resolve_raster_output(p.valueAsText, None)
+    try:
+        p.value = resolved if arcpy.Exists(resolved) else None
+    except Exception:
+        pass
+
+
 class Toolbox(object):
     def __init__(self):
         self.label = "Jenness Enterprises Tools"
@@ -194,6 +226,9 @@ class Toolbox(object):
                       MultiSunHillshade, SimpleHypsometricShading,
                       BlurredHillshade, SurfaceAreaRatio, VRM, TRI,
                       FractalDimension, TopographicWetnessIndex,
+                      SimpleTPI,
+                      SlopePositionClassification, LandformClassification,
+                      GeneralGridClassification,
                       LSRIOnDEM, LSRIOnContourPolylines]
 
 
@@ -3764,6 +3799,976 @@ class TopographicWetnessIndex(object):
                 "elev_units": P["elev_units"].valueAsText,
                 "slope_epsilon": P["slope_epsilon"].value,
             })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class SimpleTPI(object):
+    """Topographic Position Index (TPI): each cell's elevation minus the mean
+    elevation of a neighborhood around it (Weiss 2001; Guisan et al. 1999).
+    Writes up to three optional outputs: raw TPI (elevation units), and TPI
+    standardized (in standard-deviation units) at DEM scale or at neighborhood
+    scale. No Spatial Analyst."""
+
+    def __init__(self):
+        self.label = "Topographic Position Index (TPI)"
+        self.description = (
+            "Computes the Topographic Position Index (TPI) of a DEM over a "
+            "neighborhood: each cell's elevation minus the mean elevation of "
+            "the cells around it. Positive values sit above their surroundings "
+            "(ridges, hills); negative values sit below (valleys, channels). "
+            "Choose any of five outputs: raw TPI in elevation units, TPI "
+            "standardized into standard-deviation units at neighborhood scale "
+            "or at DEM scale, TPI in percentile units, or an experimental TPI "
+            "standardized by the neighborhood standard deviation of TPI. "
+            "Computed internally -- no Spatial Analyst.")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_units = None
+
+    _detect_units = EnhancedHillshade._detect_units
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input elevation raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_tpi = arcpy.Parameter(
+            displayName="Output TPI (elevation units)", name="out_tpi",
+            datatype="DERasterDataset", parameterType="Optional", direction="Output")
+        out_dev = arcpy.Parameter(
+            displayName="Output TPI, standardized at neighborhood scale (std. deviations)",
+            name="out_dev", datatype="DERasterDataset",
+            parameterType="Optional", direction="Output")
+        out_pctl = arcpy.Parameter(
+            displayName="Output TPI (percentile units)", name="out_pctl",
+            datatype="DERasterDataset", parameterType="Optional", direction="Output")
+        out_demstd = arcpy.Parameter(
+            displayName="Output TPI, standardized at DEM scale (std. deviations)",
+            name="out_demstd", datatype="DERasterDataset",
+            parameterType="Optional", direction="Output")
+        out_devtpi = arcpy.Parameter(
+            displayName=("Output TPI, standardized by neighborhood SD of TPI "
+                         "(experimental)"),
+            name="out_devtpi", datatype="DERasterDataset",
+            parameterType="Optional", direction="Output")
+        nb = _tpi_nbhd_params("nb_", "Neighborhood", 10, None)
+        elev_units = arcpy.Parameter(
+            displayName="Elevation units", name="elev_units", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        elev_units.filter.type = "ValueList"
+        elev_units.filter.list = hillshade.ELEV_UNITS
+        return ([in_raster, out_tpi, out_dev, out_pctl, out_demstd, out_devtpi]
+                + nb + [elev_units])
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        P["nb_inner"].enabled = (P["nb_shape"].valueAsText == "Annulus")
+        inr, outr, units = P["in_raster"], P["out_tpi"], P["elev_units"]
+        dem = inr.valueAsText
+        if dem:
+            detected, locked = self._detect_units(dem)
+            if locked:
+                if not units.altered or units.valueAsText == self._auto_units:
+                    units.value = detected
+                    self._auto_units = detected
+                units.enabled = False
+            else:
+                units.enabled = True
+            # Suggest an output name ONLY on the validation cycle where the DEM
+            # itself just changed (in_raster.hasBeenValidated is False only for
+            # the parameter the user just edited) -- never on cycles triggered by
+            # editing other fields. This lets the user freely clear this optional
+            # output; it will not be re-filled. (All five outputs are optional;
+            # at least one is required.) hasBeenValidated is used instead of
+            # instance state, which Pro does not guarantee across cycles.
+            if not inr.hasBeenValidated:
+                if not outr.valueAsText or outr.valueAsText == self._auto_out:
+                    try:
+                        base = _legalize(os.path.splitext(os.path.basename(
+                            dem))[0] + "_TPI")
+                        ws = arcpy.env.workspace or os.path.dirname(
+                            arcpy.Describe(dem).catalogPath)
+                        sug = _unique_name(base, ws)
+                        outr.value = sug
+                        self._auto_out = sug
+                    except Exception:
+                        pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        if not (P["out_tpi"].valueAsText or P["out_dev"].valueAsText
+                or P["out_pctl"].valueAsText or P["out_demstd"].valueAsText
+                or P["out_devtpi"].valueAsText):
+            P["out_tpi"].setErrorMessage(
+                "Choose at least one output raster (any of the five).")
+        if P["nb_outer"].value is not None and P["nb_outer"].value <= 0:
+            P["nb_outer"].setErrorMessage("The radius must be positive.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(tpi_tools)
+            P = {p.name: p for p in parameters}
+            lyrx = tpi_tools.run_tpi(
+                in_raster=_resolve_raster_path(P["in_raster"]),
+                out_raw=P["out_tpi"].valueAsText or None,
+                out_dev=P["out_dev"].valueAsText or None,
+                out_pctl=P["out_pctl"].valueAsText or None,
+                out_demstd=P["out_demstd"].valueAsText or None,
+                out_devtpi=P["out_devtpi"].valueAsText or None,
+                shape=P["nb_shape"].valueAsText,
+                outer=P["nb_outer"].value,
+                inner=P["nb_inner"].value or 0.0,
+                units=P["nb_units"].valueAsText,
+                elev_units=P["elev_units"].valueAsText or "Meters",
+                messages=messages)
+            for pname, key in (("out_tpi", "raw"), ("out_dev", "dev"),
+                               ("out_pctl", "pctl"), ("out_demstd", "demstd"),
+                               ("out_devtpi", "dev_tpi")):
+                _writeback_resolved_raster(P, pname)
+                if lyrx and lyrx.get(key):
+                    try:
+                        P[pname].symbology = lyrx[key]
+                    except Exception:
+                        pass
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+# ----------------------------------------------------------------------------
+#  TPI / Slope Position / Landform classification (shared helpers)
+# ----------------------------------------------------------------------------
+def _tpi_system_param(family, default_name):
+    p = arcpy.Parameter(
+        displayName="Classification system", name="system",
+        datatype="GPString", parameterType="Required", direction="Input")
+    p.filter.type = "ValueList"
+    try:
+        names = classification_store.system_names(family)
+    except Exception:
+        names = []
+    p.filter.list = names
+    if default_name in names:
+        p.value = default_name
+    elif names:
+        p.value = names[0]
+    return p
+
+
+def _tpi_nbhd_params(prefix, disp, outer_default, category):
+    shape = arcpy.Parameter(
+        displayName=disp + " shape", name=prefix + "shape", datatype="GPString",
+        parameterType="Required", direction="Input", category=category)
+    shape.filter.type = "ValueList"
+    shape.filter.list = tpi_tools.NBHD_SHAPES
+    shape.value = "Circle"
+    outer = arcpy.Parameter(
+        displayName=disp + " radius", name=prefix + "outer", datatype="GPDouble",
+        parameterType="Required", direction="Input", category=category)
+    outer.value = outer_default
+    inner = arcpy.Parameter(
+        displayName=disp + " inner radius (annulus only)", name=prefix + "inner",
+        datatype="GPDouble", parameterType="Optional", direction="Input",
+        category=category)
+    inner.value = 0
+    units = arcpy.Parameter(
+        displayName=disp + " radius units", name=prefix + "units",
+        datatype="GPString", parameterType="Required", direction="Input",
+        category=category)
+    units.filter.type = "ValueList"
+    units.filter.list = tpi_tools.RADIUS_UNITS
+    units.value = "Cells"
+    return [shape, outer, inner, units]
+
+
+def _tpi_refresh_systems(P, family):
+    try:
+        P["system"].filter.list = classification_store.system_names(family)
+    except Exception:
+        pass
+
+
+def _tpi_nbhd_spec(P, prefix, dem):
+    return {"kind": "tpi", "dem": dem,
+            "shape": P[prefix + "shape"].valueAsText,
+            "outer": P[prefix + "outer"].value,
+            "inner": P[prefix + "inner"].value or 0.0,
+            "units": P[prefix + "units"].valueAsText}
+
+
+# ---- source toggle + TPI-type / slope-units dropdown machinery --------------
+_SRC_ONFLY = "Calculate TPI and Slope on-the-fly from DEM"
+_SRC_EXISTING = "Use Existing TPI and Slope Rasters"
+# (label shown in the dialog, code stored in the system/spec)
+_TPI_TYPE_ONFLY = [("Raw (elevation units)", "raw"),
+                   ("Neighborhood standard deviation", "dev"),
+                   ("Percentile", "pctl")]
+_TPI_TYPE_DECLARE = [("Raw (elevation units)", "raw"),
+                     ("Neighborhood standard deviation", "dev"),
+                     ("DEM-scale standard deviation", "demstd"),
+                     ("Percentile", "pctl")]
+_KIND_DEFAULT_LABEL = {"raw": "Raw (elevation units)",
+                       "sd": "Neighborhood standard deviation",
+                       "pctl": "Percentile"}
+
+
+def _code_from_label(label, pairs):
+    for lbl, code in pairs:
+        if lbl == label:
+            return code
+    return None
+
+
+def _label_from_code(code, pairs):
+    for lbl, c in pairs:
+        if c == code:
+            return lbl
+    return None
+
+
+def _tpi_source_param():
+    p = arcpy.Parameter(
+        displayName="TPI and slope source", name="tpi_source",
+        datatype="GPString", parameterType="Required", direction="Input")
+    p.filter.type = "ValueList"
+    p.filter.list = [_SRC_ONFLY, _SRC_EXISTING]
+    p.value = _SRC_ONFLY
+    return p
+
+
+def _tpi_type_param(name, disp, pairs, category, optional=False):
+    p = arcpy.Parameter(
+        displayName=disp, name=name, datatype="GPString",
+        parameterType=("Optional" if optional else "Required"),
+        direction="Input", category=category)
+    p.filter.type = "ValueList"
+    p.filter.list = [lbl for (lbl, _c) in pairs]
+    return p
+
+
+def _slope_units_param(name, disp, category, optional=False):
+    p = arcpy.Parameter(
+        displayName=disp, name=name, datatype="GPString",
+        parameterType=("Optional" if optional else "Required"),
+        direction="Input", category=category)
+    p.filter.type = "ValueList"
+    p.filter.list = list(classification_store.SLOPE_UNITS)
+    return p
+
+
+def _save_output_param(name, disp, category):
+    return arcpy.Parameter(
+        displayName=disp, name=name, datatype="DERasterDataset",
+        parameterType="Optional", direction="Output", category=category)
+
+
+def _tpi_load_system_cached(tool, name, family):
+    cache = getattr(tool, "_sys_cache", None)
+    if cache is None:
+        cache = tool._sys_cache = {}
+    key = (family, name)
+    if key not in cache:
+        try:
+            cache[key] = classification_store.load_system(name, family)
+        except Exception:
+            cache[key] = None
+    return cache[key]
+
+
+def _system_uses_role(system, role):
+    """True if any class criterion in ``system`` references ``role``."""
+    return any(cr.get("input") == role
+               for c in system.get("classes", [])
+               for cr in c.get("criteria", []))
+
+
+def _system_tpi_kind(system, role):
+    """The warning KIND (raw/sd/pctl) the system expects for a TPI role."""
+    kinds = [tpi_tools._UNIT_KIND.get(cr.get("units", "raw"), "raw")
+             for c in system.get("classes", [])
+             for cr in c.get("criteria", []) if cr.get("input") == role]
+    for want in ("sd", "pctl", "raw"):
+        if want in kinds:
+            return want
+    return "raw"
+
+
+def _tpi_apply_system_defaults(tool, P, family, tpi_type_roles, slope_units_name):
+    """Default the on-the-fly TPI-type and slope-units dropdowns to what the
+    selected system expects -- only while the user has not overridden them.
+    ``tpi_type_roles`` is a list of (role, tpi_type_param_name)."""
+    name = P["system"].valueAsText
+    system = _tpi_load_system_cached(tool, name, family) if name else None
+    if not system:
+        return
+    for role, pname in tpi_type_roles:
+        par = P.get(pname)
+        if par is None or par.altered:
+            continue
+        want = _KIND_DEFAULT_LABEL.get(_system_tpi_kind(system, role))
+        if want:
+            par.value = want
+    if slope_units_name and P.get(slope_units_name) is not None:
+        par = P[slope_units_name]
+        su = system.get("slopeUnits")
+        if su and not par.altered:
+            par.value = su
+
+
+def _tpi_toggle_enable(P, onfly_names, existing_names):
+    onfly = P["tpi_source"].valueAsText != _SRC_EXISTING
+    for n in onfly_names:
+        if n in P:
+            P[n].enabled = onfly
+    for n in existing_names:
+        if n in P:
+            P[n].enabled = not onfly
+    return onfly
+
+
+def _cached_meta(tool, attr, path, reader):
+    if not path:
+        return None
+    cache = getattr(tool, attr, None)
+    if cache is None:
+        cache = {}
+        setattr(tool, attr, cache)
+    if path not in cache:
+        try:
+            cache[path] = reader(path)
+        except Exception:
+            cache[path] = None
+    return cache[path]
+
+
+def _effective_tpi_type(tool, P, onfly, type_name, raster_name, declare_name):
+    """Effective TPI-type code for one role given the current source mode."""
+    if onfly:
+        return _code_from_label(P[type_name].valueAsText, _TPI_TYPE_ONFLY)
+    if P[declare_name].valueAsText:
+        return _code_from_label(P[declare_name].valueAsText, _TPI_TYPE_DECLARE)
+    return _cached_meta(tool, "_tpi_type_cache", _resolve_raster_path(P[raster_name]),
+                        tpi_tools.read_tpi_type)
+
+
+def _effective_slope_units(tool, P, onfly, units_name, raster_name, declare_name):
+    if onfly:
+        return P[units_name].valueAsText
+    if P[declare_name].valueAsText:
+        return P[declare_name].valueAsText
+    return _cached_meta(tool, "_slope_units_cache",
+                        _resolve_raster_path(P[raster_name]),
+                        tpi_tools.read_slope_units)
+
+
+def _tpi_autofill_declares(tool, P, onfly, tpi_raster_names, slope_raster_name):
+    """In existing-rasters mode, pre-select the 'Declare TPI type' / 'Declare
+    slope units' dropdowns from the stamped metadata of the supplied rasters --
+    when our own tools generated them and recorded a type/units -- so the user
+    sees the detected value. Only while the user has not overridden the dropdown;
+    a raster with no stamp leaves the dropdown blank."""
+    if onfly:
+        return
+    dt = P.get("declare_tpi_type")
+    if dt is not None and not dt.altered:
+        code = None
+        for rn in tpi_raster_names:
+            code = _cached_meta(tool, "_tpi_type_cache",
+                                _resolve_raster_path(P[rn]), tpi_tools.read_tpi_type)
+            if code:
+                break
+        dt.value = _label_from_code(code, _TPI_TYPE_DECLARE) if code else None
+    ds = P.get("declare_slope_units")
+    if ds is not None and not ds.altered:
+        su = _cached_meta(tool, "_slope_units_cache",
+                          _resolve_raster_path(P[slope_raster_name]),
+                          tpi_tools.read_slope_units)
+        ds.value = su.capitalize() if su else None
+
+
+def _build_tpi_source(P, onfly, dem, prefix, raster_name, declare_name, save_name):
+    """One TPI role's ``sources`` spec (on-the-fly from the DEM, or supplied).
+    On-the-fly all TPI roles share the single 'tpi_type' dropdown."""
+    if onfly:
+        spec = _tpi_nbhd_spec(P, prefix, dem)
+        spec["tpi_type"] = _code_from_label(
+            P["tpi_type"].valueAsText, _TPI_TYPE_ONFLY) or "dev"
+        if save_name and P[save_name].valueAsText:
+            spec["save"] = P[save_name].valueAsText
+        return spec
+    spec = {"kind": "tpi", "raster": _resolve_raster_path(P[raster_name])}
+    dc = _code_from_label(P[declare_name].valueAsText, _TPI_TYPE_DECLARE)
+    if dc:
+        spec["declared_type"] = dc
+    return spec
+
+
+def _build_slope_source(P, onfly, dem, raster_name, declare_name, save_name):
+    if onfly:
+        spec = {"kind": "slope", "dem": dem,
+                "method": P["slope_method"].valueAsText or "Planar",
+                "elev_units": P["elev_units"].valueAsText or "Meters",
+                "slope_units": P["slope_units"].valueAsText or "Degrees"}
+        if save_name and P[save_name].valueAsText:
+            spec["save"] = P[save_name].valueAsText
+        return spec
+    spec = {"kind": "slope", "raster": _resolve_raster_path(P[raster_name])}
+    du = P[declare_name].valueAsText
+    if du:
+        spec["declared_units"] = du
+    return spec
+
+
+class SlopePositionClassification(object):
+    """Slope Position classification: classify terrain into slope-position
+    classes (valley, lower/middle/upper slope, flat, ridge) from a TPI (and
+    slope), using a saved classification system. Weiss 2001; Jenness TPI."""
+
+    _ONFLY_CAT = "Calculate on-the-fly (from DEM)"
+    _EXIST_CAT = "Use existing rasters"
+    _ONFLY = ("in_raster", "nb_shape", "nb_outer", "nb_inner", "nb_units",
+              "tpi_type", "elev_units", "slope_method", "slope_units",
+              "save_tpi", "save_slope")
+    _EXIST = ("in_tpi", "in_slope", "declare_tpi_type", "declare_slope_units")
+
+    def __init__(self):
+        self.label = "Slope Position Classification"
+        self.description = (
+            "Classifies a DEM into slope-position classes using a saved "
+            "classification system (e.g. Weiss 6-class or Dickson & Beier "
+            "4-class). Choose whether the tool computes the TPI and slope "
+            "on-the-fly from a DEM (no Spatial Analyst) or uses existing TPI "
+            "and slope rasters you supply. Manage the class rules and colors "
+            "with the Classification System Builder.")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_units = None
+
+    _detect_units = EnhancedHillshade._detect_units
+
+    def getParameterInfo(self):
+        source = _tpi_source_param()
+        in_raster = arcpy.Parameter(
+            displayName="Input elevation raster (DEM)",
+            name="in_raster", datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Optional", direction="Input", category=self._ONFLY_CAT)
+        system = _tpi_system_param("slope_position", "Weiss 6-Class Slope Position")
+        system.category = "Classification"
+        out_raster = arcpy.Parameter(
+            displayName="Output slope-position raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required",
+            direction="Output", category="Output")
+        oc = self._ONFLY_CAT
+        nb = _tpi_nbhd_params("nb_", "Neighborhood", 10, oc)
+        tpi_type = _tpi_type_param("tpi_type", "TPI type (on-the-fly)",
+                                   _TPI_TYPE_ONFLY, oc)
+        tpi_type.value = _TPI_TYPE_ONFLY[1][0]                 # dev by default
+        elev_units = arcpy.Parameter(
+            displayName="Elevation units", name="elev_units", datatype="GPString",
+            parameterType="Optional", direction="Input", category=oc)
+        elev_units.filter.type = "ValueList"
+        elev_units.filter.list = hillshade.ELEV_UNITS
+        slope_method = arcpy.Parameter(
+            displayName="Slope method (projected DEMs)", name="slope_method",
+            datatype="GPString", parameterType="Optional", direction="Input",
+            category=oc)
+        slope_method.filter.type = "ValueList"
+        slope_method.filter.list = topographic_tools.SLOPE_METHODS
+        slope_method.value = topographic_tools.SLOPE_METHODS[0]
+        slope_units = _slope_units_param("slope_units", "Slope output units", oc)
+        slope_units.value = classification_store.SLOPE_UNITS[0]
+        save_tpi = _save_output_param(
+            "save_tpi", "Save generated TPI raster (optional)", oc)
+        save_slope = _save_output_param(
+            "save_slope", "Save generated slope raster (optional)", oc)
+        ec = self._EXIST_CAT
+        in_tpi = arcpy.Parameter(
+            displayName="Existing TPI raster", name="in_tpi",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Optional", direction="Input", category=ec)
+        in_slope = arcpy.Parameter(
+            displayName="Existing slope raster", name="in_slope",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Optional", direction="Input", category=ec)
+        declare_tpi = _tpi_type_param(
+            "declare_tpi_type", "Declare TPI type (optional, for warnings)",
+            _TPI_TYPE_DECLARE, ec, optional=True)
+        declare_slope = _slope_units_param(
+            "declare_slope_units", "Declare slope units (optional, for warnings)",
+            ec, optional=True)
+        return ([source, in_raster] + nb +
+                [tpi_type, elev_units, slope_method, slope_units, save_tpi,
+                 save_slope, in_tpi, in_slope, declare_tpi, declare_slope,
+                 system, out_raster])
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        _tpi_refresh_systems(P, "slope_position")
+        onfly = _tpi_toggle_enable(P, self._ONFLY, self._EXIST)
+        _tpi_apply_system_defaults(self, P, "slope_position",
+                                   [("tpi", "tpi_type")], "slope_units")
+        _tpi_autofill_declares(self, P, onfly, ["in_tpi"], "in_slope")
+        P["nb_inner"].enabled = (onfly and P["nb_shape"].valueAsText == "Annulus")
+        units = P["elev_units"]
+        primary = (P["in_raster"].valueAsText if onfly
+                   else P["in_tpi"].valueAsText)
+        if onfly and P["in_raster"].valueAsText:
+            detected, locked = self._detect_units(P["in_raster"].valueAsText)
+            if locked:
+                if not units.altered or units.valueAsText == self._auto_units:
+                    units.value = detected
+                    self._auto_units = detected
+                units.enabled = False
+            else:
+                units.enabled = True
+            try:
+                geo = arcpy.Describe(P["in_raster"].valueAsText
+                                     ).spatialReference.type == "Geographic"
+            except Exception:
+                geo = False
+            P["slope_method"].enabled = not geo
+        outr = P["out_raster"]
+        if primary and (not outr.altered or outr.valueAsText == self._auto_out):
+            try:
+                base = _legalize(os.path.splitext(os.path.basename(
+                    primary))[0] + "_SlopePos")
+                ws = arcpy.env.workspace or os.path.dirname(
+                    arcpy.Describe(primary).catalogPath)
+                sug = _unique_name(base, ws)
+                outr.value = sug
+                self._auto_out = sug
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        onfly = P["tpi_source"].valueAsText != _SRC_EXISTING
+        if not P["system"].filter.list:
+            P["system"].setWarningMessage(
+                "No slope-position classification systems found. Create one "
+                "with the Classification System Builder, or reinstall to "
+                "restore the bundled defaults.")
+        if onfly:
+            if not P["in_raster"].valueAsText:
+                P["in_raster"].setErrorMessage(
+                    "Provide a DEM, or switch to 'Use Existing TPI and Slope "
+                    "Rasters'.")
+            if (P["nb_outer"].value is not None and P["nb_outer"].value <= 0):
+                P["nb_outer"].setErrorMessage("The radius must be positive.")
+        else:
+            if not P["in_tpi"].valueAsText:
+                P["in_tpi"].setErrorMessage(
+                    "Provide an existing TPI raster, or switch to on-the-fly.")
+        system = _tpi_load_system_cached(self, P["system"].valueAsText,
+                                         "slope_position")
+        if system:
+            if (not onfly and _system_uses_role(system, "slope")
+                    and not P["in_slope"].valueAsText):
+                P["in_slope"].setErrorMessage(
+                    "This system uses slope; provide an existing slope raster.")
+            rtype = _effective_tpi_type(self, P, onfly, "tpi_type", "in_tpi",
+                                        "declare_tpi_type")
+            w = tpi_tools.tpi_type_warning(system, "tpi", rtype)
+            if w:
+                (P["tpi_type"] if onfly else P["in_tpi"]).setWarningMessage(w)
+            su = _effective_slope_units(self, P, onfly, "slope_units",
+                                        "in_slope", "declare_slope_units")
+            w = tpi_tools.slope_units_warning(system, su)
+            if w:
+                (P["slope_units"] if onfly else P["in_slope"]).setWarningMessage(w)
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(classification_store)
+            importlib.reload(tpi_tools)
+            P = {p.name: p for p in parameters}
+            onfly = P["tpi_source"].valueAsText != _SRC_EXISTING
+            dem = _resolve_raster_path(P["in_raster"])
+            system = classification_store.load_system(
+                P["system"].valueAsText, "slope_position")
+            ref = dem if onfly else (_resolve_raster_path(P["in_tpi"])
+                                     or _resolve_raster_path(P["in_slope"]))
+            sources = {}
+            for inp in system["inputs"]:
+                role, kind = inp["role"], inp.get("kind", "external")
+                if kind == "tpi":
+                    sources[role] = _build_tpi_source(
+                        P, onfly, dem, "nb_", "in_tpi", "declare_tpi_type",
+                        "save_tpi")
+                elif kind == "slope":
+                    sources[role] = _build_slope_source(
+                        P, onfly, dem, "in_slope", "declare_slope_units",
+                        "save_slope")
+            lyrx = tpi_tools.run_classification(
+                "slope_position", ref, P["out_raster"].valueAsText, system,
+                sources, elev_units=P["elev_units"].valueAsText or "Meters",
+                slope_method=P["slope_method"].valueAsText or "Planar",
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+            if lyrx:
+                try:
+                    P["out_raster"].symbology = lyrx
+                except Exception:
+                    pass
+            for sp in ("save_tpi", "save_slope"):
+                if onfly and P[sp].valueAsText:
+                    _writeback_saved_output(P, sp)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class LandformClassification(object):
+    """Landform classification: classify terrain into landform categories
+    (canyons, valleys, plains, open/upper slopes, ridges, peaks) from a small-
+    and a large-neighborhood TPI plus slope, using a saved classification
+    system (e.g. Weiss 10-class). Weiss 2001; Jenness TPI."""
+
+    _ONFLY_CAT = "Calculate on-the-fly (from DEM)"
+    _EXIST_CAT = "Use existing rasters"
+    _ONFLY = ("in_raster", "sm_shape", "sm_outer", "sm_inner", "sm_units",
+              "lg_shape", "lg_outer", "lg_inner", "lg_units", "tpi_type",
+              "elev_units", "slope_method", "slope_units",
+              "save_tpi_small", "save_tpi_large", "save_slope")
+    _EXIST = ("in_tpi_small", "in_tpi_large", "in_slope",
+              "declare_tpi_type", "declare_slope_units")
+
+    def __init__(self):
+        self.label = "Landform Classification"
+        self.description = (
+            "Classifies a DEM into landform categories using a saved "
+            "classification system (e.g. Weiss 10-class). Choose whether the "
+            "tool computes two TPIs -- at a small and a large neighborhood -- "
+            "and slope on-the-fly from a DEM (no Spatial Analyst), or uses "
+            "existing TPI and slope rasters you supply. Manage the class rules "
+            "and colors with the Classification System Builder.")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_units = None
+
+    _detect_units = EnhancedHillshade._detect_units
+
+    def getParameterInfo(self):
+        source = _tpi_source_param()
+        in_raster = arcpy.Parameter(
+            displayName="Input elevation raster (DEM)",
+            name="in_raster", datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Optional", direction="Input", category=self._ONFLY_CAT)
+        system = _tpi_system_param("landform", "Weiss 10-Class Landform")
+        system.category = "Classification"
+        out_raster = arcpy.Parameter(
+            displayName="Output landform raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required",
+            direction="Output", category="Output")
+        oc = self._ONFLY_CAT
+        sm = _tpi_nbhd_params("sm_", "Small neighborhood", 3, oc)
+        lg = _tpi_nbhd_params("lg_", "Large neighborhood", 15, oc)
+        tpi_type = _tpi_type_param("tpi_type", "TPI type (on-the-fly, both scales)",
+                                   _TPI_TYPE_ONFLY, oc)
+        tpi_type.value = _TPI_TYPE_ONFLY[1][0]
+        elev_units = arcpy.Parameter(
+            displayName="Elevation units", name="elev_units", datatype="GPString",
+            parameterType="Optional", direction="Input", category=oc)
+        elev_units.filter.type = "ValueList"
+        elev_units.filter.list = hillshade.ELEV_UNITS
+        slope_method = arcpy.Parameter(
+            displayName="Slope method (projected DEMs)", name="slope_method",
+            datatype="GPString", parameterType="Optional", direction="Input",
+            category=oc)
+        slope_method.filter.type = "ValueList"
+        slope_method.filter.list = topographic_tools.SLOPE_METHODS
+        slope_method.value = topographic_tools.SLOPE_METHODS[0]
+        slope_units = _slope_units_param("slope_units", "Slope output units", oc)
+        slope_units.value = classification_store.SLOPE_UNITS[0]
+        save_ts = _save_output_param(
+            "save_tpi_small", "Save generated small-neighborhood TPI (optional)", oc)
+        save_tl = _save_output_param(
+            "save_tpi_large", "Save generated large-neighborhood TPI (optional)", oc)
+        save_slope = _save_output_param(
+            "save_slope", "Save generated slope raster (optional)", oc)
+        ec = self._EXIST_CAT
+        in_tpi_s = arcpy.Parameter(
+            displayName="Existing small-neighborhood TPI", name="in_tpi_small",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Optional", direction="Input", category=ec)
+        in_tpi_l = arcpy.Parameter(
+            displayName="Existing large-neighborhood TPI", name="in_tpi_large",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Optional", direction="Input", category=ec)
+        in_slope = arcpy.Parameter(
+            displayName="Existing slope raster", name="in_slope",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Optional", direction="Input", category=ec)
+        declare_tpi = _tpi_type_param(
+            "declare_tpi_type", "Declare TPI type (optional, for warnings)",
+            _TPI_TYPE_DECLARE, ec, optional=True)
+        declare_slope = _slope_units_param(
+            "declare_slope_units", "Declare slope units (optional, for warnings)",
+            ec, optional=True)
+        return ([source, in_raster] + sm + lg +
+                [tpi_type, elev_units, slope_method, slope_units, save_ts,
+                 save_tl, save_slope, in_tpi_s, in_tpi_l, in_slope,
+                 declare_tpi, declare_slope, system, out_raster])
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        _tpi_refresh_systems(P, "landform")
+        onfly = _tpi_toggle_enable(P, self._ONFLY, self._EXIST)
+        _tpi_apply_system_defaults(self, P, "landform",
+                                   [("tpi_small", "tpi_type")], "slope_units")
+        _tpi_autofill_declares(self, P, onfly,
+                               ["in_tpi_small", "in_tpi_large"], "in_slope")
+        P["sm_inner"].enabled = (onfly and P["sm_shape"].valueAsText == "Annulus")
+        P["lg_inner"].enabled = (onfly and P["lg_shape"].valueAsText == "Annulus")
+        units = P["elev_units"]
+        primary = (P["in_raster"].valueAsText if onfly
+                   else (P["in_tpi_small"].valueAsText
+                         or P["in_tpi_large"].valueAsText))
+        if onfly and P["in_raster"].valueAsText:
+            detected, locked = self._detect_units(P["in_raster"].valueAsText)
+            if locked:
+                if not units.altered or units.valueAsText == self._auto_units:
+                    units.value = detected
+                    self._auto_units = detected
+                units.enabled = False
+            else:
+                units.enabled = True
+            try:
+                geo = arcpy.Describe(P["in_raster"].valueAsText
+                                     ).spatialReference.type == "Geographic"
+            except Exception:
+                geo = False
+            P["slope_method"].enabled = not geo
+        outr = P["out_raster"]
+        if primary and (not outr.altered or outr.valueAsText == self._auto_out):
+            try:
+                base = _legalize(os.path.splitext(os.path.basename(
+                    primary))[0] + "_Landform")
+                ws = arcpy.env.workspace or os.path.dirname(
+                    arcpy.Describe(primary).catalogPath)
+                sug = _unique_name(base, ws)
+                outr.value = sug
+                self._auto_out = sug
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        onfly = P["tpi_source"].valueAsText != _SRC_EXISTING
+        if not P["system"].filter.list:
+            P["system"].setWarningMessage(
+                "No landform classification systems found. Create one with the "
+                "Classification System Builder, or reinstall to restore the "
+                "bundled defaults.")
+        if onfly:
+            if not P["in_raster"].valueAsText:
+                P["in_raster"].setErrorMessage(
+                    "Provide a DEM, or switch to 'Use Existing TPI and Slope "
+                    "Rasters'.")
+            for k in ("sm_outer", "lg_outer"):
+                if P[k].value is not None and P[k].value <= 0:
+                    P[k].setErrorMessage("The radius must be positive.")
+        else:
+            for pn, lbl in (("in_tpi_small", "small-neighborhood"),
+                            ("in_tpi_large", "large-neighborhood")):
+                if not P[pn].valueAsText:
+                    P[pn].setErrorMessage(
+                        "Provide the existing {} TPI raster, or switch to "
+                        "on-the-fly.".format(lbl))
+        system = _tpi_load_system_cached(self, P["system"].valueAsText, "landform")
+        if system:
+            if (not onfly and _system_uses_role(system, "slope")
+                    and not P["in_slope"].valueAsText):
+                P["in_slope"].setErrorMessage(
+                    "This system uses slope; provide an existing slope raster.")
+            for role, rp in (("tpi_small", "in_tpi_small"),
+                             ("tpi_large", "in_tpi_large")):
+                rtype = _effective_tpi_type(self, P, onfly, "tpi_type", rp,
+                                            "declare_tpi_type")
+                w = tpi_tools.tpi_type_warning(system, role, rtype)
+                if w:
+                    (P["tpi_type"] if onfly else P[rp]).setWarningMessage(w)
+            su = _effective_slope_units(self, P, onfly, "slope_units",
+                                        "in_slope", "declare_slope_units")
+            w = tpi_tools.slope_units_warning(system, su)
+            if w:
+                (P["slope_units"] if onfly else P["in_slope"]).setWarningMessage(w)
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(classification_store)
+            importlib.reload(tpi_tools)
+            P = {p.name: p for p in parameters}
+            onfly = P["tpi_source"].valueAsText != _SRC_EXISTING
+            dem = _resolve_raster_path(P["in_raster"])
+            system = classification_store.load_system(
+                P["system"].valueAsText, "landform")
+            ref = dem if onfly else (_resolve_raster_path(P["in_tpi_small"])
+                                     or _resolve_raster_path(P["in_tpi_large"])
+                                     or _resolve_raster_path(P["in_slope"]))
+            role_prefix = {"tpi_small": ("sm_", "in_tpi_small", "save_tpi_small"),
+                           "tpi_large": ("lg_", "in_tpi_large", "save_tpi_large")}
+            sources = {}
+            for inp in system["inputs"]:
+                role, kind = inp["role"], inp.get("kind", "external")
+                if kind == "tpi":
+                    if role not in role_prefix:
+                        raise arcpy.ExecuteError(
+                            "Unsupported TPI input role '{}' in system '{}': "
+                            "this tool binds only 'tpi_small' and 'tpi_large'. "
+                            "Edit the system in the Classification System "
+                            "Builder.".format(role, system["name"]))
+                    pre, rp, sv = role_prefix[role]
+                    sources[role] = _build_tpi_source(
+                        P, onfly, dem, pre, rp, "declare_tpi_type", sv)
+                elif kind == "slope":
+                    sources[role] = _build_slope_source(
+                        P, onfly, dem, "in_slope", "declare_slope_units",
+                        "save_slope")
+            lyrx = tpi_tools.run_classification(
+                "landform", ref, P["out_raster"].valueAsText, system, sources,
+                elev_units=P["elev_units"].valueAsText or "Meters",
+                slope_method=P["slope_method"].valueAsText or "Planar",
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+            if lyrx:
+                try:
+                    P["out_raster"].symbology = lyrx
+                except Exception:
+                    pass
+            for sp in ("save_tpi_small", "save_tpi_large", "save_slope"):
+                if onfly and P[sp].valueAsText:
+                    _writeback_saved_output(P, sp)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class GeneralGridClassification(object):
+    """General single-grid classification: classify any raster into categories
+    using a saved 'general' classification system (threshold rules on the
+    grid's raw or standardized values). Jenness TPI extension."""
+
+    def __init__(self):
+        self.label = "General Grid Classification"
+        self.description = (
+            "Classifies any single raster into categories using a saved "
+            "'general' classification system (threshold rules on the grid's "
+            "raw or whole-raster standardized values). No Spatial Analyst. "
+            "Manage the class rules and colors with the Classification System "
+            "Builder.")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output classified raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required", direction="Output")
+        system = _tpi_system_param("general", "Basic 4-Class (Standardized Bands)")
+        return [in_raster, out_raster, system]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        _tpi_refresh_systems(P, "general")
+        inr, outr = P["in_raster"], P["out_raster"]
+        if inr.valueAsText and (not outr.altered or outr.valueAsText == self._auto_out):
+            try:
+                base = _legalize(os.path.splitext(os.path.basename(
+                    inr.valueAsText))[0] + "_Classified")
+                ws = arcpy.env.workspace or os.path.dirname(
+                    arcpy.Describe(inr.valueAsText).catalogPath)
+                sug = _unique_name(base, ws)
+                outr.value = sug
+                self._auto_out = sug
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        if not P["system"].filter.list:
+            P["system"].setWarningMessage(
+                "No general classification systems found. Create one with the "
+                "Classification System Builder, or reinstall to restore the "
+                "bundled defaults.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(classification_store)
+            importlib.reload(tpi_tools)
+            P = {p.name: p for p in parameters}
+            grid = _resolve_raster_path(P["in_raster"])
+            system = classification_store.load_system(
+                P["system"].valueAsText, "general")
+            externals = [inp for inp in system["inputs"]
+                         if inp.get("kind", "external") == "external"]
+            if len(externals) != 1:
+                raise arcpy.ExecuteError(
+                    "This tool supports general systems with exactly one input "
+                    "grid; '{}' declares {}.".format(system["name"], len(externals)))
+            role = externals[0]["role"]
+            # whole-raster standardize the grid iff the system thresholds its
+            # standardized (z-score) values; raw-unit systems classify as-is
+            standardize = any(
+                cr.get("units") == "standardized"
+                for c in system["classes"] for cr in c["criteria"]
+                if cr.get("input") == role)
+            sources = {role: {"kind": "external", "raster": grid,
+                              "standardize": standardize}}
+            lyrx = tpi_tools.run_classification(
+                "general", grid, P["out_raster"].valueAsText, system, sources,
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+            if lyrx:
+                try:
+                    P["out_raster"].symbology = lyrx
+                except Exception:
+                    pass
         except arcpy.ExecuteError:
             raise
         except Exception:

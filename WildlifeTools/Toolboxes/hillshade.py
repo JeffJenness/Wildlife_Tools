@@ -201,7 +201,7 @@ def _open_source(in_raster, scratch, messages):
                "format directly; this can take a while for large rasters)...")
     _msg(messages, "Exporting the DEM to a scratch GeoTIFF for processing...")
     tif = arcpy.CreateUniqueName("hillshade_src.tif", scratch)
-    arcpy.management.CopyRaster(in_raster, tif)
+    arcpy.management.CopyRaster(path, tif)
     try:
         ds = gdal.Open(tif)
     except RuntimeError:

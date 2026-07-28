@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "name": "Basic 4-Class (Standardized Bands)",
+  "family": "general",
+  "builtin": true,
+  "description": "A generic starting template: classifies any single grid into four classes by standardized (z-score) bands at -1, 0, and +1 standard deviations. Edit the thresholds, units, names, and colors for your data.",
+  "inputs": [
+    { "role": "grid", "kind": "external", "label": "Input grid" }
+  ],
+  "classes": [
+    { "value": 1, "name": "Low", "color": [44, 123, 182],
+      "criteria": [ { "input": "grid", "units": "standardized", "conditions": [ {"op": "<=", "value": -1} ] } ] },
+    { "value": 2, "name": "Below Average", "color": [171, 217, 233],
+      "criteria": [ { "input": "grid", "units": "standardized", "conditions": [ {"op": ">", "value": -1}, {"join": "and", "op": "<=", "value": 0} ] } ] },
+    { "value": 3, "name": "Above Average", "color": [253, 174, 97],
+      "criteria": [ { "input": "grid", "units": "standardized", "conditions": [ {"op": ">", "value": 0}, {"join": "and", "op": "<=", "value": 1} ] } ] },
+    { "value": 4, "name": "High", "color": [215, 25, 28],
+      "criteria": [ { "input": "grid", "units": "standardized", "conditions": [ {"op": ">", "value": 1} ] } ] }
+  ]
+}

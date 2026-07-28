@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>General Grid Classification</title>
+  <!-- A raster grid whose cells have been sorted into a few color classes:
+       classifying any single grid into categories. -->
+  <g stroke="#1a1a1a" stroke-width="0.8">
+    <rect x="3"  y="3"  width="6.5" height="6.5" fill="#2c7bb6"/>
+    <rect x="9.5" y="3" width="6.5" height="6.5" fill="#2c7bb6"/>
+    <rect x="16" y="3"  width="6.5" height="6.5" fill="#a6d96a"/>
+    <rect x="22.5" y="3" width="6.5" height="6.5" fill="#ffffbf"/>
+    <rect x="3"  y="9.5" width="6.5" height="6.5" fill="#2c7bb6"/>
+    <rect x="9.5" y="9.5" width="6.5" height="6.5" fill="#a6d96a"/>
+    <rect x="16" y="9.5" width="6.5" height="6.5" fill="#ffffbf"/>
+    <rect x="22.5" y="9.5" width="6.5" height="6.5" fill="#fdae61"/>
+    <rect x="3"  y="16" width="6.5" height="6.5" fill="#a6d96a"/>
+    <rect x="9.5" y="16" width="6.5" height="6.5" fill="#ffffbf"/>
+    <rect x="16" y="16" width="6.5" height="6.5" fill="#fdae61"/>
+    <rect x="22.5" y="16" width="6.5" height="6.5" fill="#d7191c"/>
+    <rect x="3"  y="22.5" width="6.5" height="6.5" fill="#ffffbf"/>
+    <rect x="9.5" y="22.5" width="6.5" height="6.5" fill="#fdae61"/>
+    <rect x="16" y="22.5" width="6.5" height="6.5" fill="#fdae61"/>
+    <rect x="22.5" y="22.5" width="6.5" height="6.5" fill="#d7191c"/>
+  </g>
+  <rect x="2.6" y="2.6" width="26.8" height="26.8" fill="none"
+        stroke="#1a1a1a" stroke-width="1.3"/>
+</svg>
