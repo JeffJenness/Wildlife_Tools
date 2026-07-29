@@ -1088,9 +1088,14 @@ def default_unique_value_lyrx(out_raster, classes, field="Class_Name",
         out_ld["name"] = name
 
         def _rgb(c):
-            c = list(c) if c else [156, 156, 156]
+            col = list(c.get("color") or [156, 156, 156])
+            try:
+                a = float(c.get("alpha", 100))     # 0-100 percent opacity
+            except (TypeError, ValueError):
+                a = 100.0
+            a = min(max(a, 0.0), 100.0)            # CIM alpha is also 0-100
             return {"type": "CIMRGBColor",
-                    "values": [int(c[0]), int(c[1]), int(c[2]), 100]}
+                    "values": [int(col[0]), int(col[1]), int(col[2]), a]}
 
         uv_classes = []
         for c in sorted(classes, key=lambda c: int(c["value"])):
@@ -1099,7 +1104,7 @@ def default_unique_value_lyrx(out_raster, classes, field="Class_Name",
                 "type": "CIMRasterUniqueValueClass",
                 "values": [label],
                 "label": label,
-                "color": _rgb(c.get("color")),
+                "color": _rgb(c),
                 "editable": True,
             })
         out_ld["colorizer"] = {

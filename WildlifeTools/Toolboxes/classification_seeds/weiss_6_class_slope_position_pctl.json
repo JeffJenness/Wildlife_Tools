@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "name": "Weiss 6-Class Slope Position, using Percentile TPI values",
+  "family": "slope_position",
+  "builtin": true,
+  "slopeUnits": "Degrees",
+  "description": "Six-class slope-position classification from PERCENTILE TPI values (0-100: the percentage of neighborhood cells lower than the focal cell; Wilson and Gallant 2000, eq. 3.31) plus slope (to split flat from mid-slope), after Weiss (2001). Break points at the 10th, 45th, 55th, and 90th percentiles. Percentile thresholds are relative to each cell's own neighborhood, so they adapt to local relief.",
+  "source": "Weiss, A. 2001. Topographic Position and Landforms Analysis. ESRI International User Conference poster; percentile TPI after Wilson, J. P., and J. C. Gallant. 2000. Terrain analysis: principles and applications (eq. 3.31).",
+  "inputs": [
+    { "role": "tpi", "kind": "tpi", "label": "TPI (percentile)" },
+    { "role": "slope", "kind": "slope", "label": "Slope (degrees)" }
+  ],
+  "classes": [
+    { "value": 1, "name": "Valley", "color": [43, 131, 186],
+      "criteria": [ { "input": "tpi", "units": "pctl", "conditions": [ {"op": "<=", "value": 10} ] } ] },
+    { "value": 2, "name": "Lower Slope", "color": [128, 191, 171],
+      "criteria": [ { "input": "tpi", "units": "pctl", "conditions": [ {"op": ">", "value": 10}, {"join": "and", "op": "<=", "value": 45} ] } ] },
+    { "value": 3, "name": "Flat Slope", "color": [255, 255, 191],
+      "criteria": [
+        { "input": "tpi", "units": "pctl", "conditions": [ {"op": ">", "value": 45}, {"join": "and", "op": "<", "value": 55} ] },
+        { "input": "slope", "units": "degrees", "conditions": [ {"op": "<=", "value": 5} ] } ] },
+    { "value": 4, "name": "Middle Slope", "color": [253, 204, 138],
+      "criteria": [
+        { "input": "tpi", "units": "pctl", "conditions": [ {"op": ">", "value": 45}, {"join": "and", "op": "<", "value": 55} ] },
+        { "input": "slope", "units": "degrees", "conditions": [ {"op": ">", "value": 5} ] } ] },
+    { "value": 5, "name": "Upper Slope", "color": [240, 124, 74],
+      "criteria": [ { "input": "tpi", "units": "pctl", "conditions": [ {"op": ">=", "value": 55}, {"join": "and", "op": "<=", "value": 90} ] } ] },
+    { "value": 6, "name": "Ridge", "color": [215, 25, 28],
+      "criteria": [ { "input": "tpi", "units": "pctl", "conditions": [ {"op": ">", "value": 90} ] } ] }
+  ]
+}

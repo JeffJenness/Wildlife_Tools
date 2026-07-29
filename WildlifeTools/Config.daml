@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.31.1" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.31.2" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -53,11 +53,7 @@
           <button refID="WildlifeTools_LSRIOnDEM" size="large" />
           <button refID="WildlifeTools_LSRIOnContourPolylines" size="large" />
           <button refID="WildlifeTools_TopographicWetnessIndex" size="large" />
-          <button refID="WildlifeTools_SimpleTPI" size="large" />
-          <button refID="WildlifeTools_SlopePosition" size="large" />
-          <button refID="WildlifeTools_Landform" size="large" />
-          <button refID="WildlifeTools_GeneralClassification" size="large" />
-          <button refID="WildlifeTools_ClassificationBuilder" size="large" />
+          <menu refID="WildlifeTools_TPIMenu" size="large" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -489,14 +485,14 @@
           </tooltip>
         </button>
         <button id="WildlifeTools_GeneralClassification"
-                caption="General Grid Classification"
+                caption="General Raster Classification"
                 className="GeneralClassificationButton"
                 loadOnClick="true"
                 smallImage="Images\GenClass_16.png"
                 largeImage="Images\GenClass_32.png"
                 keytip="GC">
-          <tooltip heading="General Grid Classification">
-            Opens the General Grid Classification tool from the Jenness Enterprises toolbox: classifies any single raster into categories using a saved 'general' classification system (threshold rules on the grid's raw or whole-raster standardized values). No Spatial Analyst. Author the class rules and colors with the Classification System Builder. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
+          <tooltip heading="General Raster Classification">
+            Opens the General Raster Classification tool from the Jenness Enterprises toolbox: classifies any single raster into categories using a saved 'general' classification system (threshold rules on the raster's raw or whole-raster standardized values). Similar in purpose to Esri's Reclassify tool, except that the classification scheme is authored once, as a reusable named system, in the Classification System Builder; that each class stores a name and color with the output; and that no Spatial Analyst or 3D Analyst extension is required. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_ClassificationBuilder"
@@ -507,7 +503,7 @@
                 largeImage="Images\ClassBuilder_32.png"
                 keytip="CB">
           <tooltip heading="Classification System Builder">
-            Create, edit, duplicate, and delete the reusable classification systems (class thresholds, names, and colors) applied by the Slope Position, Landform, and General Grid Classification tools. Systems are saved as JSON in a per-user location that survives add-in reinstalls, so your custom classifications stay available and can be shared by copying the files.<disabledText />
+            Create, edit, duplicate, and delete the reusable classification systems (class thresholds, names, and colors -- with optional per-class transparency) applied by the Slope Position, Landform, and General Raster Classification tools. Systems are saved as JSON in a per-user location that survives add-in reinstalls, so your custom classifications stay available and can be shared by copying the files.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_SimpleHypsometricShading"
@@ -645,6 +641,20 @@
           <button refID="WildlifeTools_MultiSunHillshade" />
           <button refID="WildlifeTools_BlurredHillshade" />
           <button refID="WildlifeTools_SimpleHypsometricShading" />
+        </menu>
+        <menu id="WildlifeTools_TPIMenu"
+              caption="TPI Tools"
+              keytip="TT"
+              smallImage="Images\TPI_16.png"
+              largeImage="Images\TPI_32.png">
+          <tooltip heading="TPI Tools">
+            The Topographic Position Index family from the Jenness Enterprises toolbox: compute TPI itself (raw, standardized, or percentile), classify terrain into slope-position or landform categories using reusable classification systems, classify any raster with the General Raster Classification tool, and author the classification systems (class thresholds, names, and colors) in the Classification System Builder. All computed internally -- no Spatial Analyst. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+          <button refID="WildlifeTools_SimpleTPI" />
+          <button refID="WildlifeTools_SlopePosition" />
+          <button refID="WildlifeTools_Landform" />
+          <button refID="WildlifeTools_GeneralClassification" />
+          <button refID="WildlifeTools_ClassificationBuilder" />
         </menu>
       </menus>
 

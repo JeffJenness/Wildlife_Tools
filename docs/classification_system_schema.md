@@ -29,7 +29,7 @@ Three **families**:
 |---|---|---|
 | `slope_position` | one TPI (+ optional Slope) | Weiss 6-class; Dickson & Beier 4-class |
 | `landform` | small-neighborhood TPI + large-neighborhood TPI (+ optional Slope) | Weiss 10-class |
-| `general` | one arbitrary grid (+ optional additional grids) | basic 4-class; basic 7-class |
+| `general` | one arbitrary raster (+ optional additional rasters) | basic 4-class; basic 7-class |
 
 ---
 
@@ -87,7 +87,7 @@ Three **families**:
 ## 4. `inputs` — the input signature
 
 Declares which rasters the system needs, so the apply tool can prompt for
-exactly those (this replaces the old "additional grid referenced by name →
+exactly those (this replaces the old "additional raster referenced by name →
 halt and ask" behavior with explicit role→raster mapping).
 
 ```json
@@ -107,13 +107,17 @@ halt and ask" behavior with explicit role→raster mapping).
 
 **How the apply tool obtains each input** (§7): `tpi` and `slope` inputs are
 **computed internally from a DEM** by default, OR the user may supply a
-pre-made raster for that role. `external` inputs (e.g. a soils grid) **must**
+pre-made raster for that role. `external` inputs (e.g. a soils raster) **must**
 be supplied as a raster.
 
 Canonical roles per family:
 - `slope_position`: `tpi` (required), `slope` (optional).
 - `landform`: `tpi_small` (required), `tpi_large` (required), `slope` (optional).
-- `general`: `grid` (required), plus any number of extra `external` roles.
+- `general`: `raster` (required), plus any number of extra `external` roles.
+  (The role was named `grid` before 2026-07-29; both readers -- Python
+  `classification_store._normalize_roles` and C#
+  `ClassificationStore.NormalizeRoles` -- migrate `grid` to `raster` in memory
+  on read, so old files keep working and rewrite themselves on the next save.)
 
 ---
 
@@ -135,6 +139,7 @@ An ordered list. Each class:
 | `value` | int | **required.** Output cell value AND precedence key. Lowest value wins on overlap. |
 | `name` | string | **required.** Class label (written to the output attribute table). |
 | `color` | `[r,g,b]` 0–255 | optional. Used to pre-symbolize the output raster on add-to-map. |
+| `alpha` | number 0–100 | optional. Percent OPACITY (100 = opaque, the default when omitted; matches CIM and Pro's transparency UI). Carried into the output colormap and unique-value symbology, e.g. to let a hillshade show through selected classes. The builder omits it at 100. |
 | `criteria` | array | **required.** A cell is in this class iff **ALL** criteria hold (logical AND across inputs). |
 
 **Precedence / evaluation:** the apply tool evaluates classes in ascending
@@ -161,7 +166,7 @@ Each criterion tests **one input role**:
 | field | notes |
 |---|---|
 | `input` | a `role` from `inputs`. |
-| `units` | how to interpret this input's values (§6). |
+| `units` | how to interpret this input's values (§6). Valid values depend on the input's kind: `tpi` = raw | standardized | sd | pctl; `slope` = degrees | percent (`raw` accepted as a legacy alias from pre-2026-07-29 files); `external` = raw | standardized. |
 | `conditions` | 1 or 2 comparison conditions. |
 
 - **`conditions`**: a list of 1 or 2 objects `{ "op", "value" }`. The second
@@ -187,7 +192,7 @@ to. Exact definitions (from Jenness's corrected ArcMap `TPI_Code.bas`):
 | `sd` | standardized *elevation* (local, per neighborhood) | `TPI / FocalSD(DEM, nbhd)` (0 where FocalSD = 0) | DEM-computed only |
 
 - `FocalMean` / `FocalSD` ignore NoData within the neighborhood.
-- `sd` requires the neighborhood's SD grid, so it is **only available when the
+- `sd` requires the neighborhood's SD values, so it is **only available when the
   tool computes TPI from the DEM on the fly** — not when a pre-made TPI raster
   is supplied. The apply tool must reject a system that uses `sd` against a
   supplied TPI raster (matching the original's "invalid criteria set" guard).
@@ -347,7 +352,7 @@ Two TPI scales (SN = small neighborhood, LN = large neighborhood), standardized,
 5. Class `value`s are unique.
 6. A system using `sd`/`var` units cannot be applied against a **supplied** TPI
    raster for that role (DEM-computed only) — surfaced as a clear tool error.
-7. `color`, if present, is three ints 0–255.
+7. `color`, if present, is three ints 0–255; `alpha`, if present, is a number 0–100.
 
 ---
 
@@ -371,4 +376,4 @@ Two TPI scales (SN = small neighborhood, LN = large neighborhood), standardized,
   names; pick a sensible ramp per family, editable in the builder).
 - Decide `wedge`/`custom` neighborhood support timing (v1 = circle + annulus).
 - Whether `general` family should allow multiple TPI-derived roles or only
-  externally-supplied grids.
+  externally-supplied rasters.

@@ -1,0 +1,189 @@
+{
+  "schemaVersion": 1,
+  "name": "Weiss 6-Class Slope Position, using Raw TPI values",
+  "family": "slope_position",
+  "description": "Six-class slope-position classification from RAW TPI values (elevation units; thresholds +/- 5 and +/- 20) plus slope (to split flat from mid-slope), after Weiss (2001). Raw thresholds are absolute relief -- adjust them to your DEM and question.",
+  "source": "Weiss, A. 2001. Topographic Position and Landforms Analysis. ESRI International User Conference poster.",
+  "builtin": true,
+  "slopeUnits": "Degrees",
+  "inputs": [
+    {
+      "role": "tpi",
+      "kind": "tpi",
+      "label": "TPI"
+    },
+    {
+      "role": "slope",
+      "kind": "slope",
+      "label": "Slope (degrees)"
+    }
+  ],
+  "classes": [
+    {
+      "value": 1,
+      "name": "Valley",
+      "color": [
+        43,
+        131,
+        186
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": "<=",
+              "value": -20
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 2,
+      "name": "Lower Slope",
+      "color": [
+        128,
+        191,
+        171
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -20
+            },
+            {
+              "join": "and",
+              "op": "<=",
+              "value": -5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 3,
+      "name": "Flat Slope",
+      "color": [
+        255,
+        255,
+        191
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -5
+            },
+            {
+              "join": "and",
+              "op": "<",
+              "value": 5
+            }
+          ]
+        },
+        {
+          "input": "slope",
+          "units": "degrees",
+          "conditions": [
+            {
+              "op": "<=",
+              "value": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 4,
+      "name": "Middle Slope",
+      "color": [
+        253,
+        204,
+        138
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -5
+            },
+            {
+              "join": "and",
+              "op": "<",
+              "value": 5
+            }
+          ]
+        },
+        {
+          "input": "slope",
+          "units": "degrees",
+          "conditions": [
+            {
+              "op": ">",
+              "value": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 5,
+      "name": "Upper Slope",
+      "color": [
+        240,
+        124,
+        74
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": ">=",
+              "value": 5
+            },
+            {
+              "join": "and",
+              "op": "<=",
+              "value": 20
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 6,
+      "name": "Ridge",
+      "color": [
+        215,
+        25,
+        28
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": ">",
+              "value": 20
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

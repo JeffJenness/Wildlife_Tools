@@ -7,25 +7,183 @@
   "description": "Six-class slope-position classification from a standardized TPI plus slope (to split flat from mid-slope), after Weiss (2001).",
   "source": "Weiss, A. 2001. Topographic Position and Landforms Analysis. ESRI International User Conference poster.",
   "inputs": [
-    { "role": "tpi", "kind": "tpi", "label": "TPI" },
-    { "role": "slope", "kind": "slope", "label": "Slope (degrees)" }
+    {
+      "role": "tpi",
+      "kind": "tpi",
+      "label": "TPI"
+    },
+    {
+      "role": "slope",
+      "kind": "slope",
+      "label": "Slope (degrees)"
+    }
   ],
   "classes": [
-    { "value": 1, "name": "Valley", "color": [43, 131, 186],
-      "criteria": [ { "input": "tpi", "units": "sd", "conditions": [ {"op": "<=", "value": -1} ] } ] },
-    { "value": 2, "name": "Lower Slope", "color": [128, 191, 171],
-      "criteria": [ { "input": "tpi", "units": "sd", "conditions": [ {"op": ">", "value": -1}, {"join": "and", "op": "<=", "value": -0.5} ] } ] },
-    { "value": 3, "name": "Flat Slope", "color": [255, 255, 191],
+    {
+      "value": 1,
+      "name": "Valley",
+      "color": [
+        43,
+        131,
+        186
+      ],
       "criteria": [
-        { "input": "tpi", "units": "sd", "conditions": [ {"op": ">", "value": -0.5}, {"join": "and", "op": "<", "value": 0.5} ] },
-        { "input": "slope", "units": "raw", "conditions": [ {"op": "<=", "value": 5} ] } ] },
-    { "value": 4, "name": "Middle Slope", "color": [253, 204, 138],
+        {
+          "input": "tpi",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": "<=",
+              "value": -1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 2,
+      "name": "Lower Slope",
+      "color": [
+        128,
+        191,
+        171
+      ],
       "criteria": [
-        { "input": "tpi", "units": "sd", "conditions": [ {"op": ">", "value": -0.5}, {"join": "and", "op": "<", "value": 0.5} ] },
-        { "input": "slope", "units": "raw", "conditions": [ {"op": ">", "value": 5} ] } ] },
-    { "value": 5, "name": "Upper Slope", "color": [240, 124, 74],
-      "criteria": [ { "input": "tpi", "units": "sd", "conditions": [ {"op": ">=", "value": 0.5}, {"join": "and", "op": "<=", "value": 1} ] } ] },
-    { "value": 6, "name": "Ridge", "color": [215, 25, 28],
-      "criteria": [ { "input": "tpi", "units": "sd", "conditions": [ {"op": ">", "value": 1} ] } ] }
+        {
+          "input": "tpi",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -1
+            },
+            {
+              "join": "and",
+              "op": "<=",
+              "value": -0.5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 3,
+      "name": "Flat Slope",
+      "color": [
+        255,
+        255,
+        191
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -0.5
+            },
+            {
+              "join": "and",
+              "op": "<",
+              "value": 0.5
+            }
+          ]
+        },
+        {
+          "input": "slope",
+          "units": "degrees",
+          "conditions": [
+            {
+              "op": "<=",
+              "value": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 4,
+      "name": "Middle Slope",
+      "color": [
+        253,
+        204,
+        138
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -0.5
+            },
+            {
+              "join": "and",
+              "op": "<",
+              "value": 0.5
+            }
+          ]
+        },
+        {
+          "input": "slope",
+          "units": "degrees",
+          "conditions": [
+            {
+              "op": ">",
+              "value": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 5,
+      "name": "Upper Slope",
+      "color": [
+        240,
+        124,
+        74
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">=",
+              "value": 0.5
+            },
+            {
+              "join": "and",
+              "op": "<=",
+              "value": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 6,
+      "name": "Ridge",
+      "color": [
+        215,
+        25,
+        28
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">",
+              "value": 1
+            }
+          ]
+        }
+      ]
+    }
   ]
 }

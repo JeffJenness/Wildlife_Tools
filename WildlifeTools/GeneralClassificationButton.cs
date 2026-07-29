@@ -19,7 +19,7 @@ namespace WildlifeTools
         {
             try
             {
-                string toolPath = ToolboxPaths.ToolPath("GeneralGridClassification");
+                string toolPath = ToolboxPaths.ToolPath("GeneralRasterClassification");
                 if (toolPath == null)
                 {
                     MessageBox.Show(
@@ -32,7 +32,7 @@ namespace WildlifeTools
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    "Unable to open the General Grid Classification tool:" + Environment.NewLine + ex.Message,
+                    "Unable to open the General Raster Classification tool:" + Environment.NewLine + ex.Message,
                     "Wildlife Tools");
             }
         }

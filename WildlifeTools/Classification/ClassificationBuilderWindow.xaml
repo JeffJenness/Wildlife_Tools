@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        xmlns:mapctl="clr-namespace:ArcGIS.Desktop.Mapping.Controls;assembly=ArcGIS.Desktop.Mapping"
         xmlns:local="clr-namespace:WildlifeTools.Classification"
         Title="Classification System Builder"
         WindowStartupLocation="CenterOwner"
@@ -51,8 +52,11 @@
         <TextBlock Grid.Row="0" Grid.Column="2" Text="Family" VerticalAlignment="Center" Margin="0,0,6,4" />
         <ComboBox  Grid.Row="0" Grid.Column="3" x:Name="FamilyBox" Width="140" Margin="0,0,0,4"
                    SelectionChanged="OnFamilyChanged" />
-        <TextBlock Grid.Row="1" Grid.Column="0" Text="Description" VerticalAlignment="Center" Margin="0,0,6,4" />
-        <TextBox   Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" x:Name="DescBox" Margin="0,0,0,4" />
+        <TextBlock Grid.Row="1" Grid.Column="0" Text="Description" VerticalAlignment="Top" Margin="0,3,6,4" />
+        <TextBox   Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" x:Name="DescBox" Margin="0,0,0,4"
+                   AcceptsReturn="True" TextWrapping="Wrap" Height="52"
+                   VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top"
+                   SpellCheck.IsEnabled="True" />
         <TextBlock Grid.Row="2" Grid.Column="0" Text="Slope units" VerticalAlignment="Center" Margin="0,0,6,0" />
         <StackPanel Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Orientation="Horizontal">
           <ComboBox x:Name="SlopeUnitsBox" Width="140"
@@ -90,24 +94,56 @@
           <DataGrid x:Name="ClassGrid" AutoGenerateColumns="False"
                     CanUserAddRows="False" SelectionMode="Single"
                     SelectionChanged="OnClassSelected" HeadersVisibility="Column"
+                    RowHeight="26"
+                    PreviewTextInput="OnClassGridPreviewTextInput"
+                    PreviewKeyDown="OnClassGridPreviewKeyDown"
                     Margin="0,4,0,0">
             <DataGrid.Columns>
               <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="55" />
               <DataGridTextColumn Header="Class name" Binding="{Binding Name}" Width="*" />
-              <DataGridTextColumn Header="R" Binding="{Binding R}" Width="38" />
-              <DataGridTextColumn Header="G" Binding="{Binding G}" Width="38" />
-              <DataGridTextColumn Header="B" Binding="{Binding B}" Width="38" />
-              <DataGridTemplateColumn Header="Color" Width="52">
+              <!-- Explicit LostFocus triggers: a DataGrid row's binding group
+                   claims default-trigger bindings and defers their write-back
+                   to ROW commit, so the swatch would not update until the user
+                   left the row. LostFocus commits each box as it is exited. -->
+              <DataGridTextColumn Header="R"
+                  Binding="{Binding R, UpdateSourceTrigger=LostFocus}" Width="38" />
+              <DataGridTextColumn Header="G"
+                  Binding="{Binding G, UpdateSourceTrigger=LostFocus}" Width="38" />
+              <DataGridTextColumn Header="B"
+                  Binding="{Binding B, UpdateSourceTrigger=LostFocus}" Width="38" />
+              <DataGridTextColumn Header="Opacity %"
+                  Binding="{Binding A, UpdateSourceTrigger=LostFocus}" Width="66" />
+              <!-- IsReadOnly: the picker is not a text-editable cell, so the
+                   grid must never try to put it into edit mode. IsTabStop off
+                   on the control: tabbing THROUGH this cell toward the next
+                   row gave the picker keyboard focus, and on that transition
+                   it nulled its own SelectedColor (blank swatch). Mouse
+                   interaction is unaffected. -->
+              <DataGridTemplateColumn Header="Color" Width="72" IsReadOnly="True">
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate>
-                    <Border Height="16" Margin="3" CornerRadius="2"
-                            BorderBrush="#888" BorderThickness="1">
-                      <Border.Background>
-                        <MultiBinding Converter="{StaticResource RgbToBrush}">
-                          <Binding Path="R" /><Binding Path="G" /><Binding Path="B" />
-                        </MultiBinding>
-                      </Border.Background>
-                    </Border>
+                    <!-- Esri's own color picker (ArcGIS.Desktop.Mapping.Controls).
+                         Binding mode matters, hard-won: TwoWay with
+                         UpdateSourceTrigger=PropertyChanged is the ONLY correct
+                         combination here. Plain TwoWay joins the DataGrid row's
+                         edit transaction, deferring write-back to ROW commit
+                         (stale R/G/B cells; a pending pick could overwrite
+                         freshly typed values at commit). OneWay display plus
+                         event write-back is destroyed the moment the control
+                         sets a local value on a pick (WPF replaces a OneWay
+                         binding with the local value), leaving the swatch deaf
+                         to typed R/G/B and eventually blank. TwoWay survives
+                         local sets; PropertyChanged bypasses the row-commit
+                         deferral. The SelectedColorChanged handler stays as a
+                         second write path; the VM equality guard makes the
+                         double delivery a no-op and breaks feedback loops. -->
+                    <mapctl:ColorPickerControl Margin="2" Height="22"
+                        IsTabStop="False" KeyboardNavigation.TabNavigation="None"
+                        SelectedColor="{Binding CimColor, Mode=TwoWay,
+                                        UpdateSourceTrigger=PropertyChanged}"
+                        SelectedColorChanged="OnClassColorChanged"
+                        IsNoColorVisible="False"
+                        ToolTip="Click to choose this class's color" />
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>
               </DataGridTemplateColumn>
@@ -130,14 +166,33 @@
           </DockPanel>
           <DataGrid x:Name="CritGrid" AutoGenerateColumns="False"
                     CanUserAddRows="False" SelectionMode="Single"
-                    HeadersVisibility="Column" Margin="0,4,0,0">
+                    HeadersVisibility="Column" Margin="0,4,0,0"
+                    PreviewTextInput="OnCritGridPreviewTextInput"
+                    PreviewKeyDown="OnCritGridPreviewKeyDown">
             <DataGrid.Columns>
-              <DataGridComboBoxColumn Header="Input" Width="120"
-                  SelectedItemBinding="{Binding Input}"
-                  ItemsSource="{x:Static local:ClassificationStore.AllRoles}" />
-              <DataGridComboBoxColumn Header="Units" Width="100"
-                  SelectedItemBinding="{Binding Units}"
-                  ItemsSource="{x:Static local:ClassificationStore.UnitsList}" />
+              <!-- Input and Units are template combos (TwoWay+PropertyChanged,
+                   per the DataGrid binding recipe) so choosing an Input
+                   immediately refilters the Units choices to that input's
+                   kind: TPI = raw/standardized/sd/pctl, Slope =
+                   Degrees/Percent, Raster = Cell Values/Standardized. -->
+              <DataGridTemplateColumn Header="Input" Width="120" IsReadOnly="True">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <ComboBox ItemsSource="{x:Static local:ClassificationStore.AllRoles}"
+                        SelectedItem="{Binding Input, Mode=TwoWay,
+                                       UpdateSourceTrigger=PropertyChanged}" />
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="Units" Width="150" IsReadOnly="True">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <ComboBox ItemsSource="{Binding UnitsChoices}"
+                        SelectedItem="{Binding UnitsDisplay, Mode=TwoWay,
+                                       UpdateSourceTrigger=PropertyChanged}" />
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
               <DataGridComboBoxColumn Header="Op" Width="55"
                   SelectedItemBinding="{Binding Op1}"
                   ItemsSource="{x:Static local:ClassificationStore.Operators}" />

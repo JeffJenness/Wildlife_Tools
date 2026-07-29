@@ -228,7 +228,7 @@ class Toolbox(object):
                       FractalDimension, TopographicWetnessIndex,
                       SimpleTPI,
                       SlopePositionClassification, LandformClassification,
-                      GeneralGridClassification,
+                      GeneralRasterClassification,
                       LSRIOnDEM, LSRIOnContourPolylines]
 
 
@@ -4758,19 +4758,22 @@ class LandformClassification(object):
                 "The tool stopped because of an unexpected error; see the report above.")
 
 
-class GeneralGridClassification(object):
-    """General single-grid classification: classify any raster into categories
-    using a saved 'general' classification system (threshold rules on the
-    grid's raw or standardized values). Jenness TPI extension."""
+class GeneralRasterClassification(object):
+    """General single-raster classification: classify any raster into
+    categories using a saved 'general' classification system (threshold rules
+    on the raster's raw or standardized values). Jenness TPI extension."""
 
     def __init__(self):
-        self.label = "General Grid Classification"
+        self.label = "General Raster Classification"
         self.description = (
             "Classifies any single raster into categories using a saved "
-            "'general' classification system (threshold rules on the grid's "
-            "raw or whole-raster standardized values). No Spatial Analyst. "
-            "Manage the class rules and colors with the Classification System "
-            "Builder.")
+            "'general' classification system (threshold rules on the raster's "
+            "raw or whole-raster standardized values). Similar in purpose to "
+            "Esri's standard Reclassify tool, except that the classification "
+            "scheme is authored once, as a reusable named system, in the "
+            "Classification System Builder; that each output class stores a "
+            "name (and color) with the raster; and that no Spatial Analyst or "
+            "3D Analyst extension is required.")
         self.category = "Topographic Analysis Tools"
         self.canRunInBackground = False
         self._auto_out = None
@@ -4828,7 +4831,8 @@ class GeneralGridClassification(object):
             if len(externals) != 1:
                 raise arcpy.ExecuteError(
                     "This tool supports general systems with exactly one input "
-                    "grid; '{}' declares {}.".format(system["name"], len(externals)))
+                    "raster; '{}' declares {}.".format(system["name"],
+                                                       len(externals)))
             role = externals[0]["role"]
             # whole-raster standardize the grid iff the system thresholds its
             # standardized (z-score) values; raw-unit systems classify as-is

@@ -22,10 +22,18 @@ import shutil
 SCHEMA_VERSION = 1
 FAMILIES = ("slope_position", "landform", "general")
 _OPS = ("<", "<=", ">", ">=", "=", "!=")
-# TPI representations a criterion can threshold. 'sd' = neighborhood-scale
-# (dev); 'standardized' = whole-raster z-score (general grids / demstd); 'pctl'
-# = percentile. Warning KIND: raw / sd (dev+demstd/standardized) / pctl.
-_UNITS = ("raw", "standardized", "sd", "pctl")
+# Criterion units, per input KIND (2026-07-29). TPI roles threshold a TPI
+# representation ('sd' = neighborhood-scale dev; 'standardized' = whole-raster
+# z-score; 'pctl' = percentile; warning KIND: raw / sd / pctl). Slope roles
+# threshold slope in 'degrees' or 'percent' ('raw' accepted as a legacy alias
+# for files written before slope criteria carried their own units -- the
+# system-level slopeUnits field remains the declaration the warnings use).
+# External (general raster) roles threshold the raster's own cell values
+# ('raw') or its whole-raster z-score ('standardized').
+_UNITS_BY_KIND = {"tpi": ("raw", "standardized", "sd", "pctl"),
+                  "slope": ("degrees", "percent", "raw"),
+                  "external": ("raw", "standardized")}
+_UNITS = ("raw", "standardized", "sd", "pctl", "degrees", "percent")
 SLOPE_UNITS = ("Degrees", "Percent")
 _APP_SUBPATH = os.path.join("JennessEnterprises", "WildlifeTools",
                             "classification_systems")
@@ -76,6 +84,36 @@ def _slug(name):
     return s or "system"
 
 
+# Legacy role identifiers -> modern names ("grid" was the raster format of the
+# ArcView/ArcInfo era; renamed 2026-07-29). Old files migrate in memory on
+# every read, so existing saved systems keep working and rewrite themselves
+# the next time they are saved.
+_LEGACY_ROLES = {"grid": "raster"}
+
+
+def _normalize_roles(system):
+    """Rename legacy input roles (and every criterion referencing them) to
+    their modern identifiers, in place. Skips a rename if the modern name is
+    somehow already taken. Never raises."""
+    try:
+        inputs = system.get("inputs") or []
+        existing = {i.get("role") for i in inputs}
+        ren = {old: new for old, new in _LEGACY_ROLES.items()
+               if old in existing and new not in existing}
+        if not ren:
+            return system
+        for i in inputs:
+            if i.get("role") in ren:
+                i["role"] = ren[i["role"]]
+        for c in system.get("classes") or []:
+            for cr in c.get("criteria") or []:
+                if cr.get("input") in ren:
+                    cr["input"] = ren[cr["input"]]
+    except Exception:
+        pass
+    return system
+
+
 def list_systems(family=None):
     """All valid systems in the store (optionally filtered by family), sorted
     by name. Invalid/unreadable files are skipped silently."""
@@ -85,6 +123,7 @@ def list_systems(family=None):
         try:
             with open(f, "r", encoding="utf-8") as fh:
                 s = json.load(fh)
+            _normalize_roles(s)
             validate(s)
         except Exception:
             continue
@@ -176,6 +215,11 @@ def validate(system):
                     or not all(isinstance(x, int) and 0 <= x <= 255 for x in col)):
                 raise ValueError("Class {!r} color must be [r,g,b] 0-255."
                                  .format(c.get("name")))
+        a = c.get("alpha")
+        if a is not None:
+            if not isinstance(a, (int, float)) or not (0 <= a <= 100):
+                raise ValueError("Class {!r} alpha must be a number 0-100 "
+                                 "(percent opacity).".format(c.get("name")))
         crits = c.get("criteria")
         if not isinstance(crits, list) or not crits:
             raise ValueError("Class {!r} has no criteria.".format(c.get("name")))
@@ -184,9 +228,13 @@ def validate(system):
                 raise ValueError("Class {!r} references undeclared input {!r}."
                                  .format(c.get("name"), cr.get("input")))
             u = cr.get("units", "raw")
-            if u not in _UNITS:
-                raise ValueError("Unknown units {!r} in class {!r}."
-                                 .format(u, c.get("name")))
+            kind = roles.get(cr.get("input"), "external")
+            if u not in _UNITS_BY_KIND.get(kind, _UNITS):
+                raise ValueError(
+                    "Units {!r} are not valid for the {} input {!r} in class "
+                    "{!r} (valid: {}).".format(
+                        u, kind, cr.get("input"), c.get("name"),
+                        ", ".join(_UNITS_BY_KIND.get(kind, _UNITS))))
             conds = cr.get("conditions")
             if not isinstance(conds, list) or not (1 <= len(conds) <= 2):
                 raise ValueError("A criterion in class {!r} needs 1 or 2 "

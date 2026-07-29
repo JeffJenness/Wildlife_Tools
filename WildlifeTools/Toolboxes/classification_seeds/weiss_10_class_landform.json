@@ -7,52 +7,393 @@
   "description": "Landform classification from a small- and a large-neighborhood TPI (standardized) plus slope, after Weiss (2001).",
   "source": "Weiss, A. 2001. Topographic Position and Landforms Analysis. ESRI International User Conference poster.",
   "inputs": [
-    { "role": "tpi_small", "kind": "tpi", "label": "Small-neighborhood TPI" },
-    { "role": "tpi_large", "kind": "tpi", "label": "Large-neighborhood TPI" },
-    { "role": "slope", "kind": "slope", "label": "Slope (degrees)", "optional": true }
+    {
+      "role": "tpi_small",
+      "kind": "tpi",
+      "label": "Small-neighborhood TPI"
+    },
+    {
+      "role": "tpi_large",
+      "kind": "tpi",
+      "label": "Large-neighborhood TPI"
+    },
+    {
+      "role": "slope",
+      "kind": "slope",
+      "label": "Slope (degrees)",
+      "optional": true
+    }
   ],
   "classes": [
-    { "value": 1, "name": "Canyons, Deeply Incised Streams", "color": [44, 66, 110],
+    {
+      "value": 1,
+      "name": "Canyons, Deeply Incised Streams",
+      "color": [
+        44,
+        66,
+        110
+      ],
       "criteria": [
-        { "input": "tpi_small", "units": "sd", "conditions": [ {"op": "<=", "value": -1} ] },
-        { "input": "tpi_large", "units": "sd", "conditions": [ {"op": "<=", "value": -1} ] } ] },
-    { "value": 2, "name": "Midslope Drainages, Shallow Valleys", "color": [72, 130, 180],
+        {
+          "input": "tpi_small",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": "<=",
+              "value": -1
+            }
+          ]
+        },
+        {
+          "input": "tpi_large",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": "<=",
+              "value": -1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 2,
+      "name": "Midslope Drainages, Shallow Valleys",
+      "color": [
+        72,
+        130,
+        180
+      ],
       "criteria": [
-        { "input": "tpi_small", "units": "sd", "conditions": [ {"op": "<=", "value": -1} ] },
-        { "input": "tpi_large", "units": "sd", "conditions": [ {"op": ">", "value": -1}, {"join": "and", "op": "<", "value": 1} ] } ] },
-    { "value": 3, "name": "Upland Drainages, Headwaters", "color": [120, 180, 210],
+        {
+          "input": "tpi_small",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": "<=",
+              "value": -1
+            }
+          ]
+        },
+        {
+          "input": "tpi_large",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -1
+            },
+            {
+              "join": "and",
+              "op": "<",
+              "value": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 3,
+      "name": "Upland Drainages, Headwaters",
+      "color": [
+        120,
+        180,
+        210
+      ],
       "criteria": [
-        { "input": "tpi_small", "units": "sd", "conditions": [ {"op": "<=", "value": -1} ] },
-        { "input": "tpi_large", "units": "sd", "conditions": [ {"op": ">=", "value": 1} ] } ] },
-    { "value": 4, "name": "U-shaped Valleys", "color": [140, 170, 150],
+        {
+          "input": "tpi_small",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": "<=",
+              "value": -1
+            }
+          ]
+        },
+        {
+          "input": "tpi_large",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">=",
+              "value": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 4,
+      "name": "U-shaped Valleys",
+      "color": [
+        140,
+        170,
+        150
+      ],
       "criteria": [
-        { "input": "tpi_small", "units": "sd", "conditions": [ {"op": ">", "value": -1}, {"join": "and", "op": "<", "value": 1} ] },
-        { "input": "tpi_large", "units": "sd", "conditions": [ {"op": "<=", "value": -1} ] } ] },
-    { "value": 5, "name": "Plains", "color": [245, 245, 200],
+        {
+          "input": "tpi_small",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -1
+            },
+            {
+              "join": "and",
+              "op": "<",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "input": "tpi_large",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": "<=",
+              "value": -1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 5,
+      "name": "Plains",
+      "color": [
+        245,
+        245,
+        200
+      ],
       "criteria": [
-        { "input": "tpi_small", "units": "sd", "conditions": [ {"op": ">", "value": -1}, {"join": "and", "op": "<", "value": 1} ] },
-        { "input": "tpi_large", "units": "sd", "conditions": [ {"op": ">", "value": -1}, {"join": "and", "op": "<", "value": 1} ] },
-        { "input": "slope", "units": "raw", "conditions": [ {"op": "<=", "value": 5} ] } ] },
-    { "value": 6, "name": "Open Slopes", "color": [200, 200, 150],
+        {
+          "input": "tpi_small",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -1
+            },
+            {
+              "join": "and",
+              "op": "<",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "input": "tpi_large",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -1
+            },
+            {
+              "join": "and",
+              "op": "<",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "input": "slope",
+          "units": "degrees",
+          "conditions": [
+            {
+              "op": "<=",
+              "value": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 6,
+      "name": "Open Slopes",
+      "color": [
+        200,
+        200,
+        150
+      ],
       "criteria": [
-        { "input": "tpi_small", "units": "sd", "conditions": [ {"op": ">", "value": -1}, {"join": "and", "op": "<", "value": 1} ] },
-        { "input": "tpi_large", "units": "sd", "conditions": [ {"op": ">", "value": -1}, {"join": "and", "op": "<", "value": 1} ] },
-        { "input": "slope", "units": "raw", "conditions": [ {"op": ">", "value": 5} ] } ] },
-    { "value": 7, "name": "Upper Slopes, Mesas", "color": [210, 180, 120],
+        {
+          "input": "tpi_small",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -1
+            },
+            {
+              "join": "and",
+              "op": "<",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "input": "tpi_large",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -1
+            },
+            {
+              "join": "and",
+              "op": "<",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "input": "slope",
+          "units": "degrees",
+          "conditions": [
+            {
+              "op": ">",
+              "value": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 7,
+      "name": "Upper Slopes, Mesas",
+      "color": [
+        210,
+        180,
+        120
+      ],
       "criteria": [
-        { "input": "tpi_small", "units": "sd", "conditions": [ {"op": ">", "value": -1}, {"join": "and", "op": "<", "value": 1} ] },
-        { "input": "tpi_large", "units": "sd", "conditions": [ {"op": ">=", "value": 1} ] } ] },
-    { "value": 8, "name": "Local Ridges, Hills in Valleys", "color": [200, 140, 90],
+        {
+          "input": "tpi_small",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -1
+            },
+            {
+              "join": "and",
+              "op": "<",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "input": "tpi_large",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">=",
+              "value": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 8,
+      "name": "Local Ridges, Hills in Valleys",
+      "color": [
+        200,
+        140,
+        90
+      ],
       "criteria": [
-        { "input": "tpi_small", "units": "sd", "conditions": [ {"op": ">=", "value": 1} ] },
-        { "input": "tpi_large", "units": "sd", "conditions": [ {"op": "<=", "value": -1} ] } ] },
-    { "value": 9, "name": "Midslope Ridges, Small Hills in Plains", "color": [200, 100, 70],
+        {
+          "input": "tpi_small",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">=",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "input": "tpi_large",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": "<=",
+              "value": -1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 9,
+      "name": "Midslope Ridges, Small Hills in Plains",
+      "color": [
+        200,
+        100,
+        70
+      ],
       "criteria": [
-        { "input": "tpi_small", "units": "sd", "conditions": [ {"op": ">=", "value": 1} ] },
-        { "input": "tpi_large", "units": "sd", "conditions": [ {"op": ">", "value": -1}, {"join": "and", "op": "<", "value": 1} ] } ] },
-    { "value": 10, "name": "Mountain Tops, High Ridges", "color": [150, 40, 40],
+        {
+          "input": "tpi_small",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">=",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "input": "tpi_large",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -1
+            },
+            {
+              "join": "and",
+              "op": "<",
+              "value": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 10,
+      "name": "Mountain Tops, High Ridges",
+      "color": [
+        150,
+        40,
+        40
+      ],
       "criteria": [
-        { "input": "tpi_small", "units": "sd", "conditions": [ {"op": ">=", "value": 1} ] },
-        { "input": "tpi_large", "units": "sd", "conditions": [ {"op": ">=", "value": 1} ] } ] }
+        {
+          "input": "tpi_small",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">=",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "input": "tpi_large",
+          "units": "sd",
+          "conditions": [
+            {
+              "op": ">=",
+              "value": 1
+            }
+          ]
+        }
+      ]
+    }
   ]
 }

@@ -384,7 +384,7 @@ def focal_percentile(z, valid, rx_out_rows, ry_out, rx_in_rows, ry_in,
 # ---------------------------------------------------------------------------
 def _standardize_whole(grid):
     """(grid - mean) / SD over all finite cells (whole-raster z-score). Used for
-    'standardized'-units general grids, which have no neighborhood of their own."""
+    'standardized'-units general rasters, which have no neighborhood of their own."""
     m = np.isfinite(grid)
     if not m.any():
         return np.full_like(grid, np.nan)
@@ -499,6 +499,15 @@ def _write_class_raster(gdal, path, gt, proj, arr, classes):
     band = ds.GetRasterBand(1)
     names = {int(c["value"]): c.get("name", str(c["value"])) for c in classes}
     colors = {int(c["value"]): c.get("color") for c in classes}
+    # per-class opacity: 'alpha' is 0-100 percent in the schema (matching CIM
+    # and Pro's own transparency UI); the GDAL color table wants 0-255
+    alphas = {}
+    for c in classes:
+        try:
+            a = float(c.get("alpha", 100))
+        except (TypeError, ValueError):
+            a = 100.0
+        alphas[int(c["value"])] = int(round(2.55 * min(max(a, 0.0), 100.0)))
     # the color table must be set BEFORE writing data (GTiff locks the
     # photometric interpretation once pixels are written)
     if byte_ok:
@@ -506,7 +515,8 @@ def _write_class_raster(gdal, path, gt, proj, arr, classes):
         ct.SetColorEntry(0, (0, 0, 0, 0))
         for v in values:
             col = colors.get(v) or (180, 180, 180)
-            ct.SetColorEntry(v, (int(col[0]), int(col[1]), int(col[2]), 255))
+            ct.SetColorEntry(v, (int(col[0]), int(col[1]), int(col[2]),
+                                 alphas.get(v, 255)))
         band.SetRasterColorTable(ct)
     band.WriteArray(arr.astype(np.uint8 if byte_ok else np.int32))
     band.SetNoDataValue(NODATA_OUT)
@@ -521,6 +531,7 @@ def _write_class_raster(gdal, path, gt, proj, arr, classes):
     rat.CreateColumn("Red", gdal.GFT_Integer, gdal.GFU_Red)
     rat.CreateColumn("Green", gdal.GFT_Integer, gdal.GFU_Green)
     rat.CreateColumn("Blue", gdal.GFT_Integer, gdal.GFU_Blue)
+    rat.CreateColumn("Alpha", gdal.GFT_Integer, gdal.GFU_Alpha)
     present = [v for v in values if counts[v] > 0]
     rat.SetRowCount(len(present))
     for row, v in enumerate(present):
@@ -531,6 +542,7 @@ def _write_class_raster(gdal, path, gt, proj, arr, classes):
         rat.SetValueAsInt(row, 3, int(col[0]))
         rat.SetValueAsInt(row, 4, int(col[1]))
         rat.SetValueAsInt(row, 5, int(col[2]))
+        rat.SetValueAsInt(row, 6, alphas.get(v, 255))
     try:
         band.SetDefaultRAT(rat)
     except Exception:
@@ -673,9 +685,9 @@ def run_classification(family, in_raster, out_raster, system, sources,
         try:
             if s2.RasterXSize != width or s2.RasterYSize != height:
                 raise arcpy.ExecuteError(
-                    "Raster {} ({}x{}) does not match the reference grid "
-                    "({}x{}).".format(path, s2.RasterXSize, s2.RasterYSize,
-                                      width, height))
+                    "Raster {} ({}x{} cells) does not match the reference "
+                    "raster's dimensions ({}x{} cells).".format(
+                        path, s2.RasterXSize, s2.RasterYSize, width, height))
             b = s2.GetRasterBand(1)
             arr = b.ReadAsArray(0, 0, width, height).astype(np.float64)
             nod = b.GetNoDataValue()
@@ -785,8 +797,8 @@ def run_classification(family, in_raster, out_raster, system, sources,
                         _slope_unit_tag(su), messages)
             if w:
                 warnings.append(w)
-        else:                                  # external grid
-            _step("Reading grid for '{}'...".format(role))
+        else:                                  # external raster
+            _step("Reading raster for '{}'...".format(role))
             grid, v = _read(spec["raster"])
             valid_all &= v
             g = np.where(v, grid, np.nan)

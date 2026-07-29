@@ -7,21 +7,131 @@
   "description": "Four-class slope-position classification using RAW TPI thresholds (+/- 8 elevation units) and a 6-degree slope split, after Dickson & Beier's cougar-movement study. Because it uses raw TPI, the +/- 8 thresholds are absolute (elevation units) -- adjust them to your DEM and question.",
   "source": "Dickson, B. G., and P. Beier (cougar movement study; via Jenness TPI extension manual).",
   "inputs": [
-    { "role": "tpi", "kind": "tpi", "label": "TPI" },
-    { "role": "slope", "kind": "slope", "label": "Slope (degrees)" }
+    {
+      "role": "tpi",
+      "kind": "tpi",
+      "label": "TPI"
+    },
+    {
+      "role": "slope",
+      "kind": "slope",
+      "label": "Slope (degrees)"
+    }
   ],
   "classes": [
-    { "value": 1, "name": "Ridgeline", "color": [215, 25, 28],
-      "criteria": [ { "input": "tpi", "units": "raw", "conditions": [ {"op": ">=", "value": 8} ] } ] },
-    { "value": 2, "name": "Steep Slope", "color": [253, 174, 97],
+    {
+      "value": 1,
+      "name": "Ridgeline",
+      "color": [
+        215,
+        25,
+        28
+      ],
       "criteria": [
-        { "input": "tpi", "units": "raw", "conditions": [ {"op": ">", "value": -8}, {"join": "and", "op": "<=", "value": 8} ] },
-        { "input": "slope", "units": "raw", "conditions": [ {"op": ">=", "value": 6} ] } ] },
-    { "value": 3, "name": "Gentle Slope", "color": [171, 221, 164],
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": ">=",
+              "value": 8
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 2,
+      "name": "Steep Slope",
+      "color": [
+        253,
+        174,
+        97
+      ],
       "criteria": [
-        { "input": "tpi", "units": "raw", "conditions": [ {"op": ">", "value": -8}, {"join": "and", "op": "<=", "value": 8} ] },
-        { "input": "slope", "units": "raw", "conditions": [ {"op": "<", "value": 6} ] } ] },
-    { "value": 4, "name": "Canyon Bottom", "color": [43, 131, 186],
-      "criteria": [ { "input": "tpi", "units": "raw", "conditions": [ {"op": "<=", "value": -8} ] } ] }
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -8
+            },
+            {
+              "join": "and",
+              "op": "<",
+              "value": 8
+            }
+          ]
+        },
+        {
+          "input": "slope",
+          "units": "degrees",
+          "conditions": [
+            {
+              "op": ">=",
+              "value": 6
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 3,
+      "name": "Gentle Slope",
+      "color": [
+        171,
+        221,
+        164
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -8
+            },
+            {
+              "join": "and",
+              "op": "<",
+              "value": 8
+            }
+          ]
+        },
+        {
+          "input": "slope",
+          "units": "degrees",
+          "conditions": [
+            {
+              "op": "<",
+              "value": 6
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 4,
+      "name": "Canyon Bottom",
+      "color": [
+        43,
+        131,
+        186
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": "<=",
+              "value": -8
+            }
+          ]
+        }
+      ]
+    }
   ]
 }
