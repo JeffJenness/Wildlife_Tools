@@ -60,6 +60,7 @@ _TPI_CITATION = (_WEISS_CITATION + " See also Guisan, A., J. Weiss, and A. "
 #  (percentile), demstd (DEM-scale SD).
 # ---------------------------------------------------------------------------
 _TPI_TYPE_MARK = "JE_TPI_TYPE"
+_TPI_NBHD_MARK = "JE_TPI_NBHD"
 _SLOPE_UNIT_MARK = "JE_SLOPE_UNITS"
 TPI_TYPE_LABELS = {
     "raw": "raw TPI (elevation units)",
@@ -84,6 +85,14 @@ def _tpi_type_tag(t):
     return "[[{}={}]]".format(_TPI_TYPE_MARK, t)
 
 
+def _tpi_nbhd_tag(outer, units):
+    """Marker recording the neighborhood (outer) radius a TPI was computed
+    over, so the Landform tool can warn when the small/large TPI rasters
+    appear to be swapped."""
+    return "[[{}={:g} {}]]".format(_TPI_NBHD_MARK, float(outer),
+                                   str(units).lower())
+
+
 def _slope_unit_tag(u):
     return "[[{}={}]]".format(_SLOPE_UNIT_MARK, str(u).lower())
 
@@ -104,10 +113,31 @@ def read_tpi_type(raster):
     return _read_meta_tag(raster, _TPI_TYPE_MARK, r"[a-z_]+")
 
 
+def read_tpi_nbhd(raster):
+    """The neighborhood (outer) radius stamped in a TPI raster's metadata by
+    our TPI tools, as (radius, units) -- e.g. (100.0, 'meters') -- or None if
+    absent/unreadable (rasters made before this stamp existed have none)."""
+    s = _read_meta_tag(raster, _TPI_NBHD_MARK, r"[0-9.eE+-]+ [a-z]+")
+    if not s:
+        return None
+    try:
+        v, u = s.split()
+        return float(v), u
+    except (TypeError, ValueError):
+        return None
+
+
 def read_slope_units(raster):
     """The slope units ('degrees'/'percent') stamped in a raster's metadata, or
     None if absent/unreadable."""
     return _read_meta_tag(raster, _SLOPE_UNIT_MARK, r"[a-z]+")
+
+
+# Human phrasing for each TPI role, so warnings say WHICH neighborhood's TPI
+# the system's expectation applies to (the two Landform scales may legitimately
+# use different units, so "the system expects X" alone is ambiguous).
+_ROLE_PHRASE = {"tpi": "TPI", "tpi_small": "small-neighborhood TPI",
+                "tpi_large": "large-neighborhood TPI"}
 
 
 def tpi_type_warning(system, role, raster_type):
@@ -125,12 +155,55 @@ def tpi_type_warning(system, role, raster_type):
              for cr in c.get("criteria", []) if cr.get("input") == role}
     if not kinds or rkind in kinds:
         return None
-    return ("The TPI for '{role}' is {rt}, but the classification system '{sn}' "
-            "expects {ex}. Applying it as-is may misclassify -- choose a "
+    rl = _ROLE_PHRASE.get(role, "TPI for input '{}'".format(role))
+    return ("The {rl} is {rt}, but the classification system '{sn}' expects "
+            "{ex} for its {rl}. Applying it as-is may misclassify -- choose a "
             "matching TPI type. (The tool still runs.)").format(
-                role=role, rt=TPI_TYPE_LABELS.get(raster_type, raster_type),
+                rl=rl, rt=TPI_TYPE_LABELS.get(raster_type, raster_type),
                 sn=system.get("name", "?"),
                 ex=" / ".join(sorted(_KIND_LABEL.get(k, k) for k in kinds)))
+
+
+def tpi_scale_warning(small, large):
+    """Warn when the SMALL-neighborhood TPI's radius is not smaller than the
+    LARGE one's -- swapped inputs, or the same scale supplied twice, either of
+    which defeats a two-scale landform classification. ``small``/``large`` are
+    (radius, units) tuples (from the metadata stamp or the dialog) or None.
+    Radii are compared in meters for linear units, directly for Cells; a
+    cells-vs-linear pair is not comparable and returns None (no warning)."""
+    def _basis(t):
+        if not t:
+            return None
+        try:
+            v = float(t[0])
+        except (TypeError, ValueError):
+            return None
+        if v <= 0:
+            return None
+        u = str(t[1] or "").strip().lower()
+        if u == "cells":
+            return ("cells", v)
+        rm = _tt._RADIUS_METERS.get(u.title())
+        return ("m", v * rm) if rm else None
+
+    s, l = _basis(small), _basis(large)
+    if not s or not l or s[0] != l[0]:
+        return None
+
+    def _fmt(t):
+        return "{:g} {}".format(float(t[0]), str(t[1]).lower())
+
+    if s[1] > l[1] * (1.0 + 1e-9):
+        return ("The SMALL-neighborhood TPI uses a LARGER neighborhood radius "
+                "({}) than the large-neighborhood TPI ({}) -- the two appear "
+                "to be swapped. (The tool still runs.)").format(
+                    _fmt(small), _fmt(large))
+    if abs(s[1] - l[1]) <= 1e-9 * max(s[1], l[1]):
+        return ("The small- and large-neighborhood TPIs use the SAME "
+                "neighborhood radius ({}); a landform classification needs "
+                "two different scales. (The tool still runs.)").format(
+                    _fmt(small))
+    return None
 
 
 def slope_units_warning(system, slope_units):
@@ -621,6 +694,7 @@ def run_classification(family, in_raster, out_raster, system, sources,
 
     resolved = {}
     warnings = []
+    nbhd_by_role = {}                # TPI role -> (radius, units) or None
     valid_all = np.ones((height, width), dtype=bool)
     _mh.begin_phases([("Reading inputs...", 1),
                       ("Computing TPI and slope...", 4),
@@ -652,6 +726,7 @@ def run_classification(family, in_raster, out_raster, system, sources,
                 valid_all &= v
                 resolved[role] = np.where(v, grid, np.nan)
                 rtype = spec.get("declared_type") or read_tpi_type(spec["raster"])
+                nbhd_by_role[role] = read_tpi_nbhd(spec["raster"])
                 w = tpi_type_warning(system, role, rtype)
             else:
                 tpi_type = spec.get("tpi_type", "dev")
@@ -669,13 +744,17 @@ def run_classification(family, in_raster, out_raster, system, sources,
                 grid = tpi_representation(np.where(v, z, 0.0), v, rxo, ryo, rxi,
                                           ryi, tpi_type, messages)
                 resolved[role] = grid
+                nbhd_by_role[role] = (spec.get("outer"),
+                                      spec.get("units", "Cells"))
                 w = tpi_type_warning(system, role, tpi_type)
                 if spec.get("save"):
                     _step("Saving generated TPI raster for '{}'...".format(role))
                     _save_intermediate(
                         gdal, grid, v & np.isfinite(grid), spec["save"], gt, proj,
                         width, height, "TPI ({}) for '{}' from {}".format(
-                            tpi_type, role, in_raster), _tpi_type_tag(tpi_type),
+                            tpi_type, role, in_raster),
+                        _tpi_type_tag(tpi_type) + " " + _tpi_nbhd_tag(
+                            spec["outer"], spec.get("units", "Cells")),
                         messages)
             if w:
                 warnings.append(w)
@@ -714,6 +793,14 @@ def run_classification(family, in_raster, out_raster, system, sources,
             if spec.get("standardize"):        # whole-raster z-score (general)
                 g = _standardize_whole(g)
             resolved[role] = g
+
+    # Landform sanity check: the small-scale TPI's neighborhood should be
+    # smaller than the large-scale one's (swapped or duplicated inputs
+    # silently produce a wrong classification).
+    w = tpi_scale_warning(nbhd_by_role.get("tpi_small"),
+                          nbhd_by_role.get("tpi_large"))
+    if w:
+        warnings.append(w)
 
     for w in warnings:
         if messages is not None:
@@ -946,6 +1033,8 @@ def run_tpi(in_raster, out_raw=None, out_dev=None, out_pctl=None,
         gvalid = valid & np.isfinite(grid)
         summ = (summs[u].format(s=in_raster, sh=shape.lower(), r=outer,
                                 u=units.lower()) + "  " + _tpi_type_tag(u))
+        if u != "demstd":                     # demstd is neighborhood-independent
+            summ += " " + _tpi_nbhd_tag(outer, units)
         out_lyrx[u] = _write_float_output(
             gdal, grid, gvalid, path, gt, proj, width, height,
             title=os.path.basename(str(path)), summary=summ,

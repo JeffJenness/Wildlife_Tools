@@ -841,9 +841,13 @@ def _mahal_update(tool, P, out_name, out_base, derived_re):
                 p_tbl.value = full
                 tool._auto_tables[key] = os.path.splitext(os.path.basename(full))[0]
         else:
-            if cur_tbl == "" or cur_tname == tool._auto_tables.get(key):
+            # a disabled OUTPUT param must be EMPTIED unconditionally (not only
+            # when auto-named): any leftover value -- e.g. the stats tables a
+            # previous run generated and this run now SUPPLIES as inputs --
+            # would be pre-deleted by the GP framework on Run (overwrite).
+            if cur_tbl:
                 p_tbl.value = None
-                tool._auto_tables.pop(key, None)
+            tool._auto_tables.pop(key, None)
 
     if "points" in P:
         P["points"].enabled = is_pts
@@ -3718,9 +3722,13 @@ class TopographicWetnessIndex(object):
         ofill, ofac = P["out_filled_dem"], P["out_flow_accumulation"]
         ofill.enabled = not (have_fill or have_fac)
         ofac.enabled = not have_fac
-        if not ofill.enabled and (not ofill.altered):
+        # A disabled OUTPUT parameter must be EMPTIED, not just greyed out
+        # (no .altered guard): any value it still holds makes Pro's GP
+        # framework pre-delete that dataset on Run (overwrite-output), which
+        # can destroy the very raster now being supplied as an input.
+        if not ofill.enabled and ofill.valueAsText:
             ofill.value = None
-        if not ofac.enabled and (not ofac.altered):
+        if not ofac.enabled and ofac.valueAsText:
             ofac.value = None
         return
 
@@ -4142,6 +4150,25 @@ def _tpi_toggle_enable(P, onfly_names, existing_names):
     return onfly
 
 
+def _tpi_clear_stale_saves(P, onfly, save_names):
+    """In existing-rasters mode the optional save parameters MUST be EMPTIED,
+    not merely disabled. They are OUTPUT parameters: any value left over from
+    an earlier on-the-fly run makes Pro's geoprocessing framework PRE-DELETE
+    that dataset (standard overwrite-output behavior, before execute() ever
+    runs) the moment Run is clicked -- destroying the very raster the user is
+    now supplying as an existing input. This was the vanishing-saved-raster
+    bug: the raster saved fine, then the NEXT run silently deleted it."""
+    if onfly:
+        return
+    for n in save_names:
+        p = P.get(n)
+        if p is not None and p.valueAsText:
+            try:
+                p.value = None
+            except Exception:
+                pass
+
+
 def _cached_meta(tool, attr, path, reader):
     if not path:
         return None
@@ -4177,22 +4204,22 @@ def _effective_slope_units(tool, P, onfly, units_name, raster_name, declare_name
                         tpi_tools.read_slope_units)
 
 
-def _tpi_autofill_declares(tool, P, onfly, tpi_raster_names, slope_raster_name):
-    """In existing-rasters mode, pre-select the 'Declare TPI type' / 'Declare
-    slope units' dropdowns from the stamped metadata of the supplied rasters --
-    when our own tools generated them and recorded a type/units -- so the user
-    sees the detected value. Only while the user has not overridden the dropdown;
-    a raster with no stamp leaves the dropdown blank."""
+def _tpi_autofill_declares(tool, P, onfly, tpi_pairs, slope_raster_name):
+    """In existing-rasters mode, pre-select each 'Declare TPI type' / 'Declare
+    slope units' dropdown from the stamped metadata of ITS OWN supplied raster --
+    when our own tools generated it and recorded a type/units -- so the user
+    sees the detected value. ``tpi_pairs`` is a list of (raster_param_name,
+    declare_param_name), one pair per TPI raster (Landform declares its small-
+    and large-neighborhood TPIs independently). Only while the user has not
+    overridden the dropdown; a raster with no stamp leaves it blank."""
     if onfly:
         return
-    dt = P.get("declare_tpi_type")
-    if dt is not None and not dt.altered:
-        code = None
-        for rn in tpi_raster_names:
-            code = _cached_meta(tool, "_tpi_type_cache",
-                                _resolve_raster_path(P[rn]), tpi_tools.read_tpi_type)
-            if code:
-                break
+    for rn, dn in tpi_pairs:
+        dt = P.get(dn)
+        if dt is None or dt.altered:
+            continue
+        code = _cached_meta(tool, "_tpi_type_cache",
+                            _resolve_raster_path(P[rn]), tpi_tools.read_tpi_type)
         dt.value = _label_from_code(code, _TPI_TYPE_DECLARE) if code else None
     ds = P.get("declare_slope_units")
     if ds is not None and not ds.altered:
@@ -4202,13 +4229,15 @@ def _tpi_autofill_declares(tool, P, onfly, tpi_raster_names, slope_raster_name):
         ds.value = su.capitalize() if su else None
 
 
-def _build_tpi_source(P, onfly, dem, prefix, raster_name, declare_name, save_name):
+def _build_tpi_source(P, onfly, dem, prefix, raster_name, declare_name, save_name,
+                      type_name="tpi_type"):
     """One TPI role's ``sources`` spec (on-the-fly from the DEM, or supplied).
-    On-the-fly all TPI roles share the single 'tpi_type' dropdown."""
+    ``type_name`` is that role's own on-the-fly TPI-type dropdown (Landform has
+    one per neighborhood scale; Slope Position the single default)."""
     if onfly:
         spec = _tpi_nbhd_spec(P, prefix, dem)
         spec["tpi_type"] = _code_from_label(
-            P["tpi_type"].valueAsText, _TPI_TYPE_ONFLY) or "dev"
+            P[type_name].valueAsText, _TPI_TYPE_ONFLY) or "dev"
         if save_name and P[save_name].valueAsText:
             spec["save"] = P[save_name].valueAsText
         return spec
@@ -4325,9 +4354,11 @@ class SlopePositionClassification(object):
         P = {p.name: p for p in parameters}
         _tpi_refresh_systems(P, "slope_position")
         onfly = _tpi_toggle_enable(P, self._ONFLY, self._EXIST)
+        _tpi_clear_stale_saves(P, onfly, ("save_tpi", "save_slope"))
         _tpi_apply_system_defaults(self, P, "slope_position",
                                    [("tpi", "tpi_type")], "slope_units")
-        _tpi_autofill_declares(self, P, onfly, ["in_tpi"], "in_slope")
+        _tpi_autofill_declares(self, P, onfly,
+                               [("in_tpi", "declare_tpi_type")], "in_slope")
         P["nb_inner"].enabled = (onfly and P["nb_shape"].valueAsText == "Annulus")
         units = P["elev_units"]
         primary = (P["in_raster"].valueAsText if onfly
@@ -4453,11 +4484,12 @@ class LandformClassification(object):
     _ONFLY_CAT = "Calculate on-the-fly (from DEM)"
     _EXIST_CAT = "Use existing rasters"
     _ONFLY = ("in_raster", "sm_shape", "sm_outer", "sm_inner", "sm_units",
-              "lg_shape", "lg_outer", "lg_inner", "lg_units", "tpi_type",
-              "elev_units", "slope_method", "slope_units",
+              "tpi_type_small", "lg_shape", "lg_outer", "lg_inner", "lg_units",
+              "tpi_type_large", "elev_units", "slope_method", "slope_units",
               "save_tpi_small", "save_tpi_large", "save_slope")
     _EXIST = ("in_tpi_small", "in_tpi_large", "in_slope",
-              "declare_tpi_type", "declare_slope_units")
+              "declare_tpi_type_small", "declare_tpi_type_large",
+              "declare_slope_units")
 
     def __init__(self):
         self.label = "Landform Classification"
@@ -4490,9 +4522,14 @@ class LandformClassification(object):
         oc = self._ONFLY_CAT
         sm = _tpi_nbhd_params("sm_", "Small neighborhood", 3, oc)
         lg = _tpi_nbhd_params("lg_", "Large neighborhood", 15, oc)
-        tpi_type = _tpi_type_param("tpi_type", "TPI type (on-the-fly, both scales)",
-                                   _TPI_TYPE_ONFLY, oc)
-        tpi_type.value = _TPI_TYPE_ONFLY[1][0]
+        tpi_type_s = _tpi_type_param(
+            "tpi_type_small", "Small-neighborhood TPI type (on-the-fly)",
+            _TPI_TYPE_ONFLY, oc)
+        tpi_type_s.value = _TPI_TYPE_ONFLY[1][0]               # dev by default
+        tpi_type_l = _tpi_type_param(
+            "tpi_type_large", "Large-neighborhood TPI type (on-the-fly)",
+            _TPI_TYPE_ONFLY, oc)
+        tpi_type_l.value = _TPI_TYPE_ONFLY[1][0]
         elev_units = arcpy.Parameter(
             displayName="Elevation units", name="elev_units", datatype="GPString",
             parameterType="Optional", direction="Input", category=oc)
@@ -4526,16 +4563,23 @@ class LandformClassification(object):
             displayName="Existing slope raster", name="in_slope",
             datatype=["GPRasterLayer", "DERasterDataset"],
             parameterType="Optional", direction="Input", category=ec)
-        declare_tpi = _tpi_type_param(
-            "declare_tpi_type", "Declare TPI type (optional, for warnings)",
+        declare_tpi_s = _tpi_type_param(
+            "declare_tpi_type_small",
+            "Declare small-neighborhood TPI type (optional, for warnings)",
+            _TPI_TYPE_DECLARE, ec, optional=True)
+        declare_tpi_l = _tpi_type_param(
+            "declare_tpi_type_large",
+            "Declare large-neighborhood TPI type (optional, for warnings)",
             _TPI_TYPE_DECLARE, ec, optional=True)
         declare_slope = _slope_units_param(
             "declare_slope_units", "Declare slope units (optional, for warnings)",
             ec, optional=True)
-        return ([source, in_raster] + sm + lg +
-                [tpi_type, elev_units, slope_method, slope_units, save_ts,
-                 save_tl, save_slope, in_tpi_s, in_tpi_l, in_slope,
-                 declare_tpi, declare_slope, system, out_raster])
+        # each neighborhood followed by its own TPI-type dropdown (on-the-fly),
+        # and each raster followed by its own declare dropdown (existing)
+        return ([source, in_raster] + sm + [tpi_type_s] + lg + [tpi_type_l] +
+                [elev_units, slope_method, slope_units, save_ts,
+                 save_tl, save_slope, in_tpi_s, declare_tpi_s, in_tpi_l,
+                 declare_tpi_l, in_slope, declare_slope, system, out_raster])
 
     def isLicensed(self):
         return True
@@ -4544,10 +4588,16 @@ class LandformClassification(object):
         P = {p.name: p for p in parameters}
         _tpi_refresh_systems(P, "landform")
         onfly = _tpi_toggle_enable(P, self._ONFLY, self._EXIST)
+        _tpi_clear_stale_saves(P, onfly, ("save_tpi_small", "save_tpi_large",
+                                          "save_slope"))
         _tpi_apply_system_defaults(self, P, "landform",
-                                   [("tpi_small", "tpi_type")], "slope_units")
+                                   [("tpi_small", "tpi_type_small"),
+                                    ("tpi_large", "tpi_type_large")],
+                                   "slope_units")
         _tpi_autofill_declares(self, P, onfly,
-                               ["in_tpi_small", "in_tpi_large"], "in_slope")
+                               [("in_tpi_small", "declare_tpi_type_small"),
+                                ("in_tpi_large", "declare_tpi_type_large")],
+                               "in_slope")
         P["sm_inner"].enabled = (onfly and P["sm_shape"].valueAsText == "Annulus")
         P["lg_inner"].enabled = (onfly and P["lg_shape"].valueAsText == "Annulus")
         units = P["elev_units"]
@@ -4612,18 +4662,43 @@ class LandformClassification(object):
                     and not P["in_slope"].valueAsText):
                 P["in_slope"].setErrorMessage(
                     "This system uses slope; provide an existing slope raster.")
-            for role, rp in (("tpi_small", "in_tpi_small"),
-                             ("tpi_large", "in_tpi_large")):
-                rtype = _effective_tpi_type(self, P, onfly, "tpi_type", rp,
-                                            "declare_tpi_type")
+            for role, rp, dn, tn in (
+                    ("tpi_small", "in_tpi_small", "declare_tpi_type_small",
+                     "tpi_type_small"),
+                    ("tpi_large", "in_tpi_large", "declare_tpi_type_large",
+                     "tpi_type_large")):
+                rtype = _effective_tpi_type(self, P, onfly, tn, rp, dn)
                 w = tpi_tools.tpi_type_warning(system, role, rtype)
                 if w:
-                    (P["tpi_type"] if onfly else P[rp]).setWarningMessage(w)
+                    (P[tn] if onfly else P[rp]).setWarningMessage(w)
             su = _effective_slope_units(self, P, onfly, "slope_units",
                                         "in_slope", "declare_slope_units")
             w = tpi_tools.slope_units_warning(system, su)
             if w:
                 (P["slope_units"] if onfly else P["in_slope"]).setWarningMessage(w)
+        # Scale sanity check: the small TPI's neighborhood should be SMALLER
+        # than the large one's. On-the-fly compares the entered radii; existing
+        # mode compares the radii stamped in the rasters' metadata by our TPI
+        # tools (unstamped rasters -- e.g. made before v1.31.1, or by other
+        # software -- cannot be checked).
+        if onfly:
+            w = tpi_tools.tpi_scale_warning(
+                (P["sm_outer"].value, P["sm_units"].valueAsText or "Cells"),
+                (P["lg_outer"].value, P["lg_units"].valueAsText or "Cells"))
+            if w:
+                P["sm_outer"].setWarningMessage(w)
+                P["lg_outer"].setWarningMessage(w)
+        else:
+            nb_s = _cached_meta(self, "_tpi_nbhd_cache",
+                                _resolve_raster_path(P["in_tpi_small"]),
+                                tpi_tools.read_tpi_nbhd)
+            nb_l = _cached_meta(self, "_tpi_nbhd_cache",
+                                _resolve_raster_path(P["in_tpi_large"]),
+                                tpi_tools.read_tpi_nbhd)
+            w = tpi_tools.tpi_scale_warning(nb_s, nb_l)
+            if w:
+                P["in_tpi_small"].setWarningMessage(w)
+                P["in_tpi_large"].setWarningMessage(w)
         return
 
     def execute(self, parameters, messages):
@@ -4638,8 +4713,11 @@ class LandformClassification(object):
             ref = dem if onfly else (_resolve_raster_path(P["in_tpi_small"])
                                      or _resolve_raster_path(P["in_tpi_large"])
                                      or _resolve_raster_path(P["in_slope"]))
-            role_prefix = {"tpi_small": ("sm_", "in_tpi_small", "save_tpi_small"),
-                           "tpi_large": ("lg_", "in_tpi_large", "save_tpi_large")}
+            role_prefix = {
+                "tpi_small": ("sm_", "in_tpi_small", "declare_tpi_type_small",
+                              "save_tpi_small", "tpi_type_small"),
+                "tpi_large": ("lg_", "in_tpi_large", "declare_tpi_type_large",
+                              "save_tpi_large", "tpi_type_large")}
             sources = {}
             for inp in system["inputs"]:
                 role, kind = inp["role"], inp.get("kind", "external")
@@ -4650,9 +4728,9 @@ class LandformClassification(object):
                             "this tool binds only 'tpi_small' and 'tpi_large'. "
                             "Edit the system in the Classification System "
                             "Builder.".format(role, system["name"]))
-                    pre, rp, sv = role_prefix[role]
+                    pre, rp, dn, sv, tn = role_prefix[role]
                     sources[role] = _build_tpi_source(
-                        P, onfly, dem, pre, rp, "declare_tpi_type", sv)
+                        P, onfly, dem, pre, rp, dn, sv, type_name=tn)
                 elif kind == "slope":
                     sources[role] = _build_slope_source(
                         P, onfly, dem, "in_slope", "declare_slope_units",
@@ -4878,6 +4956,10 @@ class LSRIOnDEM(object):
                 pass
         on = bool(P["save_contours"].value)
         P["out_contours"].enabled = on
+        # disabled OUTPUT params must be emptied -- a leftover value would be
+        # pre-deleted by the GP framework on the next Run (overwrite-output)
+        if not on and P["out_contours"].valueAsText:
+            P["out_contours"].value = None
         if on and inr.valueAsText and (not P["out_contours"].altered or
                                        P["out_contours"].valueAsText == self._auto_contours):
             try:
