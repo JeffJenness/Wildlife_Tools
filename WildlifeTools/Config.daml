@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.31.2" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.32.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -57,6 +57,7 @@
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
+          <button refID="WildlifeTools_Sudoku" size="large" />
         </group>
       </groups>
 
@@ -526,6 +527,17 @@
                 keytip="TD">
           <tooltip heading="Thought for the Day">
             Shows a random inspirational quote in a little pop-up card.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_Sudoku"
+                caption="Sudoku"
+                className="Sudoku.SudokuButton"
+                loadOnClick="true"
+                smallImage="Images\Sudoku_16.png"
+                largeImage="Images\Sudoku_32.png"
+                keytip="SD">
+          <tooltip heading="Sudoku">
+            Opens a Sudoku puzzle in a floating window, so the map keeps working while you think. Three difficulty levels; every puzzle has exactly one solution. Click a cell and type 1-9; arrow keys move (wrapping at the edges) and Tab snakes through the grid. Check colors your entries blue (correct) or red (incorrect), and Reveal Cell will confess a single answer -- after asking if you are sure you want it.<disabledText />
           </tooltip>
         </button>
       </controls>

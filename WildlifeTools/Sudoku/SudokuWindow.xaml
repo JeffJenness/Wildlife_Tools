@@ -1,0 +1,153 @@
+<controls:ProWindow x:Class="WildlifeTools.Sudoku.SudokuWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        Title="Sudoku"
+        WindowStartupLocation="CenterOwner"
+        Width="470" Height="660" MinWidth="400" MinHeight="540"
+        ShowInTaskbar="False" Focusable="True">
+  <!-- SKINNING: every color below is a DynamicResource that ApplySkin()
+       replaces at runtime from the SudokuSkin palettes in the code-behind
+       (the user's choice persists in sudoku_settings.json). To add an
+       image-based skin later (wood-grain scan, brass contraption, DAW-plugin
+       chrome), a skin can supply ImageBrushes for FrameBrush / BackdropBrush
+       without touching the game mechanics. Defaults = the Parchment skin. -->
+  <controls:ProWindow.Resources>
+    <LinearGradientBrush x:Key="BackdropBrush" StartPoint="0,0" EndPoint="1,1">
+      <GradientStop Color="#F8F1DE" Offset="0" />
+      <GradientStop Color="#EFE3C4" Offset="0.55" />
+      <GradientStop Color="#E7D7B0" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="FrameBrush" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#6B4A26" Offset="0" />
+      <GradientStop Color="#4E351B" Offset="0.5" />
+      <GradientStop Color="#3A2712" Offset="1" />
+    </LinearGradientBrush>
+    <SolidColorBrush x:Key="InkBrush" Color="#332612" />
+    <SolidColorBrush x:Key="BoardFrameBrush" Color="#2E1F0E" />
+    <SolidColorBrush x:Key="BoardBgBrush" Color="#F9F3E2" />
+    <SolidColorBrush x:Key="ButtonFaceBrush" Color="#5C3F20" />
+    <SolidColorBrush x:Key="ButtonTextBrush" Color="#F5EBD3" />
+    <SolidColorBrush x:Key="ButtonEdgeBrush" Color="#2E1F0E" />
+    <SolidColorBrush x:Key="ButtonHoverBrush" Color="#7A5730" />
+    <SolidColorBrush x:Key="ButtonPressedBrush" Color="#412C14" />
+    <!-- per-skin typography (replaced by ApplySkin; embedded OFL fonts) -->
+    <FontFamily x:Key="LabelFontFam">Georgia</FontFamily>
+    <FontFamily x:Key="DisplayFontFam">Georgia</FontFamily>
+    <Style x:Key="PuzzleButton" TargetType="Button">
+      <Setter Property="Focusable" Value="False" />
+      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="Margin" Value="4,0,0,0" />
+      <Setter Property="FontFamily" Value="{DynamicResource LabelFontFam}" />
+      <Setter Property="Foreground" Value="{DynamicResource ButtonTextBrush}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{DynamicResource ButtonFaceBrush}"
+                    BorderBrush="{DynamicResource ButtonEdgeBrush}"
+                    BorderThickness="1" CornerRadius="4"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background"
+                        Value="{DynamicResource ButtonHoverBrush}" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Bd" Property="Background"
+                        Value="{DynamicResource ButtonPressedBrush}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="HeaderLabel" TargetType="TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="FontFamily" Value="{DynamicResource LabelFontFam}" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
+    </Style>
+  </controls:ProWindow.Resources>
+
+  <Border x:Name="BackdropHost" Background="{DynamicResource FrameBrush}" Padding="10">
+    <Border Background="{DynamicResource BackdropBrush}" CornerRadius="8" Padding="12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- row 1: puzzle controls -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,6" LastChildFill="False">
+          <TextBlock DockPanel.Dock="Left" Text="Difficulty" Style="{StaticResource HeaderLabel}" />
+          <ComboBox DockPanel.Dock="Left" x:Name="DifficultyBox" Width="92" Margin="6,0,0,0"
+                    VerticalAlignment="Center" SelectedIndex="1"
+                    SelectionChanged="OnDifficultyChanged">
+            <ComboBoxItem Content="Easy" />
+            <ComboBoxItem Content="Medium" />
+            <ComboBoxItem Content="Hard" />
+          </ComboBox>
+          <Button DockPanel.Dock="Right" Content="Reveal Cell" Style="{StaticResource PuzzleButton}"
+                  Click="OnRevealCell" ToolTip="Fill the selected cell with its correct value (asks first)" />
+          <Button DockPanel.Dock="Right" Content="Check" Style="{StaticResource PuzzleButton}"
+                  Click="OnCheck" ToolTip="Color your entries: blue = correct, red = incorrect" />
+          <Button DockPanel.Dock="Right" Content="New Puzzle" Style="{StaticResource PuzzleButton}"
+                  Click="OnNewPuzzle" />
+        </DockPanel>
+
+        <!-- row 2: skin -->
+        <DockPanel Grid.Row="1" Margin="0,0,0,10" LastChildFill="False">
+          <TextBlock DockPanel.Dock="Left" Text="Skin" Style="{StaticResource HeaderLabel}" />
+          <ComboBox DockPanel.Dock="Left" x:Name="SkinBox" Width="130" Margin="6,0,0,0"
+                    VerticalAlignment="Center" SelectionChanged="OnSkinChanged" />
+        </DockPanel>
+
+        <!-- row 3: the board (scales with the window) -->
+        <Viewbox Grid.Row="2" Stretch="Uniform">
+          <Grid>
+            <Border BorderBrush="{DynamicResource BoardFrameBrush}" BorderThickness="4"
+                    Background="{DynamicResource BoardBgBrush}" SnapsToDevicePixels="True">
+              <Grid x:Name="BoardHost" Width="396" Height="396" />
+            </Border>
+            <!-- celebration overlay: a dark gold-trimmed plaque so the
+                 lettering never fights the digits underneath -->
+            <Grid x:Name="WinOverlay" Visibility="Collapsed" IsHitTestVisible="False">
+              <Border HorizontalAlignment="Center" VerticalAlignment="Center"
+                      Background="{DynamicResource FrameBrush}"
+                      BorderBrush="#FFD24D" BorderThickness="2"
+                      CornerRadius="12" Padding="30,14,30,18"
+                      RenderTransformOrigin="0.5,0.5">
+                <Border.RenderTransform>
+                  <ScaleTransform x:Name="WinScale" ScaleX="0.2" ScaleY="0.2" />
+                </Border.RenderTransform>
+                <Border.Effect>
+                  <DropShadowEffect Color="#000000" BlurRadius="24" ShadowDepth="4" Opacity="0.55" />
+                </Border.Effect>
+                <StackPanel>
+                  <TextBlock x:Name="WinText" Text="SOLVED!" FontFamily="{DynamicResource DisplayFontFam}"
+                             FontWeight="Bold" FontSize="58" Foreground="#FFD24D"
+                             HorizontalAlignment="Center">
+                    <TextBlock.Effect>
+                      <DropShadowEffect Color="#FFF3C0" BlurRadius="18" ShadowDepth="0" />
+                    </TextBlock.Effect>
+                  </TextBlock>
+                  <TextBlock x:Name="WinSubText" Text="" FontFamily="{DynamicResource LabelFontFam}" FontStyle="Italic"
+                             FontSize="17" Foreground="#F2E6C8" HorizontalAlignment="Center" />
+                </StackPanel>
+              </Border>
+            </Grid>
+          </Grid>
+        </Viewbox>
+
+        <!-- row 4: status -->
+        <TextBlock Grid.Row="3" x:Name="StatusText" Margin="2,10,2,0"
+                   FontFamily="{DynamicResource LabelFontFam}" FontStyle="Italic" FontSize="13"
+                   Foreground="{DynamicResource InkBrush}" />
+      </Grid>
+    </Border>
+  </Border>
+</controls:ProWindow>

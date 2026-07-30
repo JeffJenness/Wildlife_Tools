@@ -163,6 +163,15 @@
     <Content Include="Images\ClassBuilder_32.png" />
     <Content Include="DarkImages\ClassBuilder_16.png" />
     <Content Include="DarkImages\ClassBuilder_32.png" />
+    <Content Include="Images\Sudoku_16.png" />
+    <Content Include="Images\Sudoku_32.png" />
+    <Content Include="DarkImages\Sudoku_16.png" />
+    <Content Include="DarkImages\Sudoku_32.png" />
+    <!-- Sudoku skin fonts, embedded as WPF resources so they render on every
+         machine with no installation (all SIL Open Font License; the OFL
+         texts ship alongside as required for redistribution). -->
+    <Resource Include="Fonts\*.ttf" />
+    <Content Include="Fonts\Licenses\*.txt" />
     <Content Include="Images\LSRI_DEM_16.png" />
     <Content Include="Images\LSRI_DEM_32.png" />
     <Content Include="DarkImages\LSRI_DEM_16.png" />
