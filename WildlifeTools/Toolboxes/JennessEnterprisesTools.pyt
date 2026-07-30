@@ -9,6 +9,7 @@ add-in's ribbon buttons invoke these tools so the analysis logic lives in one
 place. Add further tools/categories here as more sub-toolboxes are needed.
 """
 
+import math
 import os
 import sys
 import importlib
@@ -29,6 +30,8 @@ import hillshade      # noqa: E402
 import lsri           # noqa: E402
 import tpi_tools      # noqa: E402
 import classification_store  # noqa: E402
+import line_surface_tools  # noqa: E402
+import tool_metadata  # noqa: E402
 import error_report   # noqa: E402
 
 import re
@@ -272,7 +275,7 @@ class Toolbox(object):
                       ShadowPolygons, EnhancedHillshade, MDOWHillshade,
                       MultiSunHillshade, SimpleHypsometricShading,
                       BlurredHillshade, SurfaceAreaRatio, VRM,
-                      ArcChordRatio, TRI,
+                      ArcChordRatio, TRI, TopographyAlongLines,
                       FractalDimension, TopographicWetnessIndex,
                       SimpleTPI,
                       SlopePositionClassification, LandformClassification,
@@ -3654,6 +3657,473 @@ class TRI(object):
                 "radius_units": P["radius_units"].valueAsText,
                 "elev_units": P["elev_units"].valueAsText,
             })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class TopographyAlongLines(object):
+    """Topography along Lines -- adds topographic-roughness attribute fields to
+    an existing polyline feature class, computed by sampling elevation along
+    each line and reducing it to straight 3-D segments (see
+    ``line_surface_tools``). Elevation comes from the polylines' own Z values or
+    from a DEM sampled by bilinear interpolation."""
+
+    _Z_SOURCE = "Z values from the polylines"
+    _DEM_SOURCE = "DEM raster"
+    _SLOPE_STATS = {"avg_slope", "min_slope", "max_slope"}
+
+    def __init__(self):
+        self.label = "Topography along Lines"
+        self.description = (
+            "Adds attribute fields describing the topography along each line of "
+            "a polyline feature class -- length, surface ratio, uphill/downhill "
+            "and slope statistics, direction statistics, sinuosity, fractal "
+            "dimension, and more. Elevation is taken from the polylines' own Z "
+            "values or sampled from a DEM by bilinear interpolation at a regular "
+            "ground interval; each line is reduced to straight 3-D segments and "
+            "every statistic is computed from those segments. Direction-"
+            "dependent statistics describe the line travelling in the direction "
+            "of its geometry, from the first vertex to the last. The fields are "
+            "written into the input feature class.")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_units = None
+
+    def getParameterInfo(self):
+        in_lines = arcpy.Parameter(
+            displayName="Input polyline features", name="in_lines",
+            datatype="GPFeatureLayer", parameterType="Required", direction="Input")
+        in_lines.filter.list = ["Polyline"]
+
+        elev_source = arcpy.Parameter(
+            displayName="Elevation source", name="elev_source",
+            datatype="GPString", parameterType="Required", direction="Input")
+        elev_source.filter.type = "ValueList"
+        elev_source.filter.list = [self._Z_SOURCE, self._DEM_SOURCE]
+        elev_source.value = self._DEM_SOURCE
+
+        in_dem = arcpy.Parameter(
+            displayName="Input elevation raster (DEM)", name="in_dem",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Optional", direction="Input")
+
+        elev_units = arcpy.Parameter(
+            displayName="Elevation units", name="elev_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        elev_units.filter.type = "ValueList"
+        elev_units.filter.list = ["Meters", "Feet"]
+
+        attrs = arcpy.Parameter(
+            displayName="Surface Attributes", name="surface_attributes",
+            datatype="GPValueTable", parameterType="Required", direction="Input")
+        # Property is the FIRST column so Pro's value-table "add multiple"
+        # checklist (the down-arrow) attaches to it -- the user can check off
+        # several properties at once and each new row's field name auto-fills.
+        attrs.columns = [["GPString", "Property"],
+                         ["GPString", "Field (Existing or New)"]]
+        attrs.filters[0].type = "ValueList"
+        attrs.filters[0].list = [label for _, label in line_surface_tools.STATS]
+        attrs.filters[1].type = "ValueList"
+        attrs.filters[1].list = []          # existing field names (populated live)
+
+        use_aliases = arcpy.Parameter(
+            displayName="List existing fields by alias (instead of name)",
+            name="use_aliases", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        use_aliases.value = False
+
+        length_unit = arcpy.Parameter(
+            displayName="Length Unit", name="length_unit",
+            datatype="GPString", parameterType="Required", direction="Input")
+        length_unit.filter.type = "ValueList"
+        length_unit.filter.list = line_surface_tools.LENGTH_UNITS
+        length_unit.value = "Meters"
+
+        slope_unit = arcpy.Parameter(
+            displayName="Slope Unit", name="slope_unit",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        slope_unit.filter.type = "ValueList"
+        slope_unit.filter.list = line_surface_tools.SLOPE_UNITS
+        slope_unit.value = "Degrees"
+
+        params = [in_lines, elev_source, in_dem, elev_units, attrs,
+                  use_aliases, length_unit, slope_unit]
+        saved = _load_tool_defaults("TopographyAlongLines")
+        for p in (length_unit, slope_unit):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    _detect_units = EnhancedHillshade._detect_units
+
+    _NUMERIC_TYPES = ("SmallInteger", "Integer", "BigInteger", "Single", "Double")
+
+    def _selected_keys(self, attrs_param):
+        """The set of statistic keys currently chosen in the value table."""
+        keys = set()
+        rows = attrs_param.value
+        if rows:
+            for row in rows:
+                try:
+                    lbl = str(row[0]).strip()
+                except Exception:
+                    continue
+                k = line_surface_tools.LABEL_STAT.get(lbl)
+                if k:
+                    keys.add(k)
+        return keys
+
+    def _numeric_fields(self, lines_value):
+        """Editable numeric fields of the input (candidates for output)."""
+        try:
+            return [f for f in arcpy.ListFields(lines_value)
+                    if f.editable and f.type in self._NUMERIC_TYPES]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _resolve_field_cell(celltext, use_aliases, fields):
+        """Map a value-table field cell to a real field. Returns (name, is_new,
+        alias, warning). An exact field-NAME match always wins; in alias mode an
+        alias match is tried next (first match if the alias is duplicated, with a
+        warning); otherwise it is a new field (its typed text becomes the alias
+        in alias mode)."""
+        text = (celltext or "").strip()
+        if not text:
+            return None, False, None, None
+        by_name = {f.name.lower(): f.name for f in fields}
+        if text.lower() in by_name:
+            return by_name[text.lower()], False, None, None
+        if use_aliases:
+            matches = [f for f in fields if (f.aliasName or f.name) == text]
+            if matches:
+                warn = None
+                if len(matches) > 1:
+                    warn = ("More than one field has the alias '{}'; the first "
+                            "('{}') will be used.".format(text, matches[0].name))
+                return matches[0].name, False, None, warn
+        return None, True, (text if use_aliases else None), None
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        lines, src, dem, units = (P["in_lines"], P["elev_source"],
+                                  P["in_dem"], P["elev_units"])
+
+        # If the input is not Z-aware, elevation must come from a DEM.
+        z_aware = False
+        if lines.valueAsText:
+            try:
+                z_aware = bool(arcpy.Describe(lines.valueAsText).hasZ)
+            except Exception:
+                z_aware = False
+        if not z_aware and lines.valueAsText:
+            src.value = self._DEM_SOURCE
+            src.enabled = False
+        else:
+            src.enabled = True
+
+        use_dem = (src.valueAsText == self._DEM_SOURCE)
+        dem.enabled = use_dem
+
+        # Elevation units: detected from the DEM (DEM source) or from the
+        # feature class's vertical coordinate system (Z source). Ask only when
+        # undefined.
+        detected, locked = None, False
+        if use_dem and dem.valueAsText:
+            detected, locked = self._detect_units(dem.valueAsText)
+        elif not use_dem and lines.valueAsText:
+            detected, locked = self._detect_units(lines.valueAsText)
+        if locked:
+            if not units.altered or units.valueAsText == self._auto_units:
+                units.value = detected
+                self._auto_units = detected
+            units.enabled = False
+        else:
+            units.enabled = True
+
+        # Offer the input's existing fields as a suggestion dropdown on the
+        # field-name column, in the order they appear in the feature class. Only
+        # EDITABLE NUMERIC fields are offered (system fields like OBJECTID /
+        # Shape_Length are not editable and are excluded; text/date fields can't
+        # hold numeric results). Names, or aliases when "List by alias" is on.
+        # IMPORTANT: a non-empty ValueList on a GPString column is RESTRICTIVE
+        # (rejects non-members with ERROR 000800), which would block typing a NEW
+        # field name -- so we append whatever the user has already typed to the
+        # list, making new names valid members while still showing existing
+        # fields as suggestions.
+        try:
+            attrs = P["surface_attributes"]
+            fields = self._numeric_fields(lines.valueAsText) if lines.valueAsText else []
+            use_al = bool(P["use_aliases"].value)
+            # Auto-fill a reasonable field name from the chosen property when the
+            # field cell is left blank (e.g. Surface Length -> Surface_Length).
+            rows = attrs.value or []
+            new_rows, changed = [], False
+            for row in rows:
+                lbl = str(row[0]).strip() if row[0] is not None else ""
+                fld = str(row[1]).strip() if row[1] is not None else ""
+                key = line_surface_tools.LABEL_STAT.get(lbl)
+                if not fld and key:
+                    fld = line_surface_tools.default_field_name(key)
+                    changed = True
+                new_rows.append([lbl, fld])
+            if changed:
+                attrs.value = new_rows
+                rows = new_rows
+            # Suggestion dropdown (Field column): existing editable-numeric
+            # fields (in dataset order) plus whatever now sits in the table, so
+            # typed and auto-filled names validate against the otherwise-
+            # restrictive ValueList.
+            items = [(f.aliasName or f.name) if use_al else f.name for f in fields]
+            seen = {v.lower() for v in items}
+            for row in rows:
+                v = str(row[1]).strip() if row[1] is not None else ""
+                if v and v.lower() not in seen:
+                    items.append(v)
+                    seen.add(v.lower())
+            attrs.filters[1].list = items
+        except Exception:
+            pass
+
+        # The slope-unit choice matters only for the mean/min/max slope stats
+        # (standard deviation and RMS are always reported in degrees).
+        P["slope_unit"].enabled = bool(
+            self._selected_keys(P["surface_attributes"]) & self._SLOPE_STATS)
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        lines, src, dem, units = (P["in_lines"], P["elev_source"],
+                                  P["in_dem"], P["elev_units"])
+        if lines.valueAsText:
+            try:
+                if arcpy.Describe(lines.valueAsText).shapeType != "Polyline":
+                    lines.setErrorMessage("The input must be a polyline feature class.")
+            except Exception:
+                pass
+        use_dem = (src.valueAsText == self._DEM_SOURCE)
+        if use_dem and not dem.valueAsText:
+            dem.setErrorMessage("Specify a DEM, or choose the polylines' own Z values.")
+        if use_dem and dem.valueAsText:
+            try:
+                if arcpy.Describe(dem.valueAsText).bandCount != 1:
+                    dem.setErrorMessage("The elevation raster must be single band.")
+            except Exception:
+                pass
+        if (not use_dem) and lines.valueAsText:
+            try:
+                if not arcpy.Describe(lines.valueAsText).hasZ:
+                    src.setErrorMessage(
+                        "The polylines are not Z-enabled; choose a DEM instead.")
+            except Exception:
+                pass
+        if units.enabled and not units.valueAsText:
+            units.setErrorMessage(
+                "The elevation units are not defined; choose Meters or Feet.")
+        attrs = P["surface_attributes"]
+        if attrs.value:
+            int_types = ("SmallInteger", "Integer", "BigInteger")
+            use_aliases = bool(P["use_aliases"].value)
+            all_fields, types_by_name = [], {}
+            if lines.valueAsText:
+                try:
+                    all_fields = arcpy.ListFields(lines.valueAsText)
+                    types_by_name = {f.name.lower(): f.type for f in all_fields}
+                except Exception:
+                    all_fields, types_by_name = [], {}
+            numeric = [f for f in all_fields
+                       if f.editable and f.type in self._NUMERIC_TYPES]
+            # Workspace of the input, so new-field names can be validated the way
+            # the dataset actually creates them (shapefiles truncate to 10 chars
+            # and apply dBASE rules); the duplicate check must use those ACTUAL
+            # names, or two long names that truncate alike would slip through.
+            ws = None
+            if lines.valueAsText:
+                try:
+                    ws = arcpy.Describe(lines.valueAsText).path
+                except Exception:
+                    ws = None
+            targets = {}                 # actual field -> count (duplicate check)
+            for row in attrs.value:
+                lbl = str(row[0]).strip() if row[0] is not None else ""
+                fld = str(row[1]).strip() if row[1] is not None else ""
+                if lbl and not fld:
+                    attrs.setErrorMessage("Every property needs an output field name.")
+                    break
+                key = line_surface_tools.LABEL_STAT.get(lbl)
+                name, is_new, _alias, _w = self._resolve_field_cell(
+                    fld, use_aliases, numeric)
+                actual = name
+                if is_new and fld:
+                    try:
+                        actual = arcpy.ValidateFieldName(fld, ws) if ws else fld
+                    except Exception:
+                        actual = fld
+                    if actual and actual.lower() != fld.lower():
+                        attrs.setWarningMessage(
+                            "Field name '{}' will be created as '{}' to satisfy "
+                            "the dataset's naming rules (for example, shapefiles "
+                            "limit field names to 10 characters).".format(fld, actual))
+                if key and fld:
+                    tkey = (actual or fld).lower()
+                    targets[tkey] = targets.get(tkey, 0) + 1
+                ftype = types_by_name.get(name.lower()) if (name and not is_new) else None
+                if (key and ftype in int_types
+                        and key not in line_surface_tools.INTEGER_STATS):
+                    attrs.setWarningMessage(
+                        "Field '{}' is an integer field, but '{}' can have "
+                        "fractional values that would be rounded; choose or "
+                        "create a floating-point (Double) field instead.".format(
+                            name, lbl))
+            if any(c > 1 for c in targets.values()):
+                attrs.setErrorMessage(
+                    "The same output field is used for more than one property "
+                    "(after the dataset's field-naming rules are applied). Give "
+                    "each property its own field.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(line_surface_tools)
+            importlib.reload(tool_metadata)
+            lst = line_surface_tools
+            P = {p.name: p for p in parameters}
+
+            in_lines = P["in_lines"].valueAsText
+            use_dem = (P["elev_source"].valueAsText == self._DEM_SOURCE)
+            source = "DEM" if use_dem else "Z"
+            elev_units = P["elev_units"].valueAsText or "Meters"
+            elev_mpu = lst.ELEV_METERS.get(elev_units, 1.0)
+            length_unit = P["length_unit"].valueAsText or "Meters"
+            slope_unit = P["slope_unit"].valueAsText or "Degrees"
+
+            # Resolve each value-table row to a real output field (existing, or
+            # a new one). In alias mode the cell may hold an alias.
+            use_aliases = bool(P["use_aliases"].value)
+            numeric = self._numeric_fields(in_lines)
+            try:
+                ws = arcpy.Describe(in_lines).path
+            except Exception:
+                ws = None
+            existing = {f.name.lower() for f in arcpy.ListFields(in_lines)}
+            pairs = []                       # (real field name, stat key)
+            warned = set()
+            for row in (P["surface_attributes"].value or []):
+                lbl = str(row[0]).strip() if row[0] is not None else ""
+                cell = str(row[1]).strip() if row[1] is not None else ""
+                key = lst.LABEL_STAT.get(lbl)
+                if not (cell and key):
+                    continue
+                name, is_new, alias, warn = self._resolve_field_cell(
+                    cell, use_aliases, numeric)
+                if warn and warn not in warned:
+                    messages.addWarningMessage(warn)
+                    warned.add(warn)
+                if is_new:
+                    valid = arcpy.ValidateFieldName(cell, ws) if ws else _legalize(cell)
+                    n = 2
+                    while valid.lower() in existing:
+                        valid = "{}_{}".format(
+                            arcpy.ValidateFieldName(cell, ws) if ws else _legalize(cell), n)
+                        n += 1
+                    ftype = "LONG" if key == "reversals" else "DOUBLE"
+                    arcpy.management.AddField(in_lines, valid, ftype,
+                                              field_alias=alias)
+                    existing.add(valid.lower())
+                    name = valid
+                pairs.append((name, key))
+            if not pairs:
+                raise arcpy.ExecuteError(
+                    "Choose at least one Surface Attribute with an output field.")
+            wanted = set(k for _, k in pairs)
+
+            dem = None
+            if use_dem:
+                dem_path = _resolve_raster_path(P["in_dem"])
+                dem_sr = arcpy.Describe(dem_path).spatialReference
+                window = lst.lines_window_in_dem_crs(in_lines, dem_sr)
+                dem = lst.load_dem(dem_path, window=window)
+                messages.addMessage(
+                    "DEM read over the lines' extent ({:,} x {:,} cells); "
+                    "sampling interval {:.3f} m (min cell size); sample points "
+                    "are projected into the DEM's coordinate system.".format(
+                        dem["arr"].shape[1], dem["arr"].shape[0], dem["interval_m"]))
+
+            field_names = [fld for fld, _ in pairs]
+            field_keys = [key for _, key in pairs]
+            want_fractal = "fractal_d" in wanted
+
+            n_feat = n_written = short_fractal = nodata_segs = empty = 0
+            with arcpy.da.UpdateCursor(in_lines, ["SHAPE@"] + field_names) as cur:
+                for r in cur:
+                    n_feat += 1
+                    shp = r[0]
+                    if shp is None:
+                        continue
+                    parts, diag = lst.build_parts(shp, source, dem, elev_mpu)
+                    nodata_segs += diag.get("nodata_segments", 0)
+                    if not parts:
+                        empty += 1
+                        continue
+                    stats = lst.compute_line_statistics(
+                        parts, length_unit, elev_units, slope_unit, wanted)
+                    out = list(r)
+                    for i, key in enumerate(field_keys):
+                        v = stats.get(key)
+                        if v is None or (isinstance(v, float) and math.isnan(v)):
+                            out[i + 1] = None
+                            if key == "fractal_d":
+                                short_fractal += 1
+                        else:
+                            out[i + 1] = v
+                    cur.updateRow(out)
+                    n_written += 1
+
+            messages.addMessage(
+                "Computed {} attribute(s) for {} of {} line feature(s)."
+                .format(len(pairs), n_written, n_feat))
+            if want_fractal and short_fractal:
+                messages.addWarningMessage(
+                    "Fractal Dimension could not be computed for {} line(s) "
+                    "because they were too short to span a range of scales (a "
+                    "line must be longer than roughly six times the sampling "
+                    "interval); those values were left null.".format(short_fractal))
+            if nodata_segs:
+                messages.addWarningMessage(
+                    "{} segment(s) fell on DEM NoData and were skipped; the "
+                    "affected lines describe only their valid portions."
+                    .format(nodata_segs))
+            if empty:
+                messages.addWarningMessage(
+                    "{} line(s) had no usable segments (too short, or entirely "
+                    "on NoData) and were left null.".format(empty))
+
+            # Per-field metadata stating the units (and the direction convention
+            # for direction-dependent statistics).
+            try:
+                target = arcpy.Describe(in_lines).catalogPath
+            except Exception:
+                target = in_lines
+            fields_meta = [{"name": fld,
+                            "description": lst.field_description(
+                                key, length_unit, elev_units, slope_unit)}
+                           for fld, key in pairs]
+            tool_metadata.set_entity_and_fields(
+                target, fields=fields_meta, messages=messages)
+
+            _save_tool_defaults("TopographyAlongLines", {
+                "length_unit": length_unit, "slope_unit": slope_unit})
         except arcpy.ExecuteError:
             raise
         except Exception:

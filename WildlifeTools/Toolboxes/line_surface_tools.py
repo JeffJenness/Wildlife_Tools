@@ -1,0 +1,698 @@
+# -*- coding: utf-8 -*-
+"""Surface Attributes along a line -- engine.
+
+Adds topographic-roughness attribute fields to an existing polyline feature
+class, computed by sampling elevation along each line and reducing the line to
+a set of straight three-dimensional segments. Every statistic is derived from
+those segments (see ``compute_line_statistics``). Elevation is taken either
+from the polyline's own Z values or, more commonly, from a DEM sampled by
+bilinear interpolation at a regular ground interval (plus the first and last
+vertex of every part). Multipart lines are handled part-by-part -- disconnected
+pieces are never bridged by an artificial segment.
+
+The per-segment reduction is deliberately separated from the statistics so the
+same core can feed a companion tool that writes the segments out as their own
+polyline feature class.
+
+DIRECTION CONVENTION: every direction-dependent statistic describes the line
+travelling in the direction of its geometry, from the first vertex to the last
+(a line that climbs 100 m west-to-east drops 100 m east-to-west).
+
+Internally all lengths and elevations are carried in METERS; outputs are
+converted at the end -- lengths to the chosen Length Unit, elevations to the
+DEM's / polyline's elevation units. Slopes are computed in DEGREES and the
+single-value slope stats (mean/min/max) are converted to the chosen slope unit;
+slope dispersion (standard deviation, RMS) has no exact non-linear conversion
+and is always reported in degrees. Fractal dimension uses the planimetric
+(map-view) path so it keeps the classic 1..2 range; sinuosity is fully 3-D.
+
+Citations (attached in the tool help/metadata):
+  Directional statistics -- Mardia & Jupp (2000), Fisher (1993), Batschelet
+    (1981); formulas follow Jenness, J. (2012) "Directional data" newsletter.
+  Fractal dimension (divider method) -- Mandelbrot (1967); Nams (2005).
+  Sinuosity / straightness / tortuosity -- Benhamou (2004); straightness index
+    per Batschelet (1981).
+"""
+
+import math
+
+import numpy as np
+
+# --------------------------------------------------------------------------
+#  Statistic catalogue (the "Property" value list, in dialog order)
+# --------------------------------------------------------------------------
+#   key                        label (shown in the dropdown)
+STATS = [
+    ("plan_length", "Planimetric Length (geodesic)"),
+    ("surf_length", "Surface Length (geodesic)"),
+    ("surf_ratio", "Surface Ratio"),
+    ("length_uphill", "Length Uphill"),
+    ("prop_uphill", "Proportion Uphill"),
+    ("elev_gain", "Cumulative Elevation Gain"),
+    ("length_downhill", "Length Downhill"),
+    ("prop_downhill", "Proportion Downhill"),
+    ("elev_loss", "Cumulative Elevation Loss"),
+    ("length_flat", "Length Perfectly Flat"),
+    ("prop_flat", "Proportion Perfectly Flat"),
+    ("net_elev", "Net Elevation Change"),
+    ("avg_slope", "Average Slope"),
+    ("slope_sd", "Slope Standard Deviation"),
+    ("min_slope", "Minimum Slope"),
+    ("max_slope", "Maximum Slope"),
+    ("rms_slope", "RMS Slope"),
+    ("mean_dir", "Mean Direction"),
+    ("resultant", "Mean Resultant Length"),
+    ("circ_var", "Circular Variance"),
+    ("ang_var", "Angular Variance"),
+    ("circ_sd", "Circular Standard Deviation"),
+    ("ang_dev", "Angular Deviation"),
+    ("rayleigh_p", "Rayleigh p-value"),
+    ("total_curv", "Total Curvature"),
+    ("fractal_d", "Fractal Dimension"),
+    ("sinuosity", "Sinuosity (3D)"),
+    ("min_elev", "Minimum Elevation"),
+    ("max_elev", "Maximum Elevation"),
+    ("elev_range", "Elevation Range"),
+    ("vert_relief", "Total Vertical Relief Traveled"),
+    ("reversals", "Reversal Count"),
+]
+STAT_KEYS = [k for k, _ in STATS]
+STAT_LABEL = dict(STATS)
+LABEL_STAT = {v: k for k, v in STATS}
+
+# Which "unit family" each statistic reports in -- drives the field metadata
+# ("length" = the chosen Length Unit; "elevation" = the DEM/Z elevation units;
+# "degrees" = degrees; "slope" = the chosen slope unit; "none" = unitless;
+# "count" = an integer count).
+STAT_UNIT_KIND = {
+    "plan_length": "length", "surf_length": "length",
+    "length_uphill": "length", "length_downhill": "length",
+    "length_flat": "length",
+    "surf_ratio": "none", "prop_uphill": "none", "prop_downhill": "none",
+    "prop_flat": "none", "sinuosity": "none", "circ_var": "none",
+    "ang_var": "none", "resultant": "none", "fractal_d": "none",
+    "rayleigh_p": "none",
+    "elev_gain": "elevation", "elev_loss": "elevation", "net_elev": "elevation",
+    "min_elev": "elevation", "max_elev": "elevation", "elev_range": "elevation",
+    "vert_relief": "elevation",
+    "avg_slope": "slope", "min_slope": "slope", "max_slope": "slope",
+    "slope_sd": "degrees", "rms_slope": "degrees",
+    "mean_dir": "degrees", "circ_sd": "degrees", "ang_dev": "degrees",
+    "total_curv": "degrees",
+    "reversals": "count",
+}
+
+SLOPE_UNITS = ["Degrees", "Percent"]
+
+# Statistics whose value is a whole number (safe in an integer output field).
+# Everything else can be fractional and needs a floating-point field.
+INTEGER_STATS = {"reversals"}
+
+# Statistics whose value changes when the line is traversed in the opposite
+# direction (climb becomes descent, mean heading flips 180 degrees). The
+# circular/angular SPREAD measures are invariant (adding 180 to every bearing
+# rotates the mean but not the dispersion), so only the mean direction and the
+# elevation-sign statistics are direction-dependent.
+DIRECTION_DEPENDENT = {
+    "elev_gain", "elev_loss", "net_elev", "length_uphill", "prop_uphill",
+    "length_downhill", "prop_downhill", "mean_dir",
+}
+
+
+def default_field_name(key):
+    """A reasonable default output field name for a statistic, derived from its
+    label: parenthetical qualifiers are dropped and the rest is sanitized to a
+    valid field name (e.g. 'Surface Length (geodesic)' -> 'Surface_Length')."""
+    import re
+    base = re.sub(r"\([^)]*\)", "", STAT_LABEL[key])
+    base = re.sub(r"[^0-9A-Za-z]+", "_", base).strip("_")
+    return base or key
+
+
+def field_units_phrase(key, length_unit, elev_unit, slope_unit):
+    """Human-readable units for one statistic's output field."""
+    kind = STAT_UNIT_KIND[key]
+    if kind == "length":
+        return length_unit
+    if kind == "elevation":
+        return "{} (elevation)".format(elev_unit)
+    if kind == "degrees":
+        return "degrees (azimuth)" if key == "mean_dir" else "degrees"
+    if kind == "slope":
+        return "degrees" if slope_unit == "Degrees" else "percent"
+    if kind == "count":
+        return "count (integer)"
+    return "unitless"
+
+
+def field_description(key, length_unit, elev_unit, slope_unit):
+    """Field-metadata description for one statistic, stating its units and (for
+    direction-dependent statistics) the direction-of-travel convention."""
+    txt = "{}, computed by the Topography along Lines tool. Units: {}.".format(
+        STAT_LABEL[key], field_units_phrase(key, length_unit, elev_unit, slope_unit))
+    if key in DIRECTION_DEPENDENT:
+        txt += (" This value describes the line travelling in the direction of "
+                "its geometry, from the first vertex to the last (reversing the "
+                "line reverses this value).")
+    return txt
+
+# Length units -> meters (the chosen Length Unit; matches Calculate Geometry's
+# common set). Reported lengths are meters * (1 / factor)... stored here as
+# meters-per-unit so length_out = length_m / METERS_PER_LENGTH[unit].
+METERS_PER_LENGTH = {
+    "Meters": 1.0,
+    "Kilometers": 1000.0,
+    "Feet": 0.3048,
+    "Miles": 1609.344,
+    "Yards": 0.9144,
+    "Nautical Miles": 1852.0,
+}
+LENGTH_UNITS = list(METERS_PER_LENGTH.keys())
+
+# Elevation unit -> meters.
+ELEV_METERS = {"Meters": 1.0, "Feet": 0.3048}
+
+
+def _slope_convert(deg, slope_unit):
+    """Convert a single slope value in DEGREES to the chosen slope unit."""
+    if slope_unit == "Percent":
+        return math.tan(math.radians(deg)) * 100.0
+    return deg
+
+
+def _fractal_dimension(pts_xy_m, base_step):
+    """Planimetric fractal dimension of one part by the divider (compass) method
+    (Mandelbrot 1967; Nams 2005): the length of the path is measured by walking
+    dividers of size delta along it; D = 1 - slope of log(length) vs log(delta)
+    over a range of divider sizes. ``pts_xy_m`` is the ordered list of sample
+    points (projected meters); ``base_step`` is the smallest divider (the
+    sampling interval). Returns D in [1, ~2], or None if the part is too short /
+    the fit is undefined."""
+    pts = np.asarray(pts_xy_m, dtype=np.float64)
+    if pts.shape[0] < 3:
+        return None
+    seg = np.hypot(np.diff(pts[:, 0]), np.diff(pts[:, 1]))
+    total = float(seg.sum())
+    if total <= 0:
+        return None
+    cum = np.concatenate(([0.0], np.cumsum(seg)))   # arc length at each vertex
+
+    def walk_length(delta):
+        """Total length measured with a divider of length ``delta`` (walking
+        dividers along the arc-length parameterization, interpolating hit
+        points between vertices)."""
+        pos = 0.0
+        x0, y0 = pts[0]
+        measured = 0.0
+        n = 0
+        while pos + delta <= total + 1e-9:
+            target = pos + delta
+            j = int(np.searchsorted(cum, target))
+            if j >= len(cum):
+                break
+            # interpolate the point at arc length ``target`` between vertex j-1,j
+            t = (target - cum[j - 1]) / max(cum[j] - cum[j - 1], 1e-12)
+            x1 = pts[j - 1, 0] + t * (pts[j, 0] - pts[j - 1, 0])
+            y1 = pts[j - 1, 1] + t * (pts[j, 1] - pts[j - 1, 1])
+            measured += math.hypot(x1 - x0, y1 - y0)
+            x0, y0, pos = x1, y1, target
+            n += 1
+        # add the leftover stub back to the true endpoint (fractional divider)
+        measured += math.hypot(pts[-1, 0] - x0, pts[-1, 1] - y0)
+        return measured, n
+
+    # Divider sizes: geometric progression from the base step up to ~1/4 of the
+    # total path, at least 4 sizes needed for a stable regression.
+    dmin = max(base_step, total / 512.0)
+    dmax = total / 4.0
+    if dmax <= dmin * 1.5:
+        return None
+    n_sizes = max(4, int(round(math.log(dmax / dmin) / math.log(1.5))) + 1)
+    deltas = np.geomspace(dmin, dmax, n_sizes)
+    logd, logl = [], []
+    for d in deltas:
+        L, n = walk_length(d)
+        if n >= 1 and L > 0:
+            logd.append(math.log(d))
+            logl.append(math.log(L))
+    if len(logd) < 4:
+        return None
+    slope = np.polyfit(logd, logl, 1)[0]
+    D = 1.0 - float(slope)
+    return float(min(max(D, 1.0), 2.0))
+
+
+# --------------------------------------------------------------------------
+#  Elevation sampling / segment building (arcpy + GDAL layer)
+# --------------------------------------------------------------------------
+#  Reduces one polyline feature to the per-part straight-segment ``parts`` that
+#  compute_line_statistics consumes. DEM case: sample points are projected into
+#  the DEM's coordinate system (never the DEM itself -- projecting a raster
+#  resamples/damages it), densified at min(cell width, cell height) as a ground
+#  interval plus each part's endpoints, and Z is bilinear-interpolated. Own-Z
+#  case: the polyline's own vertices are used directly. Planimetric segment
+#  lengths and bearings are geodesic (ellipsoidal), matching the "geodesic"
+#  length labels and the rest of the suite.
+
+
+def _gdal():
+    from osgeo import gdal
+    return gdal
+
+
+def load_dem(dem_path, window=None):
+    """Open a DEM and return a dict with its array (NaN at NoData), geotransform,
+    spatial reference, ground cell sizes, and the sampling interval (meters).
+
+    ``window`` (xmin, ymin, xmax, ymax) in the DEM's OWN coordinate system, when
+    given, limits the read to the cells covering that extent (plus a small
+    margin) instead of the whole raster -- essential for large regional DEMs, so
+    memory scales with the analysis extent rather than the DEM. The returned
+    geotransform is shifted to the window origin so sampling is unaffected."""
+    import arcpy
+    import mahalanobis as _mh
+    gdal = _gdal()
+    # GDAL cannot open every raster by its catalog path -- notably rasters inside
+    # a file geodatabase (e.g. ...\DEM.gdb\name). Use the toolbox's proven
+    # resolver, which returns a GDAL-openable source (OpenFileGDB subdataset
+    # syntax, or a scratch GeoTIFF export) plus a temp copy to delete afterward.
+    src, tmp = _mh._gdal_source_path(dem_path, arcpy.env.scratchFolder)
+    ds = gdal.Open(src)
+    if ds is None:
+        if tmp:
+            try:
+                arcpy.management.Delete(tmp)
+            except Exception:
+                pass
+        raise arcpy.ExecuteError("Could not open the DEM: {}".format(dem_path))
+    band = ds.GetRasterBand(1)
+    gt = ds.GetGeoTransform()
+    full_w, full_h = ds.RasterXSize, ds.RasterYSize
+    nodata = band.GetNoDataValue()
+
+    xoff, yoff, xsize, ysize = 0, 0, full_w, full_h
+    if window is not None and gt[2] == 0 and gt[4] == 0:
+        # Cell window covering the requested extent, padded for bilinear reach.
+        margin = 4
+        xmin, ymin, xmax, ymax = window
+        cols = [(xmin - gt[0]) / gt[1], (xmax - gt[0]) / gt[1]]
+        rows = [(ymax - gt[3]) / gt[5], (ymin - gt[3]) / gt[5]]   # gt[5] < 0
+        c0 = max(0, int(math.floor(min(cols))) - margin)
+        c1 = min(full_w, int(math.ceil(max(cols))) + margin)
+        r0 = max(0, int(math.floor(min(rows))) - margin)
+        r1 = min(full_h, int(math.ceil(max(rows))) + margin)
+        if c1 <= c0 or r1 <= r0:
+            ds = None
+            if tmp:
+                try:
+                    arcpy.management.Delete(tmp)
+                except Exception:
+                    pass
+            raise arcpy.ExecuteError(
+                "The polylines do not fall within the DEM's extent.")
+        xoff, yoff, xsize, ysize = c0, r0, c1 - c0, r1 - r0
+        gt = (gt[0] + c0 * gt[1], gt[1], 0.0, gt[3] + r0 * gt[5], 0.0, gt[5])
+
+    try:
+        arr = band.ReadAsArray(xoff, yoff, xsize, ysize).astype(np.float64)
+    except (MemoryError, RuntimeError) as e:
+        ds = None
+        if tmp:
+            try:
+                arcpy.management.Delete(tmp)
+            except Exception:
+                pass
+        raise arcpy.ExecuteError(
+            "Could not read the DEM into memory over the analysis extent -- it "
+            "may be too large. Try a smaller subset of lines or a coarser DEM. "
+            "({})".format(e))
+    if nodata is not None:
+        arr = np.where(arr == nodata, np.nan, arr)
+    ds = None
+    if tmp:                                    # scratch export no longer needed
+        try:
+            arcpy.management.Delete(tmp)
+        except Exception:
+            pass
+    sr = arcpy.Describe(dem_path).spatialReference
+    nrows = arr.shape[0]
+    if sr.type == "Projected":
+        mpu = float(sr.metersPerUnit or 1.0)
+        cellw_m = abs(gt[1]) * mpu
+        cellh_m = abs(gt[5]) * mpu
+    else:                                     # geographic: degrees -> ground m
+        lat0 = math.radians(gt[3] + (nrows / 2.0) * gt[5])
+        cellh_m = abs(gt[5]) * 111132.0
+        cellw_m = abs(gt[1]) * 111320.0 * max(math.cos(lat0), 1e-6)
+    return {"arr": arr, "gt": gt, "sr": sr, "nodata": nodata,
+            "cellw_m": cellw_m, "cellh_m": cellh_m,
+            "interval_m": max(min(cellw_m, cellh_m), 1e-6)}
+
+
+def lines_window_in_dem_crs(in_lines, dem_sr):
+    """Bounding box of the input lines' extent expressed in the DEM's coordinate
+    system, for use as ``load_dem``'s window so only the relevant part of a
+    large DEM is read. The extent rectangle is densified before projection so
+    the projected bounding box truly contains the lines even across very
+    different coordinate systems. Returns (xmin, ymin, xmax, ymax), or None if
+    it can't be determined (the whole DEM is then read)."""
+    import arcpy
+    try:
+        d = arcpy.Describe(in_lines)
+        ext = d.extent
+        if ext is None or ext.XMin is None:
+            return None
+        lsr = d.spatialReference
+        if (lsr and dem_sr and lsr.name and dem_sr.name
+                and lsr.name != dem_sr.name):
+            poly = arcpy.Polygon(arcpy.Array([
+                ext.lowerLeft, ext.lowerRight, ext.upperRight,
+                ext.upperLeft, ext.lowerLeft]), lsr)
+            step = max((ext.width + ext.height) / 40.0, 1e-9)
+            try:
+                poly = poly.densify("DISTANCE", step, step)
+            except Exception:
+                pass
+            ext = poly.projectAs(dem_sr).extent
+        return (ext.XMin, ext.YMin, ext.XMax, ext.YMax)
+    except Exception:
+        return None
+
+
+def _bilinear(arr, gt, x, y):
+    """Bilinear-interpolate the raster ``arr`` (NaN = NoData) at map coordinate
+    (x, y) in the raster's own CRS. Returns NaN if out of bounds or if any of
+    the four surrounding cells is NoData."""
+    fcol = (x - gt[0]) / gt[1] - 0.5          # fractional index in cell-centers
+    frow = (y - gt[3]) / gt[5] - 0.5
+    c0 = int(math.floor(fcol))
+    r0 = int(math.floor(frow))
+    tx = fcol - c0
+    ty = frow - r0
+    h, w = arr.shape
+    if c0 < 0 or r0 < 0 or c0 + 1 >= w or r0 + 1 >= h:
+        return float("nan")
+    v00 = arr[r0, c0]
+    v01 = arr[r0, c0 + 1]
+    v10 = arr[r0 + 1, c0]
+    v11 = arr[r0 + 1, c0 + 1]
+    if not (np.isfinite(v00) and np.isfinite(v01) and np.isfinite(v10) and np.isfinite(v11)):
+        return float("nan")
+    top = v00 * (1 - tx) + v01 * tx
+    bot = v10 * (1 - tx) + v11 * tx
+    return float(top * (1 - ty) + bot * ty)
+
+
+def _local_xy_m(points, sr):
+    """Approximate metric planar coordinates for the fractal divider walk. For a
+    projected SR, scale to meters; for geographic, a local equirectangular
+    projection about the first point."""
+    import math as _m
+    if sr.type == "Projected":
+        mpu = float(sr.metersPerUnit or 1.0)
+        return [(p.X * mpu, p.Y * mpu) for p in points]
+    lon0 = math.radians(points[0].X)
+    lat0 = math.radians(points[0].Y)
+    R = 6378137.0
+    out = []
+    for p in points:
+        out.append((R * (math.radians(p.X) - lon0) * _m.cos(lat0),
+                    R * (math.radians(p.Y) - lat0)))
+    return out
+
+
+def build_parts(shape, source, dem=None, elev_m_per_unit=1.0):
+    """Reduce one polyline ``shape`` (arcpy Polyline, SHAPE@) to the per-part
+    segment dicts compute_line_statistics needs. ``source`` is "DEM" or "Z".
+    Returns (parts, diag) where diag counts NoData drops and short-for-fractal
+    parts. All returned lengths/elevations are in METERS."""
+    import arcpy
+    parts = []
+    diag = {"nodata_segments": 0, "empty_parts": 0}
+
+    if source == "DEM":
+        work_sr = dem["sr"]
+        interval_m = dem["interval_m"]
+        geom = shape.projectAs(work_sr) if shape.spatialReference and \
+            shape.spatialReference.factoryCode != work_sr.factoryCode else shape
+    else:
+        work_sr = shape.spatialReference
+        interval_m = None
+
+    for pi in range(geom.partCount if source == "DEM" else shape.partCount):
+        src_geom = geom if source == "DEM" else shape
+        part_arr = src_geom.getPart(pi)
+        pts_in = [pt for pt in part_arr if pt is not None]
+        if len(pts_in) < 2:
+            diag["empty_parts"] += 1
+            continue
+
+        if source == "DEM":
+            part_poly = arcpy.Polyline(arcpy.Array(pts_in), work_sr)
+            Lm = part_poly.getLength("GEODESIC", "METERS")
+            n = max(1, int(math.ceil(Lm / interval_m)))
+            samples = [part_poly.positionAlongLine(i / float(n), True).firstPoint
+                       for i in range(n + 1)]
+            z_raw = [_bilinear(dem["arr"], dem["gt"], p.X, p.Y) for p in samples]
+        else:
+            samples = pts_in
+            z_raw = [p.Z for p in samples]
+
+        z_m = [(zr * elev_m_per_unit if zr is not None and np.isfinite(zr)
+                else float("nan")) for zr in z_raw]
+
+        seg_plan, seg_dz, seg_bear, keep_pts, keep_z = [], [], [], [], []
+        for i in range(len(samples) - 1):
+            p0, p1 = samples[i], samples[i + 1]
+            z0, z1 = z_m[i], z_m[i + 1]
+            if not (np.isfinite(z0) and np.isfinite(z1)):
+                diag["nodata_segments"] += 1
+                continue
+            g0 = arcpy.PointGeometry(p0, work_sr)
+            g1 = arcpy.PointGeometry(p1, work_sr)
+            ang, dist = g0.angleAndDistanceTo(g1, "GEODESIC")
+            seg_plan.append(dist)
+            seg_dz.append(z1 - z0)
+            seg_bear.append(ang % 360.0)
+            if not keep_pts:
+                keep_pts.append(p0)
+                keep_z.append(z0)
+            keep_pts.append(p1)
+            keep_z.append(z1)
+        if not seg_plan:
+            diag["empty_parts"] += 1
+            continue
+
+        g_first = arcpy.PointGeometry(keep_pts[0], work_sr)
+        g_last = arcpy.PointGeometry(keep_pts[-1], work_sr)
+        _a, chord_h = g_first.angleAndDistanceTo(g_last, "GEODESIC")
+        parts.append({
+            "seg_plan_m": np.array(seg_plan),
+            "seg_dz_m": np.array(seg_dz),
+            "seg_bearing": np.array(seg_bear),
+            "z_m": np.array(keep_z),
+            "pts_xy_m": _local_xy_m(keep_pts, work_sr),
+            "chord_horiz_m": chord_h,
+            "chord_dz_m": keep_z[-1] - keep_z[0],
+            "base_step_m": (interval_m if source == "DEM"
+                            else float(np.median(seg_plan))),
+        })
+    return parts, diag
+
+
+def compute_line_statistics(parts, length_unit="Meters", elev_unit="Meters",
+                            slope_unit="Degrees", wanted=None):
+    """Compute the selected surface statistics for ONE polyline feature.
+
+    ``parts``: list of parts (disconnected pieces). Each part is a dict with
+    per-segment arrays already reduced to straight 3-D segments, all in METERS:
+        seg_plan_m   : geodesic horizontal length of each segment
+        seg_dz_m     : signed elevation change of each segment (end - start)
+        seg_bearing  : planimetric bearing of each segment, degrees (0=N, 90=E)
+        z_m          : sampled elevation at each vertex (length = n_seg + 1)
+        pts_xy_m     : projected planar sample points (for the fractal divider)
+        chord_horiz_m: geodesic distance between the part's first & last vertex
+        chord_dz_m   : elevation difference between first & last vertex
+        base_step_m  : the sampling interval (smallest fractal divider)
+    ``wanted``: iterable of stat keys to compute (default: all).
+
+    Returns {stat_key: value} with values already in reporting units (NaN where
+    undefined, e.g. a proportion of a zero-length line)."""
+    keys = set(STAT_KEYS if wanted is None else wanted)
+    lm = METERS_PER_LENGTH[length_unit]          # meters per length unit
+    em = ELEV_METERS.get(elev_unit, 1.0)         # meters per elevation unit
+
+    def to_len(x_m):
+        return x_m / lm
+
+    def to_elev(x_m):
+        return x_m / em
+
+    # Flatten segments across parts (statistics that don't care about part
+    # boundaries) while keeping per-part structure for those that do.
+    plan = np.concatenate([p["seg_plan_m"] for p in parts]) if parts else np.array([])
+    dz = np.concatenate([p["seg_dz_m"] for p in parts]) if parts else np.array([])
+    bearing = np.concatenate([p["seg_bearing"] for p in parts]) if parts else np.array([])
+    plan = plan.astype(np.float64)
+    dz = dz.astype(np.float64)
+    bearing = bearing.astype(np.float64)
+    surf = np.hypot(plan, dz)                     # surface (3-D) segment lengths
+    allz = np.concatenate([np.asarray(p["z_m"], float) for p in parts]) if parts else np.array([])
+
+    total_plan = float(plan.sum())
+    total_surf = float(surf.sum())
+    up = dz > 0
+    down = dz < 0
+    flat = dz == 0
+    # Slope of each segment in degrees (unit-independent: dz/plan is a ratio).
+    with np.errstate(invalid="ignore", divide="ignore"):
+        slope_deg = np.degrees(np.arctan2(np.abs(dz), plan))   # 0..90, positive
+    out = {}
+
+    def has(k):
+        return k in keys
+
+    if has("plan_length"):
+        out["plan_length"] = to_len(total_plan)
+    if has("surf_length"):
+        out["surf_length"] = to_len(total_surf)
+    if has("surf_ratio"):
+        out["surf_ratio"] = (total_surf / total_plan) if total_plan > 0 else float("nan")
+    if has("length_uphill"):
+        out["length_uphill"] = to_len(float(surf[up].sum()))
+    if has("length_downhill"):
+        out["length_downhill"] = to_len(float(surf[down].sum()))
+    if has("length_flat"):
+        out["length_flat"] = to_len(float(surf[flat].sum()))
+    if has("prop_uphill"):
+        out["prop_uphill"] = (float(surf[up].sum()) / total_surf) if total_surf > 0 else float("nan")
+    if has("prop_downhill"):
+        out["prop_downhill"] = (float(surf[down].sum()) / total_surf) if total_surf > 0 else float("nan")
+    if has("prop_flat"):
+        out["prop_flat"] = (float(surf[flat].sum()) / total_surf) if total_surf > 0 else float("nan")
+    gain_m = float(dz[up].sum())
+    loss_m = float(-dz[down].sum())
+    if has("elev_gain"):
+        out["elev_gain"] = to_elev(gain_m)
+    if has("elev_loss"):
+        out["elev_loss"] = to_elev(loss_m)
+    if has("net_elev"):
+        out["net_elev"] = to_elev(gain_m - loss_m)
+    if has("vert_relief"):
+        out["vert_relief"] = to_elev(gain_m + loss_m)
+    if has("min_elev"):
+        out["min_elev"] = to_elev(float(allz.min())) if allz.size else float("nan")
+    if has("max_elev"):
+        out["max_elev"] = to_elev(float(allz.max())) if allz.size else float("nan")
+    if has("elev_range"):
+        out["elev_range"] = to_elev(float(allz.max() - allz.min())) if allz.size else float("nan")
+
+    # --- slope statistics (surface-length weighted, |slope|) ---------------
+    if keys & {"avg_slope", "slope_sd", "min_slope", "max_slope", "rms_slope"}:
+        w = surf
+        wsum = float(w.sum())
+        if wsum > 0 and slope_deg.size:
+            mean_deg = float(np.sum(w * slope_deg) / wsum)
+            var_deg = float(np.sum(w * (slope_deg - mean_deg) ** 2) / wsum)
+            rms_deg = float(math.sqrt(np.sum(w * slope_deg ** 2) / wsum))
+            if has("avg_slope"):
+                out["avg_slope"] = _slope_convert(mean_deg, slope_unit)
+            if has("slope_sd"):
+                out["slope_sd"] = math.sqrt(max(var_deg, 0.0))     # degrees only
+            if has("rms_slope"):
+                out["rms_slope"] = rms_deg                          # degrees only
+            if has("min_slope"):
+                out["min_slope"] = _slope_convert(float(slope_deg.min()), slope_unit)
+            if has("max_slope"):
+                out["max_slope"] = _slope_convert(float(slope_deg.max()), slope_unit)
+        else:
+            for k in ("avg_slope", "slope_sd", "min_slope", "max_slope", "rms_slope"):
+                if has(k):
+                    out[k] = float("nan")
+
+    # --- directional statistics (surface-length weighted) ------------------
+    if keys & {"mean_dir", "resultant", "circ_var", "ang_var", "circ_sd",
+               "ang_dev", "rayleigh_p"}:
+        br = np.radians(bearing)
+        w = surf
+        S = float(np.sum(w * np.sin(br)))
+        C = float(np.sum(w * np.cos(br)))
+        wsum = float(w.sum())
+        R = math.hypot(S, C)
+        # Mean resultant length is bounded to [0, 1]; floating-point can nudge a
+        # perfectly focused set (e.g. a straight line, all bearings equal) a hair
+        # above 1, which would make -2*ln(Rbar) negative below.
+        Rbar = min(max(R / wsum, 0.0), 1.0) if wsum > 0 else float("nan")
+        if has("mean_dir"):
+            out["mean_dir"] = (math.degrees(math.atan2(S, C)) % 360.0) if wsum > 0 else float("nan")
+        if has("resultant"):
+            out["resultant"] = Rbar
+        if has("circ_var"):
+            out["circ_var"] = (1.0 - Rbar) if wsum > 0 else float("nan")
+        if has("ang_var"):
+            out["ang_var"] = (2.0 * (1.0 - Rbar)) if wsum > 0 else float("nan")
+        if has("circ_sd"):
+            out["circ_sd"] = (math.degrees(math.sqrt(max(-2.0 * math.log(Rbar), 0.0)))
+                              if wsum > 0 and Rbar > 0 else float("nan"))
+        if has("ang_dev"):
+            out["ang_dev"] = (math.degrees(math.sqrt(max(2.0 * (1.0 - Rbar), 0.0)))
+                              if wsum > 0 else float("nan"))
+        if has("rayleigh_p"):
+            # Rayleigh test of uniformity (approx., Zar 1999 eq. 27.4) using the
+            # segment count as n. z = n*Rbar^2; p ~ exp(-z)[1+(2z-z^2)/(4n)-...].
+            n = int(plan.size)
+            if n > 0 and wsum > 0:
+                z = n * Rbar * Rbar
+                p = math.exp(-z) * (1.0 + (2.0 * z - z * z) / (4.0 * n)
+                                    - (24.0 * z - 132.0 * z ** 2 + 76.0 * z ** 3
+                                       - 9.0 * z ** 4) / (288.0 * n * n))
+                out["rayleigh_p"] = float(min(max(p, 0.0), 1.0))
+            else:
+                out["rayleigh_p"] = float("nan")
+
+    # --- total curvature: sum of |turn angle| between consecutive segments,
+    #     within each part only (never across a part break) -----------------
+    if has("total_curv"):
+        tot = 0.0
+        any_turn = False
+        for p in parts:
+            b = np.asarray(p["seg_bearing"], float)
+            if b.size >= 2:
+                d = np.diff(b)
+                d = (d + 180.0) % 360.0 - 180.0     # wrap to (-180, 180]
+                tot += float(np.sum(np.abs(d)))
+                any_turn = True
+        out["total_curv"] = tot if any_turn else float("nan")
+
+    # --- reversal count: uphill<->downhill switches, within each part ------
+    if has("reversals"):
+        cnt = 0
+        for p in parts:
+            d = np.asarray(p["seg_dz_m"], float)
+            sign = np.sign(d)
+            sign = sign[sign != 0]                  # ignore perfectly flat segs
+            if sign.size >= 2:
+                cnt += int(np.sum(sign[1:] != sign[:-1]))
+        out["reversals"] = cnt
+
+    # --- 3D sinuosity: total surface length / sum of per-part 3D chords ----
+    if has("sinuosity"):
+        chord = 0.0
+        for p in parts:
+            chord += math.hypot(float(p["chord_horiz_m"]), float(p["chord_dz_m"]))
+        out["sinuosity"] = (total_surf / chord) if chord > 0 else float("nan")
+
+    # --- fractal dimension: per part (divider), surface-length weighted ----
+    if has("fractal_d"):
+        num = 0.0
+        den = 0.0
+        for p in parts:
+            D = _fractal_dimension(p["pts_xy_m"], float(p["base_step_m"]))
+            if D is not None:
+                wlen = float(np.hypot(np.asarray(p["seg_plan_m"], float),
+                                      np.asarray(p["seg_dz_m"], float)).sum())
+                num += D * wlen
+                den += wlen
+        out["fractal_d"] = (num / den) if den > 0 else float("nan")
+
+    return out
