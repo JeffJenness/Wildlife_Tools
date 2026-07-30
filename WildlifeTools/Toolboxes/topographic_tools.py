@@ -128,6 +128,57 @@ def _heron(l1, l2, l3):
     return np.sqrt(np.maximum(prod, 0.0))
 
 
+def _eight_triangle_area(NW, N_, NE, W_, C_, E_, SW, S_, SE, g, four_cell):
+    """Jenness (2004) 8-triangle 3-D surface area for a block of focal cells,
+    given the nine neighbor-elevation arrays (meters, focal = ``C_``) and a
+    dict ``g`` of the per-row SQUARED half-distance arrays (keys vA2/hA2/dA2/
+    h2/dB2/hB2/vB2), each already broadcast to the elevation arrays' shape.
+    The four edge midpoints (B/D/F/H) are the 2-cell means in both corner
+    methods; the four corners (A/C/G/I) are the 2-cell diagonal midpoints
+    (legacy) or the 4-cell averages (``four_cell``). Shared by
+    ``run_surface_area`` and ``run_acr`` so the triangulation lives in one
+    place."""
+    zB = (N_ + C_) / 2.0
+    zD = (W_ + C_) / 2.0
+    zF = (E_ + C_) / 2.0
+    zH = (S_ + C_) / 2.0
+    if four_cell:
+        zA = (NW + N_ + W_ + C_) / 4.0
+        zC = (N_ + NE + E_ + C_) / 4.0
+        zG = (W_ + SW + S_ + C_) / 4.0
+        zI = (E_ + S_ + SE + C_) / 4.0
+    else:
+        zA = (NW + C_) / 2.0
+        zC = (NE + C_) / 2.0
+        zG = (SW + C_) / 2.0
+        zI = (SE + C_) / 2.0
+
+    # Eight spoke legs (center to boundary points).
+    sA = np.sqrt(g["dA2"] + (zA - C_) ** 2)
+    sB = np.sqrt(g["vA2"] + (zB - C_) ** 2)
+    sC = np.sqrt(g["dA2"] + (zC - C_) ** 2)
+    sD = np.sqrt(g["h2"] + (zD - C_) ** 2)
+    sF = np.sqrt(g["h2"] + (zF - C_) ** 2)
+    sG = np.sqrt(g["dB2"] + (zG - C_) ** 2)
+    sH = np.sqrt(g["vB2"] + (zH - C_) ** 2)
+    sI = np.sqrt(g["dB2"] + (zI - C_) ** 2)
+
+    # Eight outer legs (between adjacent boundary points).
+    oAB = np.sqrt(g["hA2"] + (zA - zB) ** 2)
+    oBC = np.sqrt(g["hA2"] + (zC - zB) ** 2)
+    oAD = np.sqrt(g["vA2"] + (zA - zD) ** 2)
+    oCF = np.sqrt(g["vA2"] + (zC - zF) ** 2)
+    oDG = np.sqrt(g["vB2"] + (zG - zD) ** 2)
+    oFI = np.sqrt(g["vB2"] + (zI - zF) ** 2)
+    oGH = np.sqrt(g["hB2"] + (zG - zH) ** 2)
+    oHI = np.sqrt(g["hB2"] + (zI - zH) ** 2)
+
+    return (_heron(sA, sB, oAB) + _heron(sC, sB, oBC) +
+            _heron(sA, sD, oAD) + _heron(sC, sF, oCF) +
+            _heron(sD, sG, oDG) + _heron(sF, sI, oFI) +
+            _heron(sG, sH, oGH) + _heron(sH, sI, oHI))
+
+
 def _resolve_output(path, messages):
     """Shared no-more-GRID output resolution (see mahalanobis.py)."""
     return _mh.resolve_raster_output(path, messages)
@@ -205,9 +256,18 @@ def _deliver_output(out_scratch, out_raster, out_stats, messages,
 def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
                      elev_units="Meters", area_units="Sq. Meters",
                      flat_units="Sq. Meters",
-                     corner_method=None, messages=None):
+                     corner_method=None, detrend=False, detrend_radius=1.5,
+                     detrend_units="Cells", messages=None):
     """Compute any combination of the Surface Area, Surface Ratio, and Flat
-    Area rasters (at least one required). See the module docstring."""
+    Area rasters (at least one required). See the module docstring.
+
+    When ``detrend`` is True, the DEM is first locally detrended (Dilts et al.
+    2023) by subtracting a circular neighborhood mean of radius
+    ``detrend_radius`` ``detrend_units`` (default 1.5 cells = a 3x3 mean), so
+    the surface ratio measures fine-scale surface roughness with the smooth
+    underlying topography removed (Dilts's SAPR_L). The surface RATIO is the
+    meaningful ruggedness output in that mode; the surface-area and flat-area
+    outputs then describe the detrended residual surface."""
     gdal = _mh._gdal()
 
     if not (out_area or out_ratio or out_flat):
@@ -240,7 +300,21 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
     _mh.begin_phases(phases)
 
     scratch = arcpy.env.scratchFolder
-    src, in_copy = _hs._open_source(in_raster, scratch, messages)
+    detrend_scratch = None
+    detrend_meta = ""
+    work_raster = in_raster
+    if detrend:
+        detrend_scratch, dnote = _detrended_dem(
+            in_raster, detrend_radius, detrend_units, messages)
+        work_raster = detrend_scratch
+        detrend_meta = (
+            " LOCAL (detrended) variant: before the surface-area computation "
+            "the DEM was detrended by subtracting a circular neighborhood mean "
+            "(radius {}), leaving only fine-scale surface variation, so the "
+            "surface ratio measures surface roughness with the smooth "
+            "underlying topography removed (Dilts et al. 2023, SAPR_L). "
+            "{}").format(dnote, _DETREND_CITATION)
+    src, in_copy = _hs._open_source(work_raster, scratch, messages)
     band = src.GetRasterBand(1)
     width, height = src.RasterXSize, src.RasterYSize
     if width < 3 or height < 3:
@@ -248,7 +322,7 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
     gt = src.GetGeoTransform()
     proj = src.GetProjection()
     in_nodata = band.GetNoDataValue()
-    sr = arcpy.Describe(in_raster).spatialReference
+    sr = arcpy.Describe(work_raster).spatialReference
 
     geom, geographic = _surface_row_geometry(gt, height, sr)
     if geographic:
@@ -318,56 +392,12 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
             SW, S_, SE = pad[dn, :-2], pad[dn, 1:-1], pad[dn, 2:]
 
             rr = slice(r0, r1)
-            vA2 = geom["vA2"][rr][:, None]
-            hA2 = geom["hA2"][rr][:, None]
-            dA2 = geom["dA2"][rr][:, None]
-            h2 = geom["h2"][rr][:, None]
-            dB2 = geom["dB2"][rr][:, None]
-            hB2 = geom["hB2"][rr][:, None]
-            vB2 = geom["vB2"][rr][:, None]
+            g = {k: geom[k][rr][:, None] for k in
+                 ("vA2", "hA2", "dA2", "h2", "dB2", "hB2", "vB2")}
             pixm2 = geom["pix_m2"][rr][:, None]
 
-            # Interpolated boundary-point elevations. Edge midpoints are the
-            # 2-cell means in both methods; corners follow the chosen method.
-            zB = (N_ + C_) / 2.0
-            zD = (W_ + C_) / 2.0
-            zF = (E_ + C_) / 2.0
-            zH = (S_ + C_) / 2.0
-            if four_cell:
-                zA = (NW + N_ + W_ + C_) / 4.0
-                zC = (N_ + NE + E_ + C_) / 4.0
-                zG = (W_ + SW + S_ + C_) / 4.0
-                zI = (E_ + S_ + SE + C_) / 4.0
-            else:
-                zA = (NW + C_) / 2.0
-                zC = (NE + C_) / 2.0
-                zG = (SW + C_) / 2.0
-                zI = (SE + C_) / 2.0
-
-            # Eight spoke legs (center to boundary points).
-            sA = np.sqrt(dA2 + (zA - C_) ** 2)
-            sB = np.sqrt(vA2 + (zB - C_) ** 2)
-            sC = np.sqrt(dA2 + (zC - C_) ** 2)
-            sD = np.sqrt(h2 + (zD - C_) ** 2)
-            sF = np.sqrt(h2 + (zF - C_) ** 2)
-            sG = np.sqrt(dB2 + (zG - C_) ** 2)
-            sH = np.sqrt(vB2 + (zH - C_) ** 2)
-            sI = np.sqrt(dB2 + (zI - C_) ** 2)
-
-            # Eight outer legs (between adjacent boundary points).
-            oAB = np.sqrt(hA2 + (zA - zB) ** 2)
-            oBC = np.sqrt(hA2 + (zC - zB) ** 2)
-            oAD = np.sqrt(vA2 + (zA - zD) ** 2)
-            oCF = np.sqrt(vA2 + (zC - zF) ** 2)
-            oDG = np.sqrt(vB2 + (zG - zD) ** 2)
-            oFI = np.sqrt(vB2 + (zI - zF) ** 2)
-            oGH = np.sqrt(hB2 + (zG - zH) ** 2)
-            oHI = np.sqrt(hB2 + (zI - zH) ** 2)
-
-            area = (_heron(sA, sB, oAB) + _heron(sC, sB, oBC) +
-                    _heron(sA, sD, oAD) + _heron(sC, sF, oCF) +
-                    _heron(sD, sG, oDG) + _heron(sF, sI, oFI) +
-                    _heron(sG, sH, oGH) + _heron(sH, sI, oHI))
+            area = _eight_triangle_area(NW, N_, NE, W_, C_, E_, SW, S_, SE,
+                                        g, four_cell)
 
             ok = (valid[up, :-2] & valid[up, 1:-1] & valid[up, 2:] &
                   valid[sl, :-2] & valid[sl, 1:-1] & valid[sl, 2:] &
@@ -394,6 +424,11 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
     if in_copy:
         try:
             arcpy.management.Delete(in_copy)
+        except Exception:
+            pass
+    if detrend_scratch:
+        try:
+            arcpy.management.Delete(detrend_scratch)
         except Exception:
             pass
 
@@ -452,8 +487,8 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
             summary=summary_fmt.format(
                 src=str(in_raster), u=unit_for[key],
                 e=("Meters (geographic DEM)" if geographic else elev_units),
-                c=corner_note, g=geo_note),
-            description=description, tags=tags)
+                c=corner_note, g=geo_note) + detrend_meta,
+            description=description + detrend_meta, tags=tags)
         if key in ("area", "ratio"):
             # Blue (low) -> yellow -> red (high) output-parameter symbology.
             # Flat area isn't a measure of ruggedness/magnitude in the same
@@ -482,6 +517,113 @@ _VRM_CITATION = (
     "Quantifying landscape ruggedness for animal habitat analysis: a case "
     "study using bighorn sheep in the Mojave Desert. Journal of Wildlife "
     "Management 71(5):1419-1426.")
+
+# ----------------------------------------------------------------------------
+#  Local detrending (Dilts et al. 2023) -- shared "3rd-generation" pre-process
+# ----------------------------------------------------------------------------
+#
+# Dilts et al. (2023) showed that the surface ratio (Jenness 2004, a "1st
+# generation" index correlated with slope) and the "2nd generation" indices
+# VRM (Sappington 2007) and ACR (Du Preez 2015) are all still inflated by
+# SMOOTH folds -- ridgelines and drainages read as "rugged" merely because
+# adjacent cells face different directions, even where the surface itself is
+# smooth. Their fix is a simple, powerful pre-process: subtract a smoothed copy
+# of the DEM from the DEM to leave a "local-difference" surface that keeps only
+# the fine-scale variation (the smooth underlying topography removed), then run
+# the ordinary metric on THAT. The resulting "local" variants (Dilts writes
+# them SAPR_L / VRM_L / ACR_L) also remove the correlation with curvature, so
+# they map surface roughness per se -- passing all three of Dilts's "ideal
+# ruggedness" criteria (independent of slope, of smooth folding, and increasing
+# only with true vertical distortion). The smoothing here is a circular
+# neighborhood mean; a radius of 1.5 cells (the default) is exactly the 3x3
+# mean Dilts used (all eight neighbors sit within 1.5 cells), while a larger
+# radius removes broader-scale trend before the roughness is measured.
+
+_DETREND_CITATION = (
+    "Dilts, T. E., M. E. Blum, K. T. Shoemaker, P. J. Weisberg, and K. M. "
+    "Stewart. 2023. Improved topographic ruggedness indices more accurately "
+    "model fine-scale ecological patterns. Landscape Ecology 38:1395-1410 "
+    "(https://doi.org/10.1007/s10980-023-01646-6).")
+
+
+def _radius_row_cells(gt, height, sr, radius, radius_units):
+    """(rx_rows, ry, note): circular-neighborhood radius expressed in CELLS,
+    per row -- constant for Cells units or a projected raster, geodesic per row
+    for a geographic DEM with a linear-unit radius (the same sizing VRM uses).
+    ``note`` is a short human-readable description of the radius."""
+    if radius_units == "Cells":
+        return (np.full(height, float(radius)), float(radius),
+                "{:g} cells".format(radius))
+    radius_m = radius * _RADIUS_METERS[radius_units]
+    if sr.type == "Geographic":
+        a = float(sr.semiMajorAxis or 6378137.0)
+        b = float(sr.semiMinorAxis or 6356752.31424518)
+        g = _hs._geographic_row_distances(gt, height, a, b)
+        rx_rows = radius_m / np.maximum(g["h"], 1e-9)
+        ry = radius_m / max(float(np.mean(g["vA"])), 1e-9)
+        note = "{:g} {} = {:,.1f} m (geodesic per row)".format(
+            radius, radius_units.lower(), radius_m)
+    else:
+        mpu = float(sr.metersPerUnit or 1.0)
+        rx_rows = np.full(height, radius_m / (abs(gt[1]) * mpu))
+        ry = radius_m / (abs(gt[5]) * mpu)
+        note = "{:g} {} = {:,.1f} m".format(
+            radius, radius_units.lower(), radius_m)
+    return rx_rows, ry, note
+
+
+def _detrended_dem(in_raster, radius, radius_units, messages):
+    """Write a scratch 'local-difference' DEM (Dilts et al. 2023): the input
+    DEM minus its circular-neighborhood mean, leaving only fine-scale surface
+    variation. Returns (scratch_path, note); the caller runs its ordinary
+    metric on the scratch and is responsible for deleting it. Elevation units
+    are preserved (the subtraction is linear), so downstream unit handling is
+    unchanged."""
+    if float(radius) <= 0:
+        raise arcpy.ExecuteError("The detrending radius must be positive.")
+    if radius_units not in RADIUS_UNITS:
+        raise arcpy.ExecuteError(
+            "Unknown detrending radius unit: {}.".format(radius_units))
+    gdal = _mh._gdal()
+    scratch = arcpy.env.scratchFolder
+    src, in_copy = _hs._open_source(in_raster, scratch, messages)
+    try:
+        band = src.GetRasterBand(1)
+        width, height = src.RasterXSize, src.RasterYSize
+        if width < 3 or height < 3:
+            raise arcpy.ExecuteError("The DEM must be at least 3 x 3 cells.")
+        gt = src.GetGeoTransform()
+        proj = src.GetProjection()
+        in_nodata = band.GetNoDataValue()
+        sr = arcpy.Describe(in_raster).spatialReference
+        z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
+        valid = np.isfinite(z)
+        if in_nodata is not None:
+            valid &= (z != in_nodata)
+        rx_rows, ry, note = _radius_row_cells(
+            gt, height, sr, radius, radius_units)
+        smoothed = _hs._blur_grid(z, valid, rx_rows, ry, "Average")
+        resid = np.where(valid & np.isfinite(smoothed),
+                         z - smoothed, NODATA_OUT).astype(np.float32)
+        out_path = arcpy.CreateUniqueName("detrend.tif", scratch)
+        ds, oband = _make_output(gdal, out_path, gt, proj, width, height)
+        oband.WriteArray(resid)
+        oband.FlushCache()
+        ds.FlushCache()
+        oband = None
+        ds = None
+    finally:
+        src = None
+        if in_copy:
+            try:
+                arcpy.management.Delete(in_copy)
+            except Exception:
+                pass
+    _hs._msg(messages, "Local detrending (Dilts et al. 2023): subtracted a "
+                       "circular neighborhood mean (radius {}) to remove the "
+                       "smooth underlying topography before the index is "
+                       "computed.".format(note))
+    return out_path, note
 
 
 def _row_gradient_geometry(gt, height, sr, elev_mpu):
@@ -573,11 +715,20 @@ def _circular_vector_sums(nx, ny, nz, ok, rx_rows, ry):
 
 
 def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
-           radius_units="Cells", messages=None):
+           radius_units="Cells", detrend=False, detrend_radius=1.5,
+           detrend_units="Cells", messages=None):
     """Vector Ruggedness Measure (VRM): the 3-D analog of Fisher's circular
     variance (1993, eq. 2.10-2.11) applied to unit vectors orthogonal to the
     terrain surface, after Sappington et al. (2007) and Hobson (1972). See
     the module docstring.
+
+    When ``detrend`` is True the DEM is first locally detrended (Dilts et al.
+    2023) by subtracting a circular neighborhood mean of radius
+    ``detrend_radius`` ``detrend_units`` (default 1.5 cells = a 3x3 mean), so
+    the vectors reflect only fine-scale surface roughness with the smooth
+    underlying topography removed (Dilts's VRM_L); this stops smooth ridgelines
+    and drainages from reading as rugged. The detrending neighborhood is
+    independent of, and typically smaller than, the VRM ``radius``.
 
     For each cell, the unit normal vectors of every valid cell within
     ``radius`` (in ``radius_units``; a circular, NoData-ignoring
@@ -612,7 +763,20 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
     ])
 
     scratch = arcpy.env.scratchFolder
-    src, in_copy = _hs._open_source(in_raster, scratch, messages)
+    detrend_scratch = None
+    detrend_meta = ""
+    work_raster = in_raster
+    if detrend:
+        detrend_scratch, dnote = _detrended_dem(
+            in_raster, detrend_radius, detrend_units, messages)
+        work_raster = detrend_scratch
+        detrend_meta = (
+            " LOCAL (detrended) variant: the DEM was detrended by subtracting "
+            "a circular neighborhood mean (radius {}) before computing VRM, so "
+            "this measures fine-scale surface roughness with the smooth "
+            "underlying topography removed (Dilts et al. 2023, VRM_L). "
+            "{}").format(dnote, _DETREND_CITATION)
+    src, in_copy = _hs._open_source(work_raster, scratch, messages)
     band = src.GetRasterBand(1)
     width, height = src.RasterXSize, src.RasterYSize
     if width < 3 or height < 3:
@@ -620,7 +784,7 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
     gt = src.GetGeoTransform()
     proj = src.GetProjection()
     in_nodata = band.GetNoDataValue()
-    sr = arcpy.Describe(in_raster).spatialReference
+    sr = arcpy.Describe(work_raster).spatialReference
 
     elev_mpu = 1.0 if sr.type == "Geographic" else _hs._ELEV_METERS.get(elev_units, 1.0)
     geom, geographic, zscale = _row_gradient_geometry(gt, height, sr, elev_mpu)
@@ -665,6 +829,11 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
     if in_copy:
         try:
             arcpy.management.Delete(in_copy)
+        except Exception:
+            pass
+    if detrend_scratch:
+        try:
+            arcpy.management.Delete(detrend_scratch)
         except Exception:
             pass
 
@@ -715,7 +884,8 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
         summary=("Created by Vector Ruggedness Measure from {src}: radius "
                  "{r:g} {u}, elevation units {e}.").format(
                      src=str(in_raster), r=radius, u=radius_units.lower(),
-                     e=("Meters (geographic DEM)" if geographic else elev_units)),
+                     e=("Meters (geographic DEM)" if geographic else elev_units)
+                     ) + detrend_meta,
         description=(
             "Vector Ruggedness Measure (VRM) raster: a topographic "
             "roughness index (Sappington et al. 2007) that quantifies the "
@@ -725,7 +895,7 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
             "0 (a flat and/or uniformly sloped neighborhood) to 1 "
             "(maximally rugged); unlike slope alone, VRM distinguishes "
             "steep-but-even terrain from steep, broken terrain. " +
-            _VRM_CITATION),
+            _VRM_CITATION + detrend_meta),
         tags=("vector ruggedness measure, VRM, terrain ruggedness, "
              "roughness, topography, Jenness Enterprises"),
         citation=_VRM_CITATION)
@@ -737,6 +907,204 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
         messages=messages)
     _mh.end_phases()
     _hs._msg(messages, "Vector Ruggedness Measure complete: {}".format(out_raster))
+    return out_lyrx
+
+
+# ----------------------------------------------------------------------------
+#  Arc-Chord Ratio (ACR) rugosity  (Du Preez 2015)
+# ----------------------------------------------------------------------------
+#
+# ACR is a "2nd generation" rugosity index (like VRM) that removes the slope
+# dependence of the plain surface ratio. Rugosity = contoured (3-D surface)
+# area / planar area, where the ordinary Surface Ratio (Jenness 2004) uses the
+# HORIZONTAL cell footprint as the planar area -- so a smooth but steeply
+# tilted surface scores as rough. Du Preez (2015) instead projects the surface
+# onto its PLANE OF BEST FIT (POBF) before measuring the planar area; a smooth
+# tilted plane then has rugosity 1 regardless of its slope. For the raster
+# (per-cell) case, Du Preez's own steps (his Table 1b) are: (1-2) contoured
+# area = the Jenness (2004) eight-triangle 3x3 surface area; (4) POBF slope =
+# the standard 3x3 (Horn) slope; (5) POBF planar area = horizontal cell area /
+# cos(slope); (6) ACR = contoured area / planar area. That reduces exactly to
+#
+#       ACR = (Jenness Surface Ratio) x cos(3x3 best-fit-plane slope)
+#
+# i.e. our Surface Ratio "de-tilted" by the cosine of the fitted-plane slope.
+# The cosine is nz, the vertical component of the Horn unit normal already used
+# by VRM (nz = 1/sqrt(dzdx^2 + dzdy^2 + 1) = cos slope), so the whole tool is
+# just the two existing machineries multiplied together. ACR ranges from 1
+# (flat OR smoothly sloped) upward. Like the Surface Ratio it is an inherently
+# 3x3 measure; broader-scale roughness comes from the optional Dilts (2023)
+# local detrending (ACR_L), not a neighborhood radius.
+
+_ACR_CITATION = (
+    "Du Preez, C. 2015. A new arc-chord ratio (ACR) rugosity index for "
+    "quantifying three-dimensional landscape structural complexity. Landscape "
+    "Ecology 30:181-192 (https://doi.org/10.1007/s10980-014-0118-8).")
+
+
+def run_acr(in_raster, out_raster, elev_units="Meters", corner_method=None,
+            detrend=False, detrend_radius=1.5, detrend_units="Cells",
+            messages=None):
+    """Arc-Chord Ratio (ACR) rugosity (Du Preez 2015): the ratio of each
+    cell's 3-D surface area to the area of that surface projected onto its 3x3
+    plane of best fit -- equivalently the Jenness (2004) surface ratio times
+    the cosine of the 3x3 best-fit-plane slope, which removes the slope
+    inflation of the plain surface ratio (a smooth tilted plane has ACR = 1).
+    Values run from 1 (flat or smoothly sloped) upward. When ``detrend`` is
+    True the DEM is first locally detrended (Dilts et al. 2023, ACR_L) by
+    subtracting a circular neighborhood mean of radius ``detrend_radius``
+    ``detrend_units`` (default 1.5 cells = a 3x3 mean), removing the smooth
+    underlying topography so ridgelines and drainages no longer read as rugged.
+    Returns the output's default-symbology .lyrx path (or None)."""
+    gdal = _mh._gdal()
+    corner_method = corner_method or CORNER_METHODS[0]
+    if corner_method not in CORNER_METHODS:
+        raise arcpy.ExecuteError(
+            "Unknown corner interpolation method: {}.".format(corner_method))
+    four_cell = (corner_method == CORNER_METHODS[1])
+    out_raster = _mh.resolve_raster_output(out_raster, messages)
+
+    _mh.begin_phases([
+        ("Reading the DEM...", 1),
+        ("Calculating surface areas and best-fit-plane slope...", 6),
+        ("Saving the ACR raster...", 1),
+        ("Building pyramids...", 1),
+        ("Creating layer file and symbology...", 1),
+    ])
+
+    scratch = arcpy.env.scratchFolder
+    detrend_scratch = None
+    detrend_meta = ""
+    work_raster = in_raster
+    if detrend:
+        detrend_scratch, dnote = _detrended_dem(
+            in_raster, detrend_radius, detrend_units, messages)
+        work_raster = detrend_scratch
+        detrend_meta = (
+            " LOCAL (detrended) variant: the DEM was detrended by subtracting "
+            "a circular neighborhood mean (radius {}) before computing ACR, so "
+            "this measures fine-scale surface roughness with the smooth "
+            "underlying topography removed (Dilts et al. 2023, ACR_L). "
+            "{}").format(dnote, _DETREND_CITATION)
+
+    src, in_copy = _hs._open_source(work_raster, scratch, messages)
+    band = src.GetRasterBand(1)
+    width, height = src.RasterXSize, src.RasterYSize
+    if width < 3 or height < 3:
+        raise arcpy.ExecuteError("The DEM must be at least 3 x 3 cells.")
+    gt = src.GetGeoTransform()
+    proj = src.GetProjection()
+    in_nodata = band.GetNoDataValue()
+    sr = arcpy.Describe(work_raster).spatialReference
+    geographic = (sr.type == "Geographic")
+    elev_mpu = 1.0 if geographic else _hs._ELEV_METERS.get(elev_units, 1.0)
+
+    sgeom, _sg = _surface_row_geometry(gt, height, sr)   # half-dist^2 + pix_m2
+    ggeom, _gg, zscale = _row_gradient_geometry(gt, height, sr, elev_mpu)
+    if geographic:
+        _hs._msg(messages, "Geographic DEM: surface area and best-fit-plane "
+                           "slope computed per row on the spheroid.")
+    else:
+        _hs._msg(messages, "Projected DEM: cell area {:.4f} sq m; elevation "
+                           "units = {}.".format(
+                               float(sgeom["pix_m2"][0]), elev_units))
+
+    z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
+    valid = np.isfinite(z)
+    if in_nodata is not None:
+        valid &= (z != in_nodata)
+    zwork = np.where(valid, z * elev_mpu, 0.0)      # meters, for area and slope
+    src = None
+    if in_copy:
+        try:
+            arcpy.management.Delete(in_copy)
+        except Exception:
+            pass
+    if detrend_scratch:
+        try:
+            arcpy.management.Delete(detrend_scratch)
+        except Exception:
+            pass
+
+    _mh.phase_advance("Calculating surface areas and best-fit-plane slope...")
+    # Surface ratio via the shared 8-triangle method over the whole grid, with
+    # a one-cell NaN/False border so edge and NoData-adjacent cells are masked.
+    zp = np.full((height + 2, width + 2), 0.0)
+    zp[1:-1, 1:-1] = zwork
+    vp = np.zeros((height + 2, width + 2), dtype=bool)
+    vp[1:-1, 1:-1] = valid
+    NW, N_, NE = zp[:-2, :-2], zp[:-2, 1:-1], zp[:-2, 2:]
+    W_, C_, E_ = zp[1:-1, :-2], zp[1:-1, 1:-1], zp[1:-1, 2:]
+    SW, S_, SE = zp[2:, :-2], zp[2:, 1:-1], zp[2:, 2:]
+    g = {k: sgeom[k][:, None] for k in
+         ("vA2", "hA2", "dA2", "h2", "dB2", "hB2", "vB2")}
+    with np.errstate(invalid="ignore"):
+        area = _eight_triangle_area(NW, N_, NE, W_, C_, E_, SW, S_, SE,
+                                    g, four_cell)
+        ratio = area / sgeom["pix_m2"][:, None]
+
+    # cos(best-fit-plane slope) = nz, the vertical component of the Horn unit
+    # normal (VRM's machinery). ACR = surface ratio x cos(slope).
+    _nx, _ny, nz, ok = _unit_normals(zwork, valid, ggeom)
+    del _nx, _ny
+
+    with np.errstate(invalid="ignore"):
+        acr = ratio * nz
+    # ACR's theoretical minimum is 1 (a flat or smoothly sloped surface). The
+    # 3-D surface area (8-triangle) and the planar area (horizontal area /
+    # cos slope) come from slightly different surface models, so on curved
+    # cells their product can dip a hair below 1; clamp to the documented
+    # floor, exactly as VRM is clamped to its own [0, 1] range above.
+    out_valid = ok & np.isfinite(acr)
+    acr = np.where(out_valid, np.maximum(acr, 1.0), NODATA_OUT).astype(np.float32)
+    n_out = int(out_valid.sum())
+    _hs._msg(messages, "Arc-Chord Ratio ({}): {:,} of {:,} cells have a "
+                       "defined value.".format(
+                           _ACR_CITATION, n_out, width * height))
+
+    out_path = arcpy.CreateUniqueName("acr.tif", scratch)
+    ds, oband = _make_output(gdal, out_path, gt, proj, width, height)
+    oband.WriteArray(acr)
+    oband.FlushCache()
+    ds.FlushCache()
+    stats = _mh._RasterStats()
+    if out_valid.any():
+        stats.add(acr[out_valid].astype(np.float64))
+    out_stats = _mh._finalize_stats(oband, stats, messages)
+    if out_stats is not None:
+        out_stats["on_raster"] = _mh._write_gtiff_stats(oband, out_stats)
+    oband.FlushCache()
+    ds.FlushCache()
+    oband = None
+    ds = None
+
+    elev_label = "Meters (geographic DEM)" if geographic else elev_units
+    _mh.phase_advance("Saving the ACR raster...")
+    _deliver_output(
+        out_path, out_raster, out_stats, messages,
+        title=os.path.basename(str(out_raster)),
+        summary=("Created by Arc-Chord Ratio (ACR) from {src}: elevation "
+                 "units {e}; corner interpolation {c}.").format(
+                     src=str(in_raster), e=elev_label, c=corner_method)
+                 + detrend_meta,
+        description=(
+            "Arc-Chord Ratio (ACR) rugosity raster (Du Preez 2015): each "
+            "cell's 3-D surface area divided by the area of its plane of best "
+            "fit -- equivalently the Jenness (2004) surface ratio times the "
+            "cosine of the 3x3 best-fit-plane slope. Unlike the plain surface "
+            "ratio, ACR is decoupled from slope, so a smooth tilted surface "
+            "has ACR = 1 (the minimum) and larger values indicate genuine "
+            "surface roughness. " + _ACR_CITATION + " " + _CITATION +
+            detrend_meta),
+        tags=("arc-chord ratio, ACR, rugosity, ruggedness, roughness, "
+              "topography, Jenness Enterprises"),
+        citation=_ACR_CITATION)
+    _mh.phase_advance("Creating layer file and symbology...")
+    out_lyrx = _mh.default_stretch_lyrx(
+        out_raster, [(95, 135, 193), (249, 254, 204), (224, 70, 53)],
+        messages=messages)
+    _mh.end_phases()
+    _hs._msg(messages, "Arc-Chord Ratio complete: {}".format(out_raster))
     return out_lyrx
 
 

@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.32.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.33.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -48,6 +48,7 @@
         <group id="WildlifeTools_GroupTopo" caption="Topographic Analysis" appearsOnAddInTab="false">
           <button refID="WildlifeTools_SurfaceAreaRatio" size="large" />
           <button refID="WildlifeTools_VRM" size="large" />
+          <button refID="WildlifeTools_ACR" size="large" />
           <button refID="WildlifeTools_TRI" size="large" />
           <button refID="WildlifeTools_FractalDimension" size="large" />
           <button refID="WildlifeTools_LSRIOnDEM" size="large" />
@@ -394,7 +395,18 @@
                 largeImage="Images\VRM_32.png"
                 keytip="VR">
           <tooltip heading="VRM (Vector Ruggedness Measure)">
-            Opens the VRM tool from the Jenness Enterprises toolbox: a topographic roughness index (Sappington et al. 2007) measuring the 3D dispersion of unit vectors orthogonal to the terrain surface within a neighborhood of each cell - the spherical analog of circular variance (Fisher 1993). Distinguishes steep-but-even terrain from steep, broken terrain; correct on geographic (lat/long) DEMs. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
+            Opens the VRM tool from the Jenness Enterprises toolbox: a topographic roughness index (Sappington et al. 2007) measuring the 3D dispersion of unit vectors orthogonal to the terrain surface within a neighborhood of each cell - the spherical analog of circular variance (Fisher 1993). Distinguishes steep-but-even terrain from steep, broken terrain; correct on geographic (lat/long) DEMs. Optionally remove the smooth underlying topography first (Dilts et al. 2023) for a fine-scale local roughness map (VRM-L). Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_ACR"
+                caption="Arc-Chord Ratio (ACR)"
+                className="ACRButton"
+                loadOnClick="true"
+                smallImage="Images\ACR_16.png"
+                largeImage="Images\ACR_32.png"
+                keytip="AC">
+          <tooltip heading="Arc-Chord Ratio (ACR)">
+            Opens the Arc-Chord Ratio tool from the Jenness Enterprises toolbox: a surface-roughness (rugosity) index decoupled from slope (Du Preez 2015) - each cell's 3D surface area divided by the area of its plane of best fit, equivalently the Jenness (2004) surface ratio times the cosine of the 3x3 best-fit-plane slope. A smooth tilted surface has ACR = 1, so larger values reflect genuine roughness rather than steepness. Optionally remove the smooth underlying topography first (Dilts et al. 2023) for a fine-scale local roughness map (ACR-L). Correct on geographic (lat/long) DEMs. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_FractalDimension"

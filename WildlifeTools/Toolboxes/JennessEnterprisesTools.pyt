@@ -168,6 +168,53 @@ def _save_tool_defaults(tool_name, values):
         pass
 
 
+_DETREND_CATEGORY = "Local detrending (Dilts et al. 2023)"
+
+
+def _detrend_params():
+    """The three shared 'local detrending' (Dilts et al. 2023) parameters used
+    by the Surface Area, VRM, and ACR tools: an on/off toggle plus a smoothing
+    radius and its units. Subtracting a circular neighborhood mean before the
+    index is computed removes the smooth underlying topography so the metric
+    measures fine-scale surface roughness (the '...L' local variants). A radius
+    of 1.5 cells (the default) is exactly the 3x3 mean Dilts used."""
+    detrend = arcpy.Parameter(
+        displayName="Remove smooth topography first (local ruggedness)",
+        name="detrend", datatype="GPBoolean", parameterType="Optional",
+        direction="Input", category=_DETREND_CATEGORY)
+    detrend.value = False
+    detrend_radius = arcpy.Parameter(
+        displayName="Smoothing (detrending) radius", name="detrend_radius",
+        datatype="GPDouble", parameterType="Optional", direction="Input",
+        category=_DETREND_CATEGORY)
+    detrend_radius.value = 1.5
+    detrend_units = arcpy.Parameter(
+        displayName="Smoothing radius units", name="detrend_units",
+        datatype="GPString", parameterType="Optional", direction="Input",
+        category=_DETREND_CATEGORY)
+    detrend_units.filter.type = "ValueList"
+    detrend_units.filter.list = topographic_tools.RADIUS_UNITS
+    detrend_units.value = "Cells"
+    return detrend, detrend_radius, detrend_units
+
+
+def _detrend_enable(P):
+    """Enable the detrend radius/units only when detrending is on."""
+    on = bool(P["detrend"].value)
+    P["detrend_radius"].enabled = on
+    P["detrend_units"].enabled = on
+
+
+def _detrend_check(P):
+    """Validate the detrend radius when detrending is on and applicable (the
+    radius parameter is enabled only then)."""
+    if P["detrend_radius"].enabled:
+        r = P["detrend_radius"].value
+        if r is None or r <= 0:
+            P["detrend_radius"].setErrorMessage(
+                "The smoothing (detrending) radius must be positive.")
+
+
 def _writeback_resolved_raster(P, name):
     """Point a raster output parameter at the dataset actually
     delivered: a folder output typed without an extension becomes a
@@ -224,7 +271,8 @@ class Toolbox(object):
                       KernelDensityGenerate, KernelDensityProportion, KernelDensityContours,
                       ShadowPolygons, EnhancedHillshade, MDOWHillshade,
                       MultiSunHillshade, SimpleHypsometricShading,
-                      BlurredHillshade, SurfaceAreaRatio, VRM, TRI,
+                      BlurredHillshade, SurfaceAreaRatio, VRM,
+                      ArcChordRatio, TRI,
                       FractalDimension, TopographicWetnessIndex,
                       SimpleTPI,
                       SlopePositionClassification, LandformClassification,
@@ -3057,11 +3105,14 @@ class SurfaceAreaRatio(object):
         corner_method.filter.type = "ValueList"
         corner_method.filter.list = topographic_tools.CORNER_METHODS
         corner_method.value = topographic_tools.CORNER_METHODS[0]
+        detrend, detrend_radius, detrend_units = _detrend_params()
         params = [in_raster, out_area, area_units, out_ratio, out_flat,
-                  flat_units, elev_units, corner_method]
+                  flat_units, elev_units, corner_method,
+                  detrend, detrend_radius, detrend_units]
         # Pre-select the choices from the last run saved with this project.
         saved = _load_tool_defaults("SurfaceAreaRatio")
-        for p in (area_units, flat_units, elev_units, corner_method):
+        for p in (area_units, flat_units, elev_units, corner_method,
+                  detrend, detrend_radius, detrend_units):
             if p.name in saved:
                 try:
                     p.value = saved[p.name]
@@ -3089,6 +3140,15 @@ class SurfaceAreaRatio(object):
                 units.enabled = True
         P["area_units"].enabled = bool(P["out_area"].valueAsText)
         P["flat_units"].enabled = bool(P["out_flat"].valueAsText)
+        # Detrending changes the elevation surface, so it affects the surface
+        # AREA and (the meaningful one) the surface RATIO = Dilts's SAPR-L, but
+        # NOT the flat area (planimetric, elevation-independent). Offer it only
+        # when a surface-area or surface-ratio output is requested.
+        has_metric = bool(P["out_area"].valueAsText or P["out_ratio"].valueAsText)
+        P["detrend"].enabled = has_metric
+        on = has_metric and bool(P["detrend"].value)
+        P["detrend_radius"].enabled = on
+        P["detrend_units"].enabled = on
         return
 
     def updateMessages(self, parameters):
@@ -3110,6 +3170,7 @@ class SurfaceAreaRatio(object):
             P["out_area"].setErrorMessage(
                 "Specify at least one output raster (surface area, surface "
                 "ratio, or flat area).")
+        _detrend_check(P)
         return
 
     def execute(self, parameters, messages):
@@ -3125,6 +3186,9 @@ class SurfaceAreaRatio(object):
                 area_units=P["area_units"].valueAsText or "Sq. Meters",
                 flat_units=P["flat_units"].valueAsText or "Sq. Meters",
                 corner_method=P["corner_method"].valueAsText or None,
+                detrend=bool(P["detrend"].value),
+                detrend_radius=P["detrend_radius"].value or 1.5,
+                detrend_units=P["detrend_units"].valueAsText or "Cells",
                 messages=messages)
             delivered = delivered or {}
             lyrx = lyrx or {}
@@ -3151,6 +3215,9 @@ class SurfaceAreaRatio(object):
                 "flat_units": P["flat_units"].valueAsText,
                 "elev_units": P["elev_units"].valueAsText,
                 "corner_method": P["corner_method"].valueAsText,
+                "detrend": bool(P["detrend"].value),
+                "detrend_radius": P["detrend_radius"].value,
+                "detrend_units": P["detrend_units"].valueAsText,
             })
         except arcpy.ExecuteError:
             raise
@@ -3206,10 +3273,13 @@ class VRM(object):
         radius_units.filter.type = "ValueList"
         radius_units.filter.list = topographic_tools.RADIUS_UNITS
         radius_units.value = "Cells"
-        params = [in_raster, out_raster, elev_units, radius, radius_units]
+        detrend, detrend_radius, detrend_units = _detrend_params()
+        params = [in_raster, out_raster, elev_units, radius, radius_units,
+                  detrend, detrend_radius, detrend_units]
         # Pre-select the choices from the last run saved with this project.
         saved = _load_tool_defaults("VRM")
-        for p in (radius, radius_units, elev_units):
+        for p in (radius, radius_units, elev_units,
+                  detrend, detrend_radius, detrend_units):
             if p.name in saved:
                 try:
                     p.value = saved[p.name]
@@ -3246,6 +3316,7 @@ class VRM(object):
                     self._auto_out = sug
                 except Exception:
                     pass
+        _detrend_enable(P)
         return
 
     def updateMessages(self, parameters):
@@ -3265,6 +3336,7 @@ class VRM(object):
         r = P["radius"].value
         if r is not None and r <= 0:
             P["radius"].setErrorMessage("The radius must be positive.")
+        _detrend_check(P)
         return
 
     def execute(self, parameters, messages):
@@ -3277,6 +3349,9 @@ class VRM(object):
                 elev_units=P["elev_units"].valueAsText or "Meters",
                 radius=P["radius"].value,
                 radius_units=P["radius_units"].valueAsText or "Cells",
+                detrend=bool(P["detrend"].value),
+                detrend_radius=P["detrend_radius"].value or 1.5,
+                detrend_units=P["detrend_units"].valueAsText or "Cells",
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
             if out_lyrx:
@@ -3289,6 +3364,149 @@ class VRM(object):
                 "radius": P["radius"].value,
                 "radius_units": P["radius_units"].valueAsText,
                 "elev_units": P["elev_units"].valueAsText,
+                "detrend": bool(P["detrend"].value),
+                "detrend_radius": P["detrend_radius"].value,
+                "detrend_units": P["detrend_units"].valueAsText,
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class ArcChordRatio(object):
+    """Arc-Chord Ratio (ACR) rugosity -- surface roughness decoupled from
+    slope (Du Preez 2015): each cell's 3-D surface area divided by the area of
+    its plane of best fit, equivalently the Jenness (2004) surface ratio times
+    the cosine of the 3x3 best-fit-plane slope. A smooth tilted plane has
+    ACR = 1; larger values indicate genuine surface roughness."""
+
+    def __init__(self):
+        self.label = "Arc-Chord Ratio (ACR)"
+        self.description = (
+            "Computes the Arc-Chord Ratio (ACR) rugosity index (Du Preez "
+            "2015): each cell's three-dimensional surface area divided by the "
+            "area of its plane of best fit. Unlike the plain surface ratio, "
+            "ACR is decoupled from slope -- a smooth but steeply tilted "
+            "surface has ACR = 1 (the minimum), so larger values reflect "
+            "genuine surface roughness rather than steepness. Equivalently, "
+            "ACR is the Jenness (2004) surface ratio times the cosine of the "
+            "3x3 best-fit-plane slope. Optionally remove the smooth underlying "
+            "topography first (Dilts et al. 2023) to map fine-scale roughness "
+            "(ACR_L).")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_units = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input elevation raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output ACR raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required", direction="Output")
+        elev_units = arcpy.Parameter(
+            displayName="Elevation units", name="elev_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        elev_units.filter.type = "ValueList"
+        elev_units.filter.list = hillshade.ELEV_UNITS
+        corner_method = arcpy.Parameter(
+            displayName="Corner elevation interpolation", name="corner_method",
+            datatype="GPString", parameterType="Required", direction="Input")
+        corner_method.filter.type = "ValueList"
+        corner_method.filter.list = topographic_tools.CORNER_METHODS
+        corner_method.value = topographic_tools.CORNER_METHODS[0]
+        detrend, detrend_radius, detrend_units = _detrend_params()
+        params = [in_raster, out_raster, elev_units, corner_method,
+                  detrend, detrend_radius, detrend_units]
+        saved = _load_tool_defaults("ArcChordRatio")
+        for p in (elev_units, corner_method,
+                  detrend, detrend_radius, detrend_units):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    _detect_units = EnhancedHillshade._detect_units
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr, units = P["in_raster"], P["out_raster"], P["elev_units"]
+        if inr.valueAsText:
+            detected, locked = self._detect_units(inr.valueAsText)
+            if locked:
+                if not units.altered or units.valueAsText == self._auto_units:
+                    units.value = detected
+                    self._auto_units = detected
+                units.enabled = False
+            else:
+                units.enabled = True
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(inr.valueAsText))[0] + "_ACR")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        _detrend_enable(P)
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, units = P["in_raster"], P["elev_units"]
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage(
+                        "The elevation raster must be single band.")
+            except Exception:
+                pass
+            if units.enabled and not units.valueAsText:
+                units.setErrorMessage(
+                    "The DEM does not specify its elevation units; choose "
+                    "Meters or Feet.")
+        _detrend_check(P)
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            importlib.reload(topographic_tools)
+            P = {p.name: p for p in parameters}
+            out_lyrx = topographic_tools.run_acr(
+                in_raster=P["in_raster"].valueAsText,
+                out_raster=P["out_raster"].valueAsText,
+                elev_units=P["elev_units"].valueAsText or "Meters",
+                corner_method=P["corner_method"].valueAsText or None,
+                detrend=bool(P["detrend"].value),
+                detrend_radius=P["detrend_radius"].value or 1.5,
+                detrend_units=P["detrend_units"].valueAsText or "Cells",
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+            if out_lyrx:
+                try:
+                    P["out_raster"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage("Could not set output symbology: {}".format(e))
+            _save_tool_defaults("ArcChordRatio", {
+                "elev_units": P["elev_units"].valueAsText,
+                "corner_method": P["corner_method"].valueAsText,
+                "detrend": bool(P["detrend"].value),
+                "detrend_radius": P["detrend_radius"].value,
+                "detrend_units": P["detrend_units"].valueAsText,
             })
         except arcpy.ExecuteError:
             raise

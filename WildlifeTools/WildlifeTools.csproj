@@ -131,6 +131,10 @@
     <Content Include="Images\VRM_32.png" />
     <Content Include="DarkImages\VRM_16.png" />
     <Content Include="DarkImages\VRM_32.png" />
+    <Content Include="Images\ACR_16.png" />
+    <Content Include="Images\ACR_32.png" />
+    <Content Include="DarkImages\ACR_16.png" />
+    <Content Include="DarkImages\ACR_32.png" />
     <Content Include="Images\TRI_16.png" />
     <Content Include="Images\TRI_32.png" />
     <Content Include="DarkImages\TRI_16.png" />
