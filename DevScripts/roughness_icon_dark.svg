@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Topographic Roughness (dark theme)</title>
+  <!-- Dark-theme variant: same geometry, lightened so it reads on Pro's
+       dark ribbon; back ridge dimmer, front ridge brighter. -->
+  <path d="M0,29 L0,14 L3,7 L5,12 L8,3 L11,11 L14,6 L17,13 L20,5 L23,12 L26,8 L29,15 L32,11 L32,29 Z"
+        fill="#5C748E"/>
+  <path d="M0,29 L0,22 L2,17 L4,21 L6,13 L8,19 L10,11 L13,20 L15,15 L18,23 L20,17 L23,24 L25,19 L28,25 L30,21 L32,25 L32,29 Z"
+        fill="#8FB3DC"/>
+  <rect x="0" y="28" width="32" height="2" fill="#C9D6E4"/>
+</svg>
