@@ -119,14 +119,70 @@ DIRECTION_DEPENDENT = {
 }
 
 
-def default_field_name(key):
-    """A reasonable default output field name for a statistic, derived from its
-    label: parenthetical qualifiers are dropped and the rest is sanitized to a
-    valid field name (e.g. 'Surface Length (geodesic)' -> 'Surface_Length')."""
+# --------------------------------------------------------------------------
+#  Per-SEGMENT field catalogue (the companion "segment feature class" tool)
+# --------------------------------------------------------------------------
+#   key                label                              field type  unit kind
+SEG_STATS = [
+    ("begin_x", "Begin X", "DOUBLE", "coord"),
+    ("begin_y", "Begin Y", "DOUBLE", "coord"),
+    ("begin_z", "Begin Z", "DOUBLE", "elevation"),
+    ("end_x", "End X", "DOUBLE", "coord"),
+    ("end_y", "End Y", "DOUBLE", "coord"),
+    ("end_z", "End Z", "DOUBLE", "elevation"),
+    ("plan_length", "Planimetric Length (geodesic)", "DOUBLE", "length"),
+    ("surf_length", "Surface Length (geodesic)", "DOUBLE", "length"),
+    ("surf_ratio", "Surface Ratio", "DOUBLE", "none"),
+    ("rel_elev", "Relative Elevation Change", "DOUBLE", "elevation"),
+    ("net_elev", "Net Elevation Change", "DOUBLE", "elevation"),
+    ("rel_slope", "Relative Slope", "DOUBLE", "slope"),
+    ("abs_slope", "Absolute Slope", "DOUBLE", "slope"),
+    ("bearing", "Bearing", "DOUBLE", "degrees"),
+    ("deflection", "Deflection Angle", "DOUBLE", "degrees"),
+    ("abs_deflection", "Absolute Deflection Angle", "DOUBLE", "degrees"),
+    ("inclination", "Inclination Angle", "DOUBLE", "degrees"),
+    ("abs_inclination", "Absolute Inclination Angle", "DOUBLE", "degrees"),
+    ("defl3d", "3D Deflection Angle", "DOUBLE", "degrees"),
+    ("source_id", "Source Line ID", "LONG", "id"),
+    ("seg_num", "Segment Number", "LONG", "count"),
+    ("part_index", "Part Index", "LONG", "count"),
+    ("slope_class", "Slope Direction Class", "TEXT", "text"),
+    ("station", "Station (distance along line)", "DOUBLE", "length"),
+    ("mid_x", "Midpoint X", "DOUBLE", "coord"),
+    ("mid_y", "Midpoint Y", "DOUBLE", "coord"),
+    ("mid_z", "Midpoint Z", "DOUBLE", "elevation"),
+    ("mean_elev", "Mean Elevation", "DOUBLE", "elevation"),
+]
+SEG_KEYS = [k for k, _, _, _ in SEG_STATS]
+SEG_LABEL = {k: lb for k, lb, _, _ in SEG_STATS}
+SEG_LABEL_KEY = {lb: k for k, lb, _, _ in SEG_STATS}
+SEG_FTYPE = {k: ft for k, _, ft, _ in SEG_STATS}
+SEG_KIND = {k: kd for k, _, _, kd in SEG_STATS}
+# Angle fields that need the previous segment -> null / -999 on the first
+# segment of each part.
+SEG_NEEDS_PREV = {"deflection", "abs_deflection", "inclination",
+                  "abs_inclination", "defl3d"}
+
+
+def _label_to_field(label):
+    """Sanitize a statistic label into a valid field-name stem (drop
+    parentheticals, non-alphanumerics -> underscore)."""
     import re
-    base = re.sub(r"\([^)]*\)", "", STAT_LABEL[key])
-    base = re.sub(r"[^0-9A-Za-z]+", "_", base).strip("_")
-    return base or key
+    base = re.sub(r"\([^)]*\)", "", label)
+    return re.sub(r"[^0-9A-Za-z]+", "_", base).strip("_")
+
+
+def default_field_name(key):
+    """Default output field name for an along-line statistic (e.g. 'Surface
+    Length (geodesic)' -> 'Surface_Length')."""
+    return _label_to_field(STAT_LABEL[key]) or key
+
+
+def seg_default_field_name(key):
+    """Default output field name for a SEGMENT statistic -- prefixed 'Seg_' so it
+    never collides with the along-line tool's field names or copied source
+    fields (e.g. 'Surface Length (geodesic)' -> 'Seg_Surface_Length')."""
+    return "Seg_" + (_label_to_field(SEG_LABEL[key]) or key)
 
 
 def field_units_phrase(key, length_unit, elev_unit, slope_unit):
@@ -171,6 +227,56 @@ LENGTH_UNITS = list(METERS_PER_LENGTH.keys())
 
 # Elevation unit -> meters.
 ELEV_METERS = {"Meters": 1.0, "Feet": 0.3048}
+
+# Generic vertical CS (used only when no real one can be inherited) so a
+# PolylineZ output still draws correctly in a Scene instead of warning that it
+# "has no vertical coordinate system." The unit matches the tool's elevation
+# units; the datum is left unknown because we genuinely don't know it.
+_VERTCS_GENERIC = {
+    "Meters": ('VERTCS["Elevation (meters)",VDATUM["Unknown vertical datum"],'
+               'PARAMETER["Vertical_Shift",0.0],PARAMETER["Direction",1.0],'
+               'UNIT["Meter",1.0]]'),
+    "Feet": ('VERTCS["Elevation (feet)",VDATUM["Unknown vertical datum"],'
+             'PARAMETER["Vertical_Shift",0.0],PARAMETER["Direction",1.0],'
+             'UNIT["Foot",0.3048]]'),
+}
+
+
+def _vertcs_wkt(sr):
+    """Return the VERTCS[...] WKT of ``sr``'s vertical coordinate system, or
+    None if it has none. Esri exports a compound SR as a single first token of
+    the form ``PROJCS[...],VERTCS[...]`` (or ``GEOGCS[...],VERTCS[...]``), so the
+    vertical part is lifted from there verbatim -- preserving the real datum."""
+    try:
+        if sr is None or sr.VCS is None:
+            return None
+        tok = sr.exportToString().split(";")[0]
+        i = tok.find("VERTCS[")
+        return tok[i:] if i >= 0 else None
+    except Exception:
+        return None
+
+
+def output_spatial_reference(source_sr, z_source_sr, elev_units):
+    """Build the output SR for a PolylineZ result: the source polylines'
+    horizontal CS plus a vertical CS. The vertical CS is inherited from
+    ``z_source_sr`` (the DEM when the Z was sampled from a DEM, else the source
+    lines themselves) so the output carries the elevations' true datum; if
+    neither defines one, a generic VCS matching ``elev_units`` is attached so the
+    output still displays correctly in a 3-D Scene."""
+    import arcpy
+    horiz = source_sr.exportToString().split(";")[0]
+    # Drop any VERTCS already baked into the horizontal token (source was
+    # already compound) so we don't end up with two.
+    j = horiz.find(",VERTCS[")
+    src_vert = horiz[j + 1:] if j >= 0 else None
+    if j >= 0:
+        horiz = horiz[:j]
+    vert = _vertcs_wkt(z_source_sr) or src_vert \
+        or _VERTCS_GENERIC.get(elev_units, _VERTCS_GENERIC["Meters"])
+    out = arcpy.SpatialReference()
+    out.loadFromString(horiz + ";" + vert)
+    return out
 
 
 def _slope_convert(deg, slope_unit):
@@ -421,6 +527,26 @@ def _local_xy_m(points, sr):
     return out
 
 
+def _densify_geodesic(pts_in, sr, interval_m):
+    """Sample points along the vertex sequence ``pts_in`` (arcpy Points), KEEPING
+    every original vertex and inserting interior points so no gap exceeds
+    ``interval_m`` (geodesic meters). Preserving the real vertices means a
+    straight run stays collinear (no spurious turning) and the true bend shows
+    up cleanly at each vertex -- important both for the segment tool's turn
+    angles and for honest per-segment weighting of the along-line statistics."""
+    import arcpy
+    out = []
+    for j in range(len(pts_in) - 1):
+        a, b = pts_in[j], pts_in[j + 1]
+        sub = arcpy.Polyline(arcpy.Array([a, b]), sr)
+        d = sub.getLength("GEODESIC", "METERS")
+        k = max(1, int(math.ceil(d / interval_m)))
+        for m in range(k):                       # a + interior pts; b starts next
+            out.append(sub.positionAlongLine(m / float(k), True).firstPoint)
+    out.append(pts_in[-1])                        # final vertex
+    return out
+
+
 def build_parts(shape, source, dem=None, elev_m_per_unit=1.0):
     """Reduce one polyline ``shape`` (arcpy Polyline, SHAPE@) to the per-part
     segment dicts compute_line_statistics needs. ``source`` is "DEM" or "Z".
@@ -448,11 +574,9 @@ def build_parts(shape, source, dem=None, elev_m_per_unit=1.0):
             continue
 
         if source == "DEM":
-            part_poly = arcpy.Polyline(arcpy.Array(pts_in), work_sr)
-            Lm = part_poly.getLength("GEODESIC", "METERS")
-            n = max(1, int(math.ceil(Lm / interval_m)))
-            samples = [part_poly.positionAlongLine(i / float(n), True).firstPoint
-                       for i in range(n + 1)]
+            # Sample at the DEM interval BETWEEN original vertices while keeping
+            # every vertex, so real bends are preserved (see _densify_geodesic).
+            samples = _densify_geodesic(pts_in, work_sr, interval_m)
             z_raw = [_bilinear(dem["arr"], dem["gt"], p.X, p.Y) for p in samples]
         else:
             samples = pts_in
@@ -696,3 +820,149 @@ def compute_line_statistics(parts, length_unit="Meters", elev_unit="Meters",
         out["fractal_d"] = (num / den) if den > 0 else float("nan")
 
     return out
+
+
+# --------------------------------------------------------------------------
+#  Per-segment records for the companion segment-feature-class tool
+# --------------------------------------------------------------------------
+
+def build_segments(shape, source, dem, elev_m_per_unit, source_sr, parent_oid):
+    """Ordered per-segment records for ONE polyline feature, for the segment
+    tool. Coordinates are in the SOURCE dataset's coordinate system; lengths and
+    elevation change are carried in METERS (converted at write time by
+    ``seg_value``); the three angle fields (deflection, inclination, 3D
+    deflection) are None on the first segment of each part (no predecessor).
+    Each record's ``geom`` is [(x, y, z), (x, y, z)] for a Z-aware output line.
+    Segments touching NoData elevation are dropped and break the angle chain."""
+    import arcpy
+    if source == "DEM":
+        work_sr = dem["sr"]
+        interval_m = dem["interval_m"]
+        geom = (shape.projectAs(work_sr)
+                if (shape.spatialReference
+                    and shape.spatialReference.factoryCode != work_sr.factoryCode)
+                else shape)
+    else:
+        work_sr = source_sr
+        interval_m = None
+        geom = shape
+
+    segs = []
+    seg_num = 0
+    for pi in range(geom.partCount):
+        pts_in = [pt for pt in geom.getPart(pi) if pt is not None]
+        if len(pts_in) < 2:
+            continue
+        if source == "DEM":
+            samples_w = _densify_geodesic(pts_in, work_sr, interval_m)
+            z_elev = [_bilinear(dem["arr"], dem["gt"], p.X, p.Y) for p in samples_w]
+        else:
+            samples_w = pts_in
+            z_elev = [p.Z for p in samples_w]
+
+        # Sample coordinates in the SOURCE CRS (project the whole vertex string
+        # at once when the sampling frame differs).
+        if work_sr.factoryCode != source_sr.factoryCode:
+            proj = arcpy.Polyline(arcpy.Array(samples_w), work_sr).projectAs(source_sr)
+            parr = proj.getPart(0)
+            samples_s = [parr[k] for k in range(len(parr))]
+        else:
+            samples_s = samples_w
+
+        station_m = 0.0
+        prev = None                       # (bearing, pitch, vx, vy, vz)
+        for i in range(len(samples_s) - 1):
+            z0, z1 = z_elev[i], z_elev[i + 1]
+            if not (z0 is not None and z1 is not None
+                    and np.isfinite(z0) and np.isfinite(z1)):
+                prev = None               # gap breaks the angle chain
+                continue
+            p0, p1 = samples_s[i], samples_s[i + 1]
+            g0 = arcpy.PointGeometry(p0, source_sr)
+            g1 = arcpy.PointGeometry(p1, source_sr)
+            bearing, plan_m = g0.angleAndDistanceTo(g1, "GEODESIC")
+            bearing %= 360.0
+            dz_m = (z1 - z0) * elev_m_per_unit
+            surf_m = math.hypot(plan_m, dz_m)
+            pitch = math.degrees(math.atan2(dz_m, plan_m))
+            br = math.radians(bearing)
+            vx, vy, vz = plan_m * math.sin(br), plan_m * math.cos(br), dz_m
+            defl = incl = defl3d = None
+            if prev is not None:
+                pb, pp, pvx, pvy, pvz = prev
+                defl = (bearing - pb + 180.0) % 360.0 - 180.0
+                incl = pitch - pp
+                m1 = math.sqrt(pvx * pvx + pvy * pvy + pvz * pvz)
+                m2 = math.sqrt(vx * vx + vy * vy + vz * vz)
+                if m1 > 0 and m2 > 0:
+                    c = max(-1.0, min(1.0, (pvx * vx + pvy * vy + pvz * vz) / (m1 * m2)))
+                    defl3d = math.degrees(math.acos(c))
+            seg_num += 1
+            segs.append({
+                "begin_x": p0.X, "begin_y": p0.Y, "begin_z": z0,
+                "end_x": p1.X, "end_y": p1.Y, "end_z": z1,
+                "plan_m": plan_m, "surf_m": surf_m, "dz_m": dz_m,
+                "bearing": bearing, "pitch": pitch,
+                "deflection": defl, "inclination": incl, "defl3d": defl3d,
+                "seg_num": seg_num, "part_index": pi, "station_m": station_m,
+                "source_id": parent_oid,
+                "geom": [(p0.X, p0.Y, z0), (p1.X, p1.Y, z1)],
+            })
+            station_m += plan_m
+            prev = (bearing, pitch, vx, vy, vz)
+    return segs
+
+
+def seg_value(rec, key, length_unit="Meters", elev_unit="Meters",
+              slope_unit="Degrees"):
+    """The reporting value of one segment field ``key`` for a record from
+    ``build_segments`` (converted to the chosen units). Returns None where the
+    value is undefined (e.g. an angle on the first segment of a part)."""
+    if key in ("begin_x", "begin_y", "end_x", "end_y"):
+        return rec[key]                           # source-CRS map units
+    if key == "mid_x":
+        return (rec["begin_x"] + rec["end_x"]) / 2.0
+    if key == "mid_y":
+        return (rec["begin_y"] + rec["end_y"]) / 2.0
+    if key in ("begin_z", "end_z"):
+        return rec[key]                           # elevation units (as sampled)
+    if key == "mid_z":
+        return (rec["begin_z"] + rec["end_z"]) / 2.0
+    if key == "mean_elev":
+        return (rec["begin_z"] + rec["end_z"]) / 2.0
+    lm = METERS_PER_LENGTH.get(length_unit, 1.0)
+    if key == "plan_length":
+        return rec["plan_m"] / lm
+    if key == "surf_length":
+        return rec["surf_m"] / lm
+    if key == "station":
+        return rec["station_m"] / lm
+    if key == "surf_ratio":
+        return (rec["surf_m"] / rec["plan_m"]) if rec["plan_m"] > 0 else None
+    em = ELEV_METERS.get(elev_unit, 1.0)
+    if key == "rel_elev":
+        return rec["dz_m"] / em
+    if key == "net_elev":
+        return abs(rec["dz_m"]) / em
+    if key == "rel_slope":
+        return _slope_convert(rec["pitch"], slope_unit)
+    if key == "abs_slope":
+        return _slope_convert(abs(rec["pitch"]), slope_unit)
+    if key == "bearing":
+        return rec["bearing"]
+    if key == "deflection":
+        return rec["deflection"]
+    if key == "abs_deflection":
+        return None if rec["deflection"] is None else abs(rec["deflection"])
+    if key == "inclination":
+        return rec["inclination"]
+    if key == "abs_inclination":
+        return None if rec["inclination"] is None else abs(rec["inclination"])
+    if key == "defl3d":
+        return rec["defl3d"]
+    if key in ("source_id", "seg_num", "part_index"):
+        return rec[key]
+    if key == "slope_class":
+        dz = rec["dz_m"]
+        return "Flat" if dz == 0 else ("Uphill" if dz > 0 else "Downhill")
+    return None

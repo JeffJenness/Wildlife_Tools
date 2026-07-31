@@ -1127,6 +1127,123 @@ def default_unique_value_lyrx(out_raster, classes, field="Class_Name",
     return out_lyrx
 
 
+def _multipart_rgb_ramp(colors):
+    """A CIMMultipartColorRamp interpolating low->high through ``colors``
+    (>=2 (r, g, b) tuples), in RGB. Shared by the stretch and unclassed helpers."""
+    space = {"type": "CIMICCColorSpace", "url": "Default RGB"}
+    segs = [{
+        "type": "CIMLinearContinuousColorRamp", "colorSpace": space,
+        "fromColor": {"type": "CIMRGBColor", "values": list(colors[i]) + [100]},
+        "toColor": {"type": "CIMRGBColor", "values": list(colors[i + 1]) + [100]},
+    } for i in range(len(colors) - 1)]
+    if len(segs) == 1:
+        return segs[0]
+    return {"type": "CIMMultipartColorRamp", "colorRamps": segs,
+            "weights": [1] * len(segs)}
+
+
+def default_unclassed_lyrx(fc, field, colors, messages=None):
+    """Create a .lyrx beside polyline feature class ``fc`` symbolizing it with
+    ArcGIS Pro's "Unclassed Colors" on ``field``, using a low->high multi-stop
+    ramp through ``colors`` ((r, g, b) tuples). Returns the .lyrx path (set it as
+    a feature output parameter's ``.symbology`` in the .pyt) or None. Never
+    raises. Templated from a real Pro Unclassed-Colors renderer: a
+    CIMClassBreaksRenderer with classBreakType "UnclassedColor" plus a
+    CIMColorVisualVariable (minValue/maxValue) that drives the continuous color;
+    the field's data range is read from the layer."""
+    try:
+        path = arcpy.Describe(fc).catalogPath
+        name = os.path.splitext(os.path.basename(path))[0]
+    except Exception as e:
+        if messages is not None:
+            messages.addWarningMessage("Could not create layer file: {}".format(e))
+        return None
+    ws = os.path.dirname(path)
+    lyr_dir = os.path.dirname(ws) if ws.lower().endswith((".gdb", ".sde")) else ws
+    out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
+
+    lo = hi = None
+    try:
+        with arcpy.da.SearchCursor(fc, [field]) as cur:
+            for (v,) in cur:
+                if v is None:
+                    continue
+                lo = v if lo is None else min(lo, v)
+                hi = v if hi is None else max(hi, v)
+    except Exception:
+        pass
+    if lo is None:
+        lo = 0.0
+    if hi is None or hi <= lo:
+        hi = lo + 1.0
+
+    tmp = "jenness_unclassed_tmp"
+    try:
+        try:
+            arcpy.management.Delete(tmp)
+        except Exception:
+            pass
+        arcpy.management.MakeFeatureLayer(path, tmp)
+        arcpy.management.SaveToLayerFile(tmp, out_lyrx, "ABSOLUTE")
+    except Exception as e:
+        if messages is not None:
+            messages.addWarningMessage("Could not create layer file: {}".format(e))
+        return None
+    finally:
+        try:
+            arcpy.management.Delete(tmp)
+        except Exception:
+            pass
+
+    try:
+        with open(out_lyrx, encoding="utf-8") as f:
+            lyr = json.load(f)
+        ld = lyr["layerDefinitions"][0]
+        ld["name"] = name
+        base_sym = ld.get("renderer", {}).get("symbol")     # Pro's default line symbol
+        ramp = _multipart_rgb_ramp(colors)
+        brk_sym = base_sym or {"type": "CIMSymbolReference"}
+        ld["renderer"] = {
+            "type": "CIMClassBreaksRenderer",
+            "barrierWeight": "High",
+            "classBreakType": "UnclassedColor",
+            "classificationMethod": "DefinedInterval",
+            "colorRamp": ramp,
+            "field": field,
+            "heading": field,
+            "minimumBreak": lo,
+            "minimumLabel": "{:.6f}".format(lo),
+            "polygonSymbolColorTarget": "Fill",
+            "breaks": [{
+                "type": "CIMClassBreak", "label": "{:.6f}".format(hi),
+                "patch": "Default", "symbol": brk_sym, "upperBound": hi,
+            }],
+            "showInAscendingOrder": True,
+            "defaultSymbolPatch": "Default",
+            "defaultSymbol": brk_sym,
+            "defaultLabel": "<null>",
+            "numberFormat": {
+                "type": "CIMNumericFormat", "alignmentOption": "esriAlignRight",
+                "alignmentWidth": 0, "roundingOption": "esriRoundNumberOfDecimals",
+                "roundingValue": 6},
+            "alwaysUpdateClassLabels": True,
+            "sampleSize": 10000,
+            "normalizationType": "Nothing",
+            "useExclusionSymbol": False,
+            "exclusionSymbolPatch": "Default",
+            "visualVariables": [{
+                "type": "CIMColorVisualVariable",
+                "minValue": lo, "maxValue": hi, "colorRamp": ramp}],
+        }
+        with open(out_lyrx, "w", encoding="utf-8") as f:
+            json.dump(lyr, f)
+    except Exception as e:
+        if messages is not None:
+            messages.addWarningMessage(
+                "Layer file created but symbology could not be applied: {}".format(e))
+    return out_lyrx
+
+
 def _apply_known_statistics(raster, stats, messages):
     """Set band statistics on ``raster`` from precomputed values (no scan).
 

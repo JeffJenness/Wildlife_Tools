@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.34.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.35.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -51,6 +51,7 @@
           <button refID="WildlifeTools_ACR" size="large" />
           <button refID="WildlifeTools_TRI" size="large" />
           <button refID="WildlifeTools_TopographyAlongLines" size="large" />
+          <button refID="WildlifeTools_SplitLinesIntoSegments" size="large" />
           <button refID="WildlifeTools_FractalDimension" size="large" />
           <button refID="WildlifeTools_LSRIOnDEM" size="large" />
           <button refID="WildlifeTools_LSRIOnContourPolylines" size="large" />
@@ -441,6 +442,17 @@
                 keytip="TL">
           <tooltip heading="Topography along Lines">
             Opens the Topography along Lines tool from the Jenness Enterprises toolbox: it adds attribute fields describing the topography along each line of a polyline feature class -- planimetric and surface length, surface ratio, uphill/downhill and slope statistics, direction statistics (mean direction, circular and angular variance), sinuosity, fractal dimension, and more. Elevation comes from the polylines' own Z values or is sampled from a DEM by bilinear interpolation at a regular ground interval; each line is reduced to straight 3D segments. Direction-dependent statistics describe the line in the direction of its geometry (first vertex to last). Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_SplitLinesIntoSegments"
+                caption="Split Lines into Topography Segments"
+                className="SplitLinesIntoSegmentsButton"
+                loadOnClick="true"
+                smallImage="Images\SplitSeg_16.png"
+                largeImage="Images\SplitSeg_32.png"
+                keytip="SS">
+          <tooltip heading="Split Lines into Topography Segments">
+            Opens the Split Lines into Topography Segments tool from the Jenness Enterprises toolbox: it converts each polyline into a new PolylineZ feature class with one true 3D feature per straight segment (sampled from the polylines' own Z values or a DEM, keeping the original vertices). Each segment can carry optional attributes -- start/end coordinates, planimetric and surface length, slope, bearing, deflection/inclination/3D-deflection angles, and more -- and you may copy any fields from the source table. The output displays in space in a Scene, and is symbolized with Unclassed Colors. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_LSRIOnDEM"

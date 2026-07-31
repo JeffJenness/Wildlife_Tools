@@ -18,8 +18,28 @@ import arcpy
 
 # Make the helper modules next to this .pyt importable.
 _HERE = os.path.dirname(__file__)
+_PYT_PATH = os.path.abspath(__file__)   # this .pyt's own path (for the scripting hint)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
+
+
+def _scripting_hint(messages, tool_name):
+    """Print the exact lines needed to run this tool from a script or the Python
+    window. An add-in Python toolbox is not on arcpy's path automatically, and
+    Pro's 'Copy Python Command' may reference the active project toolbox rather
+    than this add-in -- so the user needs this .pyt's real path (below)."""
+    if messages is None:
+        return
+    try:
+        messages.addMessage(
+            "To run this tool from a script or the Python window, import this "
+            "toolbox first (if you used 'Copy Python Command', replace its "
+            "first line with the ImportToolbox line below):\n"
+            "    import arcpy\n"
+            "    arcpy.ImportToolbox(r\"{}\")\n"
+            "    arcpy.jenness.{}(...)".format(_PYT_PATH, tool_name))
+    except Exception:
+        pass
 
 import locoh          # noqa: E402
 import mahalanobis    # noqa: E402
@@ -276,6 +296,7 @@ class Toolbox(object):
                       MultiSunHillshade, SimpleHypsometricShading,
                       BlurredHillshade, SurfaceAreaRatio, VRM,
                       ArcChordRatio, TRI, TopographyAlongLines,
+                      SplitLinesIntoSegments,
                       FractalDimension, TopographicWetnessIndex,
                       SimpleTPI,
                       SlopePositionClassification, LandformClassification,
@@ -379,6 +400,7 @@ class LoCoHStandard(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(locoh)   # pick up edits without restarting Pro
             iso_lyrx = locoh.run_locoh_standard(
                 in_features=parameters[0].valueAsText,
@@ -521,6 +543,7 @@ class LoCoHAdaptive(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(locoh)
             if parameters[1].valueAsText == self.A_SPECIFY:
                 a_meters, report_factor, report_unit = _resolve_length(
@@ -666,6 +689,7 @@ class LoCoHFixedSphere(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(locoh)
             if parameters[1].valueAsText == self.R_SPECIFY:
                 r_meters, report_factor, report_unit = _resolve_length(
@@ -1109,6 +1133,7 @@ class MahalanobisRaster(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(mahalanobis)
             P = {p.name: p for p in parameters}
             source = P["stats_source"].valueAsText
@@ -1222,6 +1247,7 @@ class MahalanobisPoints(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(mahalanobis)
             P = {p.name: p for p in parameters}
             source = P["stats_source"].valueAsText
@@ -1368,6 +1394,7 @@ class MahalanobisCovariance(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(mahalanobis)
             P = {p.name: p for p in parameters}
             source = P["stats_source"].valueAsText
@@ -1491,6 +1518,7 @@ class MahalanobisChiSquare(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(mahalanobis)
             P = {p.name: p for p in parameters}
             out_lyrx = mahalanobis.run_chi_square_transform(
@@ -1651,6 +1679,7 @@ class KernelDensityGenerate(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(kernel_density)
             P = {p.name: p for p in parameters}
             kernel_density.run_kernel_density(
@@ -1727,6 +1756,7 @@ class KernelDensityProportion(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(kernel_density)
             P = {p.name: p for p in parameters}
             kernel_density.run_proportion_surface(
@@ -1817,6 +1847,7 @@ class KernelDensityContours(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(kernel_density)
             P = {p.name: p for p in parameters}
             lines = P["out_lines"].valueAsText if P["make_lines"].value else None
@@ -1921,6 +1952,7 @@ class ShadowPolygons(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(cartography_tools)
             P = {p.name: p for p in parameters}
             lyrx = cartography_tools.run_shadow_polygons(
@@ -2126,6 +2158,7 @@ class EnhancedHillshade(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(hillshade)
             P = {p.name: p for p in parameters}
             out_lyrx = hillshade.run_enhanced_hillshade(
@@ -2316,6 +2349,7 @@ class MDOWHillshade(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(hillshade)
             P = {p.name: p for p in parameters}
             out_lyrx = hillshade.run_mdow_hillshade(
@@ -2638,6 +2672,7 @@ class MultiSunHillshade(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(hillshade)
             P = {p.name: p for p in parameters}
             n = self._sun_count(P["n_suns"].value)
@@ -2874,6 +2909,7 @@ class BlurredHillshade(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(hillshade)
             P = {p.name: p for p in parameters}
             out_lyrx = hillshade.run_blurred_hillshade(
@@ -3021,6 +3057,7 @@ class SimpleHypsometricShading(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(cartography_tools)
             P = {p.name: p for p in parameters}
             lyrx = cartography_tools.run_simple_hypso_shading(
@@ -3178,6 +3215,7 @@ class SurfaceAreaRatio(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(topographic_tools)
             P = {p.name: p for p in parameters}
             delivered, lyrx = topographic_tools.run_surface_area(
@@ -3344,6 +3382,7 @@ class VRM(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(topographic_tools)
             P = {p.name: p for p in parameters}
             out_lyrx = topographic_tools.run_vrm(
@@ -3487,6 +3526,7 @@ class ArcChordRatio(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(topographic_tools)
             P = {p.name: p for p in parameters}
             out_lyrx = topographic_tools.run_acr(
@@ -3635,6 +3675,7 @@ class TRI(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(topographic_tools)
             P = {p.name: p for p in parameters}
             out_lyrx = topographic_tools.run_tri(
@@ -3995,6 +4036,7 @@ class TopographyAlongLines(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(line_surface_tools)
             importlib.reload(tool_metadata)
             lst = line_surface_tools
@@ -4007,6 +4049,18 @@ class TopographyAlongLines(object):
             elev_mpu = lst.ELEV_METERS.get(elev_units, 1.0)
             length_unit = P["length_unit"].valueAsText or "Meters"
             slope_unit = P["slope_unit"].valueAsText or "Degrees"
+
+            try:
+                n_total = int(arcpy.management.GetCount(in_lines)[0])
+            except Exception:
+                n_total = 0
+            phases = [("Preparing output fields...", 1)]
+            if use_dem:
+                phases.append(("Reading the DEM...", 2))
+            phases.append(
+                ("Computing attributes for {:,} line(s)...".format(n_total)
+                 if n_total else "Computing line attributes...", 12))
+            mahalanobis.begin_phases(phases)
 
             # Resolve each value-table row to a real output field (existing, or
             # a new one). In alias mode the cell may hold an alias.
@@ -4050,6 +4104,7 @@ class TopographyAlongLines(object):
 
             dem = None
             if use_dem:
+                mahalanobis.phase_advance()          # -> "Reading the DEM..."
                 dem_path = _resolve_raster_path(P["in_dem"])
                 dem_sr = arcpy.Describe(dem_path).spatialReference
                 window = lst.lines_window_in_dem_crs(in_lines, dem_sr)
@@ -4064,10 +4119,19 @@ class TopographyAlongLines(object):
             field_keys = [key for _, key in pairs]
             want_fractal = "fractal_d" in wanted
 
+            mahalanobis.phase_advance()              # -> "Computing attributes..."
+            label_every = max(1, (n_total // 200) or 1)
             n_feat = n_written = short_fractal = nodata_segs = empty = 0
             with arcpy.da.UpdateCursor(in_lines, ["SHAPE@"] + field_names) as cur:
                 for r in cur:
                     n_feat += 1
+                    if n_total and (n_feat == 1 or n_feat == n_total
+                                    or n_feat % label_every == 0):
+                        arcpy.SetProgressorLabel(
+                            "Computing line {:,} of {:,}...".format(
+                                n_feat, n_total))
+                    if n_total:
+                        mahalanobis.phase_step(n_feat, n_total)
                     shp = r[0]
                     if shp is None:
                         continue
@@ -4122,7 +4186,423 @@ class TopographyAlongLines(object):
             tool_metadata.set_entity_and_fields(
                 target, fields=fields_meta, messages=messages)
 
+            mahalanobis.end_phases()
             _save_tool_defaults("TopographyAlongLines", {
+                "length_unit": length_unit, "slope_unit": slope_unit})
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class SplitLinesIntoSegments(object):
+    """Split Lines into Topography Segments -- converts each polyline into a new
+    PolylineZ feature class with one true 3-D feature per straight segment,
+    carrying optional per-segment topography attributes and any chosen source
+    fields. Shares the segment engine with Topography along Lines."""
+
+    _Z_SOURCE = "Z values from the polylines"
+    _DEM_SOURCE = "DEM raster"
+    _SLOPE_STATS = {"rel_slope", "abs_slope"}
+    _SYM_PRIORITY = ["mean_elev", "begin_x", "end_x", "abs_slope", "rel_slope"]
+    _RAMP = [(95, 135, 193), (249, 254, 204), (224, 70, 53)]
+    _RESERVED = {"objectid", "fid", "shape", "shape_length", "shape_area",
+                 "oid", "globalid", "shape_leng"}
+    _FTYPE_MAP = {"String": "TEXT", "Integer": "LONG", "SmallInteger": "SHORT",
+                  "Double": "DOUBLE", "Single": "FLOAT", "Date": "DATE",
+                  "BigInteger": "BIGINTEGER", "Guid": "GUID"}
+
+    def __init__(self):
+        self.label = "Split Lines into Topography Segments"
+        self.description = (
+            "Converts each polyline into a new PolylineZ feature class with one "
+            "true three-dimensional feature per straight segment (sampled along "
+            "the line from the polylines' own Z values or from a DEM, keeping "
+            "the original vertices). Each segment can carry optional attributes "
+            "-- start/end coordinates, planimetric and surface length, slope, "
+            "bearing, deflection/inclination/3D-deflection angles, and more -- "
+            "and you may copy any fields from the source table. The output "
+            "displays in 3-D in a Scene.")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_units = None
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_lines = arcpy.Parameter(
+            displayName="Input polyline features", name="in_lines",
+            datatype="GPFeatureLayer", parameterType="Required", direction="Input")
+        in_lines.filter.list = ["Polyline"]
+        out_fc = arcpy.Parameter(
+            displayName="Output segment features (PolylineZ)", name="out_fc",
+            datatype="DEFeatureClass", parameterType="Required", direction="Output")
+        elev_source = arcpy.Parameter(
+            displayName="Elevation source", name="elev_source",
+            datatype="GPString", parameterType="Required", direction="Input")
+        elev_source.filter.type = "ValueList"
+        elev_source.filter.list = [self._Z_SOURCE, self._DEM_SOURCE]
+        elev_source.value = self._DEM_SOURCE
+        in_dem = arcpy.Parameter(
+            displayName="Input elevation raster (DEM)", name="in_dem",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Optional", direction="Input")
+        elev_units = arcpy.Parameter(
+            displayName="Elevation units", name="elev_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        elev_units.filter.type = "ValueList"
+        elev_units.filter.list = ["Meters", "Feet"]
+
+        attrs = arcpy.Parameter(
+            displayName="Segment Attributes", name="surface_attributes",
+            datatype="GPValueTable", parameterType="Optional", direction="Input")
+        attrs.columns = [["GPString", "Property"],
+                         ["GPString", "Field (New)"]]
+        attrs.filters[0].type = "ValueList"
+        attrs.filters[0].list = [lb for _, lb, _, _ in line_surface_tools.SEG_STATS]
+
+        copy_fields = arcpy.Parameter(
+            displayName="Source fields to copy", name="copy_fields",
+            datatype="GPValueTable", parameterType="Optional", direction="Input")
+        copy_fields.columns = [["GPString", "Source field to copy"]]
+        copy_fields.filters[0].type = "ValueList"
+        copy_fields.filters[0].list = []
+
+        length_unit = arcpy.Parameter(
+            displayName="Length Unit", name="length_unit",
+            datatype="GPString", parameterType="Required", direction="Input")
+        length_unit.filter.type = "ValueList"
+        length_unit.filter.list = line_surface_tools.LENGTH_UNITS
+        length_unit.value = "Meters"
+        slope_unit = arcpy.Parameter(
+            displayName="Slope Unit", name="slope_unit",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        slope_unit.filter.type = "ValueList"
+        slope_unit.filter.list = line_surface_tools.SLOPE_UNITS
+        slope_unit.value = "Degrees"
+
+        params = [in_lines, out_fc, elev_source, in_dem, elev_units,
+                  attrs, copy_fields, length_unit, slope_unit]
+        saved = _load_tool_defaults("SplitLinesIntoSegments")
+        for p in (length_unit, slope_unit):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    _detect_units = EnhancedHillshade._detect_units
+
+    def _seg_pairs(self, attrs):
+        """[(stat key, output field name)] from the Segment Attributes table."""
+        pairs = []
+        for row in (attrs.value or []):
+            lbl = str(row[0]).strip() if row[0] is not None else ""
+            fld = str(row[1]).strip() if row[1] is not None else ""
+            key = line_surface_tools.SEG_LABEL_KEY.get(lbl)
+            if key and fld:
+                pairs.append((key, fld))
+        return pairs
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        lines, src, dem, units = (P["in_lines"], P["elev_source"],
+                                  P["in_dem"], P["elev_units"])
+        z_aware = False
+        if lines.valueAsText:
+            try:
+                z_aware = bool(arcpy.Describe(lines.valueAsText).hasZ)
+            except Exception:
+                z_aware = False
+        if not z_aware and lines.valueAsText:
+            src.value = self._DEM_SOURCE
+            src.enabled = False
+        else:
+            src.enabled = True
+        use_dem = (src.valueAsText == self._DEM_SOURCE)
+        dem.enabled = use_dem
+
+        detected, locked = None, False
+        if use_dem and dem.valueAsText:
+            detected, locked = self._detect_units(dem.valueAsText)
+        elif not use_dem and lines.valueAsText:
+            detected, locked = self._detect_units(lines.valueAsText)
+        if locked:
+            if not units.altered or units.valueAsText == self._auto_units:
+                units.value = detected
+                self._auto_units = detected
+            units.enabled = False
+        else:
+            units.enabled = True
+
+        # Auto-suggest an output name from the input.
+        outp = P["out_fc"]
+        if lines.valueAsText and (not outp.altered or outp.valueAsText == self._auto_out):
+            try:
+                base = _legalize(os.path.splitext(
+                    os.path.basename(lines.valueAsText))[0] + "_Segments")
+                ws = arcpy.env.workspace or os.path.dirname(
+                    arcpy.Describe(lines.valueAsText).catalogPath)
+                sug = _unique_name(base, ws)
+                outp.value = sug
+                self._auto_out = sug
+            except Exception:
+                pass
+
+        # Auto-fill blank field names (Seg_ prefixed) from the chosen property.
+        attrs = P["surface_attributes"]
+        rows = attrs.value or []
+        new_rows, changed = [], False
+        for row in rows:
+            lbl = str(row[0]).strip() if row[0] is not None else ""
+            fld = str(row[1]).strip() if row[1] is not None else ""
+            key = line_surface_tools.SEG_LABEL_KEY.get(lbl)
+            if not fld and key:
+                fld = line_surface_tools.seg_default_field_name(key)
+                changed = True
+            new_rows.append([lbl, fld])
+        if changed:
+            attrs.value = new_rows
+
+        # Populate the copy-fields checklist with the input's copyable fields.
+        try:
+            if lines.valueAsText:
+                names = [f.name for f in arcpy.ListFields(lines.valueAsText)
+                         if f.type not in ("OID", "Geometry", "Blob", "Raster")
+                         and f.name.lower() not in self._RESERVED]
+                P["copy_fields"].filters[0].list = names
+        except Exception:
+            pass
+
+        P["slope_unit"].enabled = bool(
+            {k for k, _ in self._seg_pairs(attrs)} & self._SLOPE_STATS)
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        lines, src, dem, units = (P["in_lines"], P["elev_source"],
+                                  P["in_dem"], P["elev_units"])
+        if lines.valueAsText:
+            try:
+                if arcpy.Describe(lines.valueAsText).shapeType != "Polyline":
+                    lines.setErrorMessage("The input must be a polyline feature class.")
+            except Exception:
+                pass
+        use_dem = (src.valueAsText == self._DEM_SOURCE)
+        if use_dem and not dem.valueAsText:
+            dem.setErrorMessage("Specify a DEM, or choose the polylines' own Z values.")
+        if use_dem and dem.valueAsText:
+            try:
+                if arcpy.Describe(dem.valueAsText).bandCount != 1:
+                    dem.setErrorMessage("The elevation raster must be single band.")
+            except Exception:
+                pass
+        if (not use_dem) and lines.valueAsText:
+            try:
+                if not arcpy.Describe(lines.valueAsText).hasZ:
+                    src.setErrorMessage(
+                        "The polylines are not Z-enabled; choose a DEM instead.")
+            except Exception:
+                pass
+        if units.enabled and not units.valueAsText:
+            units.setErrorMessage(
+                "The elevation units are not defined; choose Meters or Feet.")
+        # Duplicate output field names among the segment attributes (copied
+        # source fields are auto-renamed at run time if they would collide).
+        attrs = P["surface_attributes"]
+        seen = set()
+        for _, fld in self._seg_pairs(attrs):
+            n = fld.lower()
+            if n in seen:
+                attrs.setErrorMessage(
+                    "The same output field is used for more than one property.")
+                break
+            seen.add(n)
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(line_surface_tools)
+            importlib.reload(mahalanobis)
+            lst = line_surface_tools
+            P = {p.name: p for p in parameters}
+
+            in_lines = P["in_lines"].valueAsText
+            out_fc = P["out_fc"].valueAsText
+            use_dem = (P["elev_source"].valueAsText == self._DEM_SOURCE)
+            source = "DEM" if use_dem else "Z"
+            elev_units = P["elev_units"].valueAsText or "Meters"
+            elev_mpu = lst.ELEV_METERS.get(elev_units, 1.0)
+            length_unit = P["length_unit"].valueAsText or "Meters"
+            slope_unit = P["slope_unit"].valueAsText or "Degrees"
+            source_sr = arcpy.Describe(in_lines).spatialReference
+
+            pairs = self._seg_pairs(P["surface_attributes"])       # (key, field)
+            copy_names = [str(r[0]).strip() for r in (P["copy_fields"].value or [])
+                          if r[0] is not None and str(r[0]).strip()]
+
+            try:
+                n_total = int(arcpy.management.GetCount(in_lines)[0])
+            except Exception:
+                n_total = 0
+            phases = [("Preparing the output feature class...", 1)]
+            if use_dem:
+                phases.append(("Reading the DEM...", 2))
+            phases.append(
+                ("Splitting {:,} line(s) into 3-D segments...".format(n_total)
+                 if n_total else "Splitting lines into 3-D segments...", 12))
+            phases.append(("Applying symbology...", 1))
+            mahalanobis.begin_phases(phases)
+
+            # Resolve the DEM's coordinate system up front so the output can
+            # inherit a real vertical CS (the Z comes from the DEM). Without a
+            # vertical CS the PolylineZ warns and mis-draws in a 3-D Scene.
+            dem_path = dem_sr = None
+            if use_dem:
+                dem_path = _resolve_raster_path(P["in_dem"])
+                dem_sr = arcpy.Describe(dem_path).spatialReference
+            out_sr = lst.output_spatial_reference(
+                source_sr, dem_sr if use_dem else source_sr, elev_units)
+
+            # Create the output PolylineZ feature class (source horizontal CS +
+            # an elevation vertical CS).
+            out_ws, out_name = os.path.split(out_fc)
+            arcpy.management.CreateFeatureclass(
+                out_ws, out_name, "POLYLINE", spatial_reference=out_sr,
+                has_z="ENABLED")
+            null_ok = (".gdb" in out_fc.lower() or ".sde" in out_fc.lower())
+
+            taken = {f.name.lower() for f in arcpy.ListFields(out_fc)}
+
+            def make_field(desired, ftype, length=None, alias=None):
+                try:
+                    nm = arcpy.ValidateFieldName(desired, out_ws)
+                except Exception:
+                    nm = desired
+                base, n = nm, 2
+                while nm.lower() in taken or nm.lower() in self._RESERVED:
+                    nm = arcpy.ValidateFieldName("{}_{}".format(base, n), out_ws)
+                    n += 1
+                kw = {}
+                if length:
+                    kw["field_length"] = length
+                if alias:
+                    kw["field_alias"] = alias
+                arcpy.management.AddField(out_fc, nm, ftype, **kw)
+                taken.add(nm.lower())
+                return nm
+
+            # Segment-attribute fields.
+            key_field = []                       # (key, actual field name)
+            for key, fld in pairs:
+                ftype = lst.SEG_FTYPE[key]
+                length = 16 if ftype == "TEXT" else None
+                key_field.append((key, make_field(fld, ftype, length)))
+
+            # Copied source fields (type from source; sanitized name).
+            src_fields = {f.name: f for f in arcpy.ListFields(in_lines)}
+            copy_map = []                        # (source name, target name)
+            for cn in copy_names:
+                f = src_fields.get(cn)
+                if f is None:
+                    continue
+                ftype = self._FTYPE_MAP.get(f.type)
+                if ftype is None:
+                    messages.addWarningMessage(
+                        "Field '{}' has a type that cannot be copied; skipped.".format(cn))
+                    continue
+                length = f.length if ftype == "TEXT" else None
+                tgt = make_field(cn, ftype, length, alias=f.aliasName)
+                copy_map.append((cn, tgt))
+
+            dem = None
+            if use_dem:
+                mahalanobis.phase_advance()          # -> "Reading the DEM..."
+                window = lst.lines_window_in_dem_crs(in_lines, dem_sr)
+                dem = lst.load_dem(dem_path, window=window)
+                messages.addMessage(
+                    "DEM read over the lines' extent ({:,} x {:,} cells); "
+                    "sampling interval {:.3f} m.".format(
+                        dem["arr"].shape[1], dem["arr"].shape[0], dem["interval_m"]))
+
+            null_val = None if null_ok else -999
+            out_flds = ["SHAPE@"] + [fn for _, fn in key_field] + \
+                       [tgt for _, tgt in copy_map]
+            in_flds = ["SHAPE@", "OID@"] + [src for src, _ in copy_map]
+
+            mahalanobis.phase_advance()              # -> "Splitting ... segments..."
+            label_every = max(1, (n_total // 200) or 1)
+            n_lines = n_segs = nodata_segs = 0
+            icur = arcpy.da.InsertCursor(out_fc, out_flds)
+            try:
+                with arcpy.da.SearchCursor(in_lines, in_flds) as scur:
+                    for i, row in enumerate(scur, 1):
+                        if n_total and (i == 1 or i == n_total
+                                        or i % label_every == 0):
+                            arcpy.SetProgressorLabel(
+                                "Splitting line {:,} of {:,} "
+                                "({:,} segments so far)...".format(
+                                    i, n_total, n_segs))
+                        if n_total:
+                            mahalanobis.phase_step(i, n_total)
+                        shp, oid = row[0], row[1]
+                        copied_vals = list(row[2:])
+                        if shp is None:
+                            continue
+                        n_lines += 1
+                        recs = lst.build_segments(
+                            shp, source, dem, elev_mpu, source_sr, oid)
+                        for rec in recs:
+                            pts = arcpy.Array([arcpy.Point(x, y, z)
+                                               for (x, y, z) in rec["geom"]])
+                            geom = arcpy.Polyline(pts, source_sr, True)
+                            vals = [geom]
+                            for key, _ in key_field:
+                                v = lst.seg_value(rec, key, length_unit,
+                                                  elev_units, slope_unit)
+                                if v is None:
+                                    v = null_val
+                                vals.append(v)
+                            vals.extend(copied_vals)
+                            icur.insertRow(vals)
+                            n_segs += 1
+            finally:
+                del icur
+
+            messages.addMessage(
+                "Created {:,} segment feature(s) from {:,} line(s).".format(
+                    n_segs, n_lines))
+
+            # Output symbology: Unclassed Colors on the highest-priority field the
+            # user calculated (else the first one), blue -> yellow -> red.
+            mahalanobis.phase_advance()              # -> "Applying symbology..."
+            sym_field = None
+            by_key = {k: fn for k, fn in key_field}
+            for pk in self._SYM_PRIORITY:
+                if pk in by_key:
+                    sym_field = by_key[pk]
+                    break
+            if sym_field is None and key_field:
+                sym_field = key_field[0][1]
+            if sym_field:
+                try:
+                    lyrx = mahalanobis.default_unclassed_lyrx(
+                        out_fc, sym_field, self._RAMP, messages=messages)
+                    if lyrx:
+                        P["out_fc"].symbology = lyrx
+                except Exception as e:
+                    messages.addWarningMessage(
+                        "Could not set output symbology: {}".format(e))
+
+            mahalanobis.end_phases()
+            _save_tool_defaults("SplitLinesIntoSegments", {
                 "length_unit": length_unit, "slope_unit": slope_unit})
         except arcpy.ExecuteError:
             raise
@@ -4253,6 +4733,7 @@ class FractalDimension(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(topographic_tools)
             P = {p.name: p for p in parameters}
             out_lyrx = topographic_tools.run_fractal_dimension(
@@ -4458,6 +4939,7 @@ class TopographicWetnessIndex(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(topographic_tools)
             P = {p.name: p for p in parameters}
             geo = False
@@ -4614,6 +5096,7 @@ class SimpleTPI(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(tpi_tools)
             P = {p.name: p for p in parameters}
             lyrx = tpi_tools.run_tpi(
@@ -5120,6 +5603,7 @@ class SlopePositionClassification(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(classification_store)
             importlib.reload(tpi_tools)
             P = {p.name: p for p in parameters}
@@ -5391,6 +5875,7 @@ class LandformClassification(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(classification_store)
             importlib.reload(tpi_tools)
             P = {p.name: p for p in parameters}
@@ -5508,6 +5993,7 @@ class GeneralRasterClassification(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(classification_store)
             importlib.reload(tpi_tools)
             P = {p.name: p for p in parameters}
@@ -5692,6 +6178,7 @@ class LSRIOnDEM(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(lsri)
             P = {p.name: p for p in parameters}
             out_lyrx = lsri.run_lsri_on_dem(
@@ -5827,6 +6314,7 @@ class LSRIOnContourPolylines(object):
 
     def execute(self, parameters, messages):
         try:
+            _scripting_hint(messages, type(self).__name__)
             importlib.reload(lsri)
             P = {p.name: p for p in parameters}
             out_lyrx = lsri.run_lsri_on_contours(

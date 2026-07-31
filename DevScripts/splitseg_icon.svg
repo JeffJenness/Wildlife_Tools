@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Split Lines into Topography Segments</title>
+  <!-- A line broken into separate 3D segments, each colored by value (the
+       Unclassed Colors output), with dots at the vertex breaks. -->
+  <g stroke-linecap="round" stroke-width="2.7" fill="none">
+    <line x1="3" y1="24" x2="9" y2="15" stroke="#5F87C1"/>
+    <line x1="9" y1="15" x2="15" y2="20" stroke="#6EAF96"/>
+    <line x1="15" y1="20" x2="21" y2="10" stroke="#E8C84C"/>
+    <line x1="21" y1="10" x2="27" y2="16" stroke="#E17837"/>
+    <line x1="27" y1="16" x2="30" y2="11" stroke="#E04635"/>
+  </g>
+  <g fill="#2B2B2B">
+    <circle cx="3" cy="24" r="1.7"/><circle cx="9" cy="15" r="1.7"/>
+    <circle cx="15" cy="20" r="1.7"/><circle cx="21" cy="10" r="1.7"/>
+    <circle cx="27" cy="16" r="1.7"/><circle cx="30" cy="11" r="1.7"/>
+  </g>
+</svg>

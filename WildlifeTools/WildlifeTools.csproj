@@ -139,6 +139,10 @@
     <Content Include="Images\TopoLines_32.png" />
     <Content Include="DarkImages\TopoLines_16.png" />
     <Content Include="DarkImages\TopoLines_32.png" />
+    <Content Include="Images\SplitSeg_16.png" />
+    <Content Include="Images\SplitSeg_32.png" />
+    <Content Include="DarkImages\SplitSeg_16.png" />
+    <Content Include="DarkImages\SplitSeg_32.png" />
     <Content Include="Images\TRI_16.png" />
     <Content Include="Images\TRI_32.png" />
     <Content Include="DarkImages\TRI_16.png" />
