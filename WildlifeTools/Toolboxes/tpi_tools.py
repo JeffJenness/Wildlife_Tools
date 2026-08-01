@@ -286,7 +286,6 @@ def focal_stats(z, valid, rx_out_rows, ry_out, rx_in_rows, ry_in,
     """NoData-ignoring focal mean (and optionally SD / variance) over an
     (annular) neighborhood. Returns dict with 'mean', 'count', and, if
     requested, 'sd' and 'var'. NaN where the neighborhood holds no valid cell."""
-    from scipy.signal import fftconvolve
     num = np.where(valid, z, 0.0)
     den = valid.astype(np.float64)
     numsq = np.where(valid, z * z, 0.0) if want_sd else None
@@ -301,9 +300,13 @@ def focal_stats(z, valid, rx_out_rows, ry_out, rx_in_rows, ry_in,
         # ellipse in pixel space = a true circle on the ground (same convention
         # as hillshade._row_kernel_groups and focal_percentile). Using rxo for
         # ry here would inflate the N-S ground radius by ~1/cos(latitude).
+        # Memory-safe size-aware neighborhood convolution (direct for small
+        # kernels, overlap-add FFT for large TPI windows) -- see
+        # hillshade.nbr_conv. A whole-grid fftconvolve raised MemoryError on
+        # large regional rasters, especially with the big neighborhoods TPI uses.
         k = _annulus_kernel(rxo, ry_out, rxi, ry_in)
-        cd = fftconvolve(den, k, mode="same")
-        cn = fftconvolve(num, k, mode="same")
+        cd = _hs.nbr_conv(den, k)
+        cn = _hs.nbr_conv(num, k)
         cd_r = np.maximum(cd, 0.0)
         ok = cd_r >= 0.5
         with np.errstate(invalid="ignore", divide="ignore"):
@@ -311,7 +314,7 @@ def focal_stats(z, valid, rx_out_rows, ry_out, rx_in_rows, ry_in,
         cnt[rows] = cd_r[rows]
         mean[rows] = m[rows]
         if want_sd:
-            cs = fftconvolve(numsq, k, mode="same")
+            cs = _hs.nbr_conv(numsq, k)
             with np.errstate(invalid="ignore", divide="ignore"):
                 v = np.where(ok, cs / np.maximum(cd_r, 1e-9) - m * m, np.nan)
                 v = np.where(np.isfinite(v), np.maximum(v, 0.0), np.nan)
@@ -490,7 +493,7 @@ def _write_class_raster(gdal, path, gt, proj, arr, classes):
     dtype = gdal.GDT_Byte if byte_ok else gdal.GDT_Int32
     drv = gdal.GetDriverByName("GTiff")
     ds = drv.Create(path, arr.shape[1], arr.shape[0], 1, dtype,
-                    options=["TILED=YES", "COMPRESS=LZW"])
+                    options=["TILED=YES", "COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
     ds.SetGeoTransform(gt)
     try:
         ds.SetProjection(proj)

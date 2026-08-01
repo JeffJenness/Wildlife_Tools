@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Extract Aspect Values to Points (dark theme)</title>
+  <!-- Dark-theme variant: light hub, leader, and marker outline so the mark
+       reads on Pro's dark ribbon. -->
+  <g stroke="#3a3a3a" stroke-width="0.5">
+    <path d="M13 13 L13 3.5 A9.5 9.5 0 0 1 19.7 6.3 Z" fill="#E85E58"/>
+    <path d="M13 13 L19.7 6.3 A9.5 9.5 0 0 1 22.5 13 Z" fill="#F09A52"/>
+    <path d="M13 13 L22.5 13 A9.5 9.5 0 0 1 19.7 19.7 Z" fill="#ECD055"/>
+    <path d="M13 13 L19.7 19.7 A9.5 9.5 0 0 1 13 22.5 Z" fill="#A0CD61"/>
+    <path d="M13 13 L13 22.5 A9.5 9.5 0 0 1 6.3 19.7 Z" fill="#57C1B2"/>
+    <path d="M13 13 L6.3 19.7 A9.5 9.5 0 0 1 3.5 13 Z" fill="#579CD8"/>
+    <path d="M13 13 L3.5 13 A9.5 9.5 0 0 1 6.3 6.3 Z" fill="#7E71CB"/>
+    <path d="M13 13 L6.3 6.3 A9.5 9.5 0 0 1 13 3.5 Z" fill="#D06BB4"/>
+  </g>
+  <circle cx="13" cy="13" r="2.2" fill="#E6E6E6"/>
+  <line x1="19" y1="19" x2="25" y2="25" stroke="#E6E6E6" stroke-width="2"/>
+  <circle cx="25.5" cy="25.5" r="4.2" fill="#E85E58" stroke="#E6E6E6" stroke-width="1.8"/>
+</svg>

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Aspect Tools (dark theme)</title>
+  <!-- Same aspect color wheel; the hub is light so it reads on Pro's dark
+       ribbon and the white sector strokes are kept. -->
+  <g stroke="#3a3a3a" stroke-width="0.6">
+    <path d="M16 16 L16 3 A13 13 0 0 1 25.2 6.8 Z" fill="#E85E58"/>
+    <path d="M16 16 L25.2 6.8 A13 13 0 0 1 29 16 Z" fill="#F09A52"/>
+    <path d="M16 16 L29 16 A13 13 0 0 1 25.2 25.2 Z" fill="#ECD055"/>
+    <path d="M16 16 L25.2 25.2 A13 13 0 0 1 16 29 Z" fill="#A0CD61"/>
+    <path d="M16 16 L16 29 A13 13 0 0 1 6.8 25.2 Z" fill="#57C1B2"/>
+    <path d="M16 16 L6.8 25.2 A13 13 0 0 1 3 16 Z" fill="#579CD8"/>
+    <path d="M16 16 L3 16 A13 13 0 0 1 6.8 6.8 Z" fill="#7E71CB"/>
+    <path d="M16 16 L6.8 6.8 A13 13 0 0 1 16 3 Z" fill="#D06BB4"/>
+  </g>
+  <circle cx="16" cy="16" r="3.1" fill="#E6E6E6"/>
+</svg>

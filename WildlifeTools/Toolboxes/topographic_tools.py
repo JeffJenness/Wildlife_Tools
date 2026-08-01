@@ -187,7 +187,7 @@ def _resolve_output(path, messages):
 def _make_output(gdal, path, gt, proj, width, height):
     drv = gdal.GetDriverByName("GTiff")
     ds = drv.Create(path, width, height, 1, gdal.GDT_Float32,
-                    options=["TILED=YES", "COMPRESS=LZW"])
+                    options=["TILED=YES", "COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
     ds.SetGeoTransform(gt)
     try:
         ds.SetProjection(proj)
@@ -702,15 +702,15 @@ def _circular_vector_sums(nx, ny, nz, ok, rx_rows, ry):
     EXACT radius when it is constant across rows (Cells units or a projected
     raster) -- see ``_row_kernel_groups`` for why naive rounding there would
     be a real bug, not just an approximation."""
-    from scipy.signal import fftconvolve
-
     fields = [np.where(ok, nx, 0.0), np.where(ok, ny, 0.0),
               np.where(ok, nz, 0.0), ok.astype(np.float64)]
     outs = [np.zeros_like(f) for f in fields]
+    # Memory-safe size-aware neighborhood convolution (direct for small kernels,
+    # overlap-add FFT for large) -- see hillshade.nbr_conv. A whole-grid
+    # fftconvolve here raised MemoryError on large regional rasters.
     for k, rows in _hs._row_kernel_groups(rx_rows, ry, "Average"):
         for f, out in zip(fields, outs):
-            c = fftconvolve(f, k, mode="same")
-            out[rows] = c[rows]
+            out[rows] = _hs.nbr_conv(f, k)[rows]
     return outs[0], outs[1], outs[2], outs[3]
 
 

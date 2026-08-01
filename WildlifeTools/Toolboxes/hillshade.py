@@ -352,19 +352,52 @@ def _row_kernel_groups(rx_rows, ry, kernel):
         yield _blur_kernel(rxi, ry, kernel), (rx_int == rxi)
 
 
+# Kernels up to this footprint (cells) use a direct spatial correlation; larger
+# ones use overlap-add FFT. Both are memory-safe; the cutoff only trades speed
+# (direct wins for small kernels, FFT for large).
+_NBR_DIRECT_MAX_CELLS = 225
+
+
+def nbr_conv(field, kernel):
+    """Memory-safe 'same'-mode CORRELATION of ``field`` with a 2-D ``kernel`` of
+    weights -- the shared neighborhood-convolution primitive for every focal
+    tool in this toolbox (blur, VRM, TPI family, aspect focal statistics).
+
+    A single whole-grid FFT (``scipy.signal.fftconvolve``) pads to a fast-FFT
+    length and allocates several complex arrays many times the raster size, so
+    it raises MemoryError on large regional rasters (and is slower than a direct
+    convolution for a small kernel). Instead this is SIZE-AWARE:
+
+    * small kernel (footprint <= ``_NBR_DIRECT_MAX_CELLS``): direct spatial
+      correlation (``scipy.ndimage.correlate``) -- O(cells x kernel) time,
+      O(cells) memory, fastest for small neighborhoods, and exact integer counts;
+    * large kernel: overlap-add FFT (``scipy.signal.oaconvolve``), which
+      processes the grid in blocks so memory stays bounded while keeping FFT
+      speed for big neighborhoods (e.g. a 2 km TPI window).
+
+    The kernels these tools build are symmetric (so convolution == correlation),
+    but the FFT path flips the kernel so the result is a true correlation in
+    every case; odd, centered kernels make both paths align identically with the
+    old ``fftconvolve(..., mode='same')`` result."""
+    kh, kw = kernel.shape
+    if kh * kw <= _NBR_DIRECT_MAX_CELLS:
+        from scipy.ndimage import correlate
+        return correlate(field, kernel, mode="constant", cval=0.0)
+    from scipy.signal import oaconvolve
+    return oaconvolve(field, kernel[::-1, ::-1], mode="same")
+
+
 def _blur_grid(z, valid, rx_rows, ry, kernel):
     """NoData-ignoring circular mean of ``z`` (full grid). ``valid`` is the
     data mask; invalid cells are excluded from every mean and stay invalid in
     the result (matching Focal Statistics with Ignore NoData). See
     ``_row_kernel_groups`` for how rows are grouped by radius."""
-    from scipy.signal import fftconvolve
-
     num = np.where(valid, z, 0.0)
     den = valid.astype(np.float64)
     out = np.full(z.shape, np.nan)
     for k, rows in _row_kernel_groups(rx_rows, ry, kernel):
-        cn = fftconvolve(num, k, mode="same")
-        cd = fftconvolve(den, k, mode="same")
+        cn = nbr_conv(num, k)
+        cd = nbr_conv(den, k)
         with np.errstate(invalid="ignore", divide="ignore"):
             vals = cn / np.maximum(cd, 1e-12)
         out[rows] = vals[rows]
@@ -602,7 +635,7 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
         tmp_dem = arcpy.CreateUniqueName("blurred_dem.tif", scratch)
         drv = gdal.GetDriverByName("GTiff")
         tds = drv.Create(tmp_dem, width, height, 1, gdal.GDT_Float32,
-                         options=["TILED=YES", "COMPRESS=LZW"])
+                         options=["TILED=YES", "COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
         tds.SetGeoTransform(gt)
         try:
             tds.SetProjection(proj)
@@ -664,7 +697,7 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
     out_path = arcpy.CreateUniqueName("hillshade_blurred.tif", scratch)
     drv = gdal.GetDriverByName("GTiff")
     ods = drv.Create(out_path, width, height, 1, gdal.GDT_Int16,
-                     options=["TILED=YES", "COMPRESS=LZW"])
+                     options=["TILED=YES", "COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
     ods.SetGeoTransform(hgt)
     try:
         ods.SetProjection(hproj)
@@ -934,7 +967,7 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
     out_path = arcpy.CreateUniqueName("hillshade.tif", scratch)
     drv = gdal.GetDriverByName("GTiff")
     out_ds = drv.Create(out_path, width, height, 1, gdal.GDT_Int16,
-                        options=["TILED=YES", "COMPRESS=LZW"])
+                        options=["TILED=YES", "COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
     out_ds.SetGeoTransform(gt)
     try:
         out_ds.SetProjection(src.GetProjection())

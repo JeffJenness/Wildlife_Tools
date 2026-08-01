@@ -257,7 +257,7 @@ def run_proportion_surface(kd, out_raster, messages):
         out_path = arcpy.CreateUniqueName("kd_prop.tif", scratch)
         drv = gdal.GetDriverByName("GTiff")
         out_ds = drv.Create(out_path, width, height, 1, gdal.GDT_Float32,
-                            options=["TILED=YES", "COMPRESS=LZW"])
+                            options=["TILED=YES", "COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
         out_ds.SetGeoTransform(gt)
         try:
             out_ds.SetProjection(proj)
@@ -680,7 +680,7 @@ def _write_grid(out2d, xmin, ymax, csx, csy, sr, out_raster, messages):
     scratch = arcpy.env.scratchFolder
     tif = arcpy.CreateUniqueName("kd_gen.tif", scratch)
     ds = gdal.GetDriverByName("GTiff").Create(tif, w, h, 1, gdal.GDT_Float32,
-                                              options=["TILED=YES", "COMPRESS=LZW"])
+                                              options=["TILED=YES", "COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
     ds.SetGeoTransform((xmin, csx, 0.0, ymax, 0.0, -csy))
     band = ds.GetRasterBand(1)
     band.SetNoDataValue(_NODATA)

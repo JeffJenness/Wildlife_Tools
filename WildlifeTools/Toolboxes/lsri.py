@@ -459,7 +459,7 @@ def _write_lsri_raster(gdal, engine, mult, valid_mask, gt, proj_wkt,
     out_path = arcpy.CreateUniqueName("lsri.tif", scratch)
     drv = gdal.GetDriverByName("GTiff")
     ds = drv.Create(out_path, width, height, 1, gdal.GDT_Float32,
-                    options=["TILED=YES", "COMPRESS=LZW"])
+                    options=["TILED=YES", "COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
     ds.SetGeoTransform(gt)
     try:
         ds.SetProjection(proj_wkt)

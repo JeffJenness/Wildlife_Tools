@@ -1040,6 +1040,103 @@ def default_stretch_lyrx(out_raster, colors, messages=None):
     return out_lyrx
 
 
+_ASPECT_RAMP_STOPS = [(41, 147, 162), (255, 255, 190), (51, 23, 44),
+                      (255, 255, 190), (41, 147, 162)]
+_ASPECT_RAMP_WEIGHTS = [0.21293969849246236, 0.28077889447236176,
+                        0.29522613065326647, 0.21105527638190943]
+_ASPECT_BACKGROUND = [255, 235, 190, 100]     # pale tan mask for flat (-1)
+
+
+def default_aspect_lyrx(out_raster, messages=None):
+    """Create a .lyrx beside ``out_raster`` symbolizing an aspect DIRECTION
+    raster (0-360 compass) with the cyclic aspect color scheme -- bluegreen ->
+    yellow -> brown -> yellow -> bluegreen, so 0 and 360 degrees share the same
+    color -- and the flat sentinel -1 drawn separately in a pale-tan mask color
+    (a background value, not part of the ramp). Ported from Jeff's
+    Aspect_AZ_NM.lyrx template. Returns the .lyrx path or None; never raises.
+
+    Uses a FIXED 0-360 stretch so a given direction always maps to the same
+    color regardless of the data's actual spread (the whole point of a cyclic
+    aspect ramp)."""
+    try:
+        path = arcpy.Describe(out_raster).catalogPath
+        name = os.path.splitext(os.path.basename(path))[0]
+    except Exception as e:
+        if messages is not None:
+            messages.addWarningMessage("Could not create layer file: {}".format(e))
+        return None
+    ws = os.path.dirname(path)
+    lyr_dir = os.path.dirname(ws) if ws.lower().endswith((".gdb", ".sde")) else ws
+    out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
+    tmp = "jenness_aspect_tmp"
+    try:
+        try:
+            arcpy.management.Delete(tmp)
+        except Exception:
+            pass
+        arcpy.management.MakeRasterLayer(path, tmp)
+        arcpy.management.SaveToLayerFile(tmp, out_lyrx, "ABSOLUTE")
+    except Exception as e:
+        if messages is not None:
+            messages.addWarningMessage("Could not create layer file: {}".format(e))
+        return None
+    finally:
+        try:
+            arcpy.management.Delete(tmp)
+        except Exception:
+            pass
+
+    try:
+        with open(out_lyrx, encoding="utf-8") as f:
+            lyr = json.load(f)
+        out_ld = lyr["layerDefinitions"][0]
+        out_ld["name"] = name
+        space = {"type": "CIMICCColorSpace", "url": "Default RGB"}
+        segs = [{
+            "type": "CIMLinearContinuousColorRamp",
+            "colorSpace": space,
+            "fromColor": {"type": "CIMRGBColor",
+                          "values": list(_ASPECT_RAMP_STOPS[i]) + [100]},
+            "toColor": {"type": "CIMRGBColor",
+                        "values": list(_ASPECT_RAMP_STOPS[i + 1]) + [100]},
+        } for i in range(len(_ASPECT_RAMP_STOPS) - 1)]
+        out_ld["colorizer"] = {
+            "type": "CIMRasterStretchColorizer",
+            "resamplingType": "NearestNeighbor",
+            "noDataColor": {"type": "CIMRGBColor", "values": [255, 255, 255, 0]},
+            "backgroundColor": {"type": "CIMRGBColor",
+                                "values": list(_ASPECT_BACKGROUND)},
+            "backgroundValue": -1,
+            "displayBackgroundValue": True,
+            "colorRamp": {"type": "CIMMultipartColorRamp",
+                          "colorRamps": segs,
+                          "weights": list(_ASPECT_RAMP_WEIGHTS)},
+            "colorScheme": "Aspect (cyclic)",
+            "gammaValue": 1,
+            "minPercent": 0.0, "maxPercent": 0.0,
+            "standardDeviationParam": 2,
+            "statsType": "Dataset",
+            "dra": False,
+            "stretchClasses": [
+                {"type": "CIMRasterStretchClass", "label": "-1 (flat)",
+                 "value": -1},
+                {"type": "CIMRasterStretchClass", "label": "180", "value": 180},
+                {"type": "CIMRasterStretchClass", "label": "360", "value": 360},
+            ],
+            "stretchStats": {"type": "StatsHistogram", "min": 0.0, "max": 360.0,
+                             "mean": 180.0, "stddev": 104.0,
+                             "limitMin": 0.0, "limitMax": 360.0},
+            "stretchType": "MinimumMaximum",
+        }
+        with open(out_lyrx, "w", encoding="utf-8") as f:
+            json.dump(lyr, f)
+    except Exception as e:
+        if messages is not None:
+            messages.addWarningMessage(
+                "Layer file created but symbology could not be applied: {}".format(e))
+    return out_lyrx
+
+
 def default_unique_value_lyrx(out_raster, classes, field="Class_Name",
                               messages=None):
     """Create a .lyrx beside ``out_raster`` with a UNIQUE VALUES renderer keyed
@@ -1370,7 +1467,7 @@ def compute_mahalanobis(vrts, geo, mean, inv_cov, out_type, scratch, messages):
     out_path = arcpy.CreateUniqueName("mahal_out.tif", scratch)
     drv = gdal.GetDriverByName("GTiff")
     out_ds = drv.Create(out_path, width, height, 1, gdal.GDT_Float32,
-                        options=["TILED=YES", "COMPRESS=LZW"])
+                        options=["TILED=YES", "COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
     out_ds.SetGeoTransform((minx, cell, 0.0, maxy, 0.0, -cell))
     try:
         out_ds.SetProjection(vrts[0].GetProjection())
@@ -2155,7 +2252,7 @@ def run_chi_square_transform(in_raster, df, out_raster, messages=None):
     out_path = arcpy.CreateUniqueName("mahal_chi.tif", scratch)
     drv = gdal.GetDriverByName("GTiff")
     out_ds = drv.Create(out_path, width, height, 1, gdal.GDT_Float32,
-                        options=["TILED=YES", "COMPRESS=LZW"])
+                        options=["TILED=YES", "COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
     out_ds.SetGeoTransform(src.GetGeoTransform())
     try:
         out_ds.SetProjection(src.GetProjection())

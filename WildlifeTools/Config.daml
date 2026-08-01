@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.35.1" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.38.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -49,6 +49,7 @@
           <menu refID="WildlifeTools_TopographicRoughnessMenu" size="large" />
           <button refID="WildlifeTools_TopographicWetnessIndex" size="large" />
           <menu refID="WildlifeTools_TPIMenu" size="large" />
+          <menu refID="WildlifeTools_AspectToolsMenu" size="large" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -382,13 +383,13 @@
           </tooltip>
         </button>
         <button id="WildlifeTools_VRM"
-                caption="VRM"
+                caption="Vector Ruggedness Measure (VRM)"
                 className="VRMButton"
                 loadOnClick="true"
                 smallImage="Images\VRM_16.png"
                 largeImage="Images\VRM_32.png"
                 keytip="VR">
-          <tooltip heading="VRM (Vector Ruggedness Measure)">
+          <tooltip heading="Vector Ruggedness Measure (VRM)">
             Opens the VRM tool from the Jenness Enterprises toolbox: a topographic roughness index (Sappington et al. 2007) measuring the 3D dispersion of unit vectors orthogonal to the terrain surface within a neighborhood of each cell - the spherical analog of circular variance (Fisher 1993). Distinguishes steep-but-even terrain from steep, broken terrain; correct on geographic (lat/long) DEMs. Optionally remove the smooth underlying topography first (Dilts et al. 2023) for a fine-scale local roughness map (VRM-L). Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
@@ -415,13 +416,13 @@
           </tooltip>
         </button>
         <button id="WildlifeTools_TRI"
-                caption="TRI"
+                caption="Terrain Ruggedness Index (TRI)"
                 className="TRIButton"
                 loadOnClick="true"
                 smallImage="Images\TRI_16.png"
                 largeImage="Images\TRI_32.png"
                 keytip="TR">
-          <tooltip heading="TRI (Terrain Ruggedness Index)">
+          <tooltip heading="Terrain Ruggedness Index (TRI)">
             Opens the TRI tool from the Jenness Enterprises toolbox: a neighborhood terrain-ruggedness index with four selectable methods -- the root of summed squared differences (Riley, DeGloria, and Elliot 1999), the mean absolute difference (Wilson et al. 2007), a slope (distance-weighted) variant that corrects for diagonal neighbors being farther away, or the standard deviation of the neighborhood elevations. Different methods capture different notions of ruggedness. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
@@ -478,6 +479,39 @@
                 keytip="TW">
           <tooltip heading="Topographic Wetness Index (TWI / CTI)">
             Opens the Topographic Wetness Index tool from the Jenness Enterprises toolbox: TWI (also called the Compound Topographic Index) = ln( specific catchment area / (tan(slope) + epsilon) ), marking cells with large upslope area and/or gentle slope (wet valley bottoms and convergence zones) versus dry ridges and steep, diverging slopes (Beven and Kirkby 1979). Sink filling (priority-flood; Barnes, Lehman, and Mulla 2014), D8 flow direction (O'Callaghan and Mark 1984), and flow accumulation are computed internally -- no Spatial Analyst required -- or you can supply a pre-filled DEM and/or flow-accumulation raster. Slope comes from the original DEM. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_AspectTransformation"
+                caption="Aspect Transformation"
+                className="AspectTransformationButton"
+                loadOnClick="true"
+                smallImage="Images\AspectTrans_16.png"
+                largeImage="Images\AspectTrans_32.png"
+                keytip="AX">
+          <tooltip heading="Aspect Transformation">
+            Opens the Aspect Transformation tool from the Jenness Enterprises toolbox: generate one or more transformations of an aspect raster at once. Directional reclassifications assign each cell a named direction class (North/South, East/West, the four or eight cardinal and intercardinal directions) written to a Class attribute table. Trigonometric transforms produce continuous rasters: northness (cosine of aspect), eastness (sine), a trigonometric deviation from a chosen bearing (1 toward, -1 away; Trimble and Weitzman 1956, Beers et al. 1966), or a numeric deviation in degrees (0-180; Jenness 2015). Flat cells (aspect -1) can be kept as a Flat class / -1 or set to NoData. D-infinity flow-direction rasters are supported via a convention toggle. No Spatial Analyst required. Also available in the Aspect Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_ExtractAspectValuesToPoints"
+                caption="Extract Aspect Values to Points"
+                className="ExtractAspectValuesToPointsButton"
+                loadOnClick="true"
+                smallImage="Images\AspectPoint_16.png"
+                largeImage="Images\AspectPoint_32.png"
+                keytip="AP">
+          <tooltip heading="Extract Aspect Values to Points">
+            Opens the Extract Aspect Values to Points tool from the Jenness Enterprises toolbox: copies the input points and adds a field holding the aspect at each point, extracted from an aspect raster -- like Esri's Extract Values to Points, but built for aspect. The optional interpolation is a bilinear WEIGHTED MEAN DIRECTION (circular), never a linear average, so directions near north interpolate correctly (359 and 1 give ~0, not 180). Flat cells (aspect -1) are excluded from interpolation; all-flat neighbors give -1. D-infinity flow-direction rasters are supported via a convention toggle. No Spatial Analyst required. Also available in the Aspect Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_AspectFocalStatistics"
+                caption="Aspect Focal Statistics"
+                className="AspectFocalStatisticsButton"
+                loadOnClick="true"
+                smallImage="Images\Aspect_16.png"
+                largeImage="Images\Aspect_32.png"
+                keytip="AF">
+          <tooltip heading="Aspect Focal Statistics">
+            Opens the Aspect Focal Statistics tool from the Jenness Enterprises toolbox: neighborhood (focal) statistics for an aspect raster computed with CIRCULAR statistics. Aspect is a circular variable (0 and 360 degrees are the same direction), so ordinary Focal Statistics is invalid; this tool offers circular measures of central tendency and dispersion (mean direction, circular variance, standard deviation, resultant length, range, Rayleigh test, von Mises concentration, and more) over any neighborhood shape, on projected or geographic aspect rasters, with no Spatial Analyst. Flat cells (aspect -1) are ignored. D-infinity flow-direction rasters -- essentially aspect in the mathematical convention -- are supported via a convention toggle. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_SimpleTPI"
@@ -699,6 +733,18 @@
           <button refID="WildlifeTools_LSRIOnContourPolylines" />
           <button refID="WildlifeTools_TopographyAlongLines" />
           <button refID="WildlifeTools_SplitLinesIntoSegments" />
+        </menu>
+        <menu id="WildlifeTools_AspectToolsMenu"
+              caption="Aspect Tools"
+              keytip="AT"
+              smallImage="Images\Aspect_16.png"
+              largeImage="Images\Aspect_32.png">
+          <tooltip heading="Aspect Tools">
+            Tools from the Jenness Enterprises toolbox for symbolizing, analyzing, and transforming aspect. Aspect is a circular variable (0 and 360 degrees are the same direction), so ordinary raster tools that treat it as a linear number give wrong answers; these tools handle it correctly. There is deliberately no tool here to CALCULATE aspect: ArcGIS Pro already has two good ones (the Aspect tool and Surface Parameters). These tools operate on an aspect raster you have already made. All computed internally -- no Spatial Analyst. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+          <button refID="WildlifeTools_AspectFocalStatistics" />
+          <button refID="WildlifeTools_ExtractAspectValuesToPoints" />
+          <button refID="WildlifeTools_AspectTransformation" />
         </menu>
         <menu id="WildlifeTools_TPIMenu"
               caption="TPI Tools"

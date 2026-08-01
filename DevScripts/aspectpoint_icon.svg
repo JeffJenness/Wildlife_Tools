@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Extract Aspect Values to Points (light theme)</title>
+  <!-- The aspect color wheel (smaller, upper-left) with a point marker and
+       a leader: extracting the wheel's value at a point. -->
+  <g stroke="#ffffff" stroke-width="0.5">
+    <path d="M13 13 L13 3.5 A9.5 9.5 0 0 1 19.7 6.3 Z" fill="#E64A45"/>
+    <path d="M13 13 L19.7 6.3 A9.5 9.5 0 0 1 22.5 13 Z" fill="#EE8B3D"/>
+    <path d="M13 13 L22.5 13 A9.5 9.5 0 0 1 19.7 19.7 Z" fill="#E7C63B"/>
+    <path d="M13 13 L19.7 19.7 A9.5 9.5 0 0 1 13 22.5 Z" fill="#8FC24A"/>
+    <path d="M13 13 L13 22.5 A9.5 9.5 0 0 1 6.3 19.7 Z" fill="#3FB6A6"/>
+    <path d="M13 13 L6.3 19.7 A9.5 9.5 0 0 1 3.5 13 Z" fill="#3E8FD0"/>
+    <path d="M13 13 L3.5 13 A9.5 9.5 0 0 1 6.3 6.3 Z" fill="#6A5CC0"/>
+    <path d="M13 13 L6.3 6.3 A9.5 9.5 0 0 1 13 3.5 Z" fill="#C554A6"/>
+  </g>
+  <circle cx="13" cy="13" r="2.2" fill="#2B2B2B"/>
+  <!-- leader + point marker -->
+  <line x1="19" y1="19" x2="25" y2="25" stroke="#2B2B2B" stroke-width="2"/>
+  <circle cx="25.5" cy="25.5" r="4.2" fill="#E64A45" stroke="#2B2B2B" stroke-width="1.8"/>
+</svg>

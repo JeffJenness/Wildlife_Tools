@@ -47,6 +47,7 @@ import kernel_density # noqa: E402
 import cartography_tools  # noqa: E402
 import topographic_tools  # noqa: E402
 import hillshade      # noqa: E402
+import aspect_tools    # noqa: E402
 import lsri           # noqa: E402
 import tpi_tools      # noqa: E402
 import classification_store  # noqa: E402
@@ -298,6 +299,8 @@ class Toolbox(object):
                       ArcChordRatio, TRI, TopographyAlongLines,
                       SplitLinesIntoSegments,
                       FractalDimension, TopographicWetnessIndex,
+                      AspectFocalStatistics, ExtractAspectValuesToPoints,
+                      AspectTransformation,
                       SimpleTPI,
                       SlopePositionClassification, LandformClassification,
                       GeneralRasterClassification,
@@ -3276,7 +3279,7 @@ class VRM(object):
     """
 
     def __init__(self):
-        self.label = "VRM"
+        self.label = "Vector Ruggedness Measure (VRM)"
         self.description = (
             "Computes the Vector Ruggedness Measure (VRM), a topographic "
             "roughness index (Sappington et al. 2007) that quantifies the "
@@ -3567,7 +3570,7 @@ class TRI(object):
     standard deviation of neighborhood elevations)."""
 
     def __init__(self):
-        self.label = "TRI"
+        self.label = "Terrain Ruggedness Index (TRI)"
         self.description = (
             "Computes a Terrain Ruggedness Index (TRI): how much each cell's "
             "neighborhood departs from flat, by one of four methods -- Riley "
@@ -4604,6 +4607,573 @@ class SplitLinesIntoSegments(object):
             mahalanobis.end_phases()
             _save_tool_defaults("SplitLinesIntoSegments", {
                 "length_unit": length_unit, "slope_unit": slope_unit})
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class AspectFocalStatistics(object):
+    """Aspect Focal Statistics -- neighborhood (focal) statistics for an aspect
+    raster, computed with CIRCULAR statistics (aspect is a circular variable, so
+    ordinary Focal Statistics is invalid). All neighborhood shapes; projected or
+    geographic; no Spatial Analyst. See ``aspect_tools``."""
+
+    # Short codes for auto-named outputs.
+    _ABBR = {"MEAN": "MeanDir", "MEDIAN": "MedDir", "RESULTANT": "R",
+             "CIRCVAR": "CVar", "ANGVAR": "AVar", "CIRCSD": "CSD",
+             "ANGDEV": "ADev", "RANGE": "Range", "RAYLEIGH": "RayP",
+             "KAPPA": "Kappa", "PROPDEF": "PropDef"}
+    _RECT = {"width", "height"}
+    _CIRC = {"radius"}
+    _ANN = {"inner_radius", "outer_radius"}
+    _WEDGE = {"radius", "start_angle", "end_angle"}
+    _FILE = {"kernel_file"}
+
+    def __init__(self):
+        self.label = "Aspect Focal Statistics"
+        self.description = (
+            "Neighborhood (focal) statistics for an aspect raster, using "
+            "circular statistics. Aspect is a circular variable (0 and 360 "
+            "degrees are the same direction), so ordinary Focal Statistics -- "
+            "which treats it as a linear number -- is wrong; this tool offers "
+            "circular measures of central tendency and dispersion (mean "
+            "direction, circular variance, and more) over any neighborhood "
+            "shape, on projected or geographic aspect rasters, with no Spatial "
+            "Analyst required. Flat cells (aspect -1) carry no direction and are "
+            "ignored. D-infinity flow-direction rasters (which report aspect in "
+            "the mathematical convention) are supported via a convention "
+            "toggle.")
+        self.category = "Aspect Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_conv = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input aspect raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required", direction="Output")
+        statistic = arcpy.Parameter(
+            displayName="Statistic", name="statistic",
+            datatype="GPString", parameterType="Required", direction="Input")
+        statistic.filter.type = "ValueList"
+        statistic.filter.list = aspect_tools.STAT_LABELS
+        statistic.value = aspect_tools.STAT_LABELS[0]
+        neighborhood = arcpy.Parameter(
+            displayName="Neighborhood", name="neighborhood",
+            datatype="GPString", parameterType="Required", direction="Input")
+        neighborhood.filter.type = "ValueList"
+        neighborhood.filter.list = aspect_tools.NEIGHBORHOODS
+        neighborhood.value = "Circle"
+        nbr_units = arcpy.Parameter(
+            displayName="Neighborhood units", name="nbr_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        nbr_units.filter.type = "ValueList"
+        nbr_units.filter.list = aspect_tools.NBR_UNITS
+        nbr_units.value = "Cells"
+        radius = arcpy.Parameter(
+            displayName="Radius", name="radius",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        radius.value = 3
+        width = arcpy.Parameter(
+            displayName="Width", name="width",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        width.value = 3
+        height = arcpy.Parameter(
+            displayName="Height", name="height",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        height.value = 3
+        inner_radius = arcpy.Parameter(
+            displayName="Inner radius", name="inner_radius",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        inner_radius.value = 1
+        outer_radius = arcpy.Parameter(
+            displayName="Outer radius", name="outer_radius",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        outer_radius.value = 3
+        start_angle = arcpy.Parameter(
+            displayName="Start angle (deg, CCW from east)", name="start_angle",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        start_angle.value = 0
+        end_angle = arcpy.Parameter(
+            displayName="End angle (deg, CCW from east)", name="end_angle",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        end_angle.value = 90
+        kernel_file = arcpy.Parameter(
+            displayName="Kernel file", name="kernel_file",
+            datatype="DEFile", parameterType="Optional", direction="Input")
+        kernel_file.filter.list = ["txt"]
+        input_convention = arcpy.Parameter(
+            displayName="Input aspect convention", name="input_convention",
+            datatype="GPString", parameterType="Required", direction="Input")
+        input_convention.filter.type = "ValueList"
+        input_convention.filter.list = aspect_tools.INPUT_CONVENTIONS
+        input_convention.value = aspect_tools.INPUT_CONVENTIONS[0]
+        flat_handling = arcpy.Parameter(
+            displayName="All-flat neighborhoods", name="flat_handling",
+            datatype="GPString", parameterType="Required", direction="Input")
+        flat_handling.filter.type = "ValueList"
+        flat_handling.filter.list = aspect_tools.FLAT_HANDLING
+        flat_handling.value = aspect_tools.FLAT_HANDLING[0]
+        params = [in_raster, out_raster, statistic, neighborhood, nbr_units,
+                  radius, width, height, inner_radius, outer_radius,
+                  start_angle, end_angle, kernel_file, input_convention,
+                  flat_handling]
+        saved = _load_tool_defaults("AspectFocalStatistics")
+        for p in (statistic, neighborhood, nbr_units, flat_handling):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    def _relevant(self, nbr):
+        if nbr == "Rectangle":
+            return self._RECT
+        if nbr == "Circle":
+            return self._CIRC
+        if nbr == "Annulus":
+            return self._ANN
+        if nbr == "Wedge":
+            return self._WEDGE
+        if nbr in ("Irregular", "Weight"):
+            return self._FILE
+        return set()
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr = P["in_raster"], P["out_raster"]
+        nbr = P["neighborhood"].valueAsText or "Circle"
+        rel = self._relevant(nbr)
+        for nm in ("radius", "width", "height", "inner_radius", "outer_radius",
+                   "start_angle", "end_angle", "kernel_file"):
+            P[nm].enabled = nm in rel
+        # Units apply to every shape except the (cell-based) kernel files.
+        P["nbr_units"].enabled = nbr not in ("Irregular", "Weight")
+
+        if inr.valueAsText:
+            # Auto-suggest the output name from the input + statistic.
+            stat_key = aspect_tools.STAT_KEY.get(
+                P["statistic"].valueAsText, "MEAN")
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(os.path.basename(
+                        inr.valueAsText))[0] + "_" + self._ABBR.get(stat_key, "Asp"))
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+            # Suggest the Mathematical convention once, only on the cycle where
+            # the input just changed, if it looks like a D-infinity raster.
+            if not inr.hasBeenValidated:
+                try:
+                    kind, _why = aspect_tools._detect_source_kind(inr.valueAsText)
+                except Exception:
+                    kind = "unknown"
+                conv = P["input_convention"]
+                if kind == "dinf" and (not conv.altered
+                                       or conv.valueAsText == self._auto_conv):
+                    conv.value = aspect_tools.INPUT_CONVENTIONS[1]
+                    self._auto_conv = aspect_tools.INPUT_CONVENTIONS[1]
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr = P["in_raster"]
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage("The aspect raster must be single band.")
+            except Exception:
+                pass
+        nbr = P["neighborhood"].valueAsText or "Circle"
+        rel = self._relevant(nbr)
+        for nm in ("radius", "width", "height", "inner_radius", "outer_radius"):
+            if nm in rel:
+                v = P[nm].value
+                if v is not None and v <= 0:
+                    P[nm].setErrorMessage("Must be a positive value.")
+        if nbr == "Annulus":
+            ri, ro = P["inner_radius"].value, P["outer_radius"].value
+            if ri is not None and ro is not None and ri >= ro:
+                P["outer_radius"].setErrorMessage(
+                    "The outer radius must be greater than the inner radius.")
+        if nbr == "Wedge":
+            for nm in ("radius",):
+                if P[nm].value is None:
+                    P[nm].setErrorMessage("Required for a wedge neighborhood.")
+        if nbr in ("Irregular", "Weight"):
+            kf = P["kernel_file"].valueAsText
+            if not kf:
+                P["kernel_file"].setErrorMessage(
+                    "The {} neighborhood needs a kernel file.".format(nbr))
+            elif not os.path.exists(kf):
+                P["kernel_file"].setErrorMessage("Kernel file not found.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(aspect_tools)
+            P = {p.name: p for p in parameters}
+            in_path = _resolve_raster_path(P["in_raster"]) or P["in_raster"].valueAsText
+            stat_key = aspect_tools.STAT_KEY.get(
+                P["statistic"].valueAsText, P["statistic"].valueAsText)
+            out_lyrx = aspect_tools.run_aspect_focal(
+                in_raster=in_path,
+                out_raster=P["out_raster"].valueAsText,
+                statistic=stat_key,
+                neighborhood=P["neighborhood"].valueAsText or "Circle",
+                radius=P["radius"].value if P["radius"].value is not None else 3.0,
+                width=P["width"].value if P["width"].value is not None else 3.0,
+                height=P["height"].value if P["height"].value is not None else 3.0,
+                inner_radius=(P["inner_radius"].value
+                              if P["inner_radius"].value is not None else 1.0),
+                outer_radius=(P["outer_radius"].value
+                              if P["outer_radius"].value is not None else 3.0),
+                start_angle=(P["start_angle"].value
+                             if P["start_angle"].value is not None else 0.0),
+                end_angle=(P["end_angle"].value
+                           if P["end_angle"].value is not None else 90.0),
+                nbr_units=P["nbr_units"].valueAsText or "Cells",
+                kernel_file=P["kernel_file"].valueAsText,
+                input_convention=(P["input_convention"].valueAsText
+                                  or aspect_tools.INPUT_CONVENTIONS[0]),
+                flat_handling=(P["flat_handling"].valueAsText
+                               or aspect_tools.FLAT_HANDLING[0]),
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+            if out_lyrx:
+                try:
+                    P["out_raster"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage(
+                        "Could not set output symbology: {}".format(e))
+            _save_tool_defaults("AspectFocalStatistics", {
+                "statistic": P["statistic"].valueAsText,
+                "neighborhood": P["neighborhood"].valueAsText,
+                "nbr_units": P["nbr_units"].valueAsText,
+                "flat_handling": P["flat_handling"].valueAsText,
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class AspectTransformation(object):
+    """Aspect Transformation -- generate one or more transformations of an
+    aspect raster at once: directional reclassifications (with a Class attribute
+    table) and trigonometric transforms (northness, eastness, deviation from a
+    bearing). No Spatial Analyst. See ``aspect_tools.run_aspect_transform``."""
+
+    def __init__(self):
+        self.label = "Aspect Transformation"
+        self.description = (
+            "Transforms an aspect raster in one or more ways at once. "
+            "Reclassifications assign each cell a named direction class "
+            "(North/South, East/West, the four or eight cardinal/intercardinal "
+            "directions) written to a Class attribute table. Trigonometric "
+            "transforms produce continuous rasters: northness (cosine), "
+            "eastness (sine), a trigonometric deviation from a chosen bearing "
+            "(1 toward, -1 away), or a numeric deviation in degrees (0-180). "
+            "D-infinity flow-direction rasters are supported via a convention "
+            "toggle. No Spatial Analyst required.")
+        self.category = "Aspect Tools"
+        self.canRunInBackground = False
+        self._auto_conv = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input aspect raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        transformations = arcpy.Parameter(
+            displayName="Transformations", name="transformations",
+            datatype="GPString", parameterType="Required", direction="Input",
+            multiValue=True)
+        transformations.filter.type = "ValueList"
+        transformations.filter.list = aspect_tools.TRANSFORM_LABELS
+        out_workspace = arcpy.Parameter(
+            displayName="Output location (folder or geodatabase)",
+            name="out_workspace", datatype="DEWorkspace",
+            parameterType="Required", direction="Input")
+        base_name = arcpy.Parameter(
+            displayName="Output base name", name="base_name",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        target_bearing = arcpy.Parameter(
+            displayName="Target bearing (deg, for the deviation transforms)",
+            name="target_bearing", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        target_bearing.value = 45
+        input_convention = arcpy.Parameter(
+            displayName="Input aspect convention", name="input_convention",
+            datatype="GPString", parameterType="Required", direction="Input")
+        input_convention.filter.type = "ValueList"
+        input_convention.filter.list = aspect_tools.INPUT_CONVENTIONS
+        input_convention.value = aspect_tools.INPUT_CONVENTIONS[0]
+        flat_handling = arcpy.Parameter(
+            displayName="Flat cells", name="flat_handling",
+            datatype="GPString", parameterType="Required", direction="Input")
+        flat_handling.filter.type = "ValueList"
+        flat_handling.filter.list = aspect_tools.FLAT_TRANSFORM
+        flat_handling.value = aspect_tools.FLAT_TRANSFORM[0]
+        out_rasters = arcpy.Parameter(
+            displayName="Output rasters", name="out_rasters",
+            datatype="DERasterDataset", parameterType="Derived",
+            direction="Output", multiValue=True)
+        params = [in_raster, transformations, out_workspace, base_name,
+                  target_bearing, input_convention, flat_handling, out_rasters]
+        saved = _load_tool_defaults("AspectTransformation")
+        for p in (transformations, target_bearing, flat_handling):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    def _selected_keys(self, param):
+        vals = param.values if param.values else []
+        return [aspect_tools.TRANSFORM_KEY.get(str(v), str(v)) for v in vals]
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outws = P["in_raster"], P["out_workspace"]
+        # Default the output location to the input's workspace.
+        if inr.valueAsText and not outws.altered:
+            try:
+                d = arcpy.Describe(inr.valueAsText)
+                cp = d.catalogPath
+                ws = os.path.dirname(cp)
+                # step up out of a .gdb raster's internal path if needed
+                outws.value = ws
+            except Exception:
+                pass
+        # Enable the target bearing only when a deviation transform is picked.
+        keys = set(self._selected_keys(P["transformations"]))
+        P["target_bearing"].enabled = bool(keys & aspect_tools._BEARING_KEYS)
+        # Suggest the Mathematical convention once for a DINF raster.
+        if inr.valueAsText and not inr.hasBeenValidated:
+            try:
+                kind, _why = aspect_tools._detect_source_kind(inr.valueAsText)
+            except Exception:
+                kind = "unknown"
+            conv = P["input_convention"]
+            if kind == "dinf" and (not conv.altered
+                                   or conv.valueAsText == self._auto_conv):
+                conv.value = aspect_tools.INPUT_CONVENTIONS[1]
+                self._auto_conv = aspect_tools.INPUT_CONVENTIONS[1]
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr = P["in_raster"]
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage("The aspect raster must be single band.")
+            except Exception:
+                pass
+        tb = P["target_bearing"]
+        if P["target_bearing"].enabled and tb.value is not None:
+            if tb.value < 0 or tb.value > 360:
+                tb.setErrorMessage("The target bearing must be 0 - 360 degrees.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(aspect_tools)
+            P = {p.name: p for p in parameters}
+            in_raster = _resolve_raster_path(P["in_raster"]) or \
+                P["in_raster"].valueAsText
+            keys = self._selected_keys(P["transformations"])
+            outputs = aspect_tools.run_aspect_transform(
+                in_raster=in_raster,
+                out_workspace=P["out_workspace"].valueAsText,
+                transformations=keys,
+                base_name=P["base_name"].valueAsText,
+                target_bearing=(P["target_bearing"].value
+                                if P["target_bearing"].value is not None else 45.0),
+                input_convention=(P["input_convention"].valueAsText
+                                  or aspect_tools.INPUT_CONVENTIONS[0]),
+                flat_handling=(P["flat_handling"].valueAsText
+                               or aspect_tools.FLAT_TRANSFORM[0]),
+                messages=messages)
+            if outputs:
+                try:
+                    P["out_rasters"].value = ";".join(outputs)
+                except Exception:
+                    pass
+            _save_tool_defaults("AspectTransformation", {
+                "transformations": P["transformations"].valueAsText,
+                "target_bearing": P["target_bearing"].value,
+                "flat_handling": P["flat_handling"].valueAsText,
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class ExtractAspectValuesToPoints(object):
+    """Extract Aspect Values to Points -- the circular analog of Esri's Extract
+    Values to Points: copies the input points and adds a field holding the
+    aspect at each point, either the containing cell's value or a bilinear
+    WEIGHTED MEAN DIRECTION (circular interpolation). No Spatial Analyst. See
+    ``aspect_tools.run_extract_aspect_points``."""
+
+    def __init__(self):
+        self.label = "Extract Aspect Values to Points"
+        self.description = (
+            "Copies the input point features and adds a field holding the "
+            "aspect value at each point, extracted from an aspect raster -- "
+            "like Esri's Extract Values to Points, but built for aspect: the "
+            "optional interpolation is a bilinear WEIGHTED MEAN DIRECTION "
+            "(circular), never a linear average (which would put ~180 between "
+            "359 and 1). Flat cells (aspect -1) carry no direction and are "
+            "excluded from interpolation; an all-flat set of neighbors gives "
+            "-1. D-infinity flow-direction rasters are supported via a "
+            "convention toggle. No Spatial Analyst required.")
+        self.category = "Aspect Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_conv = None
+
+    def getParameterInfo(self):
+        in_points = arcpy.Parameter(
+            displayName="Input point features", name="in_points",
+            datatype="GPFeatureLayer", parameterType="Required", direction="Input")
+        in_points.filter.list = ["Point"]
+        in_raster = arcpy.Parameter(
+            displayName="Input aspect raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_points = arcpy.Parameter(
+            displayName="Output point features", name="out_points",
+            datatype="DEFeatureClass", parameterType="Required",
+            direction="Output")
+        interpolate = arcpy.Parameter(
+            displayName="Interpolate values at the point locations "
+                        "(weighted mean direction)", name="interpolate",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        interpolate.value = False
+        field_name = arcpy.Parameter(
+            displayName="Output field name", name="field_name",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        field_name.value = "Aspect"
+        input_convention = arcpy.Parameter(
+            displayName="Input aspect convention", name="input_convention",
+            datatype="GPString", parameterType="Required", direction="Input")
+        input_convention.filter.type = "ValueList"
+        input_convention.filter.list = aspect_tools.INPUT_CONVENTIONS
+        input_convention.value = aspect_tools.INPUT_CONVENTIONS[0]
+        params = [in_points, in_raster, out_points, interpolate, field_name,
+                  input_convention]
+        saved = _load_tool_defaults("ExtractAspectValuesToPoints")
+        for p in (interpolate, field_name):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inp, inr, outp = P["in_points"], P["in_raster"], P["out_points"]
+        if inp.valueAsText:
+            if not outp.altered or outp.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(os.path.basename(
+                        inp.valueAsText))[0] + "_Aspect")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inp.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outp.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        if inr.valueAsText and not inr.hasBeenValidated:
+            # Suggest the Mathematical convention once when the raster looks
+            # like a D-infinity flow-direction raster.
+            try:
+                kind, _why = aspect_tools._detect_source_kind(inr.valueAsText)
+            except Exception:
+                kind = "unknown"
+            conv = P["input_convention"]
+            if kind == "dinf" and (not conv.altered
+                                   or conv.valueAsText == self._auto_conv):
+                conv.value = aspect_tools.INPUT_CONVENTIONS[1]
+                self._auto_conv = aspect_tools.INPUT_CONVENTIONS[1]
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inp, inr = P["in_points"], P["in_raster"]
+        if inp.valueAsText:
+            try:
+                if arcpy.Describe(inp.valueAsText).shapeType != "Point":
+                    inp.setErrorMessage(
+                        "The input must be a point feature class (multipoint "
+                        "is not supported).")
+            except Exception:
+                pass
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage("The aspect raster must be single band.")
+            except Exception:
+                pass
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(aspect_tools)
+            P = {p.name: p for p in parameters}
+            in_raster = _resolve_raster_path(P["in_raster"]) or \
+                P["in_raster"].valueAsText
+            aspect_tools.run_extract_aspect_points(
+                in_points=P["in_points"].valueAsText,
+                in_raster=in_raster,
+                out_points=P["out_points"].valueAsText,
+                interpolate=bool(P["interpolate"].value),
+                field_name=P["field_name"].valueAsText or "Aspect",
+                input_convention=(P["input_convention"].valueAsText
+                                  or aspect_tools.INPUT_CONVENTIONS[0]),
+                messages=messages)
+            _save_tool_defaults("ExtractAspectValuesToPoints", {
+                "interpolate": bool(P["interpolate"].value),
+                "field_name": P["field_name"].valueAsText,
+            })
         except arcpy.ExecuteError:
             raise
         except Exception:
