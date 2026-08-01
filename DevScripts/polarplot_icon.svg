@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Polar Plots (light theme)</title>
+  <!-- A rose/polar diagram: reference circle + radial wedges of varying length. -->
+  <circle cx="16" cy="16" r="13" fill="none" stroke="#9FB6CE" stroke-width="1"/>
+  <circle cx="16" cy="16" r="8.5" fill="none" stroke="#C7D4E2" stroke-width="0.7"/>
+  <g fill="#4F6D96" fill-opacity="0.85" stroke="#2B4560" stroke-width="0.4">
+    <!-- wedges (center 16,16); a handful of varying-length petals -->
+    <path d="M16 16 L14.4 3.6 A12.5 12.5 0 0 1 17.6 3.6 Z"/>
+    <path d="M16 16 L23.9 6.9 A11 11 0 0 1 26.5 11 Z"/>
+    <path d="M16 16 L27.5 18.5 A8 8 0 0 1 24.5 22.6 Z"/>
+    <path d="M16 16 L20 25.5 A6.5 6.5 0 0 1 15.4 26.4 Z"/>
+    <path d="M16 16 L8.5 24 A7.5 7.5 0 0 1 5.6 19.6 Z"/>
+    <path d="M16 16 L5.2 12.4 A9.5 9.5 0 0 1 8 7.2 Z"/>
+  </g>
+  <circle cx="16" cy="16" r="1.4" fill="#2B2B2B"/>
+</svg>

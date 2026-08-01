@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.38.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.39.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -25,6 +25,7 @@
           <group refID="WildlifeTools_GroupGraphics"/>
           <group refID="WildlifeTools_GroupCartography"/>
           <group refID="WildlifeTools_GroupTopo"/>
+          <group refID="WildlifeTools_GroupDirectional"/>
           <group refID="WildlifeTools_GroupBreak"/>
         </tab>
       </tabs>
@@ -50,6 +51,9 @@
           <button refID="WildlifeTools_TopographicWetnessIndex" size="large" />
           <menu refID="WildlifeTools_TPIMenu" size="large" />
           <menu refID="WildlifeTools_AspectToolsMenu" size="large" />
+        </group>
+        <group id="WildlifeTools_GroupDirectional" caption="Directional" appearsOnAddInTab="false">
+          <button refID="WildlifeTools_PolarPlots" size="large" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -589,6 +593,17 @@
                 keytip="TD">
           <tooltip heading="Thought for the Day">
             Shows a random inspirational quote in a little pop-up card.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_PolarPlots"
+                caption="Polar Plots"
+                className="PolarPlots.PolarPlotButton"
+                loadOnClick="true"
+                smallImage="Images\PolarPlot_16.png"
+                largeImage="Images\PolarPlot_32.png"
+                keytip="PP">
+          <tooltip heading="Polar Plots">
+            Opens the interactive Polar Plots window: generate a circular (rose / peaks-and-valleys / density-shaded) plot of directional data from a feature class or table, adjust it live, and save it as an SVG file or (coming soon) a graphic on the map or layout. Azimuths come from an attribute field or are derived from polyline direction (geodesic on lat/long data), optionally weighted by length or an attribute. Also reports circular descriptive statistics (mean direction, dispersion, Rayleigh test, von Mises concentration, and more). A modernized recreation of the Jenness Enterprises Polar Plots extension for ArcMap.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_Sudoku"
