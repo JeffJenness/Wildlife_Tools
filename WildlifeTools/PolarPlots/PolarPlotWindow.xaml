@@ -12,6 +12,17 @@
       <Setter Property="IsExpanded" Value="False" />
     </Style>
     <Style TargetType="Label"><Setter Property="Padding" Value="0,2,4,2" /></Style>
+    <!-- Wrap every tooltip at a readable width instead of one screen-wide line. -->
+    <Style TargetType="ToolTip">
+      <Setter Property="MaxWidth" Value="420" />
+      <Setter Property="ContentTemplate">
+        <Setter.Value>
+          <DataTemplate>
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="400" />
+          </DataTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </controls:ProWindow.Resources>
 
   <Grid Margin="8">
@@ -80,7 +91,7 @@
           <StackPanel Margin="6,4,0,4">
             <Label Content="Plot type" />
             <ComboBox x:Name="cboPlotType" SelectionChanged="StyleSel"
-                ToolTip="Peaks and Valleys: a filled silhouette whose radius follows the bin values. Circular Bins (Rose): wedge-shaped bars, one per bin. Shade by Density: full-radius wedges shaded from the low-density to high-density color." />
+                ToolTip="Peaks and Valleys: a filled silhouette whose radius follows the bin values. Circular Bins (Rose): wedge-shaped bars, one per bin. Shade by Density: full-radius wedges shaded from the low-density to high-density color. External Peaks and Valleys / External Bins: the same, riding outward from an inner circle (azimuth labels inside it). Bearings: one line per observation (weighted lines vary in length); best for fewer than a few hundred values. Wind Rose: rose petals subdivided into stacked colored bands by a second numeric field (classically wind speed), with a legend. Smoothed Density: a smooth continuous silhouette fit with a von Mises kernel -- no arbitrary bin edges; best for large samples. Dot Plot: one dot per observation stacked inward from the circle; best for small samples." />
             <Grid Margin="0,4,0,0">
               <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
               <StackPanel Grid.Column="0">
@@ -89,39 +100,112 @@
                     ToolTip="Bins around the circle: 72 bins = 5 degrees each; 180 bins = 2 degrees each." />
               </StackPanel>
               <StackPanel Grid.Column="1" Margin="6,0,0,0">
-                <Label Content="Plot diameter (in)" />
-                <TextBox x:Name="txtDiameter" Text="4.0" TextChanged="StyleText"
-                    ToolTip="Diameter of the data circle in inches (labels and titles sit outside it). The preview rulers show inches." />
+                <Label x:Name="lblDiameter" Content="Plot diameter (in)" />
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/></Grid.ColumnDefinitions>
+                  <TextBox x:Name="txtDiameter" Text="4.0" TextChanged="StyleText"
+                      ToolTip="Diameter of the data circle (labels and titles sit outside it). For the External plot types this is the OUTER diameter. The preview rulers use the same units." />
+                  <ComboBox x:Name="cboUnit" Grid.Column="1" Margin="4,0,0,0" SelectedIndex="0"
+                      SelectionChanged="UnitChanged"
+                      ToolTip="Units for the plot diameters and the preview rulers: inches or centimeters. Switching converts the values already in the boxes.">
+                    <ComboBoxItem Content="in"/>
+                    <ComboBoxItem Content="cm"/>
+                  </ComboBox>
+                </Grid>
               </StackPanel>
             </Grid>
+            <StackPanel x:Name="pnlInner" Visibility="Collapsed">
+              <Label x:Name="lblInner" Content="Inside circle diameter (in)" />
+              <TextBox x:Name="txtInner" Text="1.5" TextChanged="StyleText"
+                  ToolTip="External plot types only: the diameter of the inner circle the bins ride outward from. Azimuth labels are drawn inside this circle." />
+            </StackPanel>
+            <StackPanel x:Name="pnlWind" Visibility="Collapsed">
+              <Label Content="Band by field (e.g. wind speed)" />
+              <ComboBox x:Name="cboWindField" SelectionChanged="RereadSel"
+                  ToolTip="Wind Rose only: the numeric field whose values subdivide each petal into stacked, colored bands (classically wind speed; any magnitude works). Bands are equal-interval classes between the field's minimum and maximum, drawn lowest class innermost, with a legend below the plot." />
+              <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                <Label Content="Bands:" />
+                <TextBox x:Name="txtWindClasses" Text="4" Width="40" TextChanged="StyleText"
+                    ToolTip="How many equal-interval magnitude classes (1-9)." />
+              </StackPanel>
+            </StackPanel>
+            <StackPanel x:Name="pnlSmooth" Visibility="Collapsed">
+              <Label Content="Smoothing (degrees)" />
+              <TextBox x:Name="txtSmooth" Text="20" TextChanged="StyleText"
+                  ToolTip="Standard deviation of the von Mises smoothing kernel, in degrees (Fisher 1993). Smaller = closer to the raw data (spikier); larger = smoother. The Number of bins box is ignored for this plot type -- the curve is computed on a fine fixed grid." />
+            </StackPanel>
+            <StackPanel x:Name="pnlDot" Visibility="Collapsed">
+              <Label x:Name="lblDot" Content="Dot diameter (in)" />
+              <TextBox x:Name="txtDot" Text="0.08" TextChanged="StyleText"
+                  ToolTip="One dot per observation (weights are ignored), stacked inward from the plotting circle (Fisher 1993; Batschelet 1981). The angular column width follows the dot size -- one dot fits across a column at the circle -- so smaller dots mean finer grouping. Best for small-to-moderate samples; use Smoothed Density for large ones. The Number of bins box is ignored for this plot type." />
+            </StackPanel>
+            <CheckBox x:Name="chkSqrt" Content="Equal-area (square-root) scaling"
+                Margin="0,6,0,0" Checked="StyleRouted" Unchecked="StyleRouted"
+                ToolTip="Scale petal radius by the square root of the bin value so petal AREA, not radius, is proportional to frequency (Sanderson &amp; Peacock 2019). Radius-proportional petals visually exaggerate common directions because area grows as the square of radius. Applies to the Peaks/Rose/External/Wind Rose/Smoothed Density plots; the inner ring value labels account for the scaling." />
           </StackPanel>
         </Expander>
 
         <Expander Header="Symbology">
           <StackPanel Margin="6,4,0,4">
-            <Grid>
+            <!-- Fill row: every plot type EXCEPT Shade by Density -->
+            <Grid x:Name="pnlBinFill">
               <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-              <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
-              <Label Grid.Row="0" Grid.Column="0" Content="Bin fill" />
-              <mapctl:ColorPickerControl x:Name="cpBinFill" Grid.Row="0" Grid.Column="1" Height="22"
+              <Label Grid.Column="0" Content="Bin fill" />
+              <mapctl:ColorPickerControl x:Name="cpBinFill" Grid.Column="1" Height="22"
                   Loaded="PickerLoaded" IsNoColorVisible="True" SelectedColorChanged="StyleColor"
                   ToolTip="Fill color of the bins / silhouette (choose No Color for outline-only bins)." />
-              <Label Grid.Row="1" Grid.Column="0" Content="Bin outline" />
-              <mapctl:ColorPickerControl x:Name="cpBinOutline" Grid.Row="1" Grid.Column="1" Height="22"
-                  Loaded="PickerLoaded" IsNoColorVisible="True" SelectedColorChanged="StyleColor"
-                  ToolTip="Outline color of the bins (choose No Color, or width 0, for no outline)." />
-              <Label Grid.Row="2" Grid.Column="0" Content="Low density" />
-              <mapctl:ColorPickerControl x:Name="cpLow" Grid.Row="2" Grid.Column="1" Height="22"
-                  Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="StyleColor"
-                  ToolTip="Shade-by-Density only: the color of the least-filled bin; intermediate bins ramp toward the high-density color." />
-              <Label Grid.Row="3" Grid.Column="0" Content="High density" />
-              <mapctl:ColorPickerControl x:Name="cpHigh" Grid.Row="3" Grid.Column="1" Height="22"
-                  Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="StyleColor"
-                  ToolTip="Shade-by-Density only: the color of the most-filled bin." />
             </Grid>
-            <Label Content="Bin outline width (pt)" Margin="0,4,0,0" />
-            <TextBox x:Name="txtOutlineWidth" Text="0.5" TextChanged="StyleText"
-                ToolTip="Outline width in points (1 point = 1/72 inch). 0 removes the outline." />
+            <!-- Density ramp rows: Shade by Density ONLY -->
+            <Grid x:Name="pnlDensity" Visibility="Collapsed">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+              <Label Grid.Row="0" Grid.Column="0" Content="Low density" />
+              <mapctl:ColorPickerControl x:Name="cpLow" Grid.Row="0" Grid.Column="1" Height="22"
+                  Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="StyleColor"
+                  ToolTip="The color of the least-filled bin; intermediate bins ramp toward the high-density color." />
+              <Label Grid.Row="1" Grid.Column="0" Content="High density" />
+              <mapctl:ColorPickerControl x:Name="cpHigh" Grid.Row="1" Grid.Column="1" Height="22"
+                  Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="StyleColor"
+                  ToolTip="The color of the most-filled bin." />
+            </Grid>
+            <!-- Wind-rose band ramp rows: Wind Rose ONLY -->
+            <Grid x:Name="pnlWindColors" Visibility="Collapsed">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+              <Label Grid.Row="0" Grid.Column="0" Content="Lowest band" />
+              <mapctl:ColorPickerControl x:Name="cpWindLow" Grid.Row="0" Grid.Column="1" Height="22"
+                  Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="StyleColor"
+                  ToolTip="Fill color of the LOWEST magnitude band (innermost segment of each petal); intermediate bands ramp toward the highest-band color." />
+              <Label Grid.Row="1" Grid.Column="0" Content="Highest band" />
+              <mapctl:ColorPickerControl x:Name="cpWindHigh" Grid.Row="1" Grid.Column="1" Height="22"
+                  Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="StyleColor"
+                  ToolTip="Fill color of the HIGHEST magnitude band (outermost segment of each petal)." />
+            </Grid>
+            <!-- Bearing-line row: Bearings plot type ONLY -->
+            <Grid x:Name="pnlBearing" Visibility="Collapsed">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="60"/>
+              </Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Bearing lines" />
+              <mapctl:ColorPickerControl x:Name="cpBearing" Grid.Column="1" Height="22"
+                  Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="StyleColor"
+                  ToolTip="Color of the bearing lines (one line per observation)." />
+              <TextBox x:Name="txtBearingWidth" Grid.Column="2" Text="0.5" Margin="4,0,0,0"
+                  TextChanged="StyleText"
+                  ToolTip="Bearing line width in points (minimum 0.2)." />
+            </Grid>
+            <StackPanel x:Name="pnlOutline">
+              <Grid Margin="0,2,0,0">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <Label Grid.Column="0" Content="Bin outline" />
+                <mapctl:ColorPickerControl x:Name="cpBinOutline" Grid.Column="1" Height="22"
+                    Loaded="PickerLoaded" IsNoColorVisible="True" SelectedColorChanged="StyleColor"
+                    ToolTip="Outline color of the bins (choose No Color, or width 0, for no outline)." />
+              </Grid>
+              <Label Content="Bin outline width (pt)" Margin="0,4,0,0" />
+              <TextBox x:Name="txtOutlineWidth" Text="0.5" TextChanged="StyleText"
+                  ToolTip="Outline width in points (1 point = 1/72 inch). 0 removes the outline." />
+            </StackPanel>
           </StackPanel>
         </Expander>
 
@@ -146,6 +230,18 @@
               <TextBox x:Name="txtSecCircles" Text="4" Width="48" TextChanged="StyleText"
                   ToolTip="How many rings between 0 and the maximum: 1 puts a single ring halfway. Minimum 1." />
             </StackPanel>
+            <Grid Margin="0,6,0,0">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <CheckBox x:Name="chkMeanArrow" Content="Mean direction arrow"
+                  VerticalAlignment="Center" Checked="StyleRouted" Unchecked="StyleRouted"
+                  ToolTip="Draw an arrow from the center along the mean direction; its length is the mean resultant length (r-bar, 0-1) times the plot radius, so a long arrow means concentrated directions and a short one means dispersed directions (Zar 1999; Mardia &amp; Jupp 2000)." />
+              <mapctl:ColorPickerControl x:Name="cpMean" Grid.Column="1" Height="22" Margin="6,0,0,0"
+                  Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="StyleColor"
+                  ToolTip="Color of the mean-direction arrow and its confidence arc." />
+            </Grid>
+            <CheckBox x:Name="chkMeanCI" Content="  with 95% confidence arc"
+                Margin="16,2,0,0" Checked="StyleRouted" Unchecked="StyleRouted"
+                ToolTip="Arc just outside the plotting circle spanning the 95% confidence interval of the mean direction (von Mises large-sample standard error 1/sqrt(n * r-bar * kappa); Fisher 1993). Omitted when the interval is undefined or wider than 180 degrees." />
             <CheckBox x:Name="chkAzLabels" Content="Show azimuth (degree) labels" IsChecked="True"
                 Margin="0,4,0,0" Checked="StyleRouted" Unchecked="StyleRouted"
                 ToolTip="Degree labels around the rim at every primary and secondary reference bearing." />
@@ -248,7 +344,7 @@
                 ToolTip="Save the plot exactly as previewed to a scalable SVG vector file." />
         <Button x:Name="btnAddGraphic" Content="Add to map / layout" Margin="4,0"
                 Padding="10,4" Click="OnAddGraphic"
-                ToolTip="Place the plot as a graphic on the active map or layout (coming in the next phase)." />
+                ToolTip="Place the plot as a grouped graphic: on the active LAYOUT (centered on the page, sized in inches exactly as previewed) or, if a map view is active, into a 'Polar Plots' graphics layer sized to the visible extent. Every piece stays an editable element -- ungroup to adjust individually." />
         <Button x:Name="btnClose" Content="Close" Margin="4,0" Padding="10,4" Click="OnClose" />
       </StackPanel>
       <Border BorderBrush="#33000000" BorderThickness="1" Background="White">

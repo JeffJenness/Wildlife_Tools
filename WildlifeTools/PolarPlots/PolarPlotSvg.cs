@@ -34,14 +34,34 @@ namespace WildlifeTools.PolarPlots
                 {
                     case PolarElementKind.Circle:
                         sb.AppendFormat(CI,
-                            "<circle cx=\"{0}\" cy=\"{1}\" r=\"{2}\" fill=\"none\" {3}/>\n",
+                            "<circle cx=\"{0}\" cy=\"{1}\" r=\"{2}\" {3} {4}/>\n",
                             F(X(e.Center.X)), F(Y(e.Center.Y)), F(e.Radius * PxPerIn),
+                            e.Fill.IsTransparent ? "fill=\"none\"" : FillAttrs(e),
                             StrokeAttrs(e));
                         break;
                     case PolarElementKind.Line:
                     case PolarElementKind.Polyline:
                     case PolarElementKind.Polygon:
                         {
+                            if (e.Kind == PolarElementKind.Polygon && e.Rings != null)
+                            {
+                                // Multi-ring (donut) polygon: one path with a
+                                // subpath per ring, even-odd filled.
+                                var d = new StringBuilder();
+                                foreach (var ring in e.Rings)
+                                {
+                                    if (ring == null || ring.Count == 0) continue;
+                                    for (int i = 0; i < ring.Count; i++)
+                                        d.AppendFormat(CI, "{0}{1},{2} ",
+                                            i == 0 ? "M" : "L",
+                                            F(X(ring[i].X)), F(Y(ring[i].Y)));
+                                    d.Append("Z ");
+                                }
+                                sb.AppendFormat(CI,
+                                    "<path d=\"{0}\" fill-rule=\"evenodd\" {1} {2}/>\n",
+                                    d.ToString().Trim(), FillAttrs(e), StrokeAttrs(e));
+                                break;
+                            }
                             var pts = new StringBuilder();
                             foreach (var p in e.Points)
                                 pts.AppendFormat(CI, "{0},{1} ", F(X(p.X)), F(Y(p.Y)));

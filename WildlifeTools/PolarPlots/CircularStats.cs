@@ -47,6 +47,7 @@ namespace WildlifeTools.PolarPlots
         public double RayleighZ { get; private set; }              // n * rbar_uw^2
         public double RayleighP { get; private set; }              // uniformity p
         public double VonMisesKappa { get; private set; }          // concentration
+        public double MeanCiHalfDeg95 { get; private set; }        // NaN if undefined
 
         private const double DegToRad = Math.PI / 180.0;
         private const double RadToDeg = 180.0 / Math.PI;
@@ -126,6 +127,21 @@ namespace WildlifeTools.PolarPlots
             // von Mises concentration kappa MLE approximation (Fisher 1993
             // eq. 4.42 / Best & Fisher 1981), from the (reported) mean resultant.
             VonMisesKappa = KappaFromRbar(MeanResultantLength);
+
+            // 95% confidence half-angle of the mean direction: von Mises
+            // large-sample standard error 1/sqrt(n * r-bar * kappa) (Fisher
+            // 1993 sec. 4.4.5). Undefined (NaN) when the directions are too
+            // dispersed for the interval to mean anything (half-angle >= 90
+            // degrees, kappa ~ 0), or when n < 2. Drawn as the confidence arc.
+            MeanCiHalfDeg95 = double.NaN;
+            if (Count > 1 && MeanResultantLength > 0 && VonMisesKappa > 0 &&
+                !double.IsNaN(MeanDirectionDeg))
+            {
+                double se = 1.0 / Math.Sqrt(
+                    Count * MeanResultantLength * VonMisesKappa);
+                double half = 1.96 * se / DegToRad;
+                if (half > 0 && half < 90.0) MeanCiHalfDeg95 = half;
+            }
 
             // Circular median + range (order statistics; Fisher 1993 sec. 2.3.2;
             // Mardia & Jupp 2000 sec. 2.3). Computed on the unweighted azimuths.
@@ -212,6 +228,20 @@ namespace WildlifeTools.PolarPlots
         /// (Circular Descriptive Statistics), suitable for a layout text box or
         /// the clipboard. <paramref name="header"/> lines describe the inputs.
         /// </summary>
+        /// <summary>"141.20000 ± 8.40000 Degrees (132.8° to 149.6°)", or the
+        /// undefined explanation. Shared by every report format so the text
+        /// always matches the plotted confidence arc.</summary>
+        public string MeanCiText(CultureInfo ci)
+        {
+            if (double.IsNaN(MeanCiHalfDeg95))
+                return "undefined (directions too dispersed)";
+            double lo = Mod360(MeanDirectionDeg - MeanCiHalfDeg95);
+            double hi = Mod360(MeanDirectionDeg + MeanCiHalfDeg95);
+            return MeanDirectionDeg.ToString("F5", ci) + " ± " +
+                   MeanCiHalfDeg95.ToString("F5", ci) + " Degrees (" +
+                   lo.ToString("F1", ci) + "° to " + hi.ToString("F1", ci) + "°)";
+        }
+
         public string BuildReport(IEnumerable<string> headerLines)
         {
             var sb = new StringBuilder();
@@ -252,6 +282,7 @@ namespace WildlifeTools.PolarPlots
                           " Degrees   [A,B]");
             sb.AppendLine("von Mises Concentration (kappa) = " +
                           VonMisesKappa.ToString("F5", ci) + "   [A,D]");
+            sb.AppendLine("Mean Direction 95% CI = " + MeanCiText(ci) + "   [A,D]");
             sb.AppendLine("Rayleigh Test of Uniformity: Z = " +
                           RayleighZ.ToString("F5", ci) + ", p = " +
                           RayleighP.ToString("F5", ci) + "   [A,E]");

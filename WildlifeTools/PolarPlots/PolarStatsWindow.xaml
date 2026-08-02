@@ -6,12 +6,34 @@
         WindowStartupLocation="CenterOwner"
         Width="640" Height="620" MinWidth="440" MinHeight="360"
         ResizeMode="CanResizeWithGrip" ShowInTaskbar="False">
+  <controls:ProWindow.Resources>
+    <!-- Wrap every tooltip at a readable width instead of one screen-wide line. -->
+    <Style TargetType="ToolTip">
+      <Setter Property="MaxWidth" Value="420" />
+      <Setter Property="ContentTemplate">
+        <Setter.Value>
+          <DataTemplate>
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="400" />
+          </DataTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </controls:ProWindow.Resources>
   <DockPanel Margin="10">
     <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
                 HorizontalAlignment="Right" Margin="0,8,0,0">
-      <Button Content="Copy to clipboard" Padding="10,4" Margin="4,0"
-              Click="OnCopy"
-              ToolTip="Copy the full report as plain text to the Windows clipboard" />
+      <Button Content="Copy Raw Text" Padding="10,4" Margin="4,0"
+              Click="OnCopyRaw"
+              ToolTip="Copy the report as plain, unformatted text -- for scripts, emails, or anywhere formatting is unwanted." />
+      <Button Content="Copy Rich Text" Padding="10,4" Margin="4,0"
+              Click="OnCopyRtf"
+              ToolTip="Copy the report with its formatting (bold names, colors) as Rich Text -- paste into Word, PowerPoint, or any RTF-aware editor and it arrives formatted." />
+      <Button Content="Copy Esri-formatted Text" Padding="10,4" Margin="4,0"
+              Click="OnCopyEsri"
+              ToolTip="Copy the report as text with ArcGIS text-formatting tags (BOL, CLR, FNT). Paste it into a LAYOUT TEXT element's text (insert a text element, open its text, paste) and ArcGIS renders the bold and colors." />
+      <Button Content="Add to Layout" Padding="10,4" Margin="4,0"
+              Click="OnAddToLayout"
+              ToolTip="One click: place a text element carrying this report (with its formatting) at the center of the active layout. Open a layout view first." />
       <Button Content="Close" Padding="10,4" Margin="4,0" Click="OnCloseClick" />
     </StackPanel>
     <RichTextBox x:Name="rtb" IsReadOnly="True" IsDocumentEnabled="True"

@@ -21,6 +21,8 @@ namespace WildlifeTools.PolarPlots
     {
         public PolarElementKind Kind;
         public List<PtIn> Points;          // Polygon / Polyline / Line (2 pts)
+        public List<List<PtIn>> Rings;     // optional multi-ring polygon (donuts);
+                                           // when set, takes precedence over Points
         public PtIn Center;                // Circle / Text position
         public double Radius;              // Circle
         public RgbaColor Fill = new RgbaColor(0, 0, 0, 0);

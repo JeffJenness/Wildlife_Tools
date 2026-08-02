@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.39.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.40.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -603,7 +603,7 @@
                 largeImage="Images\PolarPlot_32.png"
                 keytip="PP">
           <tooltip heading="Polar Plots">
-            Opens the interactive Polar Plots window: generate a circular (rose / peaks-and-valleys / density-shaded) plot of directional data from a feature class or table, adjust it live, and save it as an SVG file or (coming soon) a graphic on the map or layout. Azimuths come from an attribute field or are derived from polyline direction (geodesic on lat/long data), optionally weighted by length or an attribute. Also reports circular descriptive statistics (mean direction, dispersion, Rayleigh test, von Mises concentration, and more). A modernized recreation of the Jenness Enterprises Polar Plots extension for ArcMap.<disabledText />
+            Opens the interactive Polar Plots window: generate a circular plot of directional data from a feature class or table -- Peaks and Valleys, Circular Bins (Rose), Shade by Density, the External variants, or a Bearings plot -- adjust it live, and save it as an SVG file or place it as a grouped, fully editable graphic on the layout or map. Azimuths come from an attribute field or are derived from polyline direction (geodesic on lat/long data), optionally weighted by length or an attribute. Also reports circular descriptive statistics (mean direction, dispersion, Rayleigh test, von Mises concentration, and more) that can be copied as raw / rich / Esri-formatted text or placed on a layout as a text element in one click. Reusable style presets save every appearance option. A modernized recreation of the Jenness Enterprises Polar Plots extension for ArcMap.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_Sudoku"

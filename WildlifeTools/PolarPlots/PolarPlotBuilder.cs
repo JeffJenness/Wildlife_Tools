@@ -16,35 +16,68 @@ namespace WildlifeTools.PolarPlots
         private static readonly CultureInfo CI = CultureInfo.InvariantCulture;
 
         public static PolarPlotModel Build(PolarPlotSettings s, double[] bins,
-                                           IReadOnlyList<string> secondaryTitles)
+                                           IReadOnlyList<string> secondaryTitles,
+                                           IReadOnlyList<double> rawAzimuths = null,
+                                           IReadOnlyList<double> rawWeights = null,
+                                           IReadOnlyList<double> magnitudes = null,
+                                           CircularStats stats = null)
         {
             var m = new PolarPlotModel();
             int n = bins?.Length ?? 0;
-            double plotR = Math.Max(s.PlotDiameterIn, 0.5) / 2.0;
+            bool external = s.IsExternal;
+            // External plots: bins ride outward from an inner circle to the
+            // outer diameter; all other plots fill a single data circle.
+            double plotR = external
+                ? Math.Max(s.OuterDiameterIn, 0.75) / 2.0
+                : Math.Max(s.PlotDiameterIn, 0.5) / 2.0;
+            double innerR = external
+                ? Math.Min(Math.Max(s.InnerDiameterIn, 0.2) / 2.0, plotR * 0.9)
+                : 0.0;
             double maxVal = 0.0;
             for (int i = 0; i < n; i++) maxVal = Math.Max(maxVal, bins[i]);
             if (maxVal <= 0.0) maxVal = 1.0;
 
+            // Wind-rose magnitude classes: computed up front because the legend
+            // affects the canvas size. Falls back to a plain rose when no
+            // usable magnitude values exist.
+            WindBands wind = (s.PlotType == PolarPlotType.WindRose)
+                ? WindBands.Compute(s, magnitudes) : null;
+
             // Layout margins (inches): room for rim labels + titles. The plot
             // circle stays centered on the origin; the canvas simply grows by
             // the larger of the top (primary title) and bottom (secondary
-            // titles) bands, keeping every band clear of the rim labels.
-            double labelMargin = s.ShowAzimuthLabels ? 0.45 : 0.12;
+            // titles / wind legend) bands, keeping every band clear of the rim
+            // labels. External plots put their azimuth labels INSIDE the inner
+            // circle, so no rim band is needed for them.
+            double labelMargin = (s.ShowAzimuthLabels && !external) ? 0.45 : 0.12;
             double rimR = plotR + labelMargin;
             double titleTop = s.ShowPrimaryTitle ? s.TitleFontSizePt / 72.0 * 1.8 + 0.1 : 0.0;
             int secLines = (secondaryTitles?.Count ?? 0);
             double titleBottom = (s.ShowSecondaryTitles && secLines > 0)
                 ? secLines * s.SecondaryTitleFontSizePt / 72.0 * 1.5 + 0.2 : 0.0;
+            double legendRow = 0.18;
+            double legendBottom = (wind != null)
+                ? 0.24 + (wind.Breaks.Length - 1) * legendRow : 0.0;
             m.HalfWidthIn = rimR + 0.1;
-            m.HalfHeightIn = rimR + 0.1 + Math.Max(titleTop, titleBottom);
+            m.HalfHeightIn = rimR + 0.1 + Math.Max(titleTop,
+                Math.Max(titleBottom, legendBottom));
             const double yShift = 0.0;
+
+            // Radius of a value ring at fraction f of the value range: from the
+            // center for ordinary plots, from the inner circle for external.
+            // Equal-area scaling (Sanderson & Peacock 2019) maps value
+            // fractions through a square root so petal AREA, not radius, is
+            // proportional to frequency; a ring at radius fraction f then
+            // represents the value f^2 * max.
+            double RingR(double frac) => innerR + (plotR - innerR) * frac;
+            double RingValue(double frac) => maxVal * (s.EqualArea ? frac * frac : frac);
 
             // ---- secondary reference rings (drawn first, under the data) -----
             if (s.ShowSecondaryRefCircles && s.SecondaryRefCircles >= 1)
             {
                 for (int i = 1; i <= s.SecondaryRefCircles; i++)
                 {
-                    double rr = plotR * i / (s.SecondaryRefCircles + 1.0);
+                    double rr = RingR(i / (s.SecondaryRefCircles + 1.0));
                     m.Elements.Add(Ring(rr, yShift, s.SecondaryRefColor,
                                         s.SecondaryRefWidthPt, s.SecondaryRefDash));
                 }
@@ -57,13 +90,13 @@ namespace WildlifeTools.PolarPlots
                 {
                     double az = i * step;
                     if (IsCardinal(az)) continue;          // cardinals are primary
-                    m.Elements.Add(Ray(plotR, az, yShift, s.SecondaryRefColor,
+                    m.Elements.Add(Ray(innerR, plotR, az, yShift, s.SecondaryRefColor,
                                        s.SecondaryRefWidthPt, s.SecondaryRefDash));
                 }
             }
 
             // ---- the data ---------------------------------------------------
-            if (n > 0)
+            if (n > 0 || s.PlotType == PolarPlotType.Bearings)
             {
                 switch (s.PlotType)
                 {
@@ -71,6 +104,23 @@ namespace WildlifeTools.PolarPlots
                         BuildPeaks(m, s, bins, maxVal, plotR, yShift); break;
                     case PolarPlotType.ShadeByDensity:
                         BuildShade(m, s, bins, maxVal, plotR, yShift); break;
+                    case PolarPlotType.ExternalPeaksAndValleys:
+                        BuildExternalPeaks(m, s, bins, maxVal, innerR, plotR, yShift); break;
+                    case PolarPlotType.ExternalBins:
+                        BuildExternalRose(m, s, bins, maxVal, innerR, plotR, yShift); break;
+                    case PolarPlotType.Bearings:
+                        BuildBearings(m, s, rawAzimuths, rawWeights, plotR, yShift); break;
+                    case PolarPlotType.WindRose:
+                        if (wind != null)
+                            BuildWindRose(m, s, rawAzimuths, rawWeights, magnitudes,
+                                          wind, maxVal, plotR, yShift);
+                        else
+                            BuildRose(m, s, bins, maxVal, plotR, yShift);
+                        break;
+                    case PolarPlotType.SmoothedDensity:
+                        BuildKde(m, s, rawAzimuths, rawWeights, plotR, yShift); break;
+                    case PolarPlotType.DotPlot:
+                        BuildDotPlot(m, s, rawAzimuths, plotR, yShift); break;
                     default:
                         BuildRose(m, s, bins, maxVal, plotR, yShift); break;
                 }
@@ -80,11 +130,21 @@ namespace WildlifeTools.PolarPlots
             if (s.ShowPrimaryRefLines)
             {
                 foreach (double az in new[] { 0.0, 90.0, 180.0, 270.0 })
-                    m.Elements.Add(Ray(plotR, az, yShift, s.PrimaryRefColor,
-                                       s.PrimaryRefWidthPt, PolarDash.Solid));
+                    m.Elements.Add(Ray(external ? innerR : 0.0, plotR, az, yShift,
+                                       s.PrimaryRefColor, s.PrimaryRefWidthPt,
+                                       PolarDash.Solid));
                 m.Elements.Add(Ring(plotR, yShift, s.PrimaryRefColor,
                                     s.PrimaryRefWidthPt, PolarDash.Solid));
+                if (external)   // the inner circle the bins ride on
+                    m.Elements.Add(Ring(innerR, yShift, s.PrimaryRefColor,
+                                        s.PrimaryRefWidthPt, PolarDash.Solid));
             }
+
+            // ---- mean-direction overlay (arrow, length = r-bar; optional
+            // 95% confidence arc, von Mises large-sample s.e. 1/sqrt(n r-bar
+            // kappa), Fisher 1993 / Mardia & Jupp 2000) ----------------------
+            if (s.ShowMeanArrow && stats != null)
+                BuildMeanOverlay(m, s, stats, external ? innerR : 0.0, plotR, yShift);
 
             // ---- azimuth labels around the rim ------------------------------
             if (s.ShowAzimuthLabels)
@@ -96,9 +156,12 @@ namespace WildlifeTools.PolarPlots
                     for (int i = 0; i < s.SecondaryRefBearings; i++)
                         azes.Add(CircularStats.Mod360(i * step));
                 }
+                double azLabelR = external
+                    ? Math.Max(innerR - 0.16, innerR * 0.55)   // inside the inner circle
+                    : plotR + labelMargin * 0.55;              // outside the rim
                 foreach (double az in azes)
                 {
-                    var p = PolarPlotModel.Polar(plotR + labelMargin * 0.55, az);
+                    var p = PolarPlotModel.Polar(azLabelR, az);
                     var el = Label(
                         ((int)Math.Round(az)).ToString(CI) + "°",
                         p.X, p.Y + yShift, s, TextAnchor.Middle);
@@ -118,7 +181,12 @@ namespace WildlifeTools.PolarPlots
             }
 
             // ---- inner ring labels (values on chosen axes) ------------------
-            if (s.ShowInnerLabels && s.ShowSecondaryRefCircles && s.SecondaryRefCircles >= 1)
+            // Suppressed for the smoothed-density and dot plots, whose radii
+            // are not on the binned-count scale the rings would imply.
+            bool ringsHaveValues = s.PlotType != PolarPlotType.SmoothedDensity &&
+                                   s.PlotType != PolarPlotType.DotPlot;
+            if (ringsHaveValues &&
+                s.ShowInnerLabels && s.ShowSecondaryRefCircles && s.SecondaryRefCircles >= 1)
             {
                 var axes = new List<double>();
                 if (s.InnerLabelNorth) axes.Add(0);
@@ -132,8 +200,8 @@ namespace WildlifeTools.PolarPlots
                     for (int i = 1; i <= s.SecondaryRefCircles; i++)
                     {
                         double frac = i / (s.SecondaryRefCircles + 1.0);
-                        double val = maxVal * frac;
-                        var p = PolarPlotModel.Polar(plotR * frac, az);
+                        double val = RingValue(frac);
+                        var p = PolarPlotModel.Polar(RingR(frac), az);
                         bool vertAxis = (az < 45 || az > 315) ||
                                         (az > 135 && az < 225);   // N/S axis
                         double dx = vertAxis ? nudge : 0.0;
@@ -181,10 +249,94 @@ namespace WildlifeTools.PolarPlots
                         Anchor = TextAnchor.Middle,
                     });
             }
+
+            // ---- wind-rose band legend (bottom-left) ------------------------
+            if (wind != null)
+            {
+                double sq = 0.11;                       // swatch square size
+                double x0 = -m.HalfWidthIn + 0.08;
+                double yTop = -rimR - 0.16;
+                int k = wind.Breaks.Length - 1;
+                var hdr = Label(string.IsNullOrWhiteSpace(s.MagnitudeField)
+                        ? "Bands" : s.MagnitudeField,
+                    x0, yTop, s, TextAnchor.Start);
+                hdr.Bold = true;
+                m.Elements.Add(hdr);
+                for (int c = 0; c < k; c++)
+                {
+                    double yc = yTop - (c + 1) * legendRow;
+                    m.Elements.Add(new PolarElement
+                    {
+                        Kind = PolarElementKind.Polygon,
+                        Points = new List<PtIn>
+                        {
+                            new PtIn(x0, yc - sq / 2), new PtIn(x0 + sq, yc - sq / 2),
+                            new PtIn(x0 + sq, yc + sq / 2), new PtIn(x0, yc + sq / 2),
+                        },
+                        Fill = wind.BandColor(s, c),
+                        Stroke = s.BinOutline,
+                        StrokeWidthPt = Math.Min(s.BinOutlineWidthPt, 0.5),
+                    });
+                    m.Elements.Add(Label(
+                        FormatVal(wind.Breaks[c]) + " – " + FormatVal(wind.Breaks[c + 1]),
+                        x0 + sq + 0.06, yc, s, TextAnchor.Start));
+                }
+            }
             return m;
         }
 
+        /// <summary>Equal-interval magnitude classes for the wind rose; null
+        /// when no usable magnitude values exist.</summary>
+        private sealed class WindBands
+        {
+            public double[] Breaks;                 // length = classes + 1
+
+            public static WindBands Compute(PolarPlotSettings s,
+                                            IReadOnlyList<double> mags)
+            {
+                if (mags == null || mags.Count == 0) return null;
+                double lo = double.PositiveInfinity, hi = double.NegativeInfinity;
+                foreach (double v in mags)
+                {
+                    if (double.IsNaN(v)) continue;
+                    if (v < lo) lo = v;
+                    if (v > hi) hi = v;
+                }
+                if (double.IsInfinity(lo)) return null;
+                int k = Math.Min(Math.Max(s.WindClasses, 1), 9);
+                if (hi <= lo) { hi = lo + 1.0; k = 1; }
+                var b = new double[k + 1];
+                for (int i = 0; i <= k; i++) b[i] = lo + (hi - lo) * i / k;
+                return new WindBands { Breaks = b };
+            }
+
+            public int ClassOf(double v)
+            {
+                if (double.IsNaN(v)) return -1;
+                int k = Breaks.Length - 1;
+                if (v >= Breaks[k]) return k - 1;   // top edge inclusive
+                int c = (int)((v - Breaks[0]) / (Breaks[k] - Breaks[0]) * k);
+                return Math.Min(Math.Max(c, 0), k - 1);
+            }
+
+            public RgbaColor BandColor(PolarPlotSettings s, int c)
+            {
+                int k = Breaks.Length - 1;
+                double t = (k <= 1) ? 1.0 : (double)c / (k - 1);
+                return s.WindLow.Lerp(s.WindHigh, t);
+            }
+        }
+
         // ---- data builders --------------------------------------------------
+        /// <summary>Value fraction -> radius fraction; square-rooted when the
+        /// equal-area option is on so petal area tracks frequency.</summary>
+        private static double ValFrac(PolarPlotSettings s, double v, double maxVal)
+        {
+            double f = maxVal > 0 ? v / maxVal : 0.0;
+            if (f < 0) f = 0; if (f > 1) f = 1;
+            return s.EqualArea ? Math.Sqrt(f) : f;
+        }
+
         private static void BuildRose(PolarPlotModel m, PolarPlotSettings s,
             double[] bins, double maxVal, double plotR, double yShift)
         {
@@ -193,7 +345,7 @@ namespace WildlifeTools.PolarPlots
             for (int b = 0; b < n; b++)
             {
                 if (bins[b] <= 0) continue;
-                double rr = plotR * bins[b] / maxVal;
+                double rr = plotR * ValFrac(s, bins[b], maxVal);
                 double c = CircularStats.BinCenterDeg(b, n);
                 m.Elements.Add(Wedge(0, rr, c - bw / 2.0, c + bw / 2.0, yShift,
                                      s.BinFill, s.BinOutline, s.BinOutlineWidthPt));
@@ -226,7 +378,7 @@ namespace WildlifeTools.PolarPlots
             var pts = new List<PtIn>(n + 1);
             for (int b = 0; b < n; b++)
             {
-                double rr = plotR * bins[b] / maxVal;
+                double rr = plotR * ValFrac(s, bins[b], maxVal);
                 double c = CircularStats.BinCenterDeg(b, n);
                 var p = PolarPlotModel.Polar(rr, c);
                 pts.Add(new PtIn(p.X, p.Y + yShift));
@@ -281,18 +433,319 @@ namespace WildlifeTools.PolarPlots
                 Dash = dash,
             };
 
-        private static PolarElement Ray(double r, double az, double yShift,
-            RgbaColor stroke, double widthPt, PolarDash dash)
+        private static PolarElement Ray(double rFrom, double rTo, double az,
+            double yShift, RgbaColor stroke, double widthPt, PolarDash dash)
         {
-            var p = PolarPlotModel.Polar(r, az);
+            var a = PolarPlotModel.Polar(rFrom, az);
+            var b = PolarPlotModel.Polar(rTo, az);
             return new PolarElement
             {
                 Kind = PolarElementKind.Line,
-                Points = new List<PtIn> { new PtIn(0, yShift), new PtIn(p.X, p.Y + yShift) },
+                Points = new List<PtIn> { new PtIn(a.X, a.Y + yShift),
+                                          new PtIn(b.X, b.Y + yShift) },
                 Stroke = stroke,
                 StrokeWidthPt = widthPt,
                 Dash = dash,
             };
+        }
+
+        // ---- external + bearings data builders ------------------------------
+        private static void BuildExternalRose(PolarPlotModel m, PolarPlotSettings s,
+            double[] bins, double maxVal, double innerR, double outerR, double yShift)
+        {
+            int n = bins.Length;
+            double bw = 360.0 / n;
+            for (int b = 0; b < n; b++)
+            {
+                if (bins[b] <= 0) continue;
+                double rr = innerR + (outerR - innerR) * ValFrac(s, bins[b], maxVal);
+                double c = CircularStats.BinCenterDeg(b, n);
+                m.Elements.Add(Wedge(innerR, rr, c - bw / 2.0, c + bw / 2.0, yShift,
+                                     s.BinFill, s.BinOutline, s.BinOutlineWidthPt));
+            }
+        }
+
+        private static void BuildExternalPeaks(PolarPlotModel m, PolarPlotSettings s,
+            double[] bins, double maxVal, double innerR, double outerR, double yShift)
+        {
+            // A donut band: outer ring follows the bin values outward from the
+            // inner circle; the inner circle is the hole (even-odd fill).
+            int n = bins.Length;
+            var outer = new List<PtIn>(n);
+            for (int b = 0; b < n; b++)
+            {
+                double rr = innerR + (outerR - innerR) * ValFrac(s, bins[b], maxVal);
+                double c = CircularStats.BinCenterDeg(b, n);
+                var p = PolarPlotModel.Polar(rr, c);
+                outer.Add(new PtIn(p.X, p.Y + yShift));
+            }
+            var hole = new List<PtIn>(73);
+            for (int i = 0; i <= 72; i++)
+            {
+                var p = PolarPlotModel.Polar(innerR, i * 5.0);
+                hole.Add(new PtIn(p.X, p.Y + yShift));
+            }
+            m.Elements.Add(new PolarElement
+            {
+                Kind = PolarElementKind.Polygon,
+                Rings = new List<List<PtIn>> { outer, hole },
+                Fill = s.BinFill,
+                Stroke = s.BinOutline,
+                StrokeWidthPt = s.BinOutlineWidthPt,
+            });
+        }
+
+        private static void BuildBearings(PolarPlotModel m, PolarPlotSettings s,
+            IReadOnlyList<double> azimuths, IReadOnlyList<double> weights,
+            double plotR, double yShift)
+        {
+            if (azimuths == null || azimuths.Count == 0) return;
+            // Each observation is its own line from the center; when weighted,
+            // line length is proportional to the observation's weight.
+            double maxW = 1.0;
+            bool weighted = false;
+            if (weights != null && weights.Count == azimuths.Count)
+            {
+                for (int i = 0; i < weights.Count; i++)
+                    if (weights[i] > maxW) { maxW = weights[i]; weighted = true; }
+                if (!weighted)
+                    for (int i = 0; i < weights.Count && !weighted; i++)
+                        weighted = Math.Abs(weights[i] - 1.0) > 1e-12;
+            }
+            double widthPt = Math.Max(s.BearingLineWidthPt, 0.2);
+            for (int i = 0; i < azimuths.Count; i++)
+            {
+                double w = (weighted && weights != null && i < weights.Count)
+                    ? weights[i] / maxW : 1.0;
+                if (w <= 0) continue;
+                m.Elements.Add(Ray(0.0, plotR * w, azimuths[i], yShift,
+                                   s.BearingLine, widthPt, PolarDash.Solid));
+            }
+        }
+
+        // ---- phase 3 data builders ------------------------------------------
+        private static void BuildWindRose(PolarPlotModel m, PolarPlotSettings s,
+            IReadOnlyList<double> azimuths, IReadOnlyList<double> weights,
+            IReadOnlyList<double> mags, WindBands wind, double maxVal,
+            double plotR, double yShift)
+        {
+            // Stacked petals: each direction bin's wedge is subdivided into the
+            // magnitude classes, lowest class innermost, cumulative radius on
+            // the SAME scale as the plain rose (bin totals), so the petal
+            // outline matches the ordinary rose of the same data.
+            int nb = Math.Max(1, s.BinCount);
+            int k = wind.Breaks.Length - 1;
+            var sums = new double[nb, k];
+            for (int i = 0; i < azimuths.Count; i++)
+            {
+                if (mags == null || i >= mags.Count) break;
+                int c = wind.ClassOf(mags[i]);
+                if (c < 0) continue;                  // missing magnitude
+                int b = (int)Math.Floor(CircularStats.Mod360(azimuths[i]) / 360.0 * nb);
+                if (b >= nb) b = 0;
+                double w = (weights != null && i < weights.Count) ? weights[i] : 1.0;
+                sums[b, c] += w;
+            }
+            double bw = 360.0 / nb;
+            for (int b = 0; b < nb; b++)
+            {
+                double center = CircularStats.BinCenterDeg(b, nb);
+                double cum = 0.0, r0 = 0.0;
+                for (int c = 0; c < k; c++)
+                {
+                    if (sums[b, c] <= 0) continue;
+                    cum += sums[b, c];
+                    double r1 = plotR * ValFrac(s, cum, maxVal);
+                    if (r1 - r0 > 1e-6)
+                        m.Elements.Add(Wedge(r0, r1, center - bw / 2.0,
+                            center + bw / 2.0, yShift, wind.BandColor(s, c),
+                            s.BinOutline, s.BinOutlineWidthPt));
+                    r0 = r1;
+                }
+            }
+        }
+
+        private static void BuildKde(PolarPlotModel m, PolarPlotSettings s,
+            IReadOnlyList<double> azimuths, IReadOnlyList<double> weights,
+            double plotR, double yShift)
+        {
+            if (azimuths == null || azimuths.Count == 0) return;
+            // von Mises kernel density (Fisher 1993): the data are binned onto
+            // a fine 0.5-degree grid, then circularly convolved with the
+            // kernel exp(kappa*(cos(d)-1)); the silhouette is scaled to its
+            // own maximum, so the normalization constant cancels.
+            const int G = 720;
+            var grid = new double[G];
+            for (int i = 0; i < azimuths.Count; i++)
+            {
+                int g = (int)Math.Floor(CircularStats.Mod360(azimuths[i]) / 360.0 * G);
+                if (g >= G) g = 0;
+                grid[g] += (weights != null && i < weights.Count) ? weights[i] : 1.0;
+            }
+            double sigmaDeg = Math.Min(Math.Max(s.SmoothingDeg, 1.0), 90.0);
+            double sigmaRad = sigmaDeg * Math.PI / 180.0;
+            double kappa = 1.0 / (sigmaRad * sigmaRad);
+            int half = Math.Min(G / 2, (int)Math.Ceiling(4.0 * sigmaDeg / (360.0 / G)));
+            var kernel = new double[2 * half + 1];
+            for (int j = -half; j <= half; j++)
+            {
+                double d = j * (360.0 / G) * Math.PI / 180.0;
+                kernel[j + half] = Math.Exp(kappa * (Math.Cos(d) - 1.0));
+            }
+            var dens = new double[G];
+            double dmax = 0.0;
+            for (int g = 0; g < G; g++)
+            {
+                double sum = 0.0;
+                for (int j = -half; j <= half; j++)
+                {
+                    int src = g + j;
+                    if (src < 0) src += G; else if (src >= G) src -= G;
+                    sum += grid[src] * kernel[j + half];
+                }
+                dens[g] = sum;
+                if (sum > dmax) dmax = sum;
+            }
+            if (dmax <= 0) return;
+            var pts = new List<PtIn>(G);
+            for (int g = 0; g < G; g++)
+            {
+                double az = (g + 0.5) * 360.0 / G;
+                double rr = plotR * ValFrac(s, dens[g], dmax);
+                var p = PolarPlotModel.Polar(rr, az);
+                pts.Add(new PtIn(p.X, p.Y + yShift));
+            }
+            m.Elements.Add(new PolarElement
+            {
+                Kind = PolarElementKind.Polygon,
+                Points = pts,
+                Fill = s.BinFill,
+                Stroke = s.BinOutline,
+                StrokeWidthPt = s.BinOutlineWidthPt,
+            });
+        }
+
+        private static void BuildDotPlot(PolarPlotModel m, PolarPlotSettings s,
+            IReadOnlyList<double> azimuths, double plotR, double yShift)
+        {
+            if (azimuths == null || azimuths.Count == 0) return;
+            // One dot per observation (unweighted), stacked inward from the
+            // plotting circle (Fisher 1993, Batschelet 1981). The angular
+            // column width is derived from the dot size: one dot fits across a
+            // column at the plotting radius, so the grouping is visually
+            // self-evident. Tall stacks compress their spacing to stay inside.
+            double dotD = Math.Min(Math.Max(s.DotDiameterIn, 0.02), plotR / 2.0);
+            int cols = Math.Max(8, (int)Math.Round(2.0 * Math.PI * plotR / dotD));
+            var counts = new int[cols];
+            foreach (double az in azimuths)
+            {
+                int c = (int)Math.Floor(CircularStats.Mod360(az) / 360.0 * cols);
+                if (c >= cols) c = 0;
+                counts[c]++;
+            }
+            int maxStack = 0;
+            foreach (int c in counts) if (c > maxStack) maxStack = c;
+            if (maxStack == 0) return;
+            double step = dotD;
+            double avail = plotR - dotD;              // keep the innermost dot off center
+            if (maxStack * step > avail && maxStack > 1)
+                step = avail / maxStack;
+            var stacked = new int[cols];
+            foreach (double az in azimuths)
+            {
+                int c = (int)Math.Floor(CircularStats.Mod360(az) / 360.0 * cols);
+                if (c >= cols) c = 0;
+                double rr = plotR - dotD / 2.0 - stacked[c] * step;
+                stacked[c]++;
+                if (rr < dotD / 2.0) rr = dotD / 2.0;
+                double center = (c + 0.5) * 360.0 / cols;
+                var p = PolarPlotModel.Polar(rr, center);
+                m.Elements.Add(new PolarElement
+                {
+                    Kind = PolarElementKind.Circle,
+                    Center = new PtIn(p.X, p.Y + yShift),
+                    Radius = dotD / 2.0,
+                    Fill = s.BinFill,
+                    Stroke = s.BinOutline,
+                    StrokeWidthPt = Math.Min(s.BinOutlineWidthPt, 0.75),
+                });
+            }
+        }
+
+        private static void BuildMeanOverlay(PolarPlotModel m, PolarPlotSettings s,
+            CircularStats st, double baseR, double plotR, double yShift)
+        {
+            if (double.IsNaN(st.MeanDirectionDeg) || st.MeanResultantLength <= 0)
+                return;
+            double az = st.MeanDirectionDeg;
+            double tipR = baseR + (plotR - baseR) * st.MeanResultantLength;
+            var col = s.MeanArrowColor;
+            double shaftPt = 1.8;
+
+            // Shaft.
+            m.Elements.Add(Ray(baseR, tipR, az, yShift, col, shaftPt, PolarDash.Solid));
+            // Arrowhead (filled triangle).
+            double headLen = Math.Min(0.12, Math.Max(0.05, (tipR - baseR) * 0.35));
+            double halfW = headLen * 0.42;
+            double rad = az * Math.PI / 180.0;
+            double dxU = Math.Sin(rad), dyU = Math.Cos(rad);       // outward
+            double pxU = dyU, pyU = -dxU;                          // perpendicular
+            double bx = dxU * (tipR - headLen), by = dyU * (tipR - headLen);
+            m.Elements.Add(new PolarElement
+            {
+                Kind = PolarElementKind.Polygon,
+                Points = new List<PtIn>
+                {
+                    new PtIn(dxU * tipR, dyU * tipR + yShift),
+                    new PtIn(bx + pxU * halfW, by + pyU * halfW + yShift),
+                    new PtIn(bx - pxU * halfW, by - pyU * halfW + yShift),
+                },
+                Fill = col,
+                Stroke = col,
+                StrokeWidthPt = 0.5,
+            });
+
+            // 95% confidence arc just outside the plotting circle -- the same
+            // CircularStats.MeanCiHalfDeg95 the statistics report prints, so
+            // the arc and the reported interval always agree.
+            if (s.ShowMeanCI)
+            {
+                double halfDeg = st.MeanCiHalfDeg95;
+                if (!double.IsNaN(halfDeg))
+                {
+                    double rArc = plotR + 0.055;
+                    var arc = new List<PtIn>();
+                    int steps = Math.Max(6, (int)Math.Ceiling(halfDeg));
+                    for (int i = -steps; i <= steps; i++)
+                    {
+                        var p = PolarPlotModel.Polar(rArc, az + halfDeg * i / steps);
+                        arc.Add(new PtIn(p.X, p.Y + yShift));
+                    }
+                    m.Elements.Add(new PolarElement
+                    {
+                        Kind = PolarElementKind.Polyline,
+                        Points = arc,
+                        Stroke = col,
+                        StrokeWidthPt = 1.5,
+                    });
+                    foreach (int sgn in new[] { -1, 1 })    // end ticks
+                    {
+                        var p1 = PolarPlotModel.Polar(rArc - 0.035, az + sgn * halfDeg);
+                        var p2 = PolarPlotModel.Polar(rArc + 0.035, az + sgn * halfDeg);
+                        m.Elements.Add(new PolarElement
+                        {
+                            Kind = PolarElementKind.Line,
+                            Points = new List<PtIn>
+                            {
+                                new PtIn(p1.X, p1.Y + yShift),
+                                new PtIn(p2.X, p2.Y + yShift),
+                            },
+                            Stroke = col,
+                            StrokeWidthPt = 1.5,
+                        });
+                    }
+                }
+            }
         }
 
         private static PolarElement Label(string text, double x, double y,

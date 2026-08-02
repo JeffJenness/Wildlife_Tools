@@ -34,6 +34,8 @@ namespace WildlifeTools.PolarPlots
         private List<PolarPlotData.Source> _sources = new List<PolarPlotData.Source>();
         private readonly List<double> _az = new List<double>();
         private readonly List<double> _wt = new List<double>();
+        private readonly List<double> _mag = new List<double>();
+        private bool _hasMag;
         private bool _weighted;
         private PolarPlotData.Result _lastResult;
         private bool _busy;
@@ -46,6 +48,10 @@ namespace WildlifeTools.PolarPlots
         private RgbaColor _colLabel = new RgbaColor(60, 60, 60, 255);
         private RgbaColor _colTitle = new RgbaColor(0, 0, 0, 255);
         private RgbaColor _colSec = new RgbaColor(80, 80, 80, 255);
+        private RgbaColor _colBearing = new RgbaColor(60, 140, 60, 255);
+        private RgbaColor _colWindLow = new RgbaColor(255, 244, 191, 255);
+        private RgbaColor _colWindHigh = new RgbaColor(178, 44, 28, 255);
+        private RgbaColor _colMean = new RgbaColor(200, 30, 30, 255);
 
         private static readonly string[] FontStyleNames =
             { "Regular", "Bold", "Italic", "Bold Italic" };
@@ -56,6 +62,8 @@ namespace WildlifeTools.PolarPlots
             cboPlotType.ItemsSource = new[]
             {
                 "Peaks and Valleys", "Circular Bins (Rose)", "Shade by Density",
+                "External Peaks and Valleys", "External Bins", "Bearings",
+                "Wind Rose (stacked bands)", "Smoothed Density (kernel)", "Dot Plot",
             };
             cboPlotType.SelectedIndex = 1;
 
@@ -103,12 +111,47 @@ namespace WildlifeTools.PolarPlots
         }
 
         // ---- color plumbing -------------------------------------------------
-        /// <summary>Re-apply the stored color when a picker's template loads
-        /// (first expand of its section) so the swatch is never blank.</summary>
+        // Esri's ColorPickerControl draws its swatch as a BITMAP sized to the
+        // control (DropDownColorPicker.BuildImage uses ActualWidth - 20), and
+        // it skips rebuilding on the first SizeChanged from 0x0. So a color
+        // applied while the picker is unsized (a collapsed Expander) leaves a
+        // permanently blank swatch UNLESS something re-fires the SelectedColor
+        // change at real size. Worse, CIM colors compare by value, so
+        // re-applying an equal color is a no-op on the dependency property.
+        // Fix: on load AND on the first real SizeChanged, cycle the color
+        // through a sentinel (guaranteed different) then back, deferred until
+        // layout has finished, with StyleColor suppressed during the cycle.
+        private bool _swatchRefresh;
+
         private void PickerLoaded(object sender, RoutedEventArgs e)
         {
             if (sender is ColorPickerControl cp)
-                ApplyColor(cp, ColorFieldFor(cp));
+            {
+                cp.SizeChanged -= PickerSizeChanged;   // no double-hook on re-load
+                cp.SizeChanged += PickerSizeChanged;
+                RefreshSwatch(cp);
+            }
+        }
+
+        private void PickerSizeChanged(object sender, System.Windows.SizeChangedEventArgs e)
+        {
+            if (sender is ColorPickerControl cp &&
+                e.NewSize.Width > 0 && e.NewSize.Height > 0)
+                RefreshSwatch(cp);
+        }
+
+        private void RefreshSwatch(ColorPickerControl cp)
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _swatchRefresh = true;
+                try
+                {
+                    cp.SelectedColor = new CIMRGBColor { R = 1, G = 2, B = 3, Alpha = 0.5f };
+                    ApplyColor(cp, ColorFieldFor(cp));
+                }
+                finally { _swatchRefresh = false; }
+            }), System.Windows.Threading.DispatcherPriority.Loaded);
         }
 
         private RgbaColor ColorFieldFor(ColorPickerControl cp)
@@ -119,6 +162,10 @@ namespace WildlifeTools.PolarPlots
             if (ReferenceEquals(cp, cpHigh)) return _colHigh;
             if (ReferenceEquals(cp, cpLabelColor)) return _colLabel;
             if (ReferenceEquals(cp, cpSecColor)) return _colSec;
+            if (ReferenceEquals(cp, cpBearing)) return _colBearing;
+            if (ReferenceEquals(cp, cpWindLow)) return _colWindLow;
+            if (ReferenceEquals(cp, cpWindHigh)) return _colWindHigh;
+            if (ReferenceEquals(cp, cpMean)) return _colMean;
             return _colTitle;
         }
 
@@ -130,6 +177,10 @@ namespace WildlifeTools.PolarPlots
             else if (ReferenceEquals(cp, cpHigh)) _colHigh = c;
             else if (ReferenceEquals(cp, cpLabelColor)) _colLabel = c;
             else if (ReferenceEquals(cp, cpSecColor)) _colSec = c;
+            else if (ReferenceEquals(cp, cpBearing)) _colBearing = c;
+            else if (ReferenceEquals(cp, cpWindLow)) _colWindLow = c;
+            else if (ReferenceEquals(cp, cpWindHigh)) _colWindHigh = c;
+            else if (ReferenceEquals(cp, cpMean)) _colMean = c;
             else if (ReferenceEquals(cp, cpTitleColor)) _colTitle = c;
         }
 
@@ -169,8 +220,52 @@ namespace WildlifeTools.PolarPlots
         { if (!_loading) RenderPreview(); }
         private void StyleRouted(object s, RoutedEventArgs e)
         { if (!_loading) RenderPreview(); }
+
+        // ---- diameter units (inches / centimeters) --------------------------
+        // The model is ALWAYS inches internally; the unit choice only changes
+        // how the two diameter boxes are interpreted and how the preview
+        // rulers are drawn.
+        private const double CmPerIn = 2.54;
+        private bool _cm;
+        private double DisplayToInches(double v) => _cm ? v / CmPerIn : v;
+
+        private void UnitChanged(object s, SelectionChangedEventArgs e)
+        {
+            if (lblDiameter == null) return;      // fires during XAML parse
+            bool cm = cboUnit.SelectedIndex == 1;
+            if (cm == _cm) return;
+            _cm = cm;
+            bool was = _loading;
+            _loading = true;                       // one render at the end
+            try
+            {
+                ConvertBox(txtDiameter, cm ? CmPerIn : 1.0 / CmPerIn);
+                ConvertBox(txtInner, cm ? CmPerIn : 1.0 / CmPerIn);
+                ConvertBox(txtDot, cm ? CmPerIn : 1.0 / CmPerIn);
+                UpdateUnitLabels();
+            }
+            finally { _loading = was; }
+            if (!_loading) RenderPreview();
+        }
+
+        private void UpdateUnitLabels()
+        {
+            string u = _cm ? "cm" : "in";
+            lblDiameter.Content = "Plot diameter (" + u + ")";
+            lblInner.Content = "Inside circle diameter (" + u + ")";
+            lblDot.Content = "Dot diameter (" + u + ")";
+        }
+
+        private static void ConvertBox(TextBox tb, double factor)
+        {
+            if (double.TryParse(tb.Text, NumberStyles.Float,
+                                CultureInfo.InvariantCulture, out double v))
+                tb.Text = Math.Round(v * factor, 3)
+                    .ToString(CultureInfo.InvariantCulture);
+        }
         private void StyleColor(object s, ColorChangedEventArgs e)
         {
+            if (_swatchRefresh) return;    // ignore the swatch-rebuild cycle
             if (s is ColorPickerControl cp)
             {
                 if (e?.Color == null)
@@ -189,7 +284,10 @@ namespace WildlifeTools.PolarPlots
             _loading = true;
             cboAzField.ItemsSource = fields;
             cboWField.ItemsSource = fields.ToList();
-            if (fields.Count > 0) { cboAzField.SelectedIndex = 0; cboWField.SelectedIndex = 0; }
+            cboWindField.ItemsSource = fields.ToList();
+            if (fields.Count > 0)
+            { cboAzField.SelectedIndex = 0; cboWField.SelectedIndex = 0;
+              cboWindField.SelectedIndex = 0; }
             rbAzPolyline.IsEnabled = src.IsPolyline;
             rbWLength.IsEnabled = src.IsPolyline;
             if (!src.IsPolyline && rbAzPolyline.IsChecked == true) rbAzField.IsChecked = true;
@@ -219,6 +317,8 @@ namespace WildlifeTools.PolarPlots
                 _lastResult = res;
                 _az.Clear(); _az.AddRange(res.Azimuths);
                 _wt.Clear(); _wt.AddRange(res.Weights);
+                _mag.Clear(); _mag.AddRange(res.Magnitudes);
+                _hasMag = res.HasMagnitudes;
                 _weighted = res.Weighted;
                 RenderPreview();
             }
@@ -234,10 +334,33 @@ namespace WildlifeTools.PolarPlots
             {
                 case 0: s.PlotType = PolarPlotType.PeaksAndValleys; break;
                 case 2: s.PlotType = PolarPlotType.ShadeByDensity; break;
+                case 3: s.PlotType = PolarPlotType.ExternalPeaksAndValleys; break;
+                case 4: s.PlotType = PolarPlotType.ExternalBins; break;
+                case 5: s.PlotType = PolarPlotType.Bearings; break;
+                case 6: s.PlotType = PolarPlotType.WindRose; break;
+                case 7: s.PlotType = PolarPlotType.SmoothedDensity; break;
+                case 8: s.PlotType = PolarPlotType.DotPlot; break;
                 default: s.PlotType = PolarPlotType.CircularBins; break;
             }
+            s.MagnitudeField = cboWindField.SelectedItem as string ?? "";
+            s.WindClasses = Math.Min(Math.Max(ParseInt(txtWindClasses.Text, 4), 1), 9);
+            s.WindLow = _colWindLow;
+            s.WindHigh = _colWindHigh;
+            s.SmoothingDeg = Math.Min(Math.Max(ParseDouble(txtSmooth.Text, 20.0), 1.0), 90.0);
+            s.DotDiameterIn = Math.Max(0.02,
+                DisplayToInches(ParseDouble(txtDot.Text, _cm ? 0.2 : 0.08)));
+            s.EqualArea = chkSqrt.IsChecked == true;
+            s.ShowMeanArrow = chkMeanArrow.IsChecked == true;
+            s.ShowMeanCI = chkMeanCI.IsChecked == true;
+            s.MeanArrowColor = _colMean;
             s.BinCount = Math.Max(1, ParseInt(txtBins.Text, 72));
-            s.PlotDiameterIn = Math.Max(0.5, ParseDouble(txtDiameter.Text, 4.0));
+            s.PlotDiameterIn = Math.Max(0.5,
+                DisplayToInches(ParseDouble(txtDiameter.Text, _cm ? 10.0 : 4.0)));
+            s.OuterDiameterIn = s.PlotDiameterIn;
+            s.InnerDiameterIn = Math.Max(0.2,
+                DisplayToInches(ParseDouble(txtInner.Text, _cm ? 4.0 : 1.5)));
+            s.BearingLine = _colBearing;
+            s.BearingLineWidthPt = Math.Max(0.2, ParseDouble(txtBearingWidth.Text, 0.5));
             s.BinFill = _colBinFill;
             s.BinOutline = _colBinOutline;
             s.LowDensity = _colLow;
@@ -319,25 +442,46 @@ namespace WildlifeTools.PolarPlots
         {
             try
             {
-                // Plot-type-dependent symbology: the density ramp only applies
-                // to Shade by Density; the bin fill only to the other types.
-                bool shade = cboPlotType.SelectedIndex == 2;
-                cpLow.IsEnabled = shade;
-                cpHigh.IsEnabled = shade;
-                cpBinFill.IsEnabled = !shade;
+                // Plot-type-dependent option rows: only the rows relevant to
+                // the current plot type exist in the dialog.
+                int idx = cboPlotType.SelectedIndex;
+                bool shade = idx == 2;
+                bool external = idx == 3 || idx == 4;
+                bool bearings = idx == 5;
+                bool wind = idx == 6;
+                bool kde = idx == 7;
+                bool dots = idx == 8;
+                pnlDensity.Visibility = shade ? Visibility.Visible : Visibility.Collapsed;
+                pnlWindColors.Visibility = wind ? Visibility.Visible : Visibility.Collapsed;
+                pnlBinFill.Visibility = (shade || bearings || wind)
+                    ? Visibility.Collapsed : Visibility.Visible;
+                pnlOutline.Visibility = bearings ? Visibility.Collapsed : Visibility.Visible;
+                pnlBearing.Visibility = bearings ? Visibility.Visible : Visibility.Collapsed;
+                pnlInner.Visibility = external ? Visibility.Visible : Visibility.Collapsed;
+                pnlWind.Visibility = wind ? Visibility.Visible : Visibility.Collapsed;
+                pnlSmooth.Visibility = kde ? Visibility.Visible : Visibility.Collapsed;
+                pnlDot.Visibility = dots ? Visibility.Visible : Visibility.Collapsed;
 
                 var s = BuildSettings();
                 var st = new CircularStats(_az, _wt, _weighted);
                 var bins = st.Bin(s.BinCount);
-                var model = PolarPlotBuilder.Build(s, bins, SecondaryTitleLines(s, bins));
+                var model = PolarPlotBuilder.Build(s, bins, SecondaryTitleLines(s, bins),
+                                                   _az, _wt, _mag, st);
                 _model = model; _modelSettings = s;
                 double ppd = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-                var dg = PolarPlotWpf.Render(model, ppd, showRulers: true);
+                var dg = PolarPlotWpf.Render(model, ppd, showRulers: true,
+                                             rulersCm: _cm);
                 imgPreview.Source = new DrawingImage(dg);
                 SetStatus(_az.Count.ToString("N0", CultureInfo.InvariantCulture) +
                           " value(s) plotted" +
                           (_lastResult != null && _lastResult.ExcludedNegative > 0
-                              ? "; " + _lastResult.ExcludedNegative + " negative excluded" : ""));
+                              ? "; " + _lastResult.ExcludedNegative + " negative excluded" : "") +
+                          (bearings && _az.Count > 500
+                              ? "  (Bearings plots draw one line per value; large " +
+                                "counts render slowly)" : "") +
+                          (dots && _az.Count > 2000
+                              ? "  (Dot plots draw one dot per value; consider " +
+                                "Smoothed Density for large samples)" : ""));
             }
             catch (Exception ex) { SetStatus("Render error: " + ex.Message); }
         }
@@ -380,14 +524,24 @@ namespace WildlifeTools.PolarPlots
             catch (Exception ex) { MessageBox.Show("Could not save SVG: " + ex.Message, "Polar Plots"); }
         }
 
-        private void OnAddGraphic(object sender, RoutedEventArgs e)
+        private async void OnAddGraphic(object sender, RoutedEventArgs e)
         {
-            // Phase 2: place the plot as a CIM group element on the active map or
-            // layout, and optionally the statistics as a text element.
-            MessageBox.Show(
-                "Adding the plot as a graphic on the map or layout is coming in " +
-                "the next phase. For now, use Save as SVG (highest fidelity) or " +
-                "Calculate statistics.", "Polar Plots");
+            if (_model == null) { MessageBox.Show("Nothing to add yet.", "Polar Plots"); return; }
+            var model = _model;                     // snapshot for the MCT call
+            string name = "Polar Plot - " +
+                ((cboSource.SelectedItem as PolarPlotData.Source)?.Name ?? "plot");
+            btnAddGraphic.IsEnabled = false;
+            try
+            {
+                string where = await QueuedTask.Run(
+                    () => PolarPlotCim.PlaceOnActiveView(model, name));
+                SetStatus(where);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "Polar Plots");
+            }
+            finally { btnAddGraphic.IsEnabled = true; }
         }
 
         private void OnClose(object sender, RoutedEventArgs e) => Close();
@@ -397,7 +551,20 @@ namespace WildlifeTools.PolarPlots
         {
             PlotTypeIndex = cboPlotType.SelectedIndex,
             BinCount = ParseInt(txtBins.Text, 72),
-            PlotDiameterIn = ParseDouble(txtDiameter.Text, 4.0),
+            Units = _cm ? "cm" : "in",
+            PlotDiameterIn = DisplayToInches(ParseDouble(txtDiameter.Text, _cm ? 10.0 : 4.0)),
+            InnerDiameterIn = DisplayToInches(ParseDouble(txtInner.Text, _cm ? 4.0 : 1.5)),
+            BearingLine = PolarPlotStyleDto.FromColor(_colBearing),
+            BearingLineWidthPt = ParseDouble(txtBearingWidth.Text, 0.5),
+            WindClasses = ParseInt(txtWindClasses.Text, 4),
+            WindLow = PolarPlotStyleDto.FromColor(_colWindLow),
+            WindHigh = PolarPlotStyleDto.FromColor(_colWindHigh),
+            SmoothingDeg = ParseDouble(txtSmooth.Text, 20.0),
+            DotDiameterIn = DisplayToInches(ParseDouble(txtDot.Text, _cm ? 0.2 : 0.08)),
+            EqualArea = chkSqrt.IsChecked == true,
+            ShowMeanArrow = chkMeanArrow.IsChecked == true,
+            ShowMeanCI = chkMeanCI.IsChecked == true,
+            MeanArrowColor = PolarPlotStyleDto.FromColor(_colMean),
             BinFill = PolarPlotStyleDto.FromColor(_colBinFill),
             BinOutline = PolarPlotStyleDto.FromColor(_colBinOutline),
             LowDensity = PolarPlotStyleDto.FromColor(_colLow),
@@ -439,7 +606,32 @@ namespace WildlifeTools.PolarPlots
                 if (d.PlotTypeIndex >= 0 && d.PlotTypeIndex < cboPlotType.Items.Count)
                     cboPlotType.SelectedIndex = d.PlotTypeIndex;
                 txtBins.Text = d.BinCount.ToString(CultureInfo.InvariantCulture);
-                txtDiameter.Text = d.PlotDiameterIn.ToString(CultureInfo.InvariantCulture);
+                // Units first: the DTO's diameters are always INCHES; convert
+                // them into the preset's display unit.
+                _cm = string.Equals(d.Units, "cm", StringComparison.OrdinalIgnoreCase);
+                cboUnit.SelectedIndex = _cm ? 1 : 0;
+                UpdateUnitLabels();
+                double f = _cm ? CmPerIn : 1.0;
+                txtDiameter.Text = Math.Round(d.PlotDiameterIn * f, 3)
+                    .ToString(CultureInfo.InvariantCulture);
+                txtInner.Text = Math.Round(d.InnerDiameterIn * f, 3)
+                    .ToString(CultureInfo.InvariantCulture);
+                _colBearing = PolarPlotStyleDto.ToColor(d.BearingLine, _colBearing);
+                ApplyColor(cpBearing, _colBearing);
+                txtBearingWidth.Text = d.BearingLineWidthPt.ToString(CultureInfo.InvariantCulture);
+                txtWindClasses.Text = d.WindClasses.ToString(CultureInfo.InvariantCulture);
+                _colWindLow = PolarPlotStyleDto.ToColor(d.WindLow, _colWindLow);
+                _colWindHigh = PolarPlotStyleDto.ToColor(d.WindHigh, _colWindHigh);
+                _colMean = PolarPlotStyleDto.ToColor(d.MeanArrowColor, _colMean);
+                ApplyColor(cpWindLow, _colWindLow);
+                ApplyColor(cpWindHigh, _colWindHigh);
+                ApplyColor(cpMean, _colMean);
+                txtSmooth.Text = d.SmoothingDeg.ToString(CultureInfo.InvariantCulture);
+                txtDot.Text = Math.Round(d.DotDiameterIn * f, 3)
+                    .ToString(CultureInfo.InvariantCulture);
+                chkSqrt.IsChecked = d.EqualArea;
+                chkMeanArrow.IsChecked = d.ShowMeanArrow;
+                chkMeanCI.IsChecked = d.ShowMeanCI;
                 _colBinFill = PolarPlotStyleDto.ToColor(d.BinFill, _colBinFill);
                 _colBinOutline = PolarPlotStyleDto.ToColor(d.BinOutline, _colBinOutline);
                 _colLow = PolarPlotStyleDto.ToColor(d.LowDensity, _colLow);

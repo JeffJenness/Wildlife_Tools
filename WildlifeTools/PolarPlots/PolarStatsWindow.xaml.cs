@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
+using System.Text;
 using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Media;
@@ -10,12 +12,20 @@ namespace WildlifeTools.PolarPlots
 {
     /// <summary>
     /// Resizable window presenting the Circular Descriptive Statistics as a
-    /// formatted document (RichTextBox). The plain-text version is copied to
-    /// the clipboard ONLY when the user clicks "Copy to clipboard".
+    /// formatted document (RichTextBox). Nothing touches the clipboard until
+    /// the user clicks one of the copy buttons:
+    ///   Copy Raw Text  -- plain text;
+    ///   Copy Rich Text -- RTF serialized from the displayed document itself,
+    ///                     so Word/PowerPoint paste exactly what is shown;
+    ///   Copy Esri-formatted Text -- text carrying ArcGIS text-formatting tags
+    ///                     (BOL / CLR / FNT), for pasting into a layout TEXT
+    ///                     element where ArcGIS renders the formatting.
     /// </summary>
     public partial class PolarStatsWindow : ArcGIS.Desktop.Framework.Controls.ProWindow
     {
         private readonly string _plainText;
+        private readonly CircularStats _stats;
+        private readonly IReadOnlyList<string> _headers;
         private static readonly CultureInfo CI = CultureInfo.InvariantCulture;
 
         internal PolarStatsWindow(CircularStats st, IReadOnlyList<string> headerLines,
@@ -23,6 +33,8 @@ namespace WildlifeTools.PolarPlots
         {
             InitializeComponent();
             _plainText = plainText ?? "";
+            _stats = st;
+            _headers = headerLines;
             rtb.Document = BuildDocument(st, headerLines);
         }
 
@@ -42,7 +54,7 @@ namespace WildlifeTools.PolarPlots
 
             if (headers != null && headers.Count > 0)
             {
-                var hp = new Paragraph { Margin = new Thickness(0, 0, 0, 8) };
+                var hp = RulePara();
                 hp.Inlines.Add(new Bold(new Run("Input Parameters")));
                 foreach (var h in headers)
                 {
@@ -50,7 +62,6 @@ namespace WildlifeTools.PolarPlots
                     hp.Inlines.Add(new Run("   " + h));
                 }
                 doc.Blocks.Add(hp);
-                doc.Blocks.Add(Rule());
             }
 
             void AddStat(Paragraph p, string name, string value, string refs = null)
@@ -63,7 +74,7 @@ namespace WildlifeTools.PolarPlots
                 p.Inlines.Add(new LineBreak());
             }
 
-            var sp = new Paragraph { Margin = new Thickness(0, 6, 0, 6) };
+            var sp = RulePara();
             AddStat(sp, "Count of values analyzed", st.Count.ToString("N0", CI));
             if (st.Weighted)
                 AddStat(sp, "Total weight", st.TotalWeight.ToString("N4", CI));
@@ -81,13 +92,13 @@ namespace WildlifeTools.PolarPlots
                 st.AngularDeviationRad.ToString("F5", CI) + " Radians = " +
                 st.AngularDeviationDeg.ToString("F5", CI) + " Degrees", "[C]");
             doc.Blocks.Add(sp);
-            doc.Blocks.Add(Rule());
 
-            var xp = new Paragraph { Margin = new Thickness(0, 6, 0, 6) };
+            var xp = RulePara();
             AddStat(xp, "Median Direction", double.IsNaN(st.MedianDirectionDeg)
                 ? "undefined" : st.MedianDirectionDeg.ToString("F5", CI) + " Degrees", "[A,B]");
             AddStat(xp, "Circular Range", st.CircularRangeDeg.ToString("F5", CI) + " Degrees", "[A,B]");
             AddStat(xp, "von Mises Concentration (kappa)", st.VonMisesKappa.ToString("F5", CI), "[A,D]");
+            AddStat(xp, "Mean Direction 95% CI", st.MeanCiText(CI), "[A,D]");
             AddStat(xp, "Rayleigh Test of Uniformity",
                 "Z = " + st.RayleighZ.ToString("F5", CI) + ", p = " + st.RayleighP.ToString("F5", CI), "[A,E]");
             if (st.Weighted)
@@ -95,46 +106,214 @@ namespace WildlifeTools.PolarPlots
                     "(Median, Range and the Rayleigh test are computed on the " +
                     "unweighted azimuths.)")) { FontSize = 11 });
             doc.Blocks.Add(xp);
-            doc.Blocks.Add(Rule());
 
             var rp = new Paragraph { FontSize = 11, Foreground = Brushes.Gray };
-            rp.Inlines.Add(new Run(
-                "[A] Fisher, N. I. 1993. Statistical Analysis of Circular Data. Cambridge University Press."));
-            rp.Inlines.Add(new LineBreak());
-            rp.Inlines.Add(new Run(
-                "[B] Mardia, K. V., and P. E. Jupp. 2000. Directional Statistics. Wiley."));
-            rp.Inlines.Add(new LineBreak());
-            rp.Inlines.Add(new Run(
-                "[C] Batschelet, E. 1981. Circular Statistics in Biology. Academic Press."));
-            rp.Inlines.Add(new LineBreak());
-            rp.Inlines.Add(new Run(
-                "[D] Best, D. J., and N. I. Fisher. 1981. Communications in Statistics - " +
-                "Simulation and Computation 10(5):493-502."));
-            rp.Inlines.Add(new LineBreak());
-            rp.Inlines.Add(new Run(
-                "[E] Zar, J. H. 1999. Biostatistical Analysis, 4th ed. Prentice Hall, ch. 27."));
+            foreach (string r in References())
+            {
+                rp.Inlines.Add(new Run(r));
+                rp.Inlines.Add(new LineBreak());
+            }
             doc.Blocks.Add(rp);
             return doc;
         }
 
-        private static BlockUIContainer Rule() => new BlockUIContainer(
-            new System.Windows.Controls.Border
-            {
-                Height = 1,
-                Background = new SolidColorBrush(Color.FromArgb(60, 0, 0, 0)),
-                Margin = new Thickness(0, 2, 0, 2),
-            });
-
-        private void OnCopy(object sender, RoutedEventArgs e)
+        private static string[] References() => new[]
         {
+            "[A] Fisher, N. I. 1993. Statistical Analysis of Circular Data. Cambridge University Press.",
+            "[B] Mardia, K. V., and P. E. Jupp. 2000. Directional Statistics. Wiley.",
+            "[C] Batschelet, E. 1981. Circular Statistics in Biology. Academic Press.",
+            "[D] Best, D. J., and N. I. Fisher. 1981. Communications in Statistics - Simulation and Computation 10(5):493-502.",
+            "[E] Zar, J. H. 1999. Biostatistical Analysis, 4th ed. Prentice Hall, ch. 27.",
+        };
+
+        /// <summary>A paragraph with a bottom hairline border -- unlike a
+        /// BlockUIContainer, a paragraph border survives RTF serialization, so
+        /// the section rules paste into Word.</summary>
+        private static Paragraph RulePara() => new Paragraph
+        {
+            Margin = new Thickness(0, 4, 0, 8),
+            Padding = new Thickness(0, 0, 0, 6),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(70, 0, 0, 0)),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+        };
+
+        // ---- copy buttons ---------------------------------------------------
+        private void OnCopyRaw(object sender, RoutedEventArgs e)
+        {
+            if (TryClipboard(() => Clipboard.SetText(_plainText)))
+                ShowToast(sender, "✓ Report copied as plain text");
+        }
+
+        private void OnCopyRtf(object sender, RoutedEventArgs e)
+        {
+            bool ok = TryClipboard(() =>
+            {
+                // Serialize the displayed document itself, so what pastes into
+                // Word is exactly what this window shows.
+                var range = new TextRange(rtb.Document.ContentStart,
+                                          rtb.Document.ContentEnd);
+                string rtf;
+                using (var ms = new MemoryStream())
+                {
+                    range.Save(ms, DataFormats.Rtf);
+                    rtf = Encoding.UTF8.GetString(ms.ToArray());
+                }
+                var data = new DataObject();
+                data.SetData(DataFormats.Rtf, rtf);
+                data.SetData(DataFormats.UnicodeText, _plainText); // plain fallback
+                Clipboard.SetDataObject(data, true);
+            });
+            if (ok)
+                ShowToast(sender, "✓ Report copied as rich text " +
+                                  "(paste into Word, PowerPoint, ...)");
+        }
+
+        private void OnCopyEsri(object sender, RoutedEventArgs e)
+        {
+            if (TryClipboard(() => Clipboard.SetText(BuildEsriTagged())))
+                ShowToast(sender, "✓ Esri-formatted text copied " +
+                                  "(paste into a layout text element)");
+        }
+
+        /// <summary>One-click: place the report as a formatted text element on
+        /// the active layout (the same Esri-tagged text as Copy Esri-formatted
+        /// Text, no clipboard round-trip).</summary>
+        private async void OnAddToLayout(object sender, RoutedEventArgs e)
+        {
+            string tagged = BuildEsriTagged();
             try
             {
-                Clipboard.SetText(_plainText);
+                string where = await ArcGIS.Desktop.Framework.Threading.Tasks
+                    .QueuedTask.Run(() => PolarPlotCim.PlaceStatsTextOnLayout(tagged));
+                ShowToast(sender, "✓ " + where);
             }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "Polar Plots");
+            }
+        }
+
+        // ---- transient toast ------------------------------------------------
+        // Small self-dismissing confirmation bubble above the clicked button,
+        // so every Copy / Add click gives visible feedback without a modal
+        // dialog to dismiss.
+        private System.Windows.Controls.Primitives.Popup _toast;
+        private System.Windows.Threading.DispatcherTimer _toastTimer;
+
+        private void ShowToast(object nearButton, string message)
+        {
+            if (_toast == null)
+            {
+                _toast = new System.Windows.Controls.Primitives.Popup
+                {
+                    AllowsTransparency = true,
+                    Placement = System.Windows.Controls.Primitives.PlacementMode.Top,
+                    StaysOpen = true,
+                    PopupAnimation = System.Windows.Controls.Primitives.PopupAnimation.Fade,
+                };
+                _toastTimer = new System.Windows.Threading.DispatcherTimer
+                { Interval = TimeSpan.FromSeconds(2.2) };
+                _toastTimer.Tick += (s2, e2) =>
+                { _toastTimer.Stop(); _toast.IsOpen = false; };
+                Closed += (s2, e2) =>
+                { _toastTimer.Stop(); _toast.IsOpen = false; };
+            }
+            _toastTimer.Stop();
+            _toast.IsOpen = false;                 // restart if already showing
+            _toast.PlacementTarget = nearButton as UIElement ?? this;
+            _toast.Child = new System.Windows.Controls.Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(235, 45, 45, 45)),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(10, 6, 10, 6),
+                Margin = new Thickness(0, 0, 0, 6),
+                Child = new System.Windows.Controls.TextBlock
+                {
+                    Text = message,
+                    Foreground = Brushes.White,
+                    FontSize = 12,
+                    MaxWidth = 340,
+                    TextWrapping = TextWrapping.Wrap,
+                },
+            };
+            _toast.IsOpen = true;
+            _toastTimer.Start();
+        }
+
+        /// <summary>
+        /// The report as text with ArcGIS text-formatting tags (see Esri's
+        /// "Text formatting tags" help page): BOL for the stat names, CLR for
+        /// the gray citation markers, FNT size for the heading. Paste into a
+        /// layout TEXT element's text and ArcGIS renders the formatting.
+        /// </summary>
+        private string BuildEsriTagged()
+        {
+            var sb = new StringBuilder();
+            var st = _stats;
+            sb.AppendLine("<FNT size=\"14\"><BOL>Circular Descriptive Statistics</BOL></FNT>");
+            sb.AppendLine();
+            if (_headers != null && _headers.Count > 0)
+            {
+                sb.AppendLine("<BOL>Input Parameters</BOL>");
+                foreach (var h in _headers) sb.AppendLine("   " + EscapeEsri(h));
+                sb.AppendLine();
+            }
+            void Line(string name, string value, string refs = null)
+            {
+                sb.Append("<BOL>").Append(EscapeEsri(name)).Append(" = </BOL>")
+                  .Append(EscapeEsri(value));
+                if (!string.IsNullOrEmpty(refs))
+                    sb.Append("  <CLR red=\"128\" green=\"128\" blue=\"128\">")
+                      .Append(refs).Append("</CLR>");
+                sb.AppendLine();
+            }
+            Line("Count of values analyzed", st.Count.ToString("N0", CI));
+            if (st.Weighted) Line("Total weight", st.TotalWeight.ToString("N4", CI));
+            Line("Mean Direction", double.IsNaN(st.MeanDirectionDeg)
+                ? "undefined (resultant length is zero)"
+                : st.MeanDirectionDeg.ToString("F5", CI) + " Degrees");
+            Line("Resultant Length", st.ResultantLength.ToString("F5", CI));
+            Line("Mean Resultant Length", st.MeanResultantLength.ToString("F4", CI));
+            Line("Circular Variance", st.CircularVariance.ToString("F4", CI), "[A,B]");
+            Line("Angular Variance", st.AngularVariance.ToString("F5", CI), "[C]");
+            Line("Circular Standard Deviation",
+                st.CircularSdRad.ToString("F5", CI) + " Radians = " +
+                st.CircularSdDeg.ToString("F5", CI) + " Degrees", "[A,B]");
+            Line("Angular Deviation",
+                st.AngularDeviationRad.ToString("F5", CI) + " Radians = " +
+                st.AngularDeviationDeg.ToString("F5", CI) + " Degrees", "[C]");
+            sb.AppendLine();
+            Line("Median Direction", double.IsNaN(st.MedianDirectionDeg)
+                ? "undefined" : st.MedianDirectionDeg.ToString("F5", CI) + " Degrees", "[A,B]");
+            Line("Circular Range", st.CircularRangeDeg.ToString("F5", CI) + " Degrees", "[A,B]");
+            Line("von Mises Concentration (kappa)", st.VonMisesKappa.ToString("F5", CI), "[A,D]");
+            Line("Mean Direction 95% CI", st.MeanCiText(CI), "[A,D]");
+            Line("Rayleigh Test of Uniformity",
+                "Z = " + st.RayleighZ.ToString("F5", CI) + ", p = " +
+                st.RayleighP.ToString("F5", CI), "[A,E]");
+            if (st.Weighted)
+                sb.AppendLine("<ITA>(Median, Range and the Rayleigh test are " +
+                              "computed on the unweighted azimuths.)</ITA>");
+            sb.AppendLine();
+            foreach (string r in References())
+                sb.Append("<FNT size=\"7\"><CLR red=\"110\" green=\"110\" blue=\"110\">")
+                  .Append(EscapeEsri(r)).AppendLine("</CLR></FNT>");
+            return sb.ToString();
+        }
+
+        /// <summary>ArcGIS parses formatting tags as XML, so literal &amp;, &lt;
+        /// and &gt; in the visible text must be escaped.</summary>
+        private static string EscapeEsri(string s) => (s ?? "")
+            .Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+
+        private static bool TryClipboard(Action a)
+        {
+            try { a(); return true; }
             catch (Exception ex)
             {
                 MessageBox.Show("Could not copy to the clipboard: " + ex.Message,
                     "Polar Plots");
+                return false;
             }
         }
 

@@ -50,7 +50,22 @@ namespace WildlifeTools.PolarPlots
 
         public int PlotTypeIndex { get; set; }         // combo index (0..)
         public int BinCount { get; set; } = 72;
+        public string Units { get; set; } = "in";      // "in"/"cm" display unit
+                                                       // (diameters below stay inches)
         public double PlotDiameterIn { get; set; } = 4.0;
+        public double InnerDiameterIn { get; set; } = 1.5;
+        public int[] BearingLine { get; set; }
+        public double BearingLineWidthPt { get; set; } = 0.5;
+
+        public int WindClasses { get; set; } = 4;
+        public int[] WindLow { get; set; }
+        public int[] WindHigh { get; set; }
+        public double SmoothingDeg { get; set; } = 20.0;
+        public double DotDiameterIn { get; set; } = 0.08;   // inches, like the diameters
+        public bool EqualArea { get; set; }
+        public bool ShowMeanArrow { get; set; }
+        public bool ShowMeanCI { get; set; }
+        public int[] MeanArrowColor { get; set; }
 
         public int[] BinFill { get; set; }
         public int[] BinOutline { get; set; }

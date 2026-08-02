@@ -19,7 +19,7 @@ namespace WildlifeTools.PolarPlots
         private static readonly CultureInfo CI = CultureInfo.InvariantCulture;
 
         public static DrawingGroup Render(PolarPlotModel m, double pixelsPerDip = 1.0,
-                                          bool showRulers = false)
+                                          bool showRulers = false, bool rulersCm = false)
         {
             var dg = new DrawingGroup();
             using (var dc = dg.Open())
@@ -37,7 +37,7 @@ namespace WildlifeTools.PolarPlots
                     switch (e.Kind)
                     {
                         case PolarElementKind.Circle:
-                            dc.DrawEllipse(null, Pen(e), new Point(X(e.Center.X), Y(e.Center.Y)),
+                            dc.DrawEllipse(Fill(e), Pen(e), new Point(X(e.Center.X), Y(e.Center.Y)),
                                 e.Radius * PxPerIn, e.Radius * PxPerIn);
                             break;
                         case PolarElementKind.Line:
@@ -58,19 +58,23 @@ namespace WildlifeTools.PolarPlots
                 }
 
                 if (showRulers)
-                    DrawRulers(dc, m, pixelsPerDip);
+                    DrawRulers(dc, m, pixelsPerDip, rulersCm);
             }
             dg.Freeze();
             return dg;
         }
 
         /// <summary>
-        /// Inch rulers along the inside of the TOP and LEFT edges of the canvas
-        /// (preview only -- never exported). Ticks every 1/4 inch, numbers at
-        /// whole inches, so the plot-diameter setting is easy to judge.
+        /// Rulers along the inside of the TOP and LEFT edges of the canvas
+        /// (preview only -- never exported), in inches or centimeters to match
+        /// the dialog's unit choice. Ticks every 1/4 unit, numbers at whole
+        /// units, so the plot-diameter setting is easy to judge.
         /// </summary>
-        private static void DrawRulers(DrawingContext dc, PolarPlotModel m, double ppd)
+        private static void DrawRulers(DrawingContext dc, PolarPlotModel m, double ppd,
+                                       bool cm)
         {
+            double inPerUnit = cm ? 1.0 / 2.54 : 1.0;   // model space is inches
+            double pxPerUnit = inPerUnit * PxPerIn;
             double wPx = 2 * m.HalfWidthIn * PxPerIn;
             double hPx = 2 * m.HalfHeightIn * PxPerIn;
             var pen = new Pen(new SolidColorBrush(Color.FromRgb(140, 140, 140)), 1.0);
@@ -81,25 +85,27 @@ namespace WildlifeTools.PolarPlots
 
             // Top ruler.
             dc.DrawLine(pen, new Point(0, 0.5), new Point(wPx, 0.5));
-            for (double x = 0; x <= 2 * m.HalfWidthIn + 1e-9; x += 0.25)
+            for (double x = 0; x * pxPerUnit <= wPx + 1e-6; x += 0.25)
             {
-                double px = x * PxPerIn;
+                double px = x * pxPerUnit;
                 bool whole = Math.Abs(x - Math.Round(x)) < 1e-9;
                 bool half = !whole && Math.Abs(x * 2 - Math.Round(x * 2)) < 1e-9;
                 double len = whole ? 10 : (half ? 7 : 4);
                 dc.DrawLine(pen, new Point(px, 0), new Point(px, len));
                 if (whole)
                 {
-                    var ft = new FormattedText(((int)Math.Round(x)).ToString(CI),
+                    string t = ((int)Math.Round(x)).ToString(CI) +
+                               (x < 1e-9 ? (cm ? " cm" : " in") : "");
+                    var ft = new FormattedText(t,
                         CI, FlowDirection.LeftToRight, tf, 9, textBrush, ppd);
                     dc.DrawText(ft, new Point(px + 2, 10));
                 }
             }
             // Left ruler.
             dc.DrawLine(pen, new Point(0.5, 0), new Point(0.5, hPx));
-            for (double y = 0; y <= 2 * m.HalfHeightIn + 1e-9; y += 0.25)
+            for (double y = 0; y * pxPerUnit <= hPx + 1e-6; y += 0.25)
             {
-                double py = y * PxPerIn;
+                double py = y * pxPerUnit;
                 bool whole = Math.Abs(y - Math.Round(y)) < 1e-9;
                 bool half = !whole && Math.Abs(y * 2 - Math.Round(y * 2)) < 1e-9;
                 double len = whole ? 10 : (half ? 7 : 4);
@@ -116,15 +122,20 @@ namespace WildlifeTools.PolarPlots
         private static Geometry PolyGeom(PolarElement e, Func<double, double> X,
             Func<double, double> Y, bool closed)
         {
-            var g = new StreamGeometry();
+            var g = new StreamGeometry { FillRule = FillRule.EvenOdd };
             using (var ctx = g.Open())
             {
-                if (e.Points.Count == 0) return g;
                 bool filled = closed && Fill(e) != null;
-                ctx.BeginFigure(new Point(X(e.Points[0].X), Y(e.Points[0].Y)),
-                    filled, closed);
-                for (int i = 1; i < e.Points.Count; i++)
-                    ctx.LineTo(new Point(X(e.Points[i].X), Y(e.Points[i].Y)), true, false);
+                var rings = e.Rings ?? new System.Collections.Generic.List<
+                    System.Collections.Generic.List<PtIn>> { e.Points };
+                foreach (var ring in rings)
+                {
+                    if (ring == null || ring.Count == 0) continue;
+                    ctx.BeginFigure(new Point(X(ring[0].X), Y(ring[0].Y)),
+                        filled, closed);
+                    for (int i = 1; i < ring.Count; i++)
+                        ctx.LineTo(new Point(X(ring[i].X), Y(ring[i].Y)), true, false);
+                }
             }
             g.Freeze();
             return g;

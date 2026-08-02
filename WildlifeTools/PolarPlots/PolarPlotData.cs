@@ -30,7 +30,9 @@ namespace WildlifeTools.PolarPlots
         {
             public List<double> Azimuths = new List<double>();
             public List<double> Weights = new List<double>();
+            public List<double> Magnitudes = new List<double>();  // NaN = missing
             public bool Weighted;
+            public bool HasMagnitudes;             // magnitude field was read
             public int RawCount;                   // rows read
             public int ExcludedNegative;
             public int UsableCount => Azimuths.Count;
@@ -95,7 +97,10 @@ namespace WildlifeTools.PolarPlots
                     ? def.FindField(s.AzimuthField) : -1;
                 int wIdx = (s.WeightOption == PolarWeightOption.ByAttribute)
                     ? def.FindField(s.WeightField) : -1;
+                int magIdx = string.IsNullOrEmpty(s.MagnitudeField)
+                    ? -1 : def.FindField(s.MagnitudeField);
                 res.Weighted = s.WeightOption != PolarWeightOption.None;
+                res.HasMagnitudes = magIdx >= 0;
 
                 var qf = new QueryFilter();
                 if (s.UseSelectedOnly)
@@ -141,9 +146,14 @@ namespace WildlifeTools.PolarPlots
                             }
                             if (weight <= 0.0 && res.Weighted) continue;
 
-                            AddValue(res, az, weight, s);
+                            double mag = double.NaN;
+                            if (magIdx >= 0 && !TryDouble(row[magIdx], out mag))
+                                mag = double.NaN;
+
+                            AddValue(res, az, weight, mag, s);
                             if (s.AddReverse)
-                                AddValue(res, CircularStats.Mod360(az + 180.0), weight, s);
+                                AddValue(res, CircularStats.Mod360(az + 180.0),
+                                         weight, mag, s);
                         }
                     }
                 }
@@ -151,7 +161,8 @@ namespace WildlifeTools.PolarPlots
             return res;
         }
 
-        private static void AddValue(Result res, double az, double weight, PolarPlotSettings s)
+        private static void AddValue(Result res, double az, double weight, double mag,
+                                     PolarPlotSettings s)
         {
             // Exclude-negative handling before normalizing into 0-360.
             if (s.ExcludeMinusOneOnly)
@@ -165,6 +176,7 @@ namespace WildlifeTools.PolarPlots
             }
             res.Azimuths.Add(CircularStats.Mod360(az));
             res.Weights.Add(res.Weighted ? weight : 1.0);
+            res.Magnitudes.Add(mag);
         }
 
         private static IReadOnlyList<long> GetSelectedIds(Source src)

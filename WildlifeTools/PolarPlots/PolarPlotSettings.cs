@@ -11,6 +11,10 @@ namespace WildlifeTools.PolarPlots
         ExternalPeaksAndValleys = 4,
         ExternalBins = 5,
         Bearings = 6,
+        // Phase 3:
+        WindRose = 7,          // petals stacked by a magnitude field's classes
+        SmoothedDensity = 8,   // von Mises kernel density silhouette
+        DotPlot = 9,           // one dot per observation, stacked inward
     }
 
     internal enum PolarWeightOption { None = 1, ByLength = 2, ByAttribute = 3 }
@@ -37,6 +41,26 @@ namespace WildlifeTools.PolarPlots
         public double BinOutlineWidthPt = 0.5;
         public RgbaColor LowDensity = new RgbaColor(230, 240, 255, 255);
         public RgbaColor HighDensity = new RgbaColor(30, 70, 140, 255);
+        public RgbaColor BearingLine = new RgbaColor(60, 140, 60, 255);
+        public double BearingLineWidthPt = 0.5;   // >= 0.2 in the original tool
+
+        // Wind rose (stacked petals banded by a magnitude field).
+        public string MagnitudeField = "";
+        public int WindClasses = 4;                // 1..9 equal-interval bands
+        public RgbaColor WindLow = new RgbaColor(255, 244, 191, 255);
+        public RgbaColor WindHigh = new RgbaColor(178, 44, 28, 255);
+
+        // Smoothed density (von Mises kernel, Fisher 1993).
+        public double SmoothingDeg = 20.0;         // kernel SD in degrees
+
+        // Dot plot (one dot per observation; column width follows dot size).
+        public double DotDiameterIn = 0.08;
+
+        // Overlays.
+        public bool EqualArea = false;             // sqrt-radius petal scaling
+        public bool ShowMeanArrow = false;         // arrow, length = r-bar
+        public bool ShowMeanCI = false;            // 95% confidence arc
+        public RgbaColor MeanArrowColor = new RgbaColor(200, 30, 30, 255);
 
         // Reference lines.
         public bool ShowPrimaryRefLines = true;   // N/E/S/W rays + outer circle
