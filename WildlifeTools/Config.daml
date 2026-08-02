@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.41.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.42.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -52,8 +52,9 @@
           <menu refID="WildlifeTools_TPIMenu" size="large" />
           <menu refID="WildlifeTools_AspectToolsMenu" size="large" />
         </group>
-        <group id="WildlifeTools_GroupDirectional" caption="Directional" appearsOnAddInTab="false">
+        <group id="WildlifeTools_GroupDirectional" caption="Terrain Graphs" appearsOnAddInTab="false">
           <button refID="WildlifeTools_PolarPlots" size="large" />
+          <button refID="WildlifeTools_SlopeGraphic" size="large" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -604,6 +605,17 @@
                 keytip="PP">
           <tooltip heading="Polar Plots">
             Opens the interactive Polar Plots window: generate a circular plot of directional data from a feature class or table -- Peaks and Valleys, Circular Bins (Rose), Shade by Density, the External variants, or a Bearings plot -- adjust it live, and save it as an SVG file or place it as a grouped, fully editable graphic on the layout or map. Azimuths come from an attribute field or are derived from polyline direction (geodesic on lat/long data), optionally weighted by length or an attribute. Also reports circular descriptive statistics (mean direction, dispersion, Rayleigh test, von Mises concentration, and more) that can be copied as raw / rich / Esri-formatted text or placed on a layout as a text element in one click. Reusable style presets save every appearance option. A modernized recreation of the Jenness Enterprises Polar Plots extension for ArcMap.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_SlopeGraphic"
+                caption="Slope Graphic"
+                className="SlopeGraphic.SlopeGraphicButton"
+                loadOnClick="true"
+                smallImage="Images\SlopeGraphic_16.png"
+                largeImage="Images\SlopeGraphic_32.png"
+                keytip="SG">
+          <tooltip heading="Slope Graphic">
+            Opens the interactive Slope Graphic window: an intuitive visual summary of the slope in an area -- a line inclined at the MEAN slope, a wedge spanning one standard deviation either side of it, a wedge spanning the full min-max range, an optional robust percentile wedge, a dashed median line, a protractor scale arc, and an arcing 95% confidence interval of the mean. Reads slope from a numeric field on a feature layer or table, or streams an entire slope raster (any size) into exact statistics; values may be in degrees, percent slope, rise:run ratio, or gradians. Adjust everything live and save the graphic as an SVG file or place it as a grouped, fully editable graphic on the layout or map, with slope statistics one click away. A modernized recreation of the Slope Graphic from the Jenness Enterprises Grid Tools extension for ArcView 3.x.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_Sudoku"

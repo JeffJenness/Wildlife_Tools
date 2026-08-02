@@ -204,7 +204,8 @@ namespace WildlifeTools.PolarPlots
         /// dimension). Returns a description of where it went, or throws with a
         /// user-frien­dly message. MCT.
         /// </summary>
-        public static string PlaceOnActiveView(PolarPlotModel m, string name)
+        public static string PlaceOnActiveView(PolarPlotModel m, string name,
+                                               string graphicsLayerName = "Polar Plots")
         {
             var lv = LayoutView.Active;
             if (lv?.Layout != null)
@@ -231,9 +232,9 @@ namespace WildlifeTools.PolarPlots
                 var map = mv.Map;
                 GraphicsLayer gl = map.GetLayersAsFlattenedList()
                     .OfType<GraphicsLayer>()
-                    .FirstOrDefault(g => g.Name == "Polar Plots")
+                    .FirstOrDefault(g => g.Name == graphicsLayerName)
                     ?? LayerFactory.Instance.CreateLayer<GraphicsLayer>(
-                        new GraphicsLayerCreationParams { Name = "Polar Plots" }, map);
+                        new GraphicsLayerCreationParams { Name = graphicsLayerName }, map);
                 var ext = mv.Extent;
                 double cx = (ext.XMin + ext.XMax) / 2.0;
                 double cy = (ext.YMin + ext.YMax) / 2.0;
@@ -242,8 +243,8 @@ namespace WildlifeTools.PolarPlots
                 var grp = Place(m, gl, cx, cy, upi, name);
                 if (grp == null) throw new InvalidOperationException(
                     "No plot elements could be created in the graphics layer.");
-                return "Added to the 'Polar Plots' graphics layer in map '" +
-                       map.Name + "'.";
+                return "Added to the '" + graphicsLayerName +
+                       "' graphics layer in map '" + map.Name + "'.";
             }
 
             throw new InvalidOperationException(

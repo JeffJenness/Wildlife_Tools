@@ -1,0 +1,304 @@
+<controls:ProWindow x:Class="WildlifeTools.SlopeGraphic.SlopeGraphicWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        xmlns:mapctl="clr-namespace:ArcGIS.Desktop.Mapping.Controls;assembly=ArcGIS.Desktop.Mapping"
+        Title="Slope Graphic" WindowStartupLocation="CenterOwner"
+        Width="960" Height="720" MinWidth="760" MinHeight="540"
+        ShowInTaskbar="False">
+  <controls:ProWindow.Resources>
+    <Style TargetType="Expander">
+      <Setter Property="Margin" Value="0,2,0,2" />
+      <Setter Property="IsExpanded" Value="False" />
+    </Style>
+    <Style TargetType="Label"><Setter Property="Padding" Value="0,2,4,2" /></Style>
+    <!-- Wrap every tooltip at a readable width instead of one screen-wide line. -->
+    <Style TargetType="ToolTip">
+      <Setter Property="MaxWidth" Value="420" />
+      <Setter Property="ContentTemplate">
+        <Setter.Value>
+          <DataTemplate>
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="400" />
+          </DataTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </controls:ProWindow.Resources>
+
+  <Grid Margin="8">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="380" />
+      <ColumnDefinition Width="6" />
+      <ColumnDefinition Width="*" />
+    </Grid.ColumnDefinitions>
+
+    <!-- ===== settings ===== -->
+    <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
+      <StackPanel>
+
+        <Border BorderBrush="#33000000" BorderThickness="0,0,0,1" Padding="0,0,0,4" Margin="0,0,0,4">
+          <StackPanel Orientation="Horizontal">
+            <Label Content="Style presets:" VerticalAlignment="Center" />
+            <Button Content="Load..." Padding="10,2" Margin="4,0" Click="OnLoadStyle"
+                ToolTip="Load a saved Slope Graphic style (element toggles, colors, fonts, size) from a JSON preset file." />
+            <Button Content="Save..." Padding="10,2" Margin="4,0" Click="OnSaveStyle"
+                ToolTip="Save the current style (everything about appearance; nothing about the data source) to a named JSON preset file in your user profile." />
+          </StackPanel>
+        </Border>
+
+        <Expander Header="Data source" IsExpanded="True">
+          <StackPanel Margin="6,4,0,4">
+            <Label Content="Dataset" />
+            <ComboBox x:Name="cboSource" SelectionChanged="SourceSelChanged"
+                ToolTip="The dataset holding your slope values: a feature layer, a standalone table, or a SLOPE RASTER. All are listed from the active map. NOTE: a raster is ALWAYS analyzed over its ENTIRE extent (aside from optional cell sampling) -- to get statistics for a study area or management unit, clip the raster to that area of interest first, add the clipped raster to the map, and analyze that." />
+            <Label Content="Slope values are" Margin="0,6,0,0" />
+            <ComboBox x:Name="cboSlopeUnit" SelectedIndex="0" SelectionChanged="RereadSel"
+                ToolTip="The unit of the slope values in the data. Degrees: 0-90. Percent slope: 100 × rise/run, so 45° = 100% (also called grade). Rise:run ratio: 0.5 = 26.57°. Gradians (gons): 100 gon = 90°. For a RASTER source the unit is set automatically when the raster's geoprocessing history records how the slope was computed (Esri's Slope / Surface Parameters tools write DEGREE or PERCENT_RISE into the metadata lineage) -- you can always override it here. The mean, standard deviation and confidence interval are ALWAYS computed on the slope ANGLES (percent/ratio values pass through the arctangent first) and converted back to this unit for display: averaging raw percent-slope values biases steepness statistics high, because percent is the tangent of the angle and a single near-vertical cell (5,000%+) can dominate the mean. The average steepness of a landscape does not depend on the unit it was measured in. Median, percentiles, minimum and maximum are unaffected either way.">
+              <ComboBoxItem Content="Degrees (0–90)"/>
+              <ComboBoxItem Content="Percent slope (rise/run × 100)"/>
+              <ComboBoxItem Content="Rise:run ratio"/>
+              <ComboBoxItem Content="Gradians (gons)"/>
+            </ComboBox>
+            <StackPanel x:Name="pnlRasterSource" Visibility="Collapsed" Margin="0,6,0,0">
+              <Label Content="Cell sampling" />
+              <ComboBox x:Name="cboRasterSample" SelectedIndex="0" SelectionChanged="RereadSel"
+                  ToolTip="How much of the raster to read. Auto reads every cell up to about 100 million cells, then switches to systematic sampling (every 2nd/4th/... cell in each direction); the sampling used is reported below the graphic. Cell values stream into exact running sums plus fine 0.01-degree bins during the read, so statistics are exact for the cells read. The ENTIRE raster extent is always considered -- clip the raster first to analyze a specific study area.">
+                <ComboBoxItem Content="Auto (recommended)"/>
+                <ComboBoxItem Content="Every cell"/>
+                <ComboBoxItem Content="Every 2nd cell"/>
+                <ComboBoxItem Content="Every 4th cell"/>
+                <ComboBoxItem Content="Every 8th cell"/>
+                <ComboBoxItem Content="Every 16th cell"/>
+              </ComboBox>
+            </StackPanel>
+            <StackPanel x:Name="pnlVectorSource">
+              <Label Content="Slope field" Margin="0,6,0,0" />
+              <ComboBox x:Name="cboField" SelectionChanged="RereadSel"
+                  ToolTip="The numeric field holding the slope values, in the unit chosen above. Negative values and values beyond vertical are excluded (and counted)." />
+              <Label Content="Weight" Margin="0,6,0,0" />
+              <RadioButton x:Name="rbWNone" Content="Do not weight" GroupName="SW"
+                  IsChecked="True" Checked="RereadRouted"
+                  ToolTip="Every record counts equally (weight 1)." />
+              <RadioButton x:Name="rbWLength" Content="By polyline length" GroupName="SW"
+                  Checked="RereadRouted"
+                  ToolTip="Weight each polyline's slope by the polyline's length, so long lines count more than short ones (geodesic length on lat/long data)." />
+              <RadioButton x:Name="rbWField" Content="By attribute field" GroupName="SW"
+                  Checked="RereadRouted"
+                  ToolTip="Weight each record by a numeric attribute value (for example, an area or count field)." />
+              <ComboBox x:Name="cboWField" Margin="16,2,0,0" SelectionChanged="RereadSel"
+                  ToolTip="The numeric field supplying each record's weight." />
+              <CheckBox x:Name="chkSelected" Content="Use selected records only"
+                  Margin="0,6,0,0" Checked="RereadRouted" Unchecked="RereadRouted"
+                  ToolTip="Analyze only the currently selected records; if nothing is selected, all records are used." />
+            </StackPanel>
+          </StackPanel>
+        </Expander>
+
+        <Expander Header="Graphic elements" IsExpanded="True">
+          <StackPanel Margin="6,4,0,4">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+              </Grid.ColumnDefinitions>
+              <CheckBox x:Name="chkMean" Content="Mean slope line" IsChecked="True"
+                  VerticalAlignment="Center" Checked="StyleRouted" Unchecked="StyleRouted"
+                  ToolTip="A line from the origin inclined at the MEAN slope. Its length sets the graphic's overall size." />
+              <mapctl:ColorPickerControl x:Name="cpMean" Grid.Column="1" Height="22" Margin="6,0,0,0"
+                  Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="StyleColor"
+                  ToolTip="Color of the mean slope line." />
+              <TextBox x:Name="txtMeanWidth" Grid.Column="2" Text="2" Margin="4,0,0,0"
+                  TextChanged="StyleText" ToolTip="Mean line width in points." />
+            </Grid>
+            <Grid Margin="0,3,0,0">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <CheckBox x:Name="chkMedian" Content="Median slope line (dashed)" IsChecked="True"
+                  VerticalAlignment="Center" Checked="StyleRouted" Unchecked="StyleRouted"
+                  ToolTip="The MEDIAN slope as a dashed line. Slope distributions are often right-skewed (a few cliffs drag the mean up), so mean-vs-median divergence is informative. Its value label is drawn only when the median differs visibly from the mean." />
+              <mapctl:ColorPickerControl x:Name="cpMedian" Grid.Column="1" Height="22" Margin="6,0,0,0"
+                  Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="StyleColor"
+                  ToolTip="Color of the median slope line." />
+            </Grid>
+            <Grid Margin="0,3,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <CheckBox x:Name="chkSd" Content="±1 SD wedge" IsChecked="True"
+                  VerticalAlignment="Center" Checked="StyleRouted" Unchecked="StyleRouted"
+                  ToolTip="Rounded wedge spanning one standard deviation either side of the mean (clamped at 0 and vertical). Its width shows the variability in slope." />
+              <mapctl:ColorPickerControl x:Name="cpSdFill" Grid.Column="1" Height="22" Margin="6,0,0,0"
+                  Loaded="PickerLoaded" IsNoColorVisible="True" SelectedColorChanged="StyleColor"
+                  ToolTip="Fill color of the SD wedge (classic: cyan)." />
+              <mapctl:ColorPickerControl x:Name="cpSdOutline" Grid.Column="2" Height="22" Margin="4,0,0,0"
+                  Loaded="PickerLoaded" IsNoColorVisible="True" SelectedColorChanged="StyleColor"
+                  ToolTip="Outline color of the SD wedge." />
+            </Grid>
+            <Grid Margin="0,3,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <CheckBox x:Name="chkRange" Content="Range wedge (min–max)" IsChecked="True"
+                  VerticalAlignment="Center" Checked="StyleRouted" Unchecked="StyleRouted"
+                  ToolTip="Wedge spanning the full minimum-to-maximum range of slope values. Sensitive to single outlier cells -- consider the percentile wedge as a robust alternative." />
+              <mapctl:ColorPickerControl x:Name="cpRangeFill" Grid.Column="1" Height="22" Margin="6,0,0,0"
+                  Loaded="PickerLoaded" IsNoColorVisible="True" SelectedColorChanged="StyleColor"
+                  ToolTip="Fill color of the range wedge (classic: pink)." />
+              <mapctl:ColorPickerControl x:Name="cpRangeOutline" Grid.Column="2" Height="22" Margin="4,0,0,0"
+                  Loaded="PickerLoaded" IsNoColorVisible="True" SelectedColorChanged="StyleColor"
+                  ToolTip="Outline color of the range wedge." />
+            </Grid>
+            <Grid Margin="0,3,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/><ColumnDefinition Width="44"/><ColumnDefinition Width="44"/>
+                <ColumnDefinition Width="*"/><ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <CheckBox x:Name="chkPctl" Content="Percentile wedge"
+                  VerticalAlignment="Center" Checked="StyleRouted" Unchecked="StyleRouted"
+                  ToolTip="Wedge spanning the chosen lower and upper percentiles (default 5th-95th): a robust alternative to the min-max range wedge, immune to isolated outlier cells." />
+              <TextBox x:Name="txtPctlLo" Grid.Column="1" Text="5" Margin="4,0,0,0"
+                  TextChanged="StyleText" ToolTip="Lower percentile (0-100)." />
+              <TextBox x:Name="txtPctlHi" Grid.Column="2" Text="95" Margin="4,0,0,0"
+                  TextChanged="StyleText" ToolTip="Upper percentile (0-100)." />
+              <mapctl:ColorPickerControl x:Name="cpPctlFill" Grid.Column="3" Height="22" Margin="4,0,0,0"
+                  Loaded="PickerLoaded" IsNoColorVisible="True" SelectedColorChanged="StyleColor"
+                  ToolTip="Fill color of the percentile wedge." />
+              <mapctl:ColorPickerControl x:Name="cpPctlOutline" Grid.Column="4" Height="22" Margin="4,0,0,0"
+                  Loaded="PickerLoaded" IsNoColorVisible="True" SelectedColorChanged="StyleColor"
+                  ToolTip="Outline color of the percentile wedge." />
+            </Grid>
+            <Grid Margin="0,3,0,0">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <CheckBox x:Name="chkCi" Content="95% CI of the mean (arc)" IsChecked="True"
+                  VerticalAlignment="Center" Checked="StyleRouted" Unchecked="StyleRouted"
+                  ToolTip="Arcing curve with end ticks spanning the 95% confidence interval of the MEAN slope (t-based; Zar 1999 ch. 7), just outside the mean line -- the same idiom as the Polar Plots mean-direction confidence arc. With millions of raster cells the interval is often a sliver: that is real (the mean is simply known very precisely)." />
+              <mapctl:ColorPickerControl x:Name="cpCi" Grid.Column="1" Height="22" Margin="6,0,0,0"
+                  Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="StyleColor"
+                  ToolTip="Color of the confidence arc." />
+            </Grid>
+            <Grid Margin="0,3,0,0">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <CheckBox x:Name="chkProtractor" Content="Protractor arc + ticks" IsChecked="True"
+                  VerticalAlignment="Center" Checked="StyleRouted" Unchecked="StyleRouted"
+                  ToolTip="A quarter-circle scale arc with tick marks every 5° (major every 10°), so the graphic self-reports its scale. Tick labels are always in degrees; the value labels on the graphic elements carry the source unit." />
+              <mapctl:ColorPickerControl x:Name="cpProtractor" Grid.Column="1" Height="22" Margin="6,0,0,0"
+                  Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="StyleColor"
+                  ToolTip="Color of the protractor arc, ticks, and degree labels." />
+            </Grid>
+            <CheckBox x:Name="chkProtLabels" Content="  Protractor degree labels" IsChecked="True"
+                Margin="16,2,0,0" Checked="StyleRouted" Unchecked="StyleRouted"
+                ToolTip="Degree labels (0°, 10°, ... 90°) at the major ticks." />
+            <CheckBox x:Name="chkBoundaryLabels" Content="Value labels on the elements" IsChecked="True"
+                Margin="0,3,0,0" Checked="StyleRouted" Unchecked="StyleRouted"
+                ToolTip="Small halo'd numeric labels (in the source unit) at the mean-line tip and at each wedge boundary, so the graphic is readable without the statistics text beside it." />
+            <Grid Margin="0,6,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/><ColumnDefinition Width="40"/>
+                <ColumnDefinition Width="86"/><ColumnDefinition Width="56"/>
+              </Grid.ColumnDefinitions>
+              <ComboBox x:Name="cboLabelFont" ToolTip="Font for the value and protractor labels."
+                  SelectionChanged="StyleSel" />
+              <TextBox x:Name="txtLabelSize" Grid.Column="1" Text="9" Margin="4,0,0,0"
+                  TextChanged="StyleText" ToolTip="Label size in points." />
+              <ComboBox x:Name="cboLabelStyle" Grid.Column="2" Margin="4,0,0,0"
+                  SelectionChanged="StyleSel" ToolTip="Label font style." />
+              <mapctl:ColorPickerControl x:Name="cpLabelColor" Grid.Column="3" Height="22" Margin="4,0,0,0"
+                  Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="StyleColor"
+                  ToolTip="Color of the value labels." />
+            </Grid>
+          </StackPanel>
+        </Expander>
+
+        <Expander Header="Size">
+          <StackPanel Margin="6,4,0,4">
+            <Label x:Name="lblSize" Content="Graphic size (in)" />
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/></Grid.ColumnDefinitions>
+              <TextBox x:Name="txtSize" Text="3.0" TextChanged="StyleText"
+                  ToolTip="Length of the mean slope line (the axes match it; wedges are proportionally shorter, the protractor slightly longer). The preview rulers use the same units." />
+              <ComboBox x:Name="cboUnit" Grid.Column="1" Margin="4,0,0,0" SelectedIndex="0"
+                  SelectionChanged="UnitChanged"
+                  ToolTip="Units for the graphic size and the preview rulers: inches or centimeters. Switching converts the value already in the box.">
+                <ComboBoxItem Content="in"/>
+                <ComboBoxItem Content="cm"/>
+              </ComboBox>
+            </Grid>
+          </StackPanel>
+        </Expander>
+
+        <Expander Header="Titles">
+          <StackPanel Margin="6,4,0,4">
+            <CheckBox x:Name="chkPrimaryTitle" Content="Primary title"
+                Checked="StyleRouted" Unchecked="StyleRouted"
+                ToolTip="A title centered above the graphic." />
+            <TextBox x:Name="txtPrimaryTitle" Margin="16,2,0,0" Text="Slope Distribution"
+                TextChanged="StyleText" ToolTip="The title text." />
+            <Label Content="Title font" Margin="0,6,0,0" />
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/><ColumnDefinition Width="40"/>
+                <ColumnDefinition Width="86"/><ColumnDefinition Width="56"/>
+              </Grid.ColumnDefinitions>
+              <ComboBox x:Name="cboTitleFont" SelectionChanged="StyleSel" />
+              <TextBox x:Name="txtTitleSize" Grid.Column="1" Text="16" Margin="4,0,0,0"
+                  TextChanged="StyleText" />
+              <ComboBox x:Name="cboTitleStyle" Grid.Column="2" Margin="4,0,0,0"
+                  SelectionChanged="StyleSel" />
+              <mapctl:ColorPickerControl x:Name="cpTitleColor" Grid.Column="3" Height="22" Margin="4,0,0,0"
+                  Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="StyleColor" />
+            </Grid>
+            <CheckBox x:Name="chkSecTitles" Content="Secondary titles (source, count, sampling)"
+                Margin="0,8,0,0" Checked="StyleRouted" Unchecked="StyleRouted"
+                ToolTip="Automatic provenance lines below the graphic: dataset, count analyzed, and (for rasters) the sampling used." />
+            <Label Content="Secondary title font" Margin="0,6,0,0" />
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/><ColumnDefinition Width="40"/>
+                <ColumnDefinition Width="86"/><ColumnDefinition Width="56"/>
+              </Grid.ColumnDefinitions>
+              <ComboBox x:Name="cboSecFont" SelectionChanged="StyleSel" />
+              <TextBox x:Name="txtSecSize" Grid.Column="1" Text="9" Margin="4,0,0,0"
+                  TextChanged="StyleText" />
+              <ComboBox x:Name="cboSecStyle" Grid.Column="2" Margin="4,0,0,0"
+                  SelectionChanged="StyleSel" />
+              <mapctl:ColorPickerControl x:Name="cpSecColor" Grid.Column="3" Height="22" Margin="4,0,0,0"
+                  Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="StyleColor" />
+            </Grid>
+          </StackPanel>
+        </Expander>
+
+      </StackPanel>
+    </ScrollViewer>
+
+    <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="Transparent" />
+
+    <!-- ===== preview ===== -->
+    <DockPanel Grid.Column="2" Margin="4,0,0,0">
+      <StackPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+        <DockPanel Margin="0,0,0,4">
+          <ProgressBar x:Name="barProgress" DockPanel.Dock="Left" Width="170"
+                       Height="14" Minimum="0" Maximum="100" Margin="0,0,8,0"
+                       VerticalAlignment="Center" Visibility="Collapsed"
+                       ToolTip="Raster read progress (percent of rows read)." />
+          <TextBlock x:Name="txtStatus" TextWrapping="Wrap"
+                     VerticalAlignment="Center" Foreground="#666" />
+        </DockPanel>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+          <Button x:Name="btnStats" Content="Calculate statistics" Margin="4,0"
+                  Padding="10,4" Click="OnCalcStats"
+                  ToolTip="Open the Slope Statistics report (mean, median, SD, range, percentiles, 95% CI) in a resizable window with copy and add-to-layout options." />
+          <Button x:Name="btnSaveSvg" Content="Save as SVG..." Margin="4,0"
+                  Padding="10,4" Click="OnSaveSvg"
+                  ToolTip="Save the graphic exactly as previewed to a scalable SVG vector file." />
+          <Button x:Name="btnAddGraphic" Content="Add to map / layout" Margin="4,0"
+                  Padding="10,4" Click="OnAddGraphic"
+                  ToolTip="Place the graphic as a grouped graphic: on the active LAYOUT (centered on the page, sized exactly as previewed) or, if a map view is active, into a 'Slope Graphics' graphics layer sized to the visible extent. Every piece stays an editable element -- ungroup to adjust individually." />
+          <Button x:Name="btnClose" Content="Close" Margin="4,0" Padding="10,4" Click="OnClose" />
+        </StackPanel>
+      </StackPanel>
+      <Border BorderBrush="#33000000" BorderThickness="1" Background="White">
+        <Image x:Name="imgPreview" Stretch="Uniform" Margin="8"
+               RenderOptions.BitmapScalingMode="HighQuality"
+               ToolTip="Live preview. The rulers along the top and left edges use the chosen size units (preview only; they are not exported)." />
+      </Border>
+    </DockPanel>
+  </Grid>
+</controls:ProWindow>

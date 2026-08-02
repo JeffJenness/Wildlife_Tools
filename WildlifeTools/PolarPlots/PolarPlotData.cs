@@ -87,7 +87,7 @@ namespace WildlifeTools.PolarPlots
             return names;
         }
 
-        private static Table GetTable(Source src)
+        internal static Table GetTable(Source src)
         {
             if (src == null) return null;
             if (src.FeatureLayer != null) return src.FeatureLayer.GetTable();
@@ -203,7 +203,7 @@ namespace WildlifeTools.PolarPlots
             res.Magnitudes.Add(mag);
         }
 
-        private static IReadOnlyList<long> GetSelectedIds(Source src)
+        internal static IReadOnlyList<long> GetSelectedIds(Source src)
         {
             try
             {
@@ -244,7 +244,7 @@ namespace WildlifeTools.PolarPlots
             return true;
         }
 
-        private static double PolylineLength(Polyline poly)
+        internal static double PolylineLength(Polyline poly)
         {
             var sr = poly.SpatialReference;
             if (sr != null && sr.IsGeographic)
@@ -269,7 +269,7 @@ namespace WildlifeTools.PolarPlots
             return 2 * EarthR * Math.Asin(Math.Min(1.0, Math.Sqrt(h)));
         }
 
-        private static bool TryDouble(object v, out double d)
+        internal static bool TryDouble(object v, out double d)
         {
             d = 0.0;
             if (v == null) return false;
