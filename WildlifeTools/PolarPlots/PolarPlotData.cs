@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using ArcGIS.Core.Data;
+using ArcGIS.Core.Data.Raster;
 using ArcGIS.Core.Geometry;
 using ArcGIS.Desktop.Mapping;
 
@@ -23,6 +24,8 @@ namespace WildlifeTools.PolarPlots
             public bool IsPolyline;
             public FeatureLayer FeatureLayer;      // one of these is set
             public StandaloneTable StandaloneTable;
+            public BasicRasterLayer RasterLayer;   // aspect raster source
+            public bool IsRaster => RasterLayer != null;
             public override string ToString() => Name;
         }
 
@@ -33,8 +36,10 @@ namespace WildlifeTools.PolarPlots
             public List<double> Magnitudes = new List<double>();  // NaN = missing
             public bool Weighted;
             public bool HasMagnitudes;             // magnitude field was read
-            public int RawCount;                   // rows read
-            public int ExcludedNegative;
+            public bool IsBinned;                  // raster: 0.1-degree count bins
+            public long RawCount;                  // rows read / cells examined
+            public long ExcludedNegative;
+            public string SamplingNote;            // raster: how cells were read
             public int UsableCount => Azimuths.Count;
         }
 
@@ -57,6 +62,8 @@ namespace WildlifeTools.PolarPlots
             }
             foreach (var st in map.GetStandaloneTablesAsFlattenedList())
                 list.Add(new Source { Name = st.Name, IsPolyline = false, StandaloneTable = st });
+            foreach (var rl in map.GetLayersAsFlattenedList().OfType<BasicRasterLayer>())
+                list.Add(new Source { Name = rl.Name + "  [raster]", RasterLayer = rl });
             return list;
         }
 
@@ -64,6 +71,7 @@ namespace WildlifeTools.PolarPlots
         public static List<string> NumericFields(Source src)
         {
             var names = new List<string>();
+            if (src == null || src.IsRaster) return names;
             using (Table table = GetTable(src))
             {
                 if (table == null) return names;
@@ -86,8 +94,24 @@ namespace WildlifeTools.PolarPlots
             return src.StandaloneTable?.GetTable();
         }
 
-        public static Result Read(Source src, PolarPlotSettings s)
+        /// <summary>Finished binned raster read, cached by the window for as
+        /// long as the Polar Plots window stays open so switching back to an
+        /// already-read raster is instant. Counts are PRE-reverse-fold, so the
+        /// Add Reverse checkbox also reuses the cache.</summary>
+        internal sealed class RasterBinCache
         {
+            public double[] Counts;
+            public long Examined;
+            public long Excluded;
+            public string SamplingNote;
+        }
+
+        public static Result Read(Source src, PolarPlotSettings s,
+                                  IProgress<double> progress = null,
+                                  Dictionary<string, RasterBinCache> rasterCache = null)
+        {
+            if (src != null && src.IsRaster)
+                return ReadRaster(src, s, progress, rasterCache);
             var res = new Result();
             using (Table table = GetTable(src))
             {
@@ -197,6 +221,10 @@ namespace WildlifeTools.PolarPlots
             var pts = poly.Points;
             if (pts == null || pts.Count < 2) return false;
             MapPoint a = pts[0], b = pts[pts.Count - 1];
+            // Zero-length lines and CLOSED loops (identical endpoints) have no
+            // start-to-end direction; without this, atan2(0,0) = 0 would count
+            // each one as a fabricated due-north observation.
+            if (a.X == b.X && a.Y == b.Y) return false;
             var sr = poly.SpatialReference;
             if (sr != null && sr.IsGeographic)
             {
@@ -247,6 +275,277 @@ namespace WildlifeTools.PolarPlots
             if (v == null) return false;
             try { d = Convert.ToDouble(v); return !double.IsNaN(d); }
             catch { return false; }
+        }
+
+        // ---- raster (aspect) source -----------------------------------------
+        // A raster is never materialized as raw azimuths: cell values are
+        // accumulated on the fly into fine 0.1-degree count bins, so a
+        // billion-cell aspect raster reduces to at most 3,600 weighted records
+        // and everything downstream (plots, stats) uses the existing weighted
+        // pipeline. The whole raster is always considered (users must clip
+        // first to analyze a study area), except that very large rasters are
+        // systematically sampled -- never via averaged pyramids, which corrupt
+        // circular values (mean of 359 and 1 is NOT 180).
+        private const int RasterBins = 3600;                 // 0.1-degree bins
+        private const long AutoSampleTarget = 100_000_000;   // cells, auto mode
+
+        private static Result ReadRaster(Source src, PolarPlotSettings s,
+                                         IProgress<double> progress,
+                                         Dictionary<string, RasterBinCache> cache)
+        {
+            var res = new Result { Weighted = true, IsBinned = true };
+
+            // Cache key: the raster plus every option that changes what gets
+            // accumulated (the reverse fold happens after the cache).
+            string key = (src.RasterLayer?.URI ?? src.Name) + "|" +
+                s.RasterSampleStep + "|" + s.ExcludeNegative + "|" +
+                s.ExcludeMinusOneOnly;
+            if (cache != null && cache.TryGetValue(key, out var hit))
+            {
+                progress?.Report(1.0);
+                FinishRasterResult(res, (double[])hit.Counts.Clone(),
+                    hit.Examined, hit.Excluded, hit.SamplingNote, s);
+                return res;
+            }
+
+            var raster = src.RasterLayer.GetRaster();
+            if (raster == null) return res;
+            int w = raster.GetWidth(), h = raster.GetHeight();
+            if (w <= 0 || h <= 0) return res;
+            long totalCells = (long)w * h;
+
+            var counts = new double[RasterBins];
+            long examined = 0, excluded = 0;
+
+            // Fast path: an integer raster with a Value/Count attribute table
+            // IS the binned data -- no pixels need to be read at all.
+            bool fromVat = s.RasterSampleStep <= 1 &&
+                TryReadVat(raster, s, counts, ref examined, ref excluded);
+
+            if (!fromVat)
+            {
+                int step = s.RasterSampleStep;
+                if (step <= 0)                    // auto: full read up to the
+                {                                 // target, then sample
+                    step = 1;
+                    while (totalCells / ((long)step * step) > AutoSampleTarget)
+                        step *= 2;
+                }
+                double noData = double.NaN;
+                bool hasNoData = false;
+                try
+                {
+                    object nd = raster.GetNoDataValue();
+                    if (nd != null && TryDouble(nd, out double ndv))
+                    { noData = ndv; hasNoData = true; }
+                }
+                catch { }
+
+                // Full-width strips; 1-row strips when sampling so skipped
+                // rows are never read (that is where the I/O saving is).
+                int blockRows = step == 1 ? (w == 256 ? 255 : 256) : 1;
+                using (PixelBlock pb = raster.CreatePixelBlock(w, blockRows))
+                {
+                    // The last strip is usually shorter than blockRows; it gets
+                    // its own exactly-sized block so Read never has to fill a
+                    // block that extends past the bottom edge of the raster.
+                    PixelBlock tail = null;
+                    try
+                    {
+                        int rowStep = step == 1 ? blockRows : step;
+                        for (int y = 0; y < h; y += rowStep)
+                        {
+                            int rows = Math.Min(blockRows, h - y);
+                            PixelBlock blk = pb;
+                            if (rows < blockRows)
+                            {
+                                tail = tail ?? raster.CreatePixelBlock(w, rows);
+                                blk = tail;
+                            }
+                            raster.Read(0, y, blk);
+                            Array data = blk.GetPixelData(0, false);
+                            Array mask = null;
+                            try { mask = blk.GetNoDataMask(0, false); } catch { }
+                            AccumulateBlock(data, mask, w, rows, step, hasNoData,
+                                noData, s, counts, ref examined, ref excluded);
+                            progress?.Report(Math.Min(1.0, (y + rowStep) / (double)h));
+                        }
+                    }
+                    finally { tail?.Dispose(); }
+                }
+                if (step > 1)
+                    res.SamplingNote = "sampled every " + step + "×" + step +
+                        " cells (1/" + (step * (long)step) + " of " +
+                        totalCells.ToString("N0") + ")";
+            }
+            else
+            {
+                res.SamplingNote = "from the raster attribute table";
+                progress?.Report(1.0);
+            }
+
+            if (cache != null)
+                cache[key] = new RasterBinCache
+                {
+                    Counts = (double[])counts.Clone(),
+                    Examined = examined,
+                    Excluded = excluded,
+                    SamplingNote = res.SamplingNote,
+                };
+            FinishRasterResult(res, counts, examined, excluded, res.SamplingNote, s);
+            return res;
+        }
+
+        /// <summary>Reverse fold + bins-to-records conversion, shared by fresh
+        /// reads and cache hits.</summary>
+        private static void FinishRasterResult(Result res, double[] counts,
+            long examined, long excluded, string samplingNote, PolarPlotSettings s)
+        {
+            if (s.AddReverse)
+            {
+                var orig = (double[])counts.Clone();
+                for (int b = 0; b < RasterBins; b++)
+                    counts[b] = orig[b] + orig[(b + RasterBins / 2) % RasterBins];
+                examined *= 2;
+            }
+            for (int b = 0; b < RasterBins; b++)
+                if (counts[b] > 0)
+                {
+                    res.Azimuths.Add((b + 0.5) * (360.0 / RasterBins));
+                    res.Weights.Add(counts[b]);
+                }
+            res.RawCount = examined;
+            res.ExcludedNegative = excluded;
+            res.SamplingNote = samplingNote;
+        }
+
+        /// <summary>Accumulate one cell value (with weight, for the VAT path)
+        /// into the bins, applying the flat/negative exclusion rules.</summary>
+        private static void AccumulateValue(double v, double weight,
+            PolarPlotSettings s, double[] counts, ref long examined, ref long excluded)
+        {
+            if (double.IsNaN(v)) return;
+            examined += (long)weight;
+            if (s.ExcludeMinusOneOnly)
+            {
+                if (Math.Abs(v + 1.0) < 1e-9) { excluded += (long)weight; return; }
+            }
+            else if (s.ExcludeNegative && v < 0.0)
+            {
+                excluded += (long)weight;
+                return;
+            }
+            int b = (int)(CircularStats.Mod360(v) * (RasterBins / 360.0));
+            if (b >= RasterBins) b = 0;
+            counts[b] += weight;
+        }
+
+        private static bool TryReadVat(Raster raster, PolarPlotSettings s,
+            double[] counts, ref long examined, ref long excluded)
+        {
+            try
+            {
+                using (Table vat = raster.GetAttributeTable())
+                {
+                    if (vat == null) return false;
+                    var def = vat.GetDefinition();
+                    int vIdx = def.FindField("Value");
+                    int cIdx = def.FindField("Count");
+                    if (vIdx < 0 || cIdx < 0) return false;
+                    using (RowCursor cur = vat.Search(null, false))
+                    {
+                        while (cur.MoveNext())
+                        {
+                            using (Row row = cur.Current)
+                            {
+                                if (!TryDouble(row[vIdx], out double v)) continue;
+                                if (!TryDouble(row[cIdx], out double c) || c <= 0) continue;
+                                AccumulateValue(v, c, s, counts,
+                                    ref examined, ref excluded);
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>Typed, non-boxing accumulation of one pixel-block strip.
+        /// The SDK does not document the 2-D array's dimension order, so it is
+        /// resolved against the block width (the block height is chosen to
+        /// never equal the width).</summary>
+        private static void AccumulateBlock(Array data, Array mask, int width,
+            int rows, int colStep, bool hasNoData, double noData,
+            PolarPlotSettings s, double[] counts, ref long examined, ref long excluded)
+        {
+            if (data == null) return;
+            int d0 = data.GetLength(0);
+            bool xFirst = d0 == width;             // data[x, y] vs data[y, x]
+            var mk = mask as byte[,];
+            if (mk != null && (mk.GetLength(0) != data.GetLength(0) ||
+                               mk.GetLength(1) != data.GetLength(1)))
+                mk = null;                         // shape mismatch: ignore mask
+            long exLocal = 0, one = 0;             // ref params cannot be
+                                                   // captured by local functions
+            void Acc(double v, bool noDataCell)
+            {
+                if (noDataCell) return;
+                if (hasNoData && v == noData) return;
+                AccumulateValue(v, 1.0, s, counts, ref one, ref exLocal);
+            }
+
+            switch (data)
+            {
+                case float[,] a:
+                    for (int r = 0; r < rows; r++)
+                        for (int c = 0; c < width; c += colStep)
+                            Acc(xFirst ? a[c, r] : a[r, c],
+                                mk != null && (xFirst ? mk[c, r] : mk[r, c]) == 0);
+                    break;
+                case double[,] a:
+                    for (int r = 0; r < rows; r++)
+                        for (int c = 0; c < width; c += colStep)
+                            Acc(xFirst ? a[c, r] : a[r, c],
+                                mk != null && (xFirst ? mk[c, r] : mk[r, c]) == 0);
+                    break;
+                case int[,] a:
+                    for (int r = 0; r < rows; r++)
+                        for (int c = 0; c < width; c += colStep)
+                            Acc(xFirst ? a[c, r] : a[r, c],
+                                mk != null && (xFirst ? mk[c, r] : mk[r, c]) == 0);
+                    break;
+                case short[,] a:
+                    for (int r = 0; r < rows; r++)
+                        for (int c = 0; c < width; c += colStep)
+                            Acc(xFirst ? a[c, r] : a[r, c],
+                                mk != null && (xFirst ? mk[c, r] : mk[r, c]) == 0);
+                    break;
+                case ushort[,] a:
+                    for (int r = 0; r < rows; r++)
+                        for (int c = 0; c < width; c += colStep)
+                            Acc(xFirst ? a[c, r] : a[r, c],
+                                mk != null && (xFirst ? mk[c, r] : mk[r, c]) == 0);
+                    break;
+                case byte[,] a:
+                    for (int r = 0; r < rows; r++)
+                        for (int c = 0; c < width; c += colStep)
+                            Acc(xFirst ? a[c, r] : a[r, c],
+                                mk != null && (xFirst ? mk[c, r] : mk[r, c]) == 0);
+                    break;
+                default:
+                    // Uncommon pixel types: boxed per-cell fallback.
+                    for (int r = 0; r < rows; r++)
+                        for (int c = 0; c < width; c += colStep)
+                        {
+                            object o = xFirst ? data.GetValue(c, r) : data.GetValue(r, c);
+                            if (o != null && TryDouble(o, out double v))
+                                Acc(v, mk != null && (xFirst ? mk[c, r] : mk[r, c]) == 0);
+                        }
+                    break;
+            }
+            examined += one;
+            excluded += exLocal;
         }
     }
 }

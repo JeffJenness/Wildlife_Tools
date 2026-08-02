@@ -59,12 +59,7 @@ namespace WildlifeTools.PolarPlots
         public PolarPlotWindow()
         {
             InitializeComponent();
-            cboPlotType.ItemsSource = new[]
-            {
-                "Peaks and Valleys", "Circular Bins (Rose)", "Shade by Density",
-                "External Peaks and Valleys", "External Bins", "Bearings",
-                "Wind Rose (stacked bands)", "Smoothed Density (kernel)", "Dot Plot",
-            };
+            cboPlotType.ItemsSource = AllPlotTypes;
             cboPlotType.SelectedIndex = 1;
 
             var fonts = System.Windows.Media.Fonts.SystemFontFamilies
@@ -276,12 +271,64 @@ namespace WildlifeTools.PolarPlots
             if (!_loading) RenderPreview();
         }
 
+        private bool _srcIsRaster;
+
+        // Canonical plot-type list. The combo shows a FILTERED copy for raster
+        // sources (no Bearings / Wind Rose -- they need individual observations
+        // / a second field), so selections are mapped by NAME, never by the
+        // combo's own index.
+        private static readonly string[] AllPlotTypes =
+        {
+            "Peaks and Valleys", "Circular Bins (Rose)", "Shade by Density",
+            "External Peaks and Valleys", "External Bins", "Bearings",
+            "Wind Rose (stacked bands)", "Smoothed Density (kernel)", "Dot Plot",
+        };
+        private const int PlotIdxBearings = 5, PlotIdxWindRose = 6, PlotIdxDot = 8;
+
+        /// <summary>Canonical index (into AllPlotTypes) of the current combo
+        /// selection, regardless of which filtered list is showing.</summary>
+        private int PlotTypeIdx()
+        {
+            int i = Array.IndexOf(AllPlotTypes, cboPlotType.SelectedItem as string);
+            return i >= 0 ? i : 1;                  // default: Rose
+        }
+
+        /// <summary>Swap the combo between the full list (vector/table) and the
+        /// raster-filtered list, keeping the selection when it survives and
+        /// falling back to Rose when it does not. Call with _loading true.</summary>
+        private void UpdatePlotTypeItems()
+        {
+            string cur = cboPlotType.SelectedItem as string;
+            string[] items = _srcIsRaster
+                ? AllPlotTypes.Where((n, i) =>
+                    i != PlotIdxBearings && i != PlotIdxWindRose && i != PlotIdxDot)
+                    .ToArray()
+                : AllPlotTypes;
+            if (cboPlotType.ItemsSource is string[] old && old.Length == items.Length)
+                return;                             // already showing this list
+            cboPlotType.ItemsSource = items;
+            cboPlotType.SelectedItem = items.Contains(cur)
+                ? cur : "Circular Bins (Rose)";
+        }
+
+        // Binned raster reads cached for the life of THIS window, so switching
+        // back to an already-read raster is instant; discarded when the window
+        // closes (the button releases the window instance).
+        private readonly Dictionary<string, PolarPlotData.RasterBinCache>
+            _rasterCache = new Dictionary<string, PolarPlotData.RasterBinCache>();
+
         private async System.Threading.Tasks.Task PopulateFieldsAsync()
         {
             var src = cboSource.SelectedItem as PolarPlotData.Source;
             if (src == null) return;
+            _srcIsRaster = src.IsRaster;
+            // Rasters: cell value IS the azimuth and cell counts are the
+            // weights, so the field/weight/selection rows do not apply.
+            pnlVectorSource.Visibility = _srcIsRaster ? Visibility.Collapsed : Visibility.Visible;
+            pnlRasterSource.Visibility = _srcIsRaster ? Visibility.Visible : Visibility.Collapsed;
             var fields = await QueuedTask.Run(() => PolarPlotData.NumericFields(src));
             _loading = true;
+            UpdatePlotTypeItems();
             cboAzField.ItemsSource = fields;
             cboWField.ItemsSource = fields.ToList();
             cboWindField.ItemsSource = fields.ToList();
@@ -303,17 +350,36 @@ namespace WildlifeTools.PolarPlots
             chkExcludeNeg1.IsEnabled = chkExcludeNeg.IsChecked == true;
         }
 
+        private bool _rereadPending;    // a change arrived during a long read
+
         private async System.Threading.Tasks.Task RereadAsync()
         {
-            if (_busy) return;
+            // Never DROP a reread request: if one arrives while a (possibly
+            // minutes-long) raster read is running, remember it and run again
+            // when the current read finishes, so the controls and the plot can
+            // never end up silently out of sync.
+            if (_busy) { _rereadPending = true; return; }
             var src = cboSource.SelectedItem as PolarPlotData.Source;
             if (src == null) { RenderPreview(); return; }
             _busy = true;
-            SetStatus("Reading data...");
+            SetStatus(src.IsRaster ? "Reading raster..." : "Reading data...");
+            if (src.IsRaster)
+            {
+                barProgress.Value = 0;
+                barProgress.Visibility = Visibility.Visible;
+            }
             try
             {
                 var s = BuildSettings();
-                var res = await QueuedTask.Run(() => PolarPlotData.Read(src, s));
+                // Progress<T> marshals back to this (UI) thread automatically.
+                var prog = new Progress<double>(f =>
+                {
+                    barProgress.Value = f * 100.0;
+                    SetStatus("Reading raster... " +
+                              ((int)Math.Round(f * 100.0)) + "%");
+                });
+                var res = await QueuedTask.Run(() => PolarPlotData.Read(
+                    src, s, src.IsRaster ? prog : null, _rasterCache));
                 _lastResult = res;
                 _az.Clear(); _az.AddRange(res.Azimuths);
                 _wt.Clear(); _wt.AddRange(res.Weights);
@@ -323,14 +389,19 @@ namespace WildlifeTools.PolarPlots
                 RenderPreview();
             }
             catch (Exception ex) { SetStatus("Error reading data: " + ex.Message); }
-            finally { _busy = false; }
+            finally { _busy = false; barProgress.Visibility = Visibility.Collapsed; }
+            if (_rereadPending)
+            {
+                _rereadPending = false;
+                await RereadAsync();    // settings are re-captured fresh
+            }
         }
 
         // ---- settings from controls ----------------------------------------
         private PolarPlotSettings BuildSettings()
         {
             var s = new PolarPlotSettings();
-            switch (cboPlotType.SelectedIndex)
+            switch (PlotTypeIdx())
             {
                 case 0: s.PlotType = PolarPlotType.PeaksAndValleys; break;
                 case 2: s.PlotType = PolarPlotType.ShadeByDensity; break;
@@ -341,6 +412,15 @@ namespace WildlifeTools.PolarPlots
                 case 7: s.PlotType = PolarPlotType.SmoothedDensity; break;
                 case 8: s.PlotType = PolarPlotType.DotPlot; break;
                 default: s.PlotType = PolarPlotType.CircularBins; break;
+            }
+            switch (cboRasterSample.SelectedIndex)
+            {
+                case 1: s.RasterSampleStep = 1; break;
+                case 2: s.RasterSampleStep = 2; break;
+                case 3: s.RasterSampleStep = 4; break;
+                case 4: s.RasterSampleStep = 8; break;
+                case 5: s.RasterSampleStep = 16; break;
+                default: s.RasterSampleStep = 0; break;   // auto
             }
             s.MagnitudeField = cboWindField.SelectedItem as string ?? "";
             s.WindClasses = Math.Min(Math.Max(ParseInt(txtWindClasses.Text, 4), 1), 9);
@@ -422,13 +502,24 @@ namespace WildlifeTools.PolarPlots
         {
             var lines = new List<string>();
             if (!s.ShowSecondaryTitles) return lines;
-            string azSrc = s.AzimuthOption == PolarAzimuthOption.ByPolyline
-                ? "polyline direction" : "field [" + s.AzimuthField + "]";
-            lines.Add("Source: " + s.DatasetName + " (" + azSrc + ")");
-            lines.Add("Count analyzed: " + _az.Count.ToString("N0", CultureInfo.InvariantCulture));
-            lines.Add(s.WeightOption == PolarWeightOption.None
-                ? "Values not weighted"
-                : "Total weight: " + _wt.Sum().ToString("N2", CultureInfo.InvariantCulture));
+            if (_srcIsRaster)
+            {
+                lines.Add("Source: " + s.DatasetName + " (cell values, full extent)");
+                lines.Add("Cells analyzed: " +
+                    _wt.Sum().ToString("N0", CultureInfo.InvariantCulture) +
+                    (_lastResult?.SamplingNote != null
+                        ? " (" + _lastResult.SamplingNote + ")" : ""));
+            }
+            else
+            {
+                string azSrc = s.AzimuthOption == PolarAzimuthOption.ByPolyline
+                    ? "polyline direction" : "field [" + s.AzimuthField + "]";
+                lines.Add("Source: " + s.DatasetName + " (" + azSrc + ")");
+                lines.Add("Count analyzed: " + _az.Count.ToString("N0", CultureInfo.InvariantCulture));
+                lines.Add(s.WeightOption == PolarWeightOption.None
+                    ? "Values not weighted"
+                    : "Total weight: " + _wt.Sum().ToString("N2", CultureInfo.InvariantCulture));
+            }
             double max = bins != null && bins.Length > 0 ? bins.Max() : 0;
             lines.Add("Maximum bin value: " + max.ToString("N2", CultureInfo.InvariantCulture));
             return lines;
@@ -444,7 +535,7 @@ namespace WildlifeTools.PolarPlots
             {
                 // Plot-type-dependent option rows: only the rows relevant to
                 // the current plot type exist in the dialog.
-                int idx = cboPlotType.SelectedIndex;
+                int idx = PlotTypeIdx();
                 bool shade = idx == 2;
                 bool external = idx == 3 || idx == 4;
                 bool bearings = idx == 5;
@@ -463,7 +554,14 @@ namespace WildlifeTools.PolarPlots
                 pnlDot.Visibility = dots ? Visibility.Visible : Visibility.Collapsed;
 
                 var s = BuildSettings();
-                var st = new CircularStats(_az, _wt, _weighted);
+                // Bearings, Wind Rose and Dot Plot are removed from the combo
+                // for raster sources; this is only a safety net (e.g. against
+                // a stale selection mid-switch).
+                if (_srcIsRaster && (s.PlotType == PolarPlotType.DotPlot ||
+                                     s.PlotType == PolarPlotType.Bearings ||
+                                     s.PlotType == PolarPlotType.WindRose))
+                    s.PlotType = PolarPlotType.CircularBins;
+                var st = new CircularStats(_az, _wt, _weighted, _srcIsRaster);
                 var bins = st.Bin(s.BinCount);
                 var model = PolarPlotBuilder.Build(s, bins, SecondaryTitleLines(s, bins),
                                                    _az, _wt, _mag, st);
@@ -472,14 +570,23 @@ namespace WildlifeTools.PolarPlots
                 var dg = PolarPlotWpf.Render(model, ppd, showRulers: true,
                                              rulersCm: _cm);
                 imgPreview.Source = new DrawingImage(dg);
-                SetStatus(_az.Count.ToString("N0", CultureInfo.InvariantCulture) +
-                          " value(s) plotted" +
+                string plotted = _srcIsRaster
+                    ? st.Count.ToString("N0", CultureInfo.InvariantCulture) +
+                      " cells plotted (binned to 0.1°" +
+                      (_lastResult?.SamplingNote != null
+                          ? "; " + _lastResult.SamplingNote : "") + ")"
+                    : _az.Count.ToString("N0", CultureInfo.InvariantCulture) +
+                      " value(s) plotted";
+                SetStatus(plotted +
                           (_lastResult != null && _lastResult.ExcludedNegative > 0
-                              ? "; " + _lastResult.ExcludedNegative + " negative excluded" : "") +
-                          (bearings && _az.Count > 500
+                              ? "; " + _lastResult.ExcludedNegative.ToString("N0",
+                                    CultureInfo.InvariantCulture) +
+                                (_srcIsRaster ? " flat/negative cells excluded"
+                                              : " negative excluded") : "") +
+                          (!_srcIsRaster && bearings && _az.Count > 500
                               ? "  (Bearings plots draw one line per value; large " +
                                 "counts render slowly)" : "") +
-                          (dots && _az.Count > 2000
+                          (!_srcIsRaster && dots && _az.Count > 2000
                               ? "  (Dot plots draw one dot per value; consider " +
                                 "Smoothed Density for large samples)" : ""));
             }
@@ -491,16 +598,27 @@ namespace WildlifeTools.PolarPlots
         {
             if (_az.Count == 0) { MessageBox.Show("No data to analyze.", "Polar Plots"); return; }
             var s = BuildSettings();
-            var st = new CircularStats(_az, _wt, _weighted);
-            var header = new List<string>
-            {
-                "Dataset = " + s.DatasetName,
-                "Azimuth Source = " + (s.AzimuthOption == PolarAzimuthOption.ByPolyline
-                    ? "Derived from polylines" : "Field [" + s.AzimuthField + "]"),
-                "Weighting = " + (s.WeightOption == PolarWeightOption.None ? "None"
-                    : s.WeightOption == PolarWeightOption.ByLength ? "By polyline length"
-                    : "Field [" + s.WeightField + "]"),
-            };
+            var st = new CircularStats(_az, _wt, _weighted, _srcIsRaster);
+            var header = _srcIsRaster
+                ? new List<string>
+                {
+                    "Dataset = " + s.DatasetName,
+                    "Azimuth Source = Raster cell values (full raster extent; " +
+                        "clip the raster first to analyze a specific area)",
+                    "Cells = " + (_lastResult?.RawCount ?? 0).ToString("N0",
+                        CultureInfo.InvariantCulture) + " examined" +
+                        (_lastResult?.SamplingNote != null
+                            ? "; " + _lastResult.SamplingNote : ""),
+                }
+                : new List<string>
+                {
+                    "Dataset = " + s.DatasetName,
+                    "Azimuth Source = " + (s.AzimuthOption == PolarAzimuthOption.ByPolyline
+                        ? "Derived from polylines" : "Field [" + s.AzimuthField + "]"),
+                    "Weighting = " + (s.WeightOption == PolarWeightOption.None ? "None"
+                        : s.WeightOption == PolarWeightOption.ByLength ? "By polyline length"
+                        : "Field [" + s.WeightField + "]"),
+                };
             string plain = st.BuildReport(header);
             var win = new PolarStatsWindow(st, header, plain) { Owner = this };
             win.Show();
@@ -549,7 +667,7 @@ namespace WildlifeTools.PolarPlots
         // ---- style presets --------------------------------------------------
         private PolarPlotStyleDto CaptureStyle() => new PolarPlotStyleDto
         {
-            PlotTypeIndex = cboPlotType.SelectedIndex,
+            PlotTypeIndex = PlotTypeIdx(),
             BinCount = ParseInt(txtBins.Text, 72),
             Units = _cm ? "cm" : "in",
             PlotDiameterIn = DisplayToInches(ParseDouble(txtDiameter.Text, _cm ? 10.0 : 4.0)),
@@ -603,8 +721,16 @@ namespace WildlifeTools.PolarPlots
             _loading = true;
             try
             {
-                if (d.PlotTypeIndex >= 0 && d.PlotTypeIndex < cboPlotType.Items.Count)
-                    cboPlotType.SelectedIndex = d.PlotTypeIndex;
+                if (d.PlotTypeIndex >= 0 && d.PlotTypeIndex < AllPlotTypes.Length)
+                {
+                    // Select by NAME: the combo may be showing the raster-
+                    // filtered list; a preset naming a hidden type falls back
+                    // to Rose.
+                    string want = AllPlotTypes[d.PlotTypeIndex];
+                    cboPlotType.SelectedItem =
+                        (cboPlotType.ItemsSource as string[])?.Contains(want) == true
+                            ? want : "Circular Bins (Rose)";
+                }
                 txtBins.Text = d.BinCount.ToString(CultureInfo.InvariantCulture);
                 // Units first: the DTO's diameters are always INCHES; convert
                 // them into the preset's display unit.

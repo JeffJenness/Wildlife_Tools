@@ -56,6 +56,10 @@ namespace WildlifeTools.PolarPlots
         // Dot plot (one dot per observation; column width follows dot size).
         public double DotDiameterIn = 0.08;
 
+        // Raster (aspect) source: 0 = auto (full read up to ~100M cells, then
+        // systematic sampling), 1 = every cell, else every Nth cell in x and y.
+        public int RasterSampleStep = 0;
+
         // Overlays.
         public bool EqualArea = false;             // sqrt-radius petal scaling
         public bool ShowMeanArrow = false;         // arrow, length = r-bar

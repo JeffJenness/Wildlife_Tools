@@ -536,17 +536,21 @@ namespace WildlifeTools.PolarPlots
             int nb = Math.Max(1, s.BinCount);
             int k = wind.Breaks.Length - 1;
             var sums = new double[nb, k];
+            double bw = 360.0 / nb;
             for (int i = 0; i < azimuths.Count; i++)
             {
                 if (mags == null || i >= mags.Count) break;
                 int c = wind.ClassOf(mags[i]);
                 if (c < 0) continue;                  // missing magnitude
-                int b = (int)Math.Floor(CircularStats.Mod360(azimuths[i]) / 360.0 * nb);
-                if (b >= nb) b = 0;
+                // Nearest-CENTER binning, identical to CircularStats.Bin():
+                // bin b is centered on b*bw, so the drawn petal (also centered
+                // on b*bw) contains exactly the data it claims and the wind
+                // rose lines up with the plain rose of the same data.
+                int b = (int)Math.Floor((CircularStats.Mod360(azimuths[i]) + bw / 2.0) / bw);
+                if (b >= nb) b -= nb;
                 double w = (weights != null && i < weights.Count) ? weights[i] : 1.0;
                 sums[b, c] += w;
             }
-            double bw = 360.0 / nb;
             for (int b = 0; b < nb; b++)
             {
                 double center = CircularStats.BinCenterDeg(b, nb);

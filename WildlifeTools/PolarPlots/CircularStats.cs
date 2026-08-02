@@ -24,8 +24,15 @@ namespace WildlifeTools.PolarPlots
         public IReadOnlyList<double> Weights { get; }    // parallel; 1.0 if unweighted
         public bool Weighted { get; }
 
+        /// <summary>True when each weight is a COUNT of identical observations
+        /// (a binned raster read, or a Value/Count attribute table): the
+        /// effective sample size is then the total weight, and the extended
+        /// statistics (Rayleigh, median, CI) are computed weighted rather than
+        /// on the record list, which would treat every occupied bin equally.</summary>
+        public bool WeightsAreCounts { get; }
+
         // Results.
-        public int Count { get; private set; }
+        public long Count { get; private set; }
         public double TotalWeight { get; private set; }
         public double SumSin { get; private set; }
         public double SumCos { get; private set; }
@@ -53,11 +60,13 @@ namespace WildlifeTools.PolarPlots
         private const double RadToDeg = 180.0 / Math.PI;
 
         public CircularStats(IReadOnlyList<double> azimuths,
-                             IReadOnlyList<double> weights, bool weighted)
+                             IReadOnlyList<double> weights, bool weighted,
+                             bool weightsAreCounts = false)
         {
             Azimuths = azimuths ?? Array.Empty<double>();
             Weights = weights;
             Weighted = weighted;
+            WeightsAreCounts = weightsAreCounts;
             Compute();
         }
 
@@ -73,7 +82,9 @@ namespace WildlifeTools.PolarPlots
                 c += wi * Math.Cos(r);
                 w += wi;
             }
-            Count = n;
+            // For count-weighted data the sample size is the number of
+            // underlying observations (cells), not the number of bins.
+            Count = WeightsAreCounts ? (long)Math.Round(w) : n;
             TotalWeight = w;
             SumSin = s;
             SumCos = c;
@@ -114,14 +125,19 @@ namespace WildlifeTools.PolarPlots
             double rbarU = (n > 0) ? Math.Sqrt(su * su + cu * cu) / n : 0.0;
             if (rbarU > 1.0) rbarU = 1.0;
 
-            // Rayleigh test of uniformity (Fisher 1993 eq. 4.17; Zar 1999 eq. 27.2-4).
-            double z = n * rbarU * rbarU;
+            // Rayleigh test of uniformity (Fisher 1993 eq. 4.17; Zar 1999 eq.
+            // 27.2-4). For count-weighted data (raster bins / Value+Count
+            // tables) the sample is the underlying observations, so use the
+            // weighted r-bar and the total count as n.
+            double nEff = WeightsAreCounts ? TotalWeight : n;
+            double rbarEff = WeightsAreCounts ? MeanResultantLength : rbarU;
+            double z = nEff * rbarEff * rbarEff;
             RayleighZ = z;
-            RayleighP = (n > 0)
+            RayleighP = (nEff > 0)
                 ? Clamp01(Math.Exp(-z) * (1.0
-                    + (2.0 * z - z * z) / (4.0 * n)
+                    + (2.0 * z - z * z) / (4.0 * nEff)
                     - (24.0 * z - 132.0 * z * z + 76.0 * z * z * z - 9.0 * z * z * z * z)
-                        / (288.0 * n * n)))
+                        / (288.0 * nEff * nEff)))
                 : double.NaN;
 
             // von Mises concentration kappa MLE approximation (Fisher 1993
@@ -152,7 +168,34 @@ namespace WildlifeTools.PolarPlots
             for (int i = 1; i < n; i++)
                 maxGap = Math.Max(maxGap, vals[i] - vals[i - 1]);
             CircularRangeDeg = 360.0 - maxGap;
-            MedianDirectionDeg = CircularMedian(vals);
+            // Range is about which directions are OCCUPIED, so the sorted
+            // distinct list serves both modes; the median must respect counts.
+            MedianDirectionDeg = WeightsAreCounts
+                ? WeightedCircularMedian() : CircularMedian(vals);
+        }
+
+        /// <summary>Circular median for count-weighted data: the observed
+        /// direction minimizing the count-weighted summed circular distance
+        /// (Fisher 1993, generalized). O(k^2) over the k occupied bins.</summary>
+        private double WeightedCircularMedian()
+        {
+            int k = Azimuths.Count;
+            if (k == 0) return double.NaN;
+            double best = Azimuths[0], bestCost = double.PositiveInfinity;
+            for (int i = 0; i < k; i++)
+            {
+                double c = Azimuths[i], cost = 0.0;
+                for (int j = 0; j < k; j++)
+                {
+                    double d = Math.Abs(Mod360(Azimuths[j] - c));
+                    if (d > 180.0) d = 360.0 - d;
+                    double wj = (Weights != null && j < Weights.Count) ? Weights[j] : 1.0;
+                    cost += wj * d;
+                    if (cost >= bestCost) { cost = double.PositiveInfinity; break; }
+                }
+                if (cost < bestCost) { bestCost = cost; best = c; }
+            }
+            return Mod360(best);
         }
 
         private static double KappaFromRbar(double r)
@@ -255,7 +298,7 @@ namespace WildlifeTools.PolarPlots
                 sb.AppendLine("-------------------------------------------------------");
             }
             sb.AppendLine("Count of values analyzed = " + Count.ToString("N0", ci));
-            if (Weighted)
+            if (Weighted && !WeightsAreCounts)   // for counts, Count IS the total
                 sb.AppendLine("Total weight = " + TotalWeight.ToString("N4", ci));
             string meanTxt = double.IsNaN(MeanDirectionDeg)
                 ? "undefined (resultant length is zero)"
@@ -286,7 +329,10 @@ namespace WildlifeTools.PolarPlots
             sb.AppendLine("Rayleigh Test of Uniformity: Z = " +
                           RayleighZ.ToString("F5", ci) + ", p = " +
                           RayleighP.ToString("F5", ci) + "   [A,E]");
-            if (Weighted)
+            if (WeightsAreCounts)
+                sb.AppendLine("   (Values binned to 0.1-degree classes; statistics " +
+                              "computed on the per-class cell counts.)");
+            else if (Weighted)
                 sb.AppendLine("   (Median, Range and the Rayleigh test are computed " +
                               "on the unweighted azimuths.)");
             sb.AppendLine("-------------------------------------------------------");

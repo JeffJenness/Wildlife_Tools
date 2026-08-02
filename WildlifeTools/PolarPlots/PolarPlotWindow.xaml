@@ -50,7 +50,20 @@
           <StackPanel Margin="6,4,0,4">
             <Label Content="Dataset" />
             <ComboBox x:Name="cboSource" SelectionChanged="SourceSelChanged"
-                ToolTip="The feature class or table holding your directional data. All feature layers and standalone tables in the active map are listed." />
+                ToolTip="The dataset holding your directional data: a feature layer, a standalone table, or an ASPECT RASTER (cell values in compass degrees, -1 = flat). All are listed from the active map. NOTE: a raster is ALWAYS analyzed over its ENTIRE extent (aside from optional cell sampling) -- to get statistics for a study area or management unit, clip the raster to that area of interest first, add the clipped raster to the map, and analyze that." />
+            <StackPanel x:Name="pnlRasterSource" Visibility="Collapsed" Margin="0,6,0,0">
+              <Label Content="Cell sampling" />
+              <ComboBox x:Name="cboRasterSample" SelectedIndex="0" SelectionChanged="RereadSel"
+                  ToolTip="How much of the raster to read. Auto reads every cell up to about 100 million cells, then switches to systematic sampling (every 2nd/4th/... cell in each direction) so enormous rasters stay fast; the sampling used is reported below the plot. Sampling is statistically sound for aspect; averaged pyramid levels are never used because averaging corrupts circular values. Cell values are accumulated into 0.1-degree bins during the read, so plots and statistics are exact for the cells read. The ENTIRE raster extent is always considered -- clip the raster first to analyze a specific study area.">
+                <ComboBoxItem Content="Auto (recommended)"/>
+                <ComboBoxItem Content="Every cell"/>
+                <ComboBoxItem Content="Every 2nd cell"/>
+                <ComboBoxItem Content="Every 4th cell"/>
+                <ComboBoxItem Content="Every 8th cell"/>
+                <ComboBoxItem Content="Every 16th cell"/>
+              </ComboBox>
+            </StackPanel>
+            <StackPanel x:Name="pnlVectorSource">
             <Label Content="Azimuth source" Margin="0,6,0,0" />
             <RadioButton x:Name="rbAzPolyline" Content="Derive from polyline direction"
                 GroupName="Az" Checked="RereadRouted"
@@ -75,6 +88,7 @@
             <CheckBox x:Name="chkSelected" Content="Use selected records only"
                 Margin="0,6,0,0" Checked="RereadRouted" Unchecked="RereadRouted"
                 ToolTip="Analyze only the currently selected records; if nothing is selected, all records are used." />
+            </StackPanel>
             <CheckBox x:Name="chkReverse" Content="Add reverse azimuths"
                 Margin="0,2,0,0" Checked="RereadRouted" Unchecked="RereadRouted"
                 ToolTip="Also plot each azimuth's opposite direction (azimuth + 180). Use for phenomena that run both ways, such as geologic fracture lines; the plot becomes symmetric." />
@@ -332,10 +346,18 @@
 
     <!-- ===== preview + actions ===== -->
     <DockPanel Grid.Column="2" Margin="4,0,0,0">
-      <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
-                  HorizontalAlignment="Right" Margin="0,6,0,0">
-        <TextBlock x:Name="txtStatus" VerticalAlignment="Center" Margin="0,0,12,0"
-                   Foreground="#666" />
+      <StackPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+        <!-- Full-width, wrapping status row: the data/sampling summary is
+             never clipped no matter how narrow the window is. -->
+        <DockPanel Margin="0,0,0,4">
+          <ProgressBar x:Name="barProgress" DockPanel.Dock="Left" Width="170"
+                       Height="14" Minimum="0" Maximum="100" Margin="0,0,8,0"
+                       VerticalAlignment="Center" Visibility="Collapsed"
+                       ToolTip="Raster read progress (percent of rows read)." />
+          <TextBlock x:Name="txtStatus" TextWrapping="Wrap"
+                     VerticalAlignment="Center" Foreground="#666" />
+        </DockPanel>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
         <Button x:Name="btnStats" Content="Calculate statistics" Margin="4,0"
                 Padding="10,4" Click="OnCalcStats"
                 ToolTip="Open the Circular Descriptive Statistics report (mean direction, dispersion, Rayleigh test, and more) in a resizable window." />
@@ -346,11 +368,12 @@
                 Padding="10,4" Click="OnAddGraphic"
                 ToolTip="Place the plot as a grouped graphic: on the active LAYOUT (centered on the page, sized in inches exactly as previewed) or, if a map view is active, into a 'Polar Plots' graphics layer sized to the visible extent. Every piece stays an editable element -- ungroup to adjust individually." />
         <Button x:Name="btnClose" Content="Close" Margin="4,0" Padding="10,4" Click="OnClose" />
+        </StackPanel>
       </StackPanel>
       <Border BorderBrush="#33000000" BorderThickness="1" Background="White">
         <Image x:Name="imgPreview" Stretch="Uniform" Margin="8"
                RenderOptions.BitmapScalingMode="HighQuality"
-               ToolTip="Live preview. The rulers along the top and left edges are in inches (preview only; they are not exported)." />
+               ToolTip="Live preview. The rulers along the top and left edges use the chosen diameter units (preview only; they are not exported)." />
       </Border>
     </DockPanel>
   </Grid>

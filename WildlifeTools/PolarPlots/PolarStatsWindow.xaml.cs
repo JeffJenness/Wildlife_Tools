@@ -76,7 +76,7 @@ namespace WildlifeTools.PolarPlots
 
             var sp = RulePara();
             AddStat(sp, "Count of values analyzed", st.Count.ToString("N0", CI));
-            if (st.Weighted)
+            if (st.Weighted && !st.WeightsAreCounts)
                 AddStat(sp, "Total weight", st.TotalWeight.ToString("N4", CI));
             AddStat(sp, "Mean Direction", double.IsNaN(st.MeanDirectionDeg)
                 ? "undefined (resultant length is zero)"
@@ -101,7 +101,11 @@ namespace WildlifeTools.PolarPlots
             AddStat(xp, "Mean Direction 95% CI", st.MeanCiText(CI), "[A,D]");
             AddStat(xp, "Rayleigh Test of Uniformity",
                 "Z = " + st.RayleighZ.ToString("F5", CI) + ", p = " + st.RayleighP.ToString("F5", CI), "[A,E]");
-            if (st.Weighted)
+            if (st.WeightsAreCounts)
+                xp.Inlines.Add(new Italic(new Run(
+                    "(Values binned to 0.1-degree classes; statistics computed " +
+                    "on the per-class cell counts.)")) { FontSize = 11 });
+            else if (st.Weighted)
                 xp.Inlines.Add(new Italic(new Run(
                     "(Median, Range and the Rayleigh test are computed on the " +
                     "unweighted azimuths.)")) { FontSize = 11 });
@@ -268,7 +272,8 @@ namespace WildlifeTools.PolarPlots
                 sb.AppendLine();
             }
             Line("Count of values analyzed", st.Count.ToString("N0", CI));
-            if (st.Weighted) Line("Total weight", st.TotalWeight.ToString("N4", CI));
+            if (st.Weighted && !st.WeightsAreCounts)
+                Line("Total weight", st.TotalWeight.ToString("N4", CI));
             Line("Mean Direction", double.IsNaN(st.MeanDirectionDeg)
                 ? "undefined (resultant length is zero)"
                 : st.MeanDirectionDeg.ToString("F5", CI) + " Degrees");
@@ -291,7 +296,10 @@ namespace WildlifeTools.PolarPlots
             Line("Rayleigh Test of Uniformity",
                 "Z = " + st.RayleighZ.ToString("F5", CI) + ", p = " +
                 st.RayleighP.ToString("F5", CI), "[A,E]");
-            if (st.Weighted)
+            if (st.WeightsAreCounts)
+                sb.AppendLine("<ITA>(Values binned to 0.1-degree classes; " +
+                              "statistics computed on the per-class cell counts.)</ITA>");
+            else if (st.Weighted)
                 sb.AppendLine("<ITA>(Median, Range and the Rayleigh test are " +
                               "computed on the unweighted azimuths.)</ITA>");
             sb.AppendLine();
