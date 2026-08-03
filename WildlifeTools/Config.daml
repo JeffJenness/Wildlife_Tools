@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.44.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.45.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -26,6 +26,7 @@
           <group refID="WildlifeTools_GroupCartography"/>
           <group refID="WildlifeTools_GroupTopo"/>
           <group refID="WildlifeTools_GroupDirectional"/>
+          <group refID="WildlifeTools_GroupData"/>
           <group refID="WildlifeTools_GroupBreak"/>
         </tab>
       </tabs>
@@ -56,6 +57,9 @@
         <group id="WildlifeTools_GroupDirectional" caption="Terrain Graphs" appearsOnAddInTab="false">
           <button refID="WildlifeTools_PolarPlots" size="large" />
           <button refID="WildlifeTools_SlopeGraphic" size="large" />
+        </group>
+        <group id="WildlifeTools_GroupData" caption="Data Tools" appearsOnAddInTab="false">
+          <button refID="WildlifeTools_FavoriteDatasets" size="large" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -639,6 +643,17 @@
                 keytip="SG">
           <tooltip heading="Slope Graphic">
             Opens the interactive Slope Graphic window: an intuitive visual summary of the slope in an area -- a line inclined at the MEAN slope, a wedge spanning one standard deviation either side of it, a wedge spanning the full min-max range, an optional robust percentile wedge, a dashed median line, a protractor scale arc, and an arcing 95% confidence interval of the mean. Reads slope from a numeric field on a feature layer or table, or streams an entire slope raster (any size) into exact statistics; values may be in degrees, percent slope, rise:run ratio, or gradians. Adjust everything live and save the graphic as an SVG file or place it as a grouped, fully editable graphic on the layout or map, with slope statistics one click away. A modernized recreation of the Slope Graphic from the Jenness Enterprises Grid Tools extension for ArcView 3.x.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_FavoriteDatasets"
+                caption="Load Favorite Datasets"
+                className="DataTools.FavoriteDatasetsButton"
+                loadOnClick="true"
+                smallImage="Images\FavoriteData_16.png"
+                largeImage="Images\FavoriteData_32.png"
+                keytip="FD">
+          <tooltip heading="Load Favorite Datasets">
+            Opens the Load Favorite Datasets window: keep your most-used datasets in four groups you name yourself, then check any combination and add them all to the active map with one click -- no more hunting through folders and web servers. Any dataset a browse dialog can reach can be saved: feature classes, rasters, tables, and online services alike. Add items, remove them, and edit their descriptions; the lists are saved with your user profile and shared across projects. Datasets that appear to be unavailable (a missing path or an unreachable server) show in RED. A modernized recreation of the Load Favorite Datasets tool from the ArcMap SSI toolbar.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_Sudoku"

@@ -1,0 +1,172 @@
+<controls:ProWindow x:Class="WildlifeTools.DataTools.FavoriteDatasetsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        Title="Load Favorite Datasets" WindowStartupLocation="CenterOwner"
+        Width="880" Height="720" MinWidth="660" MinHeight="500"
+        ResizeMode="CanResizeWithGrip" ShowInTaskbar="False">
+  <controls:ProWindow.Resources>
+    <!-- Parchment skin (borrowed from the Sudoku tool's Parchment palette;
+         EB Garamond / Cinzel are embedded SIL-OFL fonts). -->
+    <LinearGradientBrush x:Key="FrameBrush" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#6B4A26" Offset="0" />
+      <GradientStop Color="#4E351B" Offset="0.5" />
+      <GradientStop Color="#3A2712" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="BackdropBrush" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#F8F1DE" Offset="0" />
+      <GradientStop Color="#EFE3C4" Offset="0.55" />
+      <GradientStop Color="#E7D7B0" Offset="1" />
+    </LinearGradientBrush>
+    <SolidColorBrush x:Key="PanelBrush" Color="#F9F3E2" />
+    <SolidColorBrush x:Key="PanelEdgeBrush" Color="#2E1F0E" />
+    <SolidColorBrush x:Key="InkBrush" Color="#332612" />
+    <SolidColorBrush x:Key="HintBrush" Color="#8A7550" />
+    <SolidColorBrush x:Key="GridLineBrush" Color="#4A381E" />
+    <SolidColorBrush x:Key="ButtonFaceBrush" Color="#5C3F20" />
+    <SolidColorBrush x:Key="ButtonTextBrush" Color="#F5EBD3" />
+    <SolidColorBrush x:Key="ButtonEdgeBrush" Color="#2E1F0E" />
+    <SolidColorBrush x:Key="ButtonHoverBrush" Color="#7A5730" />
+    <SolidColorBrush x:Key="ButtonPressedBrush" Color="#412C14" />
+    <FontFamily x:Key="BodyFontFam">/WildlifeTools;component/Fonts/#EB Garamond, Georgia</FontFamily>
+    <FontFamily x:Key="DisplayFontFam">/WildlifeTools;component/Fonts/#Cinzel, Georgia</FontFamily>
+
+    <!-- Wrap every tooltip at a readable width instead of one screen-wide line. -->
+    <Style TargetType="ToolTip">
+      <Setter Property="MaxWidth" Value="420" />
+      <Setter Property="ContentTemplate">
+        <Setter.Value>
+          <DataTemplate>
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="400" />
+          </DataTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="ParchButton" TargetType="Button">
+      <Setter Property="Focusable" Value="False" />
+      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="FontFamily" Value="{StaticResource BodyFontFam}" />
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="Foreground" Value="{StaticResource ButtonTextBrush}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{StaticResource ButtonFaceBrush}"
+                    BorderBrush="{StaticResource ButtonEdgeBrush}"
+                    BorderThickness="1" CornerRadius="4"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background"
+                        Value="{StaticResource ButtonHoverBrush}" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Bd" Property="Background"
+                        Value="{StaticResource ButtonPressedBrush}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- One favorites group: editable name header, checkbox list, buttons. -->
+    <DataTemplate x:Key="GroupTemplate">
+      <Border BorderBrush="{StaticResource PanelEdgeBrush}" BorderThickness="1"
+              CornerRadius="4" Margin="4" Padding="7"
+              Background="{StaticResource PanelBrush}">
+        <DockPanel>
+          <TextBox DockPanel.Dock="Top" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                   FontWeight="Bold" FontSize="16" TextAlignment="Center"
+                   FontFamily="{StaticResource DisplayFontFam}"
+                   Foreground="{StaticResource InkBrush}"
+                   BorderThickness="0" Background="Transparent" Margin="0,0,0,5"
+                   ToolTip="The group's name -- click to edit it. Groups are just labels; use them to sort your favorites however you like (projects, themes, servers, ...)." />
+          <StackPanel DockPanel.Dock="Bottom">
+            <TextBlock Text="Double-click an item for details" FontSize="11"
+                       FontFamily="{StaticResource BodyFontFam}"
+                       Foreground="{StaticResource HintBrush}"
+                       HorizontalAlignment="Center" Margin="0,4,0,4" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <Button Content="Add..." Margin="2,0" Click="OnAddClick"
+                      Style="{StaticResource ParchButton}" Tag="{Binding}"
+                      ToolTip="Browse for datasets to add to this group: feature classes, rasters, tables, or web services (multi-select works). You will be asked for a short description of each; the description is what the list shows." />
+              <Button Content="Remove" Margin="2,0" Click="OnRemoveClick"
+                      Style="{StaticResource ParchButton}" Tag="{Binding}"
+                      ToolTip="Remove the checked item(s) from this group. The datasets themselves are not touched." />
+              <Button Content="Edit Description" Margin="2,0" Click="OnEditClick"
+                      Style="{StaticResource ParchButton}" Tag="{Binding}"
+                      ToolTip="Edit the description of the checked item(s)." />
+            </StackPanel>
+          </StackPanel>
+          <ListBox ItemsSource="{Binding Items}" BorderThickness="1"
+                   BorderBrush="{StaticResource GridLineBrush}"
+                   Background="{StaticResource PanelBrush}"
+                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                   MouseDoubleClick="OnItemDoubleClick">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <CheckBox IsChecked="{Binding IsChecked}" Margin="1"
+                          ToolTip="{Binding InfoTip}">
+                  <TextBlock Text="{Binding Description}" TextWrapping="Wrap"
+                             FontFamily="{StaticResource BodyFontFam}" FontSize="14">
+                    <TextBlock.Style>
+                      <Style TargetType="TextBlock">
+                        <Setter Property="Foreground" Value="#332612" />
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding IsUnavailable}" Value="True">
+                            <Setter Property="Foreground" Value="#C22718" />
+                            <Setter Property="ToolTip"
+                                    Value="This dataset appears to be UNAVAILABLE (path or server not found)." />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </TextBlock.Style>
+                  </TextBlock>
+                </CheckBox>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DockPanel>
+      </Border>
+    </DataTemplate>
+  </controls:ProWindow.Resources>
+
+  <Border Background="{StaticResource FrameBrush}" Padding="9">
+    <Border Background="{StaticResource BackdropBrush}" CornerRadius="8" Padding="9">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+          <DockPanel Margin="4,0,4,5">
+            <TextBlock x:Name="txtStatus" TextWrapping="Wrap"
+                       FontFamily="{StaticResource BodyFontFam}" FontSize="13"
+                       Foreground="#5C4526" VerticalAlignment="Center" />
+          </DockPanel>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+            <Button x:Name="btnLoad" Content="Add Selected to Map" Margin="4,0"
+                    Padding="14,5" Click="OnLoadClick" FontWeight="Bold"
+                    Style="{StaticResource ParchButton}"
+                    ToolTip="Add every CHECKED dataset (from all four groups) to the active map. Local data and web services both load; anything that fails is reported and the rest still load." />
+            <Button x:Name="btnSave" Content="Save Changes" Margin="4,0" Padding="14,5"
+                    Click="OnSaveClick" Style="{StaticResource ParchButton}"
+                    ToolTip="Save the lists (group names, items, descriptions) to your user profile. The window also offers to save when you close it with unsaved changes." />
+            <Button Content="Check Availability" Margin="4,0" Padding="14,5"
+                    Click="OnRecheckClick" Style="{StaticResource ParchButton}"
+                    ToolTip="Re-test every item: local paths are checked on disk, service connections and web services are pinged; unavailable datasets show in RED. Runs automatically when the window opens." />
+            <Button Content="Close" Margin="4,0" Padding="14,5" Click="OnCloseClick"
+                    Style="{StaticResource ParchButton}" />
+          </StackPanel>
+        </StackPanel>
+
+        <UniformGrid Rows="2" Columns="2">
+          <ContentControl x:Name="grp1" ContentTemplate="{StaticResource GroupTemplate}" />
+          <ContentControl x:Name="grp2" ContentTemplate="{StaticResource GroupTemplate}" />
+          <ContentControl x:Name="grp3" ContentTemplate="{StaticResource GroupTemplate}" />
+          <ContentControl x:Name="grp4" ContentTemplate="{StaticResource GroupTemplate}" />
+        </UniformGrid>
+      </DockPanel>
+    </Border>
+  </Border>
+</controls:ProWindow>
