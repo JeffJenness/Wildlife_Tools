@@ -176,8 +176,15 @@ def _detect_source_kind(in_raster, arr=None, nodata=None):
     import arcpy
     text = ""
     try:
-        md = arcpy.metadata.Metadata(in_raster)
-        text = ((md.xml or "") + " " + (md.lineage or "")).lower()
+        # Resolve a layer to its dataset path; this arcpy has no
+        # Metadata.lineage attribute (the history lives inside md.xml).
+        try:
+            path = arcpy.Describe(in_raster).catalogPath
+        except Exception:
+            path = in_raster
+        md = arcpy.metadata.Metadata(path)
+        text = ((md.xml or "") + " " +
+                (getattr(md, "lineage", "") or "")).lower()
     except Exception:
         text = ""
     if text:
@@ -1389,3 +1396,858 @@ def _build_pyramids(out_path, technique, messages):
     except Exception as e:
         _warn(messages, "Could not build pyramids for {}: {}".format(
             out_path, e))
+
+
+# ---------------------------------------------------------------------------
+#  Aspect Zonal Statistics as Table
+# ---------------------------------------------------------------------------
+# The circular analog of Esri's Zonal Statistics as Table, computed entirely
+# internally (no Spatial Analyst / Image Analyst). Zones come from an integer
+# raster or from point / polyline / polygon features; every zone's aspect
+# cells are gathered and summarized with the same circular statistics the
+# Polar Plots tool reports. Feature zones are processed ONE ZONE AT A TIME so
+# overlapping features in different zones are each analyzed in full (the
+# historic Zonal Statistics rasterize-everything-first overlap bug can not
+# occur here); overlapping features in the SAME zone count each cell once.
+# Flat cells (aspect -1) carry no direction and are excluded from the
+# statistics, but are counted and reported per zone (FLAT_COUNT / FLAT_PCT).
+
+ZONAL_STATS = [
+    ("ALL",      "All circular statistics"),
+    ("MEAN",     "Mean Direction"),
+    ("RBAR",     "Mean Resultant Length (r-bar)"),
+    ("RLEN",     "Resultant Length"),
+    ("CVAR",     "Circular Variance"),
+    ("AVAR",     "Angular Variance"),
+    ("CSD",      "Circular Standard Deviation"),
+    ("ADEV",     "Angular Deviation"),
+    ("MEDIAN",   "Median Direction"),
+    ("RANGE",    "Circular Range"),
+    ("KAPPA",    "von Mises Concentration (kappa)"),
+    ("RAYLEIGH", "Rayleigh Test (Z and p)"),
+    ("CI95",     "Mean Direction 95% Confidence Interval"),
+]
+ZONAL_LABELS = [lbl for _, lbl in ZONAL_STATS]
+ZONAL_KEY = {lbl: k for k, lbl in ZONAL_STATS}
+
+# key -> ordered (field, alias, ftype) tuples added to the output table.
+_ZFIELDS = {
+    "MEAN":     [("MEAN_DIR", "Mean Direction (degrees)", "DOUBLE")],
+    "RBAR":     [("RBAR", "Mean Resultant Length (0-1)", "DOUBLE")],
+    "RLEN":     [("R_LENGTH", "Resultant Length", "DOUBLE")],
+    "CVAR":     [("CIRC_VAR", "Circular Variance", "DOUBLE")],
+    "AVAR":     [("ANG_VAR", "Angular Variance", "DOUBLE")],
+    "CSD":      [("CIRC_SD", "Circular Standard Deviation (degrees)", "DOUBLE")],
+    "ADEV":     [("ANG_DEV", "Angular Deviation (degrees)", "DOUBLE")],
+    "MEDIAN":   [("MEDIAN_DIR", "Median Direction (degrees)", "DOUBLE")],
+    "RANGE":    [("CIRC_RANGE", "Circular Range (degrees)", "DOUBLE")],
+    "KAPPA":    [("VM_KAPPA", "von Mises Concentration (kappa)", "DOUBLE")],
+    "RAYLEIGH": [("RAYLEIGH_Z", "Rayleigh Z", "DOUBLE"),
+                 ("RAYLEIGH_P", "Rayleigh p (uniformity)", "DOUBLE")],
+    "CI95":     [("CI95_HALF", "95% CI Half-Angle (degrees)", "DOUBLE"),
+                 ("CI95_LO", "95% CI Lower Bound (degrees)", "DOUBLE"),
+                 ("CI95_HI", "95% CI Upper Bound (degrees)", "DOUBLE")],
+}
+_ZORDER = ["MEAN", "RBAR", "RLEN", "CVAR", "AVAR", "CSD", "ADEV",
+           "MEDIAN", "RANGE", "KAPPA", "RAYLEIGH", "CI95"]
+
+_ZBINS = 3600                       # 0.1-degree bins for median/range
+_ZMAX_ZONES = 50000                 # histogram memory backstop
+
+
+class _ZoneAcc(object):
+    """Per-zone accumulator: exact trig sums for the resultant-based
+    statistics plus a fine 0.1-degree histogram for the order statistics.
+    Zone keys may be ints (raster zones) or any hashable field value
+    (feature zones)."""
+
+    def __init__(self):
+        self.zones = {}             # key -> dict of accumulators
+
+    def _zone(self, key):
+        z = self.zones.get(key)
+        if z is None:
+            if len(self.zones) >= _ZMAX_ZONES:
+                import arcpy
+                raise arcpy.ExecuteError(
+                    "More than {:,} zones -- reduce the number of distinct "
+                    "zone values.".format(_ZMAX_ZONES))
+            z = {"sin": 0.0, "cos": 0.0, "n": 0, "flat": 0, "nodata": 0,
+                 "bad": 0, "hist": np.zeros(_ZBINS, np.float64)}
+            self.zones[key] = z
+        return z
+
+    def add_compass(self, key, compass):
+        """Accumulate an array of valid compass directions (degrees 0-360)."""
+        z = self._zone(key)
+        if compass.size == 0:
+            return
+        rad = np.radians(compass)
+        z["sin"] += float(np.sum(np.sin(rad)))
+        z["cos"] += float(np.sum(np.cos(rad)))
+        z["n"] += int(compass.size)
+        b = np.floor(compass * (_ZBINS / 360.0)).astype(np.int64)
+        np.clip(b, 0, _ZBINS - 1, out=b)
+        z["hist"] += np.bincount(b, minlength=_ZBINS)
+
+    def add_counts(self, key, flat=0, nodata=0, bad=0):
+        z = self._zone(key)
+        z["flat"] += int(flat)
+        z["nodata"] += int(nodata)
+        z["bad"] += int(bad)
+
+
+def _hist_circ_median_deg(hist):
+    """Circular median from a 0.1-degree histogram in O(B) via prefix sums
+    over the doubled array (the observed bin minimizing the count-weighted
+    summed circular distance; Fisher 1993, Mardia & Jupp 2000)."""
+    total = float(hist.sum())
+    if total <= 0:
+        return None
+    B = hist.size
+    half = B // 2
+    w2 = np.concatenate([hist, hist])
+    j2 = np.arange(2 * B, dtype=np.float64)
+    cw = np.concatenate([[0.0], np.cumsum(w2)])
+    cwj = np.concatenate([[0.0], np.cumsum(w2 * j2)])
+    c = np.arange(B)
+    n1 = cw[c + half + 1] - cw[c]
+    a1 = cwj[c + half + 1] - cwj[c]
+    term1 = a1 - c * n1                       # offsets 0..half: distance o
+    n2 = cw[c + B] - cw[c + half + 1]
+    a2 = cwj[c + B] - cwj[c + half + 1]
+    term2 = (B + c) * n2 - a2                 # offsets half+1..B-1: B - o
+    cost = term1 + term2
+    cost[hist <= 0] = np.inf                  # median must be an observed bin
+    b = int(np.argmin(cost))
+    return (b + 0.5) * (360.0 / B)
+
+
+def _hist_circ_range_deg(hist):
+    """Circular range (the smallest arc containing every observation) from
+    the occupied 0.1-degree bins: 360 minus the largest empty gap."""
+    occ = np.nonzero(hist > 0)[0]
+    if occ.size == 0:
+        return None
+    if occ.size == 1:
+        return 0.0
+    binw = 360.0 / hist.size
+    gaps = np.diff(occ) * binw
+    wrap = 360.0 - (occ[-1] - occ[0]) * binw
+    return max(0.0, 360.0 - max(float(gaps.max()), wrap))
+
+
+def _zone_stats_row(z, ignore_nodata):
+    """The statistics dict for one zone's accumulators (None = NULL)."""
+    out = {k: None for grp in _ZFIELDS.values() for k, _a, _t in grp}
+    n = z["n"]
+    if (not ignore_nodata and z["nodata"] > 0) or n == 0:
+        return out
+    r_len = math.hypot(z["sin"], z["cos"])
+    rbar = min(r_len / n, 1.0)
+    if r_len > 1e-12:
+        out["MEAN_DIR"] = math.degrees(math.atan2(z["sin"], z["cos"])) % 360.0
+    out["RBAR"] = rbar
+    out["R_LENGTH"] = r_len
+    out["CIRC_VAR"] = 1.0 - rbar
+    out["ANG_VAR"] = 2.0 * (1.0 - rbar)
+    out["CIRC_SD"] = math.degrees(
+        math.sqrt(max(-2.0 * math.log(max(rbar, 1e-12)), 0.0)))
+    out["ANG_DEV"] = math.degrees(math.sqrt(max(2.0 * (1.0 - rbar), 0.0)))
+    out["MEDIAN_DIR"] = _hist_circ_median_deg(z["hist"])
+    out["CIRC_RANGE"] = _hist_circ_range_deg(z["hist"])
+    kappa = float(_kappa_from_rbar(np.asarray([rbar]))[0])
+    out["VM_KAPPA"] = kappa
+    out["RAYLEIGH_Z"] = n * rbar * rbar
+    out["RAYLEIGH_P"] = float(_rayleigh_p(np.asarray([float(n)]),
+                                          np.asarray([rbar]))[0])
+    if n > 1 and rbar > 0 and kappa > 0 and out["MEAN_DIR"] is not None:
+        se = 1.0 / math.sqrt(n * rbar * kappa)
+        half = math.degrees(1.96 * se)
+        if 0.0 < half < 90.0:
+            out["CI95_HALF"] = half
+            out["CI95_LO"] = (out["MEAN_DIR"] - half) % 360.0
+            out["CI95_HI"] = (out["MEAN_DIR"] + half) % 360.0
+    return out
+
+
+def _split_compass(vals, is_math):
+    """Partition a float array into (compass_directions, n_flat, n_bad):
+    -1 = flat, other negatives / >360 = out-of-range 'bad' (excluded), and
+    everything else converted to compass degrees when ``is_math``."""
+    flat = np.abs(vals + 1.0) < 1e-9
+    bad = (~flat) & ((vals < 0.0) | (vals > 360.0 + 1e-9))
+    good = ~(flat | bad)
+    v = vals[good]
+    if is_math:
+        v = (90.0 - v) % 360.0
+    else:
+        v = np.mod(v, 360.0)
+    return v, int(np.count_nonzero(flat)), int(np.count_nonzero(bad))
+
+
+def _zone_window(ext, gt, W, H, margin=2):
+    """Window (c0, r0, c1, r1) of the aspect grid covering ``ext``
+    (xmin, ymin, xmax, ymax) plus a margin, clamped to the raster."""
+    csx, csy = gt[1], abs(gt[5])
+    c0 = int(math.floor((ext[0] - gt[0]) / csx)) - margin
+    c1 = int(math.ceil((ext[2] - gt[0]) / csx)) + margin
+    r0 = int(math.floor((gt[3] - ext[3]) / csy)) - margin
+    r1 = int(math.ceil((gt[3] - ext[1]) / csy)) + margin
+    return max(0, c0), max(0, r0), min(W, c1), min(H, r1)
+
+
+def _poly_paths(geom):
+    """One matplotlib compound Path per polygon geometry (all parts and
+    interior rings; Esri ring orientation + the nonzero winding rule make
+    holes subtract)."""
+    from matplotlib.path import Path as MplPath
+    verts, codes = [], []
+    for part in geom:
+        new_ring = True
+        for pt in part:
+            if pt is None:                    # separator: interior ring next
+                new_ring = True
+                continue
+            verts.append((pt.X, pt.Y))
+            codes.append(MplPath.MOVETO if new_ring else MplPath.LINETO)
+            new_ring = False
+    if not verts:
+        return None
+    return MplPath(verts, codes)
+
+
+def _polygon_zone_mask_rows(paths, c0, r0, c1, r1, gt, chunk_rows):
+    """Yield (row0, mask_chunk) boolean chunks of the window where cell
+    CENTERS fall inside any of the zone's polygon paths."""
+    csx, csy = gt[1], abs(gt[5])
+    xs = gt[0] + (np.arange(c0, c1) + 0.5) * csx
+    for rs in range(r0, r1, chunk_rows):
+        re_ = min(r1, rs + chunk_rows)
+        ys = gt[3] - (np.arange(rs, re_) + 0.5) * csy
+        gx, gy = np.meshgrid(xs, ys)
+        pts = np.column_stack([gx.ravel(), gy.ravel()])
+        inside = np.zeros(pts.shape[0], bool)
+        for p in paths:
+            if p is not None:
+                inside |= p.contains_points(pts)
+        yield rs, inside.reshape(re_ - rs, c1 - c0)
+
+
+def _line_cells(geom, gt, W, H):
+    """Set of (row, col) cells a polyline passes through, by densified
+    sampling at one-third of a cell (marks every cell the line crosses)."""
+    csx, csy = gt[1], abs(gt[5])
+    step = min(csx, csy) / 3.0
+    cells = set()
+    for part in geom:
+        prev = None
+        for pt in part:
+            if pt is None:
+                prev = None
+                continue
+            if prev is not None:
+                dx, dy = pt.X - prev.X, pt.Y - prev.Y
+                dist = math.hypot(dx, dy)
+                k = max(1, int(math.ceil(dist / step)))
+                for i in range(k + 1):
+                    x = prev.X + dx * i / k
+                    y = prev.Y + dy * i / k
+                    c = int((x - gt[0]) / csx)
+                    r = int((gt[3] - y) / csy)
+                    if 0 <= c < W and 0 <= r < H:
+                        cells.add((r, c))
+            prev = pt
+    return cells
+
+
+def run_aspect_zonal(in_zone_data, zone_field, in_raster, out_table,
+                     ignore_nodata=True, statistics_type="ALL",
+                     input_convention=INPUT_CONVENTIONS[0], messages=None):
+    """Aspect Zonal Statistics as Table: circular statistics of an aspect
+    raster summarized per zone, written to a standalone table -- the circular
+    analog of Esri's Zonal Statistics as Table, requiring no Spatial Analyst
+    or Image Analyst extension.
+
+    Zones: an INTEGER raster (each distinct value is a zone; sampled at the
+    aspect grid's cell centers, nearest neighbor) or point / polyline /
+    polygon features grouped by ``zone_field``. Feature zones are processed
+    one zone at a time, each over its own window of the aspect raster, so
+    overlapping features in different zones are each analyzed in full.
+    Polygons take every aspect cell whose CENTER falls inside the zone;
+    polylines take every cell the line passes through; points take a
+    bilinear WEIGHTED MEAN DIRECTION interpolated at each point (circular
+    interpolation -- 358 and 2 average to 0, never 180).
+
+    Flat cells (aspect = -1) carry no direction: they are EXCLUDED from the
+    statistics and counted per zone (FLAT_COUNT, FLAT_PCT). Values outside
+    -1..360 are excluded, counted, and reported as a might-not-be-aspect
+    warning. ``ignore_nodata`` False makes any zone containing NoData get
+    NULL statistics (Esri parity). D-infinity (mathematical-convention)
+    rasters are converted per ``input_convention``.
+
+    Returns the output table path."""
+    import arcpy
+    is_math = str(input_convention).lower().startswith("math")
+    stat_key = ZONAL_KEY.get(statistics_type, statistics_type or "ALL")
+    if stat_key not in ("ALL",) and stat_key not in _ZORDER:
+        stat_key = "ALL"
+    keys = _ZORDER if stat_key == "ALL" else [stat_key]
+
+    _mh.begin_phases([
+        ("Reading the zones...", 1),
+        ("Gathering raster cells per zone...", 8),
+        ("Writing the output table...", 2),
+    ])
+
+    dz = arcpy.Describe(in_zone_data)
+    zone_is_raster = dz.dataType in ("RasterDataset", "RasterLayer",
+                                     "MosaicDataset", "MosaicLayer")
+    shape_type = None if zone_is_raster else dz.shapeType
+
+    # ---- source-kind detection (informational) ---------------------------
+    try:
+        kind, why = _detect_source_kind(in_raster)
+    except Exception:
+        kind, why = "unknown", ""
+    if kind == "d8":
+        _warn(messages,
+              "The value raster looks like a D8 FLOW DIRECTION raster ({}). "
+              "D8 codes (1, 2, 4, ... 128) are categories, not angles -- "
+              "circular statistics on them are meaningless. Use an aspect or "
+              "D-infinity raster instead.".format(why))
+    elif kind == "dinf" and not is_math:
+        _warn(messages,
+              "The value raster looks like a D-INFINITY flow-direction "
+              "raster ({}), which reports directions in the MATHEMATICAL "
+              "convention, but the input convention is set to Compass. "
+              "Direction-valued results may be rotated/reflected; consider "
+              "the Mathematical setting.".format(why))
+    if is_math:
+        _say(messages, "Mathematical input convention: directions are "
+                       "converted to compass (0 = north, clockwise) before "
+                       "the statistics.")
+    _say(messages, "Flat cells (aspect = -1) carry no direction and are "
+                   "EXCLUDED from the circular statistics; each zone's flat "
+                   "cells are counted in FLAT_COUNT and FLAT_PCT.")
+
+    acc = _ZoneAcc()
+    zone_order = []                 # first-seen order for the output rows
+
+    def touch(key):
+        if key not in acc.zones:
+            zone_order.append(key)
+        acc._zone(key)
+
+    # ---- open the aspect raster ------------------------------------------
+    src, in_copy = _hs._open_source(in_raster, arcpy.env.scratchFolder, messages)
+    try:
+        band = src.GetRasterBand(1)
+        W, H = src.RasterXSize, src.RasterYSize
+        gt = src.GetGeoTransform()
+        nodata = band.GetNoDataValue()
+        csx, csy = gt[1], abs(gt[5])
+        rsr = arcpy.Describe(in_raster).spatialReference
+
+        total_flat = 0
+        total_bad = 0
+
+        def feed(key, vals):
+            """Accumulate raw aspect values (already NoData-masked counted
+            separately) into a zone."""
+            nonlocal total_flat, total_bad
+            good, n_flat, n_bad = _split_compass(vals, is_math)
+            acc.add_compass(key, good)
+            acc.add_counts(key, flat=n_flat, bad=n_bad)
+            total_flat += n_flat
+            total_bad += n_bad
+
+        if zone_is_raster:
+            _run_zonal_raster(in_zone_data, band, gt, W, H, nodata, rsr,
+                              acc, zone_order, feed, messages)
+        elif shape_type == "Point":
+            _run_zonal_points(in_zone_data, zone_field, band, gt, W, H,
+                              nodata, rsr, is_math, acc, zone_order, touch,
+                              messages)
+        elif shape_type in ("Polyline", "Polygon"):
+            _run_zonal_shapes(in_zone_data, zone_field, shape_type, band, gt,
+                              W, H, nodata, rsr, acc, zone_order, touch,
+                              feed, messages)
+        else:
+            raise arcpy.ExecuteError(
+                "Unsupported zone shape type: {} (points, polylines, "
+                "polygons, or an integer raster).".format(shape_type))
+    finally:
+        src = None
+        if in_copy:
+            try:
+                arcpy.management.Delete(in_copy)
+            except Exception:
+                pass
+
+    if total_flat:
+        _say(messages, "{:,} flat cell(s)/point(s) (aspect = -1) were "
+                       "excluded from the statistics.".format(total_flat))
+    if total_bad:
+        _warn(messages,
+              "{:,} value(s) fall outside the aspect range (-1 to 360 "
+              "degrees) and were excluded -- this may not be an aspect "
+              "raster.".format(total_bad))
+
+    _mh.phase_advance("Writing the output table...")
+    _write_zonal_table(out_table, in_zone_data, zone_field, zone_is_raster,
+                       acc, zone_order, keys, ignore_nodata, in_raster,
+                       statistics_type, messages)
+    _mh.end_phases()
+    return out_table
+
+
+def _run_zonal_raster(in_zone, band, gt, W, H, nodata, rsr, acc, zone_order,
+                      feed, messages):
+    """Integer-raster zones: every aspect cell is assigned the zone value at
+    its center (nearest neighbor in the zone grid), streamed in row blocks."""
+    import arcpy
+    dz = arcpy.Describe(in_zone)
+    try:
+        if not dz.isInteger:
+            raise arcpy.ExecuteError(
+                "The zone raster must be an INTEGER raster (each distinct "
+                "value is a zone).")
+    except AttributeError:
+        pass
+    zsr = dz.spatialReference
+    if (zsr and rsr and zsr.name not in ("Unknown", "") and
+            rsr.name not in ("Unknown", "") and zsr.name != rsr.name):
+        raise arcpy.ExecuteError(
+            "The zone raster ({}) and the aspect raster ({}) are in "
+            "different coordinate systems -- project one to match the other "
+            "first (Project Raster).".format(zsr.name, rsr.name))
+
+    zsrc, zcopy = _hs._open_source(in_zone, arcpy.env.scratchFolder, messages)
+    try:
+        zband = zsrc.GetRasterBand(1)
+        zW, zH = zsrc.RasterXSize, zsrc.RasterYSize
+        zgt = zsrc.GetGeoTransform()
+        znodata = zband.GetNoDataValue()
+        zcsx, zcsy = zgt[1], abs(zgt[5])
+
+        # Aspect-grid window covering the zone raster's extent.
+        zext = (zgt[0], zgt[3] - zH * zcsy, zgt[0] + zW * zcsx, zgt[3])
+        c0, r0, c1, r1 = _zone_window(zext, gt, W, H, margin=0)
+        if c1 <= c0 or r1 <= r0:
+            _warn(messages, "The zone raster does not overlap the aspect "
+                            "raster; the output table will be empty.")
+            return
+        csx, csy = gt[1], abs(gt[5])
+        xs = gt[0] + (np.arange(c0, c1) + 0.5) * csx
+        zc = np.floor((xs - zgt[0]) / zcsx).astype(np.int64)
+        cok = (zc >= 0) & (zc < zW)
+
+        _mh.phase_advance("Gathering raster cells per zone...")
+        block = 512
+        nblocks = max(1, (r1 - r0 + block - 1) // block)
+        done = 0
+        for rs in range(r0, r1, block):
+            re_ = min(r1, rs + block)
+            ys = gt[3] - (np.arange(rs, re_) + 0.5) * csy
+            zr = np.floor((zgt[3] - ys) / zcsy).astype(np.int64)
+            rok = (zr >= 0) & (zr < zH)
+            if not (rok.any() and cok.any()):
+                done += 1
+                continue
+            arr = band.ReadAsArray(c0, rs, c1 - c0, re_ - rs).astype(np.float64)
+            # Read the needed zone rows/cols once, then gather per-cell.
+            zr0, zr1 = int(zr[rok].min()), int(zr[rok].max()) + 1
+            zc0, zc1 = int(zc[cok].min()), int(zc[cok].max()) + 1
+            zarr = zband.ReadAsArray(zc0, zr0, zc1 - zc0, zr1 - zr0)
+            zri = np.clip(zr - zr0, 0, zr1 - zr0 - 1)
+            zci = np.clip(zc - zc0, 0, zc1 - zc0 - 1)
+            zvals = zarr[zri[:, None], zci[None, :]]
+            inzone = rok[:, None] & cok[None, :]
+            if znodata is not None:
+                inzone &= (zvals != znodata)
+            if not inzone.any():
+                done += 1
+                _mh.phase_step(done, nblocks)
+                continue
+            afinite = np.isfinite(arr)
+            if nodata is not None:
+                afinite &= (arr != nodata)
+            for zv in np.unique(zvals[inzone]):
+                key = int(zv)
+                sel = inzone & (zvals == zv)
+                if key not in acc.zones:
+                    zone_order.append(key)
+                    acc._zone(key)
+                nd = int(np.count_nonzero(sel & ~afinite))
+                if nd:
+                    acc.add_counts(key, nodata=nd)
+                feed(key, arr[sel & afinite])
+            done += 1
+            _mh.phase_step(done, nblocks)
+    finally:
+        zsrc = None
+        if zcopy:
+            try:
+                arcpy.management.Delete(zcopy)
+            except Exception:
+                pass
+
+
+def _run_zonal_points(in_zone, zone_field, band, gt, W, H, nodata, rsr,
+                      is_math, acc, zone_order, touch, messages):
+    """Point zones: the aspect at each point is a bilinear WEIGHTED MEAN
+    DIRECTION from the four surrounding cell centers (flat and NoData
+    neighbors excluded, weights renormalized); each point contributes one
+    direction to its zone."""
+    import arcpy
+    d = arcpy.Describe(in_zone)
+    if d.shapeType != "Point":
+        raise arcpy.ExecuteError(
+            "Multipoint zone features are not supported -- use single-part "
+            "points.")
+    _say(messages, "Point zones: the aspect at each point is interpolated "
+                   "as a bilinear weighted mean direction (circular "
+                   "interpolation).")
+    keys_, xs, ys = [], [], []
+    n_null = 0
+    with _zone_cursor(in_zone, [zone_field, "SHAPE@XY"], rsr, gt, W, H,
+                      messages, "points") as cur:
+        for key, xy in cur:
+            if xy is None:
+                continue
+            if key is None:
+                n_null += 1
+                continue
+            keys_.append(key)
+            xs.append(xy[0])
+            ys.append(xy[1])
+    if n_null:
+        _warn(messages, "{:,} point(s) have a NULL zone value and were "
+                        "skipped.".format(n_null))
+    n_pts = len(keys_)
+    if n_pts == 0:
+        _warn(messages, "No usable zone points were found.")
+        return
+    xs = np.asarray(xs, np.float64)
+    ys = np.asarray(ys, np.float64)
+    csx, csy = gt[1], abs(gt[5])
+
+    c0, r0, c1, r1 = _zone_window(
+        (xs.min(), ys.min(), xs.max(), ys.max()), gt, W, H)
+    if c1 <= c0 or r1 <= r0:
+        _warn(messages, "None of the points fall within the aspect raster.")
+        for k in keys_:
+            touch(k)
+            acc.add_counts(k, nodata=1)
+        return
+    _mh.phase_advance("Gathering raster cells per zone...")
+    arr = band.ReadAsArray(c0, r0, c1 - c0, r1 - r0).astype(np.float64)
+    Hw, Ww = arr.shape
+    x0w = gt[0] + c0 * csx
+    y0w = gt[3] - r0 * csy
+
+    valid = np.isfinite(arr)
+    if nodata is not None:
+        valid &= (arr != nodata)
+    flatm = valid & (np.abs(arr + 1.0) < 1e-9)
+    badm = valid & ~flatm & ((arr < 0.0) | (arr > 360.0 + 1e-9))
+    dirm = valid & ~flatm & ~badm
+    comp = np.where(dirm, (90.0 - arr) % 360.0 if is_math
+                    else np.mod(arr, 360.0), 0.0)
+    sinA = np.where(dirm, np.sin(np.radians(comp)), 0.0)
+    cosA = np.where(dirm, np.cos(np.radians(comp)), 0.0)
+
+    colf = (xs - x0w) / csx - 0.5          # cell-center coordinates
+    rowf = (y0w - ys) / csy - 0.5
+    cL = np.floor(colf).astype(np.int64)
+    rT = np.floor(rowf).astype(np.int64)
+    fx = colf - cL
+    fy = rowf - rT
+    ssum = np.zeros(n_pts)
+    csum = np.zeros(n_pts)
+    wdir = np.zeros(n_pts)
+    wflat = np.zeros(n_pts)
+    for dr in (0, 1):
+        for dc in (0, 1):
+            cc = cL + dc
+            rr = rT + dr
+            w = (fx if dc else 1.0 - fx) * (fy if dr else 1.0 - fy)
+            inb = (cc >= 0) & (cc < Ww) & (rr >= 0) & (rr < Hw) & (w > 0)
+            ccs = np.clip(cc, 0, Ww - 1)
+            rrs = np.clip(rr, 0, Hw - 1)
+            dm = inb & dirm[rrs, ccs]
+            fm = inb & flatm[rrs, ccs]
+            ssum += np.where(dm, w * sinA[rrs, ccs], 0.0)
+            csum += np.where(dm, w * cosA[rrs, ccs], 0.0)
+            wdir += np.where(dm, w, 0.0)
+            wflat += np.where(fm, w, 0.0)
+
+    n_flat_pts = 0
+    n_nodata_pts = 0
+    per_zone = {}
+    for i in range(n_pts):
+        k = keys_[i]
+        touch(k)
+        if wdir[i] > 1e-12:
+            r = math.hypot(ssum[i], csum[i])
+            if r > 1e-12:
+                per_zone.setdefault(k, []).append(
+                    math.degrees(math.atan2(ssum[i], csum[i])) % 360.0)
+                continue
+        if wflat[i] > 1e-12:
+            acc.add_counts(k, flat=1)
+            n_flat_pts += 1
+        else:
+            acc.add_counts(k, nodata=1)
+            n_nodata_pts += 1
+    for k, dirs in per_zone.items():
+        acc.add_compass(k, np.asarray(dirs, np.float64))
+    if n_flat_pts:
+        _say(messages, "{:,} point(s) fall on entirely flat cells and were "
+                       "excluded (counted in FLAT_COUNT).".format(n_flat_pts))
+    if n_nodata_pts:
+        _say(messages, "{:,} point(s) fall on NoData or outside the raster "
+                       "and were excluded.".format(n_nodata_pts))
+
+
+def _raster_extent_polygon(gt, W, H, rsr):
+    """The raster's footprint as a polygon in its own spatial reference."""
+    import arcpy
+    csy = abs(gt[5])
+    x0, x1 = gt[0], gt[0] + W * gt[1]
+    y1, y0 = gt[3], gt[3] - H * csy
+    return arcpy.Polygon(arcpy.Array([
+        arcpy.Point(x0, y0), arcpy.Point(x0, y1), arcpy.Point(x1, y1),
+        arcpy.Point(x1, y0), arcpy.Point(x0, y0)]), rsr)
+
+
+def _zone_cursor(in_zone, fields, rsr, gt, W, H, messages, what):
+    """SearchCursor over the zone features restricted (when this arcpy
+    supports spatial_filter) to features INTERSECTING the raster's extent:
+    zones entirely outside contribute nothing, so fetching and projecting
+    them -- the dominant cost when a small raster meets a large feature
+    class -- is skipped at the geodatabase level. Features skipped this way
+    do not appear in the output table (matching Esri's
+    intersection-of-extents behavior)."""
+    import arcpy
+    try:
+        cur = arcpy.da.SearchCursor(
+            in_zone, fields, spatial_reference=rsr,
+            spatial_filter=_raster_extent_polygon(gt, W, H, rsr))
+        _say(messages, "Only zone {} intersecting the raster extent are "
+                       "analyzed (others are skipped and do not appear in "
+                       "the output).".format(what))
+        return cur
+    except Exception:
+        return arcpy.da.SearchCursor(in_zone, fields, spatial_reference=rsr)
+
+
+def _run_zonal_shapes(in_zone, zone_field, shape_type, band, gt, W, H,
+                      nodata, rsr, acc, zone_order, touch, feed, messages):
+    """Polyline / polygon zones, one ZONE at a time over its own window of
+    the aspect raster: polygons take cells whose centers fall inside;
+    polylines take every cell the line passes through. Overlapping features
+    in different zones are each analyzed in full; within one zone, cells
+    count once."""
+    import arcpy
+    groups = {}
+    n_null = 0
+    n_curved = 0
+    min_cs = min(gt[1], abs(gt[5]))
+    with _zone_cursor(in_zone, [zone_field, "SHAPE@"], rsr, gt, W, H,
+                      messages, "features") as cur:
+        for key, geom in cur:
+            if geom is None:
+                continue
+            if key is None:
+                n_null += 1
+                continue
+            # TRUE-CURVE geometries (circles, arcs) expose only their arc
+            # endpoints when the vertices are read, which would collapse a
+            # circle to a degenerate 2-3 point 'polygon' containing nothing.
+            # Densify curves into straight segments no longer than one cell
+            # so the boundary error is far below the cell size.
+            if getattr(geom, "hasCurves", False):
+                try:
+                    geom = geom.densify("DISTANCE", min_cs, min_cs * 0.05)
+                    n_curved += 1
+                except Exception:
+                    pass
+            groups.setdefault(key, []).append(geom)
+    if n_curved:
+        _say(messages, "{:,} feature(s) contain true curves (circles/arcs) "
+                       "and were densified to one-cell segments for the "
+                       "cell test.".format(n_curved))
+    if n_null:
+        _warn(messages, "{:,} feature(s) have a NULL zone value and were "
+                        "skipped.".format(n_null))
+    if not groups:
+        _warn(messages, "No usable zone features were found.")
+        return
+    if shape_type == "Polygon":
+        _say(messages, "Polygon zones: every raster cell whose CENTER falls "
+                       "inside the zone is used.")
+    else:
+        _say(messages, "Polyline zones: every raster cell the line passes "
+                       "through is used.")
+
+    _mh.phase_advance("Gathering raster cells per zone...")
+    nz = len(groups)
+    for zi, (key, geoms) in enumerate(groups.items()):
+        touch(key)
+        ext = None
+        for g in geoms:
+            e = g.extent
+            ext = (e.XMin, e.YMin, e.XMax, e.YMax) if ext is None else (
+                min(ext[0], e.XMin), min(ext[1], e.YMin),
+                max(ext[2], e.XMax), max(ext[3], e.YMax))
+        c0, r0, c1, r1 = _zone_window(ext, gt, W, H)
+        if c1 <= c0 or r1 <= r0:
+            _mh.phase_step(zi + 1, nz)
+            continue
+
+        def eat(vals_block):
+            fin = np.isfinite(vals_block)
+            if nodata is not None:
+                fin &= (vals_block != nodata)
+            nd = int(vals_block.size - np.count_nonzero(fin))
+            if nd:
+                acc.add_counts(key, nodata=nd)
+            feed(key, vals_block[fin])
+
+        if shape_type == "Polygon":
+            paths = [_poly_paths(g) for g in geoms]
+            chunk = max(1, 4_000_000 // max(1, c1 - c0))
+            for rs, mask in _polygon_zone_mask_rows(paths, c0, r0, c1, r1,
+                                                    gt, chunk):
+                if not mask.any():
+                    continue
+                arr = band.ReadAsArray(c0, rs, c1 - c0,
+                                       mask.shape[0]).astype(np.float64)
+                eat(arr[mask])
+        else:
+            cells = set()
+            for g in geoms:
+                cells |= _line_cells(g, gt, W, H)
+            if cells:
+                rc = np.asarray(sorted(cells), np.int64)
+                rows, cols = rc[:, 0], rc[:, 1]
+                for rs in range(int(rows.min()), int(rows.max()) + 1, 512):
+                    re_ = min(int(rows.max()) + 1, rs + 512)
+                    sel = (rows >= rs) & (rows < re_)
+                    if not sel.any():
+                        continue
+                    cA, cB = int(cols[sel].min()), int(cols[sel].max()) + 1
+                    arr = band.ReadAsArray(cA, rs, cB - cA,
+                                           re_ - rs).astype(np.float64)
+                    eat(arr[rows[sel] - rs, cols[sel] - cA])
+        _mh.phase_step(zi + 1, nz)
+
+
+def _write_zonal_table(out_table, in_zone_data, zone_field, zone_is_raster,
+                       acc, zone_order, keys, ignore_nodata, in_raster,
+                       statistics_type, messages):
+    """Create the output table, write one row per zone, and stamp metadata."""
+    import arcpy
+    ws, name = os.path.split(str(out_table))
+    arcpy.management.CreateTable(ws, name)
+
+    # Zone-identifier field mirrors the source: raster zones get 'Value'.
+    if zone_is_raster:
+        zf_name, zf_type, zf_len = "Value", "LONG", None
+    else:
+        zf_name, zf_type, zf_len = zone_field, "DOUBLE", None
+        for f in arcpy.ListFields(in_zone_data):
+            if f.name.lower() == str(zone_field).lower():
+                if f.type in ("String", "GlobalID", "Guid", "Date"):
+                    zf_type, zf_len = "TEXT", max(f.length or 50, 20)
+                elif f.type in ("Integer", "SmallInteger", "BigInteger",
+                                "OID"):
+                    zf_type = "LONG"
+                break
+        try:
+            zf_name = arcpy.ValidateFieldName(zf_name, ws)
+        except Exception:
+            pass
+    # The new table already owns OBJECTID (and friends): uniquify the zone
+    # field name against the freshly created schema so an ObjectID zone
+    # field becomes e.g. OBJECTID_1 instead of failing.
+    taken = {fld.name.lower() for fld in arcpy.ListFields(out_table)}
+    base_zf, k = zf_name, 0
+    while zf_name.lower() in taken:
+        k += 1
+        zf_name = "{}_{}".format(base_zf, k)
+    if zf_len:
+        arcpy.management.AddField(out_table, zf_name, zf_type,
+                                  field_length=zf_len, field_alias=zone_field)
+    else:
+        arcpy.management.AddField(out_table, zf_name, zf_type,
+                                  field_alias=zone_field
+                                  if not zone_is_raster else "Zone Value")
+
+    arcpy.management.AddField(out_table, "COUNT", "LONG",
+                              field_alias="Count of Directional Cells")
+    arcpy.management.AddField(out_table, "FLAT_COUNT", "LONG",
+                              field_alias="Flat Cells (aspect = -1)")
+    arcpy.management.AddField(out_table, "FLAT_PCT", "DOUBLE",
+                              field_alias="Flat Cells (%)")
+    stat_fields = []
+    for k in keys:
+        for fname, alias, ftype in _ZFIELDS[k]:
+            arcpy.management.AddField(out_table, fname, ftype,
+                                      field_alias=alias)
+            stat_fields.append(fname)
+
+    # Numeric zone keys sort ascending; anything else keeps first-seen order.
+    try:
+        ordered = sorted(zone_order)
+    except TypeError:
+        ordered = zone_order
+
+    big = False
+    with arcpy.da.InsertCursor(
+            out_table, [zf_name, "COUNT", "FLAT_COUNT", "FLAT_PCT"]
+            + stat_fields) as cur:
+        for key in ordered:
+            z = acc.zones[key]
+            stats = _zone_stats_row(z, ignore_nodata)
+            n, flat = z["n"], z["flat"]
+            denom = n + flat
+            fpct = (100.0 * flat / denom) if denom > 0 else None
+            if n > 2147483647 or flat > 2147483647:
+                big = True
+            row = [key,
+                   min(n, 2147483647), min(flat, 2147483647), fpct]
+            row += [stats[f] for f in stat_fields]
+            cur.insertRow(row)
+    if big:
+        _warn(messages, "A zone exceeded the 32-bit COUNT limit; its count "
+                        "was clamped to 2,147,483,647.")
+    _say(messages, "Wrote {:,} zone row(s) to {}.".format(
+        len(ordered), out_table))
+
+    # Output metadata: conceptual description + per-run provenance (standing
+    # rule). Failure to stamp must never fail the tool.
+    try:
+        md = arcpy.metadata.Metadata(out_table)
+        md.title = "Aspect Zonal Statistics"
+        md.summary = (
+            "Circular (directional) statistics of the aspect raster '{}' "
+            "summarized per zone from '{}' (statistic: {}). Flat cells "
+            "(aspect = -1) were excluded from the statistics and counted in "
+            "FLAT_COUNT/FLAT_PCT.").format(
+                os.path.basename(str(in_raster)),
+                os.path.basename(str(in_zone_data)),
+                statistics_type)
+        md.description = (
+            "Zonal summary of an aspect raster using CIRCULAR statistics "
+            "(aspect is a circular variable: 0 and 360 degrees are the same "
+            "direction, so ordinary zonal means are wrong). Produced by the "
+            "Aspect Zonal Statistics as Table tool (Jenness Enterprises "
+            "Wildlife Tools), the circular analog of Esri's Zonal Statistics "
+            "as Table; unlike that tool it needs no Spatial Analyst or Image "
+            "Analyst extension. " + _CIRC_CITATION)
+        md.save()
+    except Exception:
+        pass

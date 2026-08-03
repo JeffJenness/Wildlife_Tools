@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.42.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.44.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -49,6 +49,7 @@
         <group id="WildlifeTools_GroupTopo" caption="Topographic Analysis" appearsOnAddInTab="false">
           <menu refID="WildlifeTools_TopographicRoughnessMenu" size="large" />
           <button refID="WildlifeTools_TopographicWetnessIndex" size="large" />
+          <button refID="WildlifeTools_SlopeZonalStatistics" size="large" />
           <menu refID="WildlifeTools_TPIMenu" size="large" />
           <menu refID="WildlifeTools_AspectToolsMenu" size="large" />
         </group>
@@ -497,6 +498,28 @@
             Opens the Aspect Transformation tool from the Jenness Enterprises toolbox: generate one or more transformations of an aspect raster at once. Directional reclassifications assign each cell a named direction class (North/South, East/West, the four or eight cardinal and intercardinal directions) written to a Class attribute table. Trigonometric transforms produce continuous rasters: northness (cosine of aspect), eastness (sine), a trigonometric deviation from a chosen bearing (1 toward, -1 away; Trimble and Weitzman 1956, Beers et al. 1966), or a numeric deviation in degrees (0-180; Jenness 2015). Flat cells (aspect -1) can be kept as a Flat class / -1 or set to NoData. D-infinity flow-direction rasters are supported via a convention toggle. No Spatial Analyst required. Also available in the Aspect Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
+        <button id="WildlifeTools_AspectZonalStatistics"
+                caption="Aspect Zonal Statistics as Table"
+                className="AspectZonalStatisticsButton"
+                loadOnClick="true"
+                smallImage="Images\AspectZonal_16.png"
+                largeImage="Images\AspectZonal_32.png"
+                keytip="AZ">
+          <tooltip heading="Aspect Zonal Statistics as Table">
+            Opens the Aspect Zonal Statistics as Table tool from the Jenness Enterprises toolbox: summarizes an aspect raster per zone into a table of CIRCULAR statistics (mean direction, mean resultant length, circular variance and SD, median direction, circular range, von Mises concentration, Rayleigh test, and the 95% CI of the mean direction). Very similar to Esri's Zonal Statistics as Table, but built for aspect -- a circular variable where the ordinary zonal MEAN and STD are wrong -- and it requires no Spatial Analyst or Image Analyst extension. Zones come from an integer raster or point / polyline / polygon features; overlapping features in different zones are each analyzed in full. Point zones use bilinear weighted-mean-direction interpolation. Flat cells (aspect -1) are excluded from the statistics and counted per zone. D-infinity rasters are supported via a convention toggle that defaults from the raster's geoprocessing history. Also available in the Aspect Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_SlopeZonalStatistics"
+                caption="Slope Zonal Statistics as Table"
+                className="SlopeZonalStatisticsButton"
+                loadOnClick="true"
+                smallImage="Images\SlopeZonal_16.png"
+                largeImage="Images\SlopeZonal_32.png"
+                keytip="SZ">
+          <tooltip heading="Slope Zonal Statistics as Table">
+            Opens the Slope Zonal Statistics as Table tool from the Jenness Enterprises toolbox: summarizes a slope raster per zone into a table (count, mean, median, standard deviation, min, max, range, 5th/95th percentiles, and the 95% confidence interval of the mean). Very similar to Esri’s Zonal Statistics as Table, but built for slope -- the mean, SD and CI are computed on the slope ANGLES, because percent slope is the tangent of the angle and averaging raw percent values biases steepness statistics high -- and it requires no Spatial Analyst or Image Analyst extension. Slope units (degrees, percent, rise:run, gradians) default automatically from the raster’s geoprocessing history; results are reported in the source unit. Negative slopes can be treated as positive (absolute steepness) or keep their sign so downhill balances uphill. Zones come from an integer raster or point / polyline / polygon features; overlapping features in different zones are each analyzed in full. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
         <button id="WildlifeTools_ExtractAspectValuesToPoints"
                 caption="Extract Aspect Values to Points"
                 className="ExtractAspectValuesToPointsButton"
@@ -772,6 +795,7 @@
           <button refID="WildlifeTools_AspectFocalStatistics" />
           <button refID="WildlifeTools_ExtractAspectValuesToPoints" />
           <button refID="WildlifeTools_AspectTransformation" />
+          <button refID="WildlifeTools_AspectZonalStatistics" />
         </menu>
         <menu id="WildlifeTools_TPIMenu"
               caption="TPI Tools"

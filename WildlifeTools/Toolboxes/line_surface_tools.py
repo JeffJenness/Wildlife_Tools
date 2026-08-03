@@ -547,6 +547,27 @@ def _densify_geodesic(pts_in, sr, interval_m):
     return out
 
 
+def _densify_if_curved(shape, interval_m=None):
+    """TRUE-CURVE polylines (arcs) expose only their arc endpoints when the
+    vertices are read, so downstream sampling would follow the CHORD of each
+    arc. Replace curves with straight segments: at the DEM sampling interval
+    when one is known (GEODESIC on geographic data), else at 1/200 of the
+    line's length. No-op for ordinary vertex polylines."""
+    if not getattr(shape, "hasCurves", False):
+        return shape
+    try:
+        sr = shape.spatialReference
+        if interval_m:
+            method = "GEODESIC" if (sr and sr.type == "Geographic") else "DISTANCE"
+            d = max(float(interval_m), 0.01)
+        else:
+            method = "DISTANCE"
+            d = max(shape.length / 200.0, 1e-6)
+        return shape.densify(method, d, d)
+    except Exception:
+        return shape
+
+
 def build_parts(shape, source, dem=None, elev_m_per_unit=1.0):
     """Reduce one polyline ``shape`` (arcpy Polyline, SHAPE@) to the per-part
     segment dicts compute_line_statistics needs. ``source`` is "DEM" or "Z".
@@ -556,6 +577,8 @@ def build_parts(shape, source, dem=None, elev_m_per_unit=1.0):
     parts = []
     diag = {"nodata_segments": 0, "empty_parts": 0}
 
+    shape = _densify_if_curved(
+        shape, dem["interval_m"] if source == "DEM" and dem else None)
     if source == "DEM":
         work_sr = dem["sr"]
         interval_m = dem["interval_m"]
@@ -849,6 +872,8 @@ def build_segments(shape, source, dem, elev_m_per_unit, source_sr, parent_oid):
 
     segs = []
     seg_num = 0
+    geom = _densify_if_curved(
+        geom, interval_m if source == "DEM" else None)
     for pi in range(geom.partCount):
         pts_in = [pt for pt in geom.getPart(pi) if pt is not None]
         if len(pts_in) < 2:

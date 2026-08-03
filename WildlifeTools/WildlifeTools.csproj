@@ -167,6 +167,14 @@
     <Content Include="Images\SlopeGraphic_32.png" />
     <Content Include="DarkImages\SlopeGraphic_16.png" />
     <Content Include="DarkImages\SlopeGraphic_32.png" />
+    <Content Include="Images\AspectZonal_16.png" />
+    <Content Include="Images\AspectZonal_32.png" />
+    <Content Include="DarkImages\AspectZonal_16.png" />
+    <Content Include="DarkImages\AspectZonal_32.png" />
+    <Content Include="Images\SlopeZonal_16.png" />
+    <Content Include="Images\SlopeZonal_32.png" />
+    <Content Include="DarkImages\SlopeZonal_16.png" />
+    <Content Include="DarkImages\SlopeZonal_32.png" />
     <Content Include="Images\TRI_16.png" />
     <Content Include="Images\TRI_32.png" />
     <Content Include="DarkImages\TRI_16.png" />

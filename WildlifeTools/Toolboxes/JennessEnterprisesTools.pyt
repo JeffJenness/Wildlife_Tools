@@ -296,11 +296,12 @@ class Toolbox(object):
                       ShadowPolygons, EnhancedHillshade, MDOWHillshade,
                       MultiSunHillshade, SimpleHypsometricShading,
                       BlurredHillshade, SurfaceAreaRatio, VRM,
-                      ArcChordRatio, TRI, TopographyAlongLines,
+                      ArcChordRatio, TRI, SlopeZonalStatisticsAsTable,
+                      TopographyAlongLines,
                       SplitLinesIntoSegments,
                       FractalDimension, TopographicWetnessIndex,
                       AspectFocalStatistics, ExtractAspectValuesToPoints,
-                      AspectTransformation,
+                      AspectTransformation, AspectZonalStatisticsAsTable,
                       SimpleTPI,
                       SlopePositionClassification, LandformClassification,
                       GeneralRasterClassification,
@@ -5122,17 +5123,17 @@ class ExtractAspectValuesToPoints(object):
                 except Exception:
                     pass
         if inr.valueAsText and not inr.hasBeenValidated:
-            # Suggest the Mathematical convention once when the raster looks
-            # like a D-infinity flow-direction raster.
+            # Suggest the Mathematical convention when the raster looks like
+            # a D-infinity flow-direction raster. Unconditional on each
+            # raster change; module reloaded because validation runs Pro's
+            # session-cached copy otherwise.
             try:
+                importlib.reload(aspect_tools)
                 kind, _why = aspect_tools._detect_source_kind(inr.valueAsText)
             except Exception:
                 kind = "unknown"
-            conv = P["input_convention"]
-            if kind == "dinf" and (not conv.altered
-                                   or conv.valueAsText == self._auto_conv):
-                conv.value = aspect_tools.INPUT_CONVENTIONS[1]
-                self._auto_conv = aspect_tools.INPUT_CONVENTIONS[1]
+            if kind == "dinf":
+                P["input_convention"].value = aspect_tools.INPUT_CONVENTIONS[1]
         return
 
     def updateMessages(self, parameters):
@@ -5173,6 +5174,449 @@ class ExtractAspectValuesToPoints(object):
             _save_tool_defaults("ExtractAspectValuesToPoints", {
                 "interpolate": bool(P["interpolate"].value),
                 "field_name": P["field_name"].valueAsText,
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class AspectZonalStatisticsAsTable(object):
+    """Aspect Zonal Statistics as Table -- the circular analog of Esri's
+    Zonal Statistics as Table, built for aspect rasters: all statistics are
+    CIRCULAR, flat cells are excluded (and counted), and no Spatial Analyst
+    or Image Analyst extension is needed. See
+    ``aspect_tools.run_aspect_zonal``."""
+
+    def __init__(self):
+        self.label = "Aspect Zonal Statistics as Table"
+        self.description = (
+            "Summarizes an aspect raster per zone into a table of CIRCULAR "
+            "statistics (mean direction, mean resultant length, circular "
+            "variance/SD, median direction, circular range, von Mises "
+            "concentration, Rayleigh test, and the 95% confidence interval "
+            "of the mean direction). Very similar to Esri's Zonal Statistics "
+            "as Table, but targeted at aspect: a circular variable where 0 "
+            "and 360 degrees are the same direction, so the ordinary zonal "
+            "MEAN/STD are wrong. Requires no Spatial Analyst or Image "
+            "Analyst extension. Zones come from an INTEGER raster or from "
+            "point / polyline / polygon features; overlapping features in "
+            "different zones are each analyzed in full (each zone is "
+            "processed independently -- the historic rasterize-first overlap "
+            "problem cannot occur). Point zones use a bilinear WEIGHTED MEAN "
+            "DIRECTION interpolated at each point; polygons use every cell "
+            "whose center falls inside; polylines use every cell the line "
+            "passes through. Flat cells (aspect = -1) carry no direction and "
+            "are excluded from the statistics but counted per zone "
+            "(FLAT_COUNT, FLAT_PCT). D-infinity flow-direction rasters are "
+            "supported via the input-convention setting, which defaults from "
+            "the raster's geoprocessing history.")
+        self.category = "Aspect Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_conv = None
+
+    def getParameterInfo(self):
+        in_zone = arcpy.Parameter(
+            displayName="Input raster or feature zone data", name="in_zone_data",
+            datatype=["GPFeatureLayer", "DEFeatureClass", "GPRasterLayer",
+                      "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        # A GPString value-list rather than a Field parameter: Field-type
+        # filters fail to offer ObjectID fields in .pyt tools (a known Pro
+        # quirk), and ObjectID is a perfectly good zone field. The list is
+        # filled from the zone dataset in updateParameters.
+        zone_field = arcpy.Parameter(
+            displayName="Zone field", name="zone_field",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        zone_field.filter.type = "ValueList"
+        zone_field.filter.list = []
+        in_raster = arcpy.Parameter(
+            displayName="Input aspect raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_table = arcpy.Parameter(
+            displayName="Output table", name="out_table",
+            datatype="DETable", parameterType="Required", direction="Output")
+        ignore_nodata = arcpy.Parameter(
+            displayName="Ignore NoData in calculations", name="ignore_nodata",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        ignore_nodata.value = True
+        statistics_type = arcpy.Parameter(
+            displayName="Statistics type", name="statistics_type",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        statistics_type.filter.type = "ValueList"
+        statistics_type.filter.list = aspect_tools.ZONAL_LABELS
+        statistics_type.value = aspect_tools.ZONAL_LABELS[0]
+        input_convention = arcpy.Parameter(
+            displayName="Input aspect convention", name="input_convention",
+            datatype="GPString", parameterType="Required", direction="Input")
+        input_convention.filter.type = "ValueList"
+        input_convention.filter.list = aspect_tools.INPUT_CONVENTIONS
+        input_convention.value = aspect_tools.INPUT_CONVENTIONS[0]
+        params = [in_zone, zone_field, in_raster, out_table, ignore_nodata,
+                  statistics_type, input_convention]
+        saved = _load_tool_defaults("AspectZonalStatisticsAsTable")
+        for p in (ignore_nodata, statistics_type):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    def _zone_is_raster(self, param):
+        try:
+            dt = arcpy.Describe(param.valueAsText).dataType
+            return dt in ("RasterDataset", "RasterLayer", "MosaicDataset",
+                          "MosaicLayer")
+        except Exception:
+            return False
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inz, outt = P["in_zone_data"], P["out_table"]
+        if inz.valueAsText:
+            if not outt.altered or outt.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(os.path.basename(
+                        inz.valueAsText))[0] + "_AspectZonal")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inz.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outt.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+            if not inz.hasBeenValidated:
+                zf = P["zone_field"]
+                if self._zone_is_raster(inz):
+                    zf.filter.list = ["Value"]
+                    if not zf.altered or zf.valueAsText not in ("Value",):
+                        zf.value = "Value"
+                else:
+                    # Integer, text, GUID and ObjectID fields all make valid
+                    # zones.
+                    ok_types = ("OID", "SmallInteger", "Integer", "BigInteger",
+                                "String", "GlobalID", "Guid")
+                    try:
+                        names = [fld.name for fld in
+                                 arcpy.ListFields(inz.valueAsText)
+                                 if fld.type in ok_types]
+                    except Exception:
+                        names = []
+                    zf.filter.list = names
+                    if names and (not zf.altered or
+                                  zf.valueAsText not in names):
+                        zf.value = names[0]
+        inr = P["in_raster"]
+        if inr.valueAsText and not inr.hasBeenValidated:
+            # Default the convention from the raster's geoprocessing history
+            # (Compass unless the lineage says D-infinity Flow Direction).
+            # Unconditional on each raster change; module reloaded because
+            # validation runs Pro's session-cached copy otherwise.
+            try:
+                importlib.reload(aspect_tools)
+                kind, _why = aspect_tools._detect_source_kind(inr.valueAsText)
+            except Exception:
+                kind = "unknown"
+            if kind == "dinf":
+                P["input_convention"].value = aspect_tools.INPUT_CONVENTIONS[1]
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inz, zf, inr = P["in_zone_data"], P["zone_field"], P["in_raster"]
+        if inz.valueAsText:
+            if self._zone_is_raster(inz):
+                try:
+                    if not arcpy.Describe(inz.valueAsText).isInteger:
+                        inz.setErrorMessage(
+                            "The zone raster must be an INTEGER raster "
+                            "(each distinct value is a zone).")
+                except Exception:
+                    pass
+            else:
+                try:
+                    st = arcpy.Describe(inz.valueAsText).shapeType
+                    if st == "Multipoint":
+                        inz.setErrorMessage(
+                            "Multipoint zone features are not supported -- "
+                            "use single-part points.")
+                except Exception:
+                    pass
+                if not zf.valueAsText:
+                    zf.setErrorMessage(
+                        "A zone field is required for feature zone data.")
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage("The aspect raster must be single band.")
+            except Exception:
+                pass
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(aspect_tools)
+            P = {p.name: p for p in parameters}
+            in_raster = _resolve_raster_path(P["in_raster"]) or \
+                P["in_raster"].valueAsText
+            if self._zone_is_raster(P["in_zone_data"]):
+                in_zone = _resolve_raster_path(P["in_zone_data"]) or \
+                    P["in_zone_data"].valueAsText
+            else:
+                in_zone = P["in_zone_data"].valueAsText
+            aspect_tools.run_aspect_zonal(
+                in_zone_data=in_zone,
+                zone_field=P["zone_field"].valueAsText or "Value",
+                in_raster=in_raster,
+                out_table=P["out_table"].valueAsText,
+                ignore_nodata=(P["ignore_nodata"].value is not False),
+                statistics_type=(P["statistics_type"].valueAsText
+                                 or aspect_tools.ZONAL_LABELS[0]),
+                input_convention=(P["input_convention"].valueAsText
+                                  or aspect_tools.INPUT_CONVENTIONS[0]),
+                messages=messages)
+            _save_tool_defaults("AspectZonalStatisticsAsTable", {
+                "ignore_nodata": P["ignore_nodata"].value is not False,
+                "statistics_type": P["statistics_type"].valueAsText,
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class SlopeZonalStatisticsAsTable(object):
+    """Slope Zonal Statistics as Table -- the slope-targeted sibling of
+    Esri's Zonal Statistics as Table and of this toolbox's Aspect Zonal
+    Statistics as Table: linear statistics computed in ANGLE space (percent
+    slopes pass through the arctangent before averaging), reported in the
+    source unit, with no Spatial Analyst or Image Analyst required. See
+    ``topographic_tools.run_slope_zonal``."""
+
+    def __init__(self):
+        self.label = "Slope Zonal Statistics as Table"
+        self.description = (
+            "Summarizes a slope raster per zone into a table: count, mean, "
+            "median, standard deviation, minimum, maximum, range, 5th/95th "
+            "percentiles, and the 95% confidence interval of the mean. Very "
+            "similar to Esri's Zonal Statistics as Table, but targeted at "
+            "slope: the mean, SD and CI are computed on the slope ANGLES "
+            "(percent slope is the tangent of the angle -- a convex "
+            "transform -- so averaging raw percent values biases steepness "
+            "statistics high) and converted back to the raster's unit for "
+            "display. Requires no Spatial Analyst or Image Analyst "
+            "extension. Slope units (degrees, percent, rise:run ratio, or "
+            "gradians) default automatically from the raster's "
+            "geoprocessing history. Negative slopes can be treated as "
+            "positive (absolute steepness, the default) or keep their sign "
+            "so downhill balances uphill; the per-zone count of negative "
+            "source values is always reported. Zones come from an INTEGER "
+            "raster or point / polyline / polygon features; overlapping "
+            "features in different zones are each analyzed in full. Point "
+            "zones use bilinear interpolation computed on the slope angles. "
+            "Values outside the valid range for the chosen unit (beyond "
+            "+/-90 degrees or +/-100 gon) are excluded, counted, and "
+            "reported.")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._auto_unit = None
+
+    def getParameterInfo(self):
+        in_zone = arcpy.Parameter(
+            displayName="Input raster or feature zone data", name="in_zone_data",
+            datatype=["GPFeatureLayer", "DEFeatureClass", "GPRasterLayer",
+                      "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        # GPString value-list (not a Field parameter): Field-type filters
+        # fail to offer ObjectID fields in .pyt tools; the list is filled
+        # from the zone dataset in updateParameters.
+        zone_field = arcpy.Parameter(
+            displayName="Zone field", name="zone_field",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        zone_field.filter.type = "ValueList"
+        zone_field.filter.list = []
+        in_raster = arcpy.Parameter(
+            displayName="Input slope raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_table = arcpy.Parameter(
+            displayName="Output table", name="out_table",
+            datatype="DETable", parameterType="Required", direction="Output")
+        ignore_nodata = arcpy.Parameter(
+            displayName="Ignore NoData in calculations", name="ignore_nodata",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        ignore_nodata.value = True
+        statistics_type = arcpy.Parameter(
+            displayName="Statistics type", name="statistics_type",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        statistics_type.filter.type = "ValueList"
+        statistics_type.filter.list = topographic_tools.SLOPE_ZONAL_LABELS
+        statistics_type.value = topographic_tools.SLOPE_ZONAL_LABELS[0]
+        slope_units = arcpy.Parameter(
+            displayName="Slope units of the input raster", name="slope_units",
+            datatype="GPString", parameterType="Required", direction="Input")
+        slope_units.filter.type = "ValueList"
+        slope_units.filter.list = topographic_tools.SLOPE_UNITS_Z
+        slope_units.value = topographic_tools.SLOPE_UNITS_Z[0]
+        use_absolute = arcpy.Parameter(
+            displayName="Treat negative slopes as positive (absolute "
+                        "steepness)", name="use_absolute",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        use_absolute.value = True
+        params = [in_zone, zone_field, in_raster, out_table, ignore_nodata,
+                  statistics_type, slope_units, use_absolute]
+        saved = _load_tool_defaults("SlopeZonalStatisticsAsTable")
+        for p in (ignore_nodata, statistics_type, use_absolute):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    def _zone_is_raster(self, param):
+        try:
+            dt = arcpy.Describe(param.valueAsText).dataType
+            return dt in ("RasterDataset", "RasterLayer", "MosaicDataset",
+                          "MosaicLayer")
+        except Exception:
+            return False
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inz, outt = P["in_zone_data"], P["out_table"]
+        if inz.valueAsText:
+            if not outt.altered or outt.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(os.path.basename(
+                        inz.valueAsText))[0] + "_SlopeZonal")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inz.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outt.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+            if not inz.hasBeenValidated:
+                zf = P["zone_field"]
+                if self._zone_is_raster(inz):
+                    zf.filter.list = ["Value"]
+                    if not zf.altered or zf.valueAsText not in ("Value",):
+                        zf.value = "Value"
+                else:
+                    ok_types = ("OID", "SmallInteger", "Integer", "BigInteger",
+                                "String", "GlobalID", "Guid")
+                    try:
+                        names = [fld.name for fld in
+                                 arcpy.ListFields(inz.valueAsText)
+                                 if fld.type in ok_types]
+                    except Exception:
+                        names = []
+                    zf.filter.list = names
+                    if names and (not zf.altered or
+                                  zf.valueAsText not in names):
+                        zf.value = names[0]
+        inr = P["in_raster"]
+        if inr.valueAsText and not inr.hasBeenValidated:
+            # Default the unit from the raster's geoprocessing history
+            # (Esri's Slope / Surface Parameters record DEGREE or
+            # PERCENT_RISE); keep the current choice when nothing can be
+            # determined. Set UNCONDITIONALLY on each raster change:
+            # instance state does not persist across validation cycles, so
+            # an altered-guard can never work here. The module is reloaded
+            # because VALIDATION (unlike execute) otherwise runs whatever
+            # copy Pro cached when the session started.
+            try:
+                importlib.reload(topographic_tools)
+                detected = topographic_tools._detect_slope_units(
+                    inr.valueAsText)
+            except Exception:
+                detected = None
+            if detected:
+                P["slope_units"].value = (
+                    topographic_tools.SLOPE_UNITS_Z[1]
+                    if detected == "percent"
+                    else topographic_tools.SLOPE_UNITS_Z[0])
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inz, zf, inr = P["in_zone_data"], P["zone_field"], P["in_raster"]
+        if inz.valueAsText:
+            if self._zone_is_raster(inz):
+                try:
+                    if not arcpy.Describe(inz.valueAsText).isInteger:
+                        inz.setErrorMessage(
+                            "The zone raster must be an INTEGER raster "
+                            "(each distinct value is a zone).")
+                except Exception:
+                    pass
+            else:
+                try:
+                    st = arcpy.Describe(inz.valueAsText).shapeType
+                    if st == "Multipoint":
+                        inz.setErrorMessage(
+                            "Multipoint zone features are not supported -- "
+                            "use single-part points.")
+                except Exception:
+                    pass
+                if not zf.valueAsText:
+                    zf.setErrorMessage(
+                        "A zone field is required for feature zone data.")
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage("The slope raster must be single band.")
+            except Exception:
+                pass
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(topographic_tools)
+            importlib.reload(aspect_tools)
+            P = {p.name: p for p in parameters}
+            in_raster = _resolve_raster_path(P["in_raster"]) or \
+                P["in_raster"].valueAsText
+            if self._zone_is_raster(P["in_zone_data"]):
+                in_zone = _resolve_raster_path(P["in_zone_data"]) or \
+                    P["in_zone_data"].valueAsText
+            else:
+                in_zone = P["in_zone_data"].valueAsText
+            topographic_tools.run_slope_zonal(
+                in_zone_data=in_zone,
+                zone_field=P["zone_field"].valueAsText or "Value",
+                in_raster=in_raster,
+                out_table=P["out_table"].valueAsText,
+                ignore_nodata=(P["ignore_nodata"].value is not False),
+                statistics_type=(P["statistics_type"].valueAsText
+                                 or topographic_tools.SLOPE_ZONAL_LABELS[0]),
+                slope_units=(P["slope_units"].valueAsText
+                             or topographic_tools.SLOPE_UNITS_Z[0]),
+                use_absolute=(P["use_absolute"].value is not False),
+                messages=messages)
+            _save_tool_defaults("SlopeZonalStatisticsAsTable", {
+                "ignore_nodata": P["ignore_nodata"].value is not False,
+                "statistics_type": P["statistics_type"].valueAsText,
+                "use_absolute": P["use_absolute"].value is not False,
             })
         except arcpy.ExecuteError:
             raise

@@ -794,6 +794,15 @@ def _polyline_segments(fc, messages):
         for (shape,) in cur:
             if shape is None:
                 continue
+            # True-curve polylines expose only arc endpoints as vertices;
+            # densify so the segment sampling follows the arc, not the chord.
+            if getattr(shape, "hasCurves", False):
+                try:
+                    shape = shape.densify(
+                        "DISTANCE", max(shape.length / 500.0, 1e-6),
+                        max(shape.length / 500.0, 1e-6))
+                except Exception:
+                    pass
             n_features += 1
             for part in shape:
                 pts = [(pt.X, pt.Y) for pt in part if pt is not None]

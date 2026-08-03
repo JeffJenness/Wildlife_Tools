@@ -2269,3 +2269,587 @@ def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
     _hs._msg(messages, "Topographic Wetness Index complete: {}".format(
         out_raster))
     return out_lyrx
+
+
+# ---------------------------------------------------------------------------
+#  Slope Zonal Statistics as Table
+# ---------------------------------------------------------------------------
+# The slope-targeted sibling of Aspect Zonal Statistics as Table (and of
+# Esri's Zonal Statistics as Table; no Spatial Analyst / Image Analyst
+# needed). It REUSES the aspect tool's zone-gathering machinery (integer
+# raster zones, per-zone feature windows with the overlap guarantee, polygon
+# center-in / polyline cell-crossing rules) via the generic feed callback,
+# but accumulates LINEAR statistics computed in ANGLE space: terrain
+# steepness is an angle, and percent slope is its tangent -- a convex
+# transform -- so averaging raw percent values biases every moment statistic
+# high. Values convert through the arctangent BEFORE the sums, and the
+# results convert back to the source unit only for display (tan of the mean
+# angle, never the mean of the tangents). Order statistics (median,
+# percentiles, min, max) are transform-invariant and reported in source
+# units; the SD and CI half-angle stay in degrees, which have no meaningful
+# nonlinear conversion.
+
+def _say(messages, text):
+    if messages is not None:
+        messages.addMessage(text)
+
+
+def _warn(messages, text):
+    if messages is not None:
+        messages.addWarningMessage(text)
+
+
+SLOPE_UNITS_Z = ["Degrees (-90 to 90)",
+                 "Percent slope (rise/run × 100)",
+                 "Rise:run ratio",
+                 "Gradians (gons)"]
+
+SLOPE_ZONAL_STATS = [
+    ("ALL",    "All statistics"),
+    ("MEAN",   "Mean Slope"),
+    ("MEDIAN", "Median Slope"),
+    ("SD",     "Standard Deviation"),
+    ("MIN",    "Minimum Slope"),
+    ("MAX",    "Maximum Slope"),
+    ("RANGE",  "Range"),
+    ("PCTL",   "5th and 95th Percentiles"),
+    ("CI95",   "Mean Slope 95% Confidence Interval"),
+]
+SLOPE_ZONAL_LABELS = [lbl for _, lbl in SLOPE_ZONAL_STATS]
+SLOPE_ZONAL_KEY = {lbl: k for k, lbl in SLOPE_ZONAL_STATS}
+_SZORDER = ["MEAN", "MEDIAN", "SD", "MIN", "MAX", "RANGE", "PCTL", "CI95"]
+
+_SZBINS = 9000                     # 0.02-degree bins over -90..90
+_SZMAX_ZONES = 10000
+
+
+def _slope_unit_key(label):
+    lab = str(label).lower()
+    if lab.startswith("percent"):
+        return "percent"
+    if lab.startswith("rise"):
+        return "ratio"
+    if lab.startswith("grad"):
+        return "gradians"
+    return "degrees"
+
+
+def _slope_to_deg(v, unit):
+    """Array conversion of source-unit slope values to DEGREES (sign kept)."""
+    if unit == "percent":
+        return np.degrees(np.arctan(v / 100.0))
+    if unit == "ratio":
+        return np.degrees(np.arctan(v))
+    if unit == "gradians":
+        return v * 0.9
+    return v
+
+
+def _slope_from_deg(d, unit):
+    """Scalar conversion of a degree value back to the source unit."""
+    if d is None:
+        return None
+    if unit == "percent":
+        return math.tan(math.radians(max(min(d, 89.999), -89.999))) * 100.0
+    if unit == "ratio":
+        return math.tan(math.radians(max(min(d, 89.999), -89.999)))
+    if unit == "gradians":
+        return d / 0.9
+    return d
+
+
+def _slope_unit_word(unit):
+    return {"percent": "percent", "ratio": "rise:run",
+            "gradians": "gons"}.get(unit, "degrees")
+
+
+def _t95_quantile(df):
+    """Two-sided 95% t quantile (Zar 1999 table B.3): exact through 30 df,
+    coarse steps to the normal 1.96."""
+    t = (12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262,
+         2.228, 2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101,
+         2.093, 2.086, 2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052,
+         2.048, 2.045, 2.042)
+    if df < 1:
+        return float("nan")
+    if df <= 30:
+        return t[df - 1]
+    if df <= 40:
+        return 2.021
+    if df <= 60:
+        return 2.000
+    if df <= 120:
+        return 1.980
+    return 1.960
+
+
+class _SlopeZoneAcc(object):
+    """Per-zone linear accumulator with the same duck-typed interface the
+    shared zone runners expect (zones / _zone / add_counts): degree-space
+    moment sums + a 0.02-degree histogram over -90..90 for the order
+    statistics, plus exact source-unit min/max."""
+
+    def __init__(self):
+        self.zones = {}
+
+    def _zone(self, key):
+        z = self.zones.get(key)
+        if z is None:
+            import arcpy
+            if len(self.zones) >= _SZMAX_ZONES:
+                raise arcpy.ExecuteError(
+                    "More than {:,} zones -- reduce the number of distinct "
+                    "zone values.".format(_SZMAX_ZONES))
+            z = {"n": 0, "sdeg": 0.0, "sdeg2": 0.0,
+                 "minv": None, "maxv": None, "neg": 0, "nodata": 0,
+                 "bad": 0, "flat": 0,
+                 "hist": np.zeros(_SZBINS, np.float64)}
+            self.zones[key] = z
+        return z
+
+    def add_counts(self, key, flat=0, nodata=0, bad=0):
+        z = self._zone(key)
+        z["flat"] += int(flat)
+        z["nodata"] += int(nodata)
+        z["bad"] += int(bad)
+
+    def add_slopes(self, key, deg, src):
+        """Accumulate parallel arrays of degree-space and source-unit
+        values (already validated / abs-applied)."""
+        z = self._zone(key)
+        if deg.size == 0:
+            return
+        z["n"] += int(deg.size)
+        z["sdeg"] += float(np.sum(deg))
+        z["sdeg2"] += float(np.sum(deg * deg))
+        mn, mx = float(np.min(src)), float(np.max(src))
+        z["minv"] = mn if z["minv"] is None else min(z["minv"], mn)
+        z["maxv"] = mx if z["maxv"] is None else max(z["maxv"], mx)
+        b = np.floor((deg + 90.0) * (_SZBINS / 180.0)).astype(np.int64)
+        np.clip(b, 0, _SZBINS - 1, out=b)
+        z["hist"] += np.bincount(b, minlength=_SZBINS)
+
+
+def _hist_quantile_deg(hist, p):
+    """Degree value at cumulative fraction ``p`` of the -90..90 histogram."""
+    total = float(hist.sum())
+    if total <= 0:
+        return None
+    target = p * total
+    cum = np.cumsum(hist)
+    b = int(np.searchsorted(cum, target, side="left"))
+    b = min(b, hist.size - 1)
+    return (b + 0.5) * (180.0 / _SZBINS) - 90.0
+
+
+def _slope_zone_row(z, unit, ignore_nodata):
+    """Field-name -> value dict for one zone (None = NULL)."""
+    out = {f: None for f in ("MEAN", "MEDIAN", "SD_DEG", "MIN", "MAX",
+                             "RANGE", "P05", "P95", "CI95_HALF_DEG",
+                             "CI95_LO", "CI95_HI")}
+    n = z["n"]
+    if (not ignore_nodata and z["nodata"] > 0) or n == 0:
+        return out
+    mean_deg = z["sdeg"] / n
+    out["MEAN"] = _slope_from_deg(mean_deg, unit)
+    out["MEDIAN"] = _slope_from_deg(_hist_quantile_deg(z["hist"], 0.5), unit)
+    out["MIN"] = z["minv"]
+    out["MAX"] = z["maxv"]
+    if z["minv"] is not None and z["maxv"] is not None:
+        out["RANGE"] = z["maxv"] - z["minv"]
+    out["P05"] = _slope_from_deg(_hist_quantile_deg(z["hist"], 0.05), unit)
+    out["P95"] = _slope_from_deg(_hist_quantile_deg(z["hist"], 0.95), unit)
+    if n > 1:
+        ss = max(z["sdeg2"] - n * mean_deg * mean_deg, 0.0)
+        sd = math.sqrt(ss / (n - 1))
+        out["SD_DEG"] = sd
+        if sd > 0:
+            half = _t95_quantile(n - 1) * sd / math.sqrt(n)
+            out["CI95_HALF_DEG"] = half
+            out["CI95_LO"] = _slope_from_deg(max(mean_deg - half, -90.0), unit)
+            out["CI95_HI"] = _slope_from_deg(min(mean_deg + half, 90.0), unit)
+    return out
+
+
+def _detect_slope_units(in_raster):
+    """'percent', 'degrees', or None from the raster's geoprocessing lineage:
+    Esri's Slope / Surface Parameters record DEGREE or PERCENT_RISE. The last
+    slope-related process wins. Best effort; never raises."""
+    import arcpy
+    import re as _re
+    try:
+        # A LAYER name must resolve to the dataset path first, and this
+        # arcpy has no Metadata.lineage attribute -- the geoprocessing
+        # history lives inside md.xml.
+        try:
+            path = arcpy.Describe(in_raster).catalogPath
+        except Exception:
+            path = in_raster
+        md = arcpy.metadata.Metadata(path)
+        text = (md.xml or "") + " " + (getattr(md, "lineage", "") or "")
+    except Exception:
+        return None
+    found = None
+    for m in _re.finditer(r"<Process\b.*?</Process>", text,
+                          _re.S | _re.I):
+        seg = m.group(0)
+        low = seg.lower()
+        if "slope" not in low and "surfaceparameters" not in low:
+            continue
+        if "percent_rise" in low:
+            found = "percent"
+        elif _re.search(r"\bDEGREE\b", seg, _re.I):
+            found = "degrees"
+    return found
+
+
+def run_slope_zonal(in_zone_data, zone_field, in_raster, out_table,
+                    ignore_nodata=True, statistics_type="ALL",
+                    slope_units=SLOPE_UNITS_Z[0], use_absolute=True,
+                    messages=None):
+    """Slope Zonal Statistics as Table: per-zone linear statistics of a slope
+    raster, computed in ANGLE space and reported in the source unit -- the
+    slope-targeted sibling of Esri's Zonal Statistics as Table, requiring no
+    Spatial Analyst or Image Analyst extension.
+
+    ``slope_units`` names the raster's unit (degrees / percent / rise:run /
+    gradians); percent and ratio values pass through the arctangent BEFORE
+    the mean/SD/CI (averaging raw percent slopes biases statistics high),
+    and single-value results convert back for display. ``use_absolute`` True
+    (the default) treats negative slopes as positive (absolute steepness);
+    False keeps signs, letting downhill balance uphill. Out-of-range values
+    (beyond +/-90 degrees or +/-100 gon) are excluded, counted, and reported.
+    Zone semantics, the overlap guarantee, ``ignore_nodata``, and the
+    cell-gathering rules are identical to Aspect Zonal Statistics as Table;
+    point zones use ordinary bilinear interpolation computed on the slope
+    ANGLES. Returns the output table path."""
+    import arcpy
+    import aspect_tools as _at
+
+    unit = _slope_unit_key(slope_units)
+    stat_key = SLOPE_ZONAL_KEY.get(statistics_type, statistics_type or "ALL")
+    if stat_key != "ALL" and stat_key not in _SZORDER:
+        stat_key = "ALL"
+    keys = _SZORDER if stat_key == "ALL" else [stat_key]
+
+    _mh.begin_phases([
+        ("Reading the zones...", 1),
+        ("Gathering raster cells per zone...", 8),
+        ("Writing the output table...", 2),
+    ])
+
+    dz = arcpy.Describe(in_zone_data)
+    zone_is_raster = dz.dataType in ("RasterDataset", "RasterLayer",
+                                     "MosaicDataset", "MosaicLayer")
+    shape_type = None if zone_is_raster else dz.shapeType
+
+    if use_absolute:
+        _say(messages, "Negative slopes are treated as POSITIVE (absolute "
+                       "steepness); the count of originally negative values "
+                       "is reported per zone in NEG_COUNT.")
+    else:
+        _say(messages, "Negative slopes keep their sign (downhill can "
+                       "balance uphill in the mean); NEG_COUNT reports how "
+                       "many values were negative.")
+
+    # Valid range per unit (percent / ratio are unbounded).
+    if unit == "degrees":
+        lim = 90.0 + 1e-6
+    elif unit == "gradians":
+        lim = 100.0 + 1e-6
+    else:
+        lim = None
+
+    acc = _SlopeZoneAcc()
+    zone_order = []
+
+    def touch(key):
+        if key not in acc.zones:
+            zone_order.append(key)
+        acc._zone(key)
+
+    src, in_copy = _hs._open_source(in_raster, arcpy.env.scratchFolder,
+                                    messages)
+    try:
+        band = src.GetRasterBand(1)
+        W, H = src.RasterXSize, src.RasterYSize
+        gt = src.GetGeoTransform()
+        nodata = band.GetNoDataValue()
+        rsr = arcpy.Describe(in_raster).spatialReference
+
+        total_bad = 0
+        total_neg = 0
+
+        def feed(key, vals):
+            nonlocal total_bad, total_neg
+            if key not in acc.zones:
+                zone_order.append(key)
+            z = acc._zone(key)
+            v = np.asarray(vals, np.float64)
+            if lim is not None:
+                bad = ~np.isfinite(v) | (np.abs(v) > lim)
+            else:
+                bad = ~np.isfinite(v)
+            nb = int(np.count_nonzero(bad))
+            if nb:
+                z["bad"] += nb
+                total_bad += nb
+                v = v[~bad]
+            neg = int(np.count_nonzero(v < 0.0))
+            z["neg"] += neg
+            total_neg += neg
+            if use_absolute:
+                v = np.abs(v)
+            deg = _slope_to_deg(v, unit)
+            acc.add_slopes(key, deg, v)
+
+        if zone_is_raster:
+            _at._run_zonal_raster(in_zone_data, band, gt, W, H, nodata, rsr,
+                                  acc, zone_order, feed, messages)
+        elif shape_type == "Point":
+            _slope_zonal_points(in_zone_data, zone_field, band, gt, W, H,
+                                nodata, rsr, unit, lim, use_absolute, acc,
+                                zone_order, touch, messages)
+        elif shape_type in ("Polyline", "Polygon"):
+            _at._run_zonal_shapes(in_zone_data, zone_field, shape_type, band,
+                                  gt, W, H, nodata, rsr, acc, zone_order,
+                                  touch, feed, messages)
+        else:
+            raise arcpy.ExecuteError(
+                "Unsupported zone shape type: {} (points, polylines, "
+                "polygons, or an integer raster).".format(shape_type))
+    finally:
+        src = None
+        if in_copy:
+            try:
+                arcpy.management.Delete(in_copy)
+            except Exception:
+                pass
+
+    if total_bad:
+        _warn(messages,
+              "{:,} value(s) fall outside the valid slope range for {} and "
+              "were excluded -- this may not be a slope raster in the "
+              "chosen unit.".format(total_bad, _slope_unit_word(unit)))
+    if total_neg:
+        _say(messages, "{:,} negative slope value(s) were encountered "
+                       "(see NEG_COUNT).".format(total_neg))
+
+    _mh.phase_advance("Writing the output table...")
+    _write_slope_zonal_table(out_table, in_zone_data, zone_field,
+                             zone_is_raster, acc, zone_order, keys, unit,
+                             ignore_nodata, in_raster, statistics_type,
+                             use_absolute, messages)
+    _mh.end_phases()
+    return out_table
+
+
+def _slope_zonal_points(in_zone, zone_field, band, gt, W, H, nodata, rsr,
+                        unit, lim, use_absolute, acc, zone_order, touch,
+                        messages):
+    """Point zones: ordinary bilinear interpolation computed on the slope
+    ANGLES of the four surrounding cell centers (NoData / out-of-range
+    neighbors excluded, weights renormalized)."""
+    import arcpy
+    d = arcpy.Describe(in_zone)
+    if d.shapeType != "Point":
+        raise arcpy.ExecuteError(
+            "Multipoint zone features are not supported -- use single-part "
+            "points.")
+    _say(messages, "Point zones: the slope at each point is interpolated "
+                   "bilinearly on the slope ANGLES.")
+    keys_, xs, ys = [], [], []
+    n_null = 0
+    import aspect_tools as _at2
+    with _at2._zone_cursor(in_zone, [zone_field, "SHAPE@XY"], rsr, gt, W, H,
+                           messages, "points") as cur:
+        for key, xy in cur:
+            if xy is None:
+                continue
+            if key is None:
+                n_null += 1
+                continue
+            keys_.append(key)
+            xs.append(xy[0])
+            ys.append(xy[1])
+    if n_null:
+        _warn(messages, "{:,} point(s) have a NULL zone value and were "
+                        "skipped.".format(n_null))
+    if not keys_:
+        _warn(messages, "No usable zone points were found.")
+        return
+    import aspect_tools as _at
+    xs = np.asarray(xs, np.float64)
+    ys = np.asarray(ys, np.float64)
+    csx, csy = gt[1], abs(gt[5])
+    c0, r0, c1, r1 = _at._zone_window(
+        (xs.min(), ys.min(), xs.max(), ys.max()), gt, W, H)
+    if c1 <= c0 or r1 <= r0:
+        _warn(messages, "None of the points fall within the slope raster.")
+        for k in keys_:
+            touch(k)
+            acc.add_counts(k, nodata=1)
+        return
+    _mh.phase_advance("Gathering raster cells per zone...")
+    arr = band.ReadAsArray(c0, r0, c1 - c0, r1 - r0).astype(np.float64)
+    Hw, Ww = arr.shape
+    x0w = gt[0] + c0 * csx
+    y0w = gt[3] - r0 * csy
+
+    valid = np.isfinite(arr)
+    if nodata is not None:
+        valid &= (arr != nodata)
+    if lim is not None:
+        valid &= (np.abs(arr) <= lim)
+    sval = np.where(valid, arr, 0.0)
+    if use_absolute:
+        sval = np.abs(sval)
+    dval = _slope_to_deg(sval, unit)
+
+    colf = (xs - x0w) / csx - 0.5
+    rowf = (y0w - ys) / csy - 0.5
+    cL = np.floor(colf).astype(np.int64)
+    rT = np.floor(rowf).astype(np.int64)
+    fx = colf - cL
+    fy = rowf - rT
+    dsum = np.zeros(len(keys_))
+    wsum = np.zeros(len(keys_))
+    for dr in (0, 1):
+        for dc in (0, 1):
+            cc = cL + dc
+            rr = rT + dr
+            w = (fx if dc else 1.0 - fx) * (fy if dr else 1.0 - fy)
+            inb = (cc >= 0) & (cc < Ww) & (rr >= 0) & (rr < Hw) & (w > 0)
+            ccs = np.clip(cc, 0, Ww - 1)
+            rrs = np.clip(rr, 0, Hw - 1)
+            ok = inb & valid[rrs, ccs]
+            dsum += np.where(ok, w * dval[rrs, ccs], 0.0)
+            wsum += np.where(ok, w, 0.0)
+
+    n_out = 0
+    per_zone_deg = {}
+    for i, k in enumerate(keys_):
+        touch(k)
+        if wsum[i] > 1e-12:
+            per_zone_deg.setdefault(k, []).append(dsum[i] / wsum[i])
+        else:
+            acc.add_counts(k, nodata=1)
+            n_out += 1
+    for k, degs in per_zone_deg.items():
+        dd = np.asarray(degs, np.float64)
+        z = acc._zone(k)
+        neg = int(np.count_nonzero(dd < 0.0))
+        z["neg"] += neg
+        src_units = np.asarray(
+            [_slope_from_deg(float(x), unit) for x in dd], np.float64)
+        acc.add_slopes(k, dd, src_units)
+    if n_out:
+        _say(messages, "{:,} point(s) fall on NoData or outside the raster "
+                       "and were excluded.".format(n_out))
+
+
+def _write_slope_zonal_table(out_table, in_zone_data, zone_field,
+                             zone_is_raster, acc, zone_order, keys, unit,
+                             ignore_nodata, in_raster, statistics_type,
+                             use_absolute, messages):
+    import arcpy
+    uw = _slope_unit_word(unit)
+    ws, name = os.path.split(str(out_table))
+    arcpy.management.CreateTable(ws, name)
+
+    if zone_is_raster:
+        zf_name, zf_type, zf_len = "Value", "LONG", None
+    else:
+        zf_name, zf_type, zf_len = zone_field, "DOUBLE", None
+        for f in arcpy.ListFields(in_zone_data):
+            if f.name.lower() == str(zone_field).lower():
+                if f.type in ("String", "GlobalID", "Guid", "Date"):
+                    zf_type, zf_len = "TEXT", max(f.length or 50, 20)
+                elif f.type in ("Integer", "SmallInteger", "BigInteger",
+                                "OID"):
+                    zf_type = "LONG"
+                break
+        try:
+            zf_name = arcpy.ValidateFieldName(zf_name, ws)
+        except Exception:
+            pass
+    taken = {fld.name.lower() for fld in arcpy.ListFields(out_table)}
+    base_zf, k2 = zf_name, 0
+    while zf_name.lower() in taken:
+        k2 += 1
+        zf_name = "{}_{}".format(base_zf, k2)
+    if zf_len:
+        arcpy.management.AddField(out_table, zf_name, zf_type,
+                                  field_length=zf_len, field_alias=zone_field)
+    else:
+        arcpy.management.AddField(out_table, zf_name, zf_type,
+                                  field_alias=zone_field
+                                  if not zone_is_raster else "Zone Value")
+    arcpy.management.AddField(out_table, "COUNT", "LONG",
+                              field_alias="Count of Cells Used")
+    arcpy.management.AddField(out_table, "NEG_COUNT", "LONG",
+                              field_alias="Values Negative in the Source")
+
+    fields_for = {
+        "MEAN":   [("MEAN", "Mean Slope ({})".format(uw))],
+        "MEDIAN": [("MEDIAN", "Median Slope ({})".format(uw))],
+        "SD":     [("SD_DEG", "Standard Deviation (degrees, of the slope "
+                              "angles)")],
+        "MIN":    [("MIN", "Minimum Slope ({})".format(uw))],
+        "MAX":    [("MAX", "Maximum Slope ({})".format(uw))],
+        "RANGE":  [("RANGE", "Range ({})".format(uw))],
+        "PCTL":   [("P05", "5th Percentile ({})".format(uw)),
+                   ("P95", "95th Percentile ({})".format(uw))],
+        "CI95":   [("CI95_HALF_DEG", "95% CI Half-Width (degrees)"),
+                   ("CI95_LO", "95% CI Lower Bound ({})".format(uw)),
+                   ("CI95_HI", "95% CI Upper Bound ({})".format(uw))],
+    }
+    stat_fields = []
+    for k in keys:
+        for fname, alias in fields_for[k]:
+            arcpy.management.AddField(out_table, fname, "DOUBLE",
+                                      field_alias=alias)
+            stat_fields.append(fname)
+
+    try:
+        ordered = sorted(zone_order)
+    except TypeError:
+        ordered = zone_order
+
+    with arcpy.da.InsertCursor(
+            out_table, [zf_name, "COUNT", "NEG_COUNT"] + stat_fields) as cur:
+        for key in ordered:
+            z = acc.zones[key]
+            row_stats = _slope_zone_row(z, unit, ignore_nodata)
+            cur.insertRow([key, min(z["n"], 2147483647),
+                           min(z["neg"], 2147483647)]
+                          + [row_stats[f] for f in stat_fields])
+    _say(messages, "Wrote {:,} zone row(s) to {}.".format(
+        len(ordered), out_table))
+
+    try:
+        md = arcpy.metadata.Metadata(out_table)
+        md.title = "Slope Zonal Statistics"
+        md.summary = (
+            "Slope statistics of '{}' summarized per zone from '{}' "
+            "(statistic: {}; units: {}; negative slopes {}). Mean, SD and "
+            "CI computed on the slope ANGLES and converted for display."
+            .format(os.path.basename(str(in_raster)),
+                    os.path.basename(str(in_zone_data)),
+                    statistics_type, uw,
+                    "treated as positive" if use_absolute
+                    else "kept signed"))
+        md.description = (
+            "Zonal summary of a slope raster with the mean, standard "
+            "deviation and confidence interval computed in ANGLE space: "
+            "percent slope is the tangent of the slope angle, a convex "
+            "transform, so averaging raw percent values biases steepness "
+            "statistics high. Produced by the Slope Zonal Statistics as "
+            "Table tool (Jenness Enterprises Wildlife Tools), the "
+            "slope-targeted sibling of Esri's Zonal Statistics as Table; "
+            "unlike that tool it needs no Spatial Analyst or Image Analyst "
+            "extension. Reference: Zar, J.H. 1999. Biostatistical Analysis, "
+            "4th ed. (t-based confidence interval).")
+        md.save()
+    except Exception:
+        pass
