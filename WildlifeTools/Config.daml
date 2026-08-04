@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.45.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.46.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -60,6 +60,7 @@
         </group>
         <group id="WildlifeTools_GroupData" caption="Data Tools" appearsOnAddInTab="false">
           <button refID="WildlifeTools_FavoriteDatasets" size="large" />
+          <button refID="WildlifeTools_AttributeSummary" size="large" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -654,6 +655,17 @@
                 keytip="FD">
           <tooltip heading="Load Favorite Datasets">
             Opens the Load Favorite Datasets window: keep your most-used datasets in four groups you name yourself, then check any combination and add them all to the active map with one click -- no more hunting through folders and web servers. Any dataset a browse dialog can reach can be saved: feature classes, rasters, tables, and online services alike. Add items, remove them, and edit their descriptions; the lists are saved with your user profile and shared across projects. Datasets that appear to be unavailable (a missing path or an unreachable server) show in RED. A modernized recreation of the Load Favorite Datasets tool from the ArcMap SSI toolbar.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_AttributeSummary"
+                caption="Attribute Summary Reports"
+                className="DataTools.AttributeSummaryButton"
+                loadOnClick="true"
+                smallImage="Images\AttrSummary_16.png"
+                largeImage="Images\AttrSummary_32.png"
+                keytip="AR">
+          <tooltip heading="Attribute Summary Reports">
+            Opens the Attribute Summary Reports window: counts and proportions of the value classes in one or more attribute fields of a feature layer, standalone table, or raster attribute table -- summarize each field separately or the unique COMBINATIONS of several fields together, in an analysis order you control. Each report line is rendered from a format template you design with token buttons ({val1}, {Count}, {Prop2}, running numbers/letters/roman numerals, tabs, ...) with a live sample preview; formats can be saved and reloaded as presets. The report opens in a window ready to copy as plain text, rich text for Word, or a clean tab-separated table for Excel. A modernized recreation of the Summarize Attribute Fields tool from the ArcMap SSI toolbar.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_Sudoku"

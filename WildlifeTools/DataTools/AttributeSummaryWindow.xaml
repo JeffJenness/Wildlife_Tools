@@ -1,0 +1,285 @@
+<controls:ProWindow x:Class="WildlifeTools.DataTools.AttributeSummaryWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        Title="Attribute Summary Reports" WindowStartupLocation="CenterOwner"
+        Width="880" Height="680" MinWidth="720" MinHeight="560"
+        ResizeMode="CanResizeWithGrip" ShowInTaskbar="False">
+  <controls:ProWindow.Resources>
+    <!-- Parchment skin (shared Data Tools identity). -->
+    <LinearGradientBrush x:Key="FrameBrush" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#6B4A26" Offset="0" />
+      <GradientStop Color="#4E351B" Offset="0.5" />
+      <GradientStop Color="#3A2712" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="BackdropBrush" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#F8F1DE" Offset="0" />
+      <GradientStop Color="#EFE3C4" Offset="0.55" />
+      <GradientStop Color="#E7D7B0" Offset="1" />
+    </LinearGradientBrush>
+    <SolidColorBrush x:Key="PanelBrush" Color="#F9F3E2" />
+    <SolidColorBrush x:Key="PanelEdgeBrush" Color="#2E1F0E" />
+    <SolidColorBrush x:Key="InkBrush" Color="#332612" />
+    <SolidColorBrush x:Key="HintBrush" Color="#8A7550" />
+    <SolidColorBrush x:Key="ButtonFaceBrush" Color="#5C3F20" />
+    <SolidColorBrush x:Key="ButtonTextBrush" Color="#F5EBD3" />
+    <SolidColorBrush x:Key="ButtonEdgeBrush" Color="#2E1F0E" />
+    <SolidColorBrush x:Key="ButtonHoverBrush" Color="#7A5730" />
+    <SolidColorBrush x:Key="ButtonPressedBrush" Color="#412C14" />
+    <FontFamily x:Key="BodyFontFam">/WildlifeTools;component/Fonts/#EB Garamond, Georgia</FontFamily>
+    <FontFamily x:Key="DisplayFontFam">/WildlifeTools;component/Fonts/#Cinzel, Georgia</FontFamily>
+
+    <Style TargetType="ToolTip">
+      <Setter Property="MaxWidth" Value="420" />
+      <Setter Property="ContentTemplate">
+        <Setter.Value>
+          <DataTemplate>
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="400" />
+          </DataTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="ParchButton" TargetType="Button">
+      <Setter Property="Focusable" Value="False" />
+      <Setter Property="Padding" Value="9,3" />
+      <Setter Property="FontFamily" Value="{StaticResource BodyFontFam}" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Foreground" Value="{StaticResource ButtonTextBrush}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{StaticResource ButtonFaceBrush}"
+                    BorderBrush="{StaticResource ButtonEdgeBrush}"
+                    BorderThickness="1" CornerRadius="4"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background"
+                        Value="{StaticResource ButtonHoverBrush}" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Bd" Property="Background"
+                        Value="{StaticResource ButtonPressedBrush}" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.45" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="HeadLabel" TargetType="TextBlock">
+      <Setter Property="FontFamily" Value="{StaticResource DisplayFontFam}" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+      <Setter Property="Margin" Value="0,6,0,2" />
+    </Style>
+    <Style x:Key="ParchList" TargetType="ListBox">
+      <Setter Property="Background" Value="{StaticResource PanelBrush}" />
+      <Setter Property="BorderBrush" Value="#4A381E" />
+      <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+      <Setter Property="FontFamily" Value="{StaticResource BodyFontFam}" />
+      <Setter Property="FontSize" Value="14" />
+    </Style>
+  </controls:ProWindow.Resources>
+
+  <Border Background="{StaticResource FrameBrush}" Padding="9">
+    <Border Background="{StaticResource BackdropBrush}" CornerRadius="8" Padding="10">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,7,0,0">
+          <TextBlock x:Name="txtStatus" TextWrapping="Wrap" Margin="2,0,2,5"
+                     FontFamily="{StaticResource BodyFontFam}" FontSize="13"
+                     Foreground="#5C4526" />
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+            <Button x:Name="btnRun" Content="Run Report" FontWeight="Bold"
+                    Padding="16,5" Margin="4,0" Click="OnRunClick"
+                    Style="{StaticResource ParchButton}"
+                    ToolTip="Read the dataset, count the classes of the analyzed field(s), and open the formatted report (counts and proportions), ready to copy into Word or Excel." />
+            <Button Content="Close" Padding="16,5" Margin="4,0" Click="OnCloseClick"
+                    Style="{StaticResource ParchButton}" />
+          </StackPanel>
+        </StackPanel>
+
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="4*" />
+            <ColumnDefinition Width="5*" />
+          </Grid.ColumnDefinitions>
+
+          <!-- ===== left: dataset + fields + analysis order ===== -->
+          <Border Grid.Column="0" BorderBrush="{StaticResource PanelEdgeBrush}"
+                  BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,5,0"
+                  Background="{StaticResource PanelBrush}">
+            <DockPanel>
+              <TextBlock DockPanel.Dock="Top" Text="Select Dataset"
+                         Style="{StaticResource HeadLabel}" Margin="0,0,0,2" />
+              <ComboBox DockPanel.Dock="Top" x:Name="cboSource"
+                        SelectionChanged="OnSourceChanged"
+                        FontFamily="{StaticResource BodyFontFam}" FontSize="14"
+                        ToolTip="The dataset to summarize: a feature layer, standalone table, or raster with an attribute table, from the active map." />
+              <TextBlock DockPanel.Dock="Top" Text="Available Fields"
+                         Style="{StaticResource HeadLabel}" />
+              <Grid DockPanel.Dock="Bottom" Margin="0,4,0,0">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" /><ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Content="Add ▼" Margin="0,0,2,0"
+                        Click="OnAddFields" Style="{StaticResource ParchButton}"
+                        ToolTip="Add the highlighted available field(s) to the analysis (double-clicking a field also adds it)." />
+                <Button Grid.Column="1" Content="▲ Remove" Margin="2,0,0,0"
+                        Click="OnRemoveFields" Style="{StaticResource ParchButton}"
+                        ToolTip="Remove the highlighted field(s) from the analysis (double-clicking also removes)." />
+              </Grid>
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="*" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <ListBox Grid.Row="0" x:Name="lstAvailable" SelectionMode="Extended"
+                         Style="{StaticResource ParchList}"
+                         MouseDoubleClick="OnAvailableDoubleClick"
+                         ToolTip="Every summarizable field on the dataset. Highlight one or more and Add them to the analysis." />
+                <TextBlock Grid.Row="1" Text="Fields to Analyze  (in order)"
+                           Style="{StaticResource HeadLabel}"
+                           ToolTip="The fields the report will summarize, in ANALYSIS ORDER: the order sets the {val1}, {val2}, ... tokens, the sort precedence when combining fields, and the section order when analyzing separately." />
+                <Grid Grid.Row="2">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <ListBox Grid.Column="0" x:Name="lstAnalysis"
+                           Style="{StaticResource ParchList}"
+                           MouseDoubleClick="OnAnalysisDoubleClick"
+                           ToolTip="Numbered in analysis order. Use the buttons to reorder: for example, to sort combined values by field B before field A, move B above A." />
+                  <StackPanel Grid.Column="1" Margin="4,0,0,0"
+                              VerticalAlignment="Center">
+                    <Button Content="Top" Width="52" Margin="0,2" Click="OnMoveTop"
+                            Style="{StaticResource ParchButton}"
+                            ToolTip="Move the highlighted field to the top (first analyzed / primary sort)." />
+                    <Button Content="▲" Width="52" Margin="0,2" Click="OnMoveUp"
+                            Style="{StaticResource ParchButton}"
+                            ToolTip="Move the highlighted field up one position." />
+                    <Button Content="▼" Width="52" Margin="0,2" Click="OnMoveDown"
+                            Style="{StaticResource ParchButton}"
+                            ToolTip="Move the highlighted field down one position." />
+                    <Button Content="Bottom" Width="52" Margin="0,2" Click="OnMoveBottom"
+                            Style="{StaticResource ParchButton}"
+                            ToolTip="Move the highlighted field to the bottom (last analyzed)." />
+                  </StackPanel>
+                </Grid>
+              </Grid>
+            </DockPanel>
+          </Border>
+
+          <!-- ===== right: options + format ===== -->
+          <Border Grid.Column="1" BorderBrush="{StaticResource PanelEdgeBrush}"
+                  BorderThickness="1" CornerRadius="4" Padding="8"
+                  Background="{StaticResource PanelBrush}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+              <StackPanel>
+                <TextBlock Text="Records" Style="{StaticResource HeadLabel}" Margin="0,0,0,2" />
+                <StackPanel Orientation="Horizontal">
+                  <RadioButton x:Name="rbAll" Content="Analyze all records" IsChecked="True"
+                      GroupName="Rec" Margin="0,0,14,0"
+                      FontFamily="{StaticResource BodyFontFam}" FontSize="14"
+                      Foreground="{StaticResource InkBrush}"
+                      ToolTip="Summarize every record in the dataset." />
+                  <RadioButton x:Name="rbSelected" Content="Analyze selected records"
+                      GroupName="Rec"
+                      FontFamily="{StaticResource BodyFontFam}" FontSize="14"
+                      Foreground="{StaticResource InkBrush}"
+                      ToolTip="Summarize only the currently selected records; if nothing is selected, all records are used." />
+                </StackPanel>
+                <CheckBox x:Name="chkCombine" Margin="0,7,0,0"
+                    Content="Combine fields (summarize unique value combinations)"
+                    FontFamily="{StaticResource BodyFontFam}" FontSize="14"
+                    Foreground="{StaticResource InkBrush}"
+                    Checked="OnOptionChanged" Unchecked="OnOptionChanged"
+                    ToolTip="Checked: one summary of the UNIQUE COMBINATIONS of all analyzed fields together ({val1}, {val2}, ... in the format). Unchecked: each field is summarized separately, one report section per field." />
+                <CheckBox x:Name="chkSort" Margin="0,4,0,0" IsChecked="True"
+                    Content="Sort values"
+                    FontFamily="{StaticResource BodyFontFam}" FontSize="14"
+                    Foreground="{StaticResource InkBrush}"
+                    ToolTip="Sort the classes by value (combined mode sorts by the first analyzed field, then the second, ...). Unchecked: classes appear in the order they were first encountered." />
+
+                <TextBlock Text="Format Text" Style="{StaticResource HeadLabel}"
+                    ToolTip="The template for each report line. Tokens in {braces} are replaced per class; everything else is literal text. Click the buttons below to insert tokens at the cursor." />
+                <TextBox x:Name="txtFormat" AcceptsReturn="False" TextWrapping="Wrap"
+                    MinHeight="52" VerticalScrollBarVisibility="Auto"
+                    FontFamily="Consolas" FontSize="13"
+                    TextChanged="OnFormatChanged"
+                    ToolTip="Example:  {increment}] {val1} (n = {Count}; {Prop2} of {total_count}){commas}" />
+                <WrapPanel Margin="0,5,0,0">
+                  <Button Content="Value" Margin="2" Click="OnToken" Tag="{}{val1}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert {val1} -- the class value (use {val2}, {val3}, ... for the second, third, ... analyzed field when combining)." />
+                  <Button Content="Count" Margin="2" Click="OnToken" Tag="{}{Count}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert {Count} -- the number of records in the class." />
+                  <Button Content="Proportion" Margin="2" Click="OnToken" Tag="{}{Prop2}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert {Prop2} -- the class's proportion of the total as a percentage with 2 decimals (change the digit for more or fewer decimals: {Prop0}, {Prop3}, ...)." />
+                  <Button Content="Total Count" Margin="2" Click="OnToken" Tag="{}{total_count}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert {total_count} -- the total number of records analyzed." />
+                  <Button Content="Inc [1]" Margin="2" Click="OnToken" Tag="{}{increment}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert {increment} -- a running number: 1, 2, 3, ..." />
+                  <Button Content="Inc [a]" Margin="2" Click="OnToken" Tag="{}{increment_alpha_lc}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Running letter: a, b, c, ..." />
+                  <Button Content="Inc [A]" Margin="2" Click="OnToken" Tag="{}{increment_alpha_uc}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Running letter: A, B, C, ..." />
+                  <Button Content="Inc [i]" Margin="2" Click="OnToken" Tag="{}{increment_roman_lc}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Running roman numeral: i, ii, iii, ..." />
+                  <Button Content="Inc [I]" Margin="2" Click="OnToken" Tag="{}{increment_roman_uc}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Running roman numeral: I, II, III, ..." />
+                  <Button Content="Tab" Margin="2" Click="OnToken" Tag="{}{tab}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert {tab} -- a tab character. Tab-separated lines paste into Excel as columns." />
+                  <Button Content="New Line" Margin="2" Click="OnToken" Tag="{}{vbcrlf}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert {vbcrlf} -- a line break within the entry." />
+                  <Button Content="Length" Margin="2" Click="OnToken" Tag="{}{Length}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert {Length} -- the combined character length of the inserted values." />
+                  <Button Content="Commas" Margin="2" Click="OnToken" Tag="{}{commas}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert the {commas} flag -- all numbers in the line get thousands separators (the token itself does not print)." />
+                  <Button Content="Simple List" Margin="2" Click="OnResetFormat"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Reset the format to the default simple list." />
+                </WrapPanel>
+
+                <TextBlock Text="Sample" Style="{StaticResource HeadLabel}"
+                    ToolTip="A live preview of one report line, rendered from the format with example values." />
+                <Border BorderBrush="#4A381E" BorderThickness="1" CornerRadius="3"
+                        Background="#FFFDF6" Padding="7" MinHeight="40">
+                  <TextBlock x:Name="txtSample" TextWrapping="Wrap"
+                             FontFamily="Consolas" FontSize="13"
+                             Foreground="{StaticResource InkBrush}" />
+                </Border>
+
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                  <Button Content="Save Format..." Margin="0,0,6,0" Click="OnSaveFormat"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Save the current format text as a named JSON preset in your user profile, for reuse on any dataset." />
+                  <Button Content="Load Format..." Click="OnLoadFormat"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Load a saved format preset." />
+                </StackPanel>
+              </StackPanel>
+            </ScrollViewer>
+          </Border>
+        </Grid>
+      </DockPanel>
+    </Border>
+  </Border>
+</controls:ProWindow>

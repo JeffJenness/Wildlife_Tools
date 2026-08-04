@@ -179,6 +179,10 @@
     <Content Include="Images\FavoriteData_32.png" />
     <Content Include="DarkImages\FavoriteData_16.png" />
     <Content Include="DarkImages\FavoriteData_32.png" />
+    <Content Include="Images\AttrSummary_16.png" />
+    <Content Include="Images\AttrSummary_32.png" />
+    <Content Include="DarkImages\AttrSummary_16.png" />
+    <Content Include="DarkImages\AttrSummary_32.png" />
     <Content Include="Images\TRI_16.png" />
     <Content Include="Images\TRI_32.png" />
     <Content Include="DarkImages\TRI_16.png" />
