@@ -1,0 +1,149 @@
+<Window x:Class="WildlifeTools.EasterEggWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="An ArcMap Easter Egg"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize" SizeToContent="Height"
+        Width="900" MaxHeight="820" Opacity="0"
+        Loaded="OnLoaded">
+
+  <!-- Outer margin leaves room for the drop shadow so it isn't clipped by the
+       transparent window edge. -->
+  <Border CornerRadius="16" BorderThickness="3" Margin="18"
+          MouseLeftButtonDown="OnDrag">
+    <Border.BorderBrush>
+      <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#3A7BD5" Offset="0" />
+        <GradientStop Color="#00D2A8" Offset="1" />
+      </LinearGradientBrush>
+    </Border.BorderBrush>
+    <Border.Effect>
+      <DropShadowEffect BlurRadius="26" ShadowDepth="3" Opacity="0.5" />
+    </Border.Effect>
+
+    <!-- Solid gradient card (no background image, unlike the Thought-for-the-Day
+         card). A Border clips its Background to CornerRadius automatically. -->
+    <Border x:Name="CardBorder" CornerRadius="13">
+      <Border.Background>
+        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+          <GradientStop Color="#1B2A40" Offset="0" />
+          <GradientStop Color="#2C4A6E" Offset="1" />
+        </LinearGradientBrush>
+      </Border.Background>
+
+      <Grid>
+        <!-- Close button -->
+        <Button Content="&#x2715;" Click="OnClose" Cursor="Hand"
+                HorizontalAlignment="Right" VerticalAlignment="Top"
+                Width="26" Height="26" Margin="6" FontSize="13" Panel.ZIndex="2"
+                Foreground="White" Background="Transparent" BorderThickness="0"
+                ToolTip="Close" />
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
+                      Margin="0,30,0,6">
+          <Grid Margin="34,0,34,18">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Text="The ArcMap &#x201C;jerry&#x201D; Easter Egg"
+                       Foreground="White" FontSize="22" FontWeight="SemiBold"
+                       HorizontalAlignment="Center" TextAlignment="Center"
+                       Margin="0,0,0,16" TextWrapping="Wrap" />
+
+            <!-- Two columns: the egg + story on the left, the source photo on
+                 the right, so the whole card is visible without scrolling. -->
+            <Grid Grid.Row="1">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="28" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+
+              <!-- LEFT: the easter-egg artifact + the story. -->
+              <StackPanel Grid.Column="0" VerticalAlignment="Top">
+                <!-- The 1-bit artwork on a white plaque so it reads exactly as it
+                     did in ArcMap. Nearest-neighbor keeps the pixels crisp. -->
+                <Border Background="#FFFFFF" CornerRadius="6" Padding="10"
+                        HorizontalAlignment="Center" Margin="0,0,0,16">
+                  <Border.Effect>
+                    <DropShadowEffect BlurRadius="10" ShadowDepth="2" Opacity="0.55" Color="Black" />
+                  </Border.Effect>
+                  <Image x:Name="EggImage" Width="220" Height="214"
+                         RenderOptions.BitmapScalingMode="NearestNeighbor"
+                         Stretch="Uniform" />
+                </Border>
+
+                <TextBlock Foreground="#E7EEF8" FontSize="14.5" LineHeight="22"
+                           TextWrapping="Wrap" Margin="0,0,0,10">
+                  Back when ArcMap first arrived &#x2014; versions
+                  <Run FontWeight="SemiBold">8.3</Run> and
+                  <Run FontWeight="SemiBold">9.0</Run> &#x2014; it hid a playful
+                  easter egg. Start an edit session, type the letters
+                  <Run FontWeight="SemiBold" FontStyle="Italic">j&#8209;e&#8209;r&#8209;r&#8209;y</Run>,
+                  and this picture of Jerry Garcia would pop up on your map. Esri
+                  quietly removed it in later releases.
+                </TextBlock>
+
+                <TextBlock Foreground="#E7EEF8" FontSize="14.5" LineHeight="22"
+                           TextWrapping="Wrap">
+                  The artwork was most likely created by
+                  <Hyperlink NavigateUri="https://www.linkedin.com/posts/nikolas-smilovsky-phd_gis-arcmap-esri-activity-7478408560956100608-_D0N"
+                             RequestNavigate="OnNavigate" Foreground="#8FBEFF">Jeff Jackson</Hyperlink>,
+                  and appears to be traced from a photograph of Jerry Garcia
+                  standing before the Step Pyramid at Saqqara, Egypt, taken in 1978
+                  by the photographer
+                  <Hyperlink NavigateUri="https://adrianboot.co.uk/"
+                             RequestNavigate="OnNavigate" Foreground="#8FBEFF">Adrian Boot</Hyperlink>.
+                </TextBlock>
+              </StackPanel>
+
+              <!-- RIGHT: source-photograph credit. By default a low-resolution
+                   thumbnail ships (fair-use historical illustration), credited to
+                   the photographer with a link to license the original. If the
+                   file is absent, the link-only credit is shown instead. -->
+              <Border Grid.Column="2" BorderBrush="#4A6C93" BorderThickness="1"
+                      CornerRadius="8" Padding="14,12" Background="#22314A"
+                      VerticalAlignment="Top" Width="392">
+                <StackPanel>
+                  <TextBlock Text="Source photograph"
+                             Foreground="#BFD4EE" FontSize="13"
+                             FontWeight="SemiBold" Margin="0,0,0,8"
+                             TextAlignment="Center" />
+
+                  <Border x:Name="SourcePlaque" Visibility="Collapsed"
+                          Background="#FFFFFF" CornerRadius="4" Padding="6"
+                          HorizontalAlignment="Center" Margin="0,0,0,10">
+                    <Image x:Name="SourceImage" MaxWidth="360" MaxHeight="300"
+                           Stretch="Uniform" />
+                  </Border>
+
+                  <TextBlock Foreground="#D7E4F4" FontSize="13.5" LineHeight="20"
+                             TextWrapping="Wrap" TextAlignment="Center">
+                    &#x201C;Jerry Garcia at Saqqara, Egypt, 1978&#x201D; (ref. U02111)
+                    &#x2014; photograph <Run FontWeight="SemiBold">&#xA9; Adrian Boot</Run>.
+                  </TextBlock>
+                  <TextBlock TextAlignment="Center" Margin="0,7,0,0" FontSize="13.5">
+                    <Hyperlink NavigateUri="https://adrianboot.co.uk/print-gallery/"
+                               RequestNavigate="OnNavigate" Foreground="#8FBEFF">View / license the original at Adrian Boot's archive &#x2192;</Hyperlink>
+                  </TextBlock>
+                  <TextBlock TextAlignment="Center" Margin="0,4,0,0" FontSize="12.5">
+                    <Hyperlink NavigateUri="https://alanpaul.substack.com/p/photo-finish-jerry-garcia-at-the"
+                               RequestNavigate="OnNavigate" Foreground="#8FBEFF">Read the story of the photograph &#x2192;</Hyperlink>
+                  </TextBlock>
+                  <TextBlock x:Name="CreditNote" Foreground="#93A9C6" FontSize="11.5"
+                             TextWrapping="Wrap" TextAlignment="Center"
+                             Margin="0,9,0,0"
+                             Text="The original photograph is not distributed with this add-in, out of respect for the photographer's copyright. Please view or license it at the source above." />
+                </StackPanel>
+              </Border>
+            </Grid>
+          </Grid>
+        </ScrollViewer>
+      </Grid>
+    </Border>
+  </Border>
+</Window>

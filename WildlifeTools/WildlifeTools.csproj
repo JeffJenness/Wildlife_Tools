@@ -219,6 +219,10 @@
     <Content Include="Images\Sudoku_32.png" />
     <Content Include="DarkImages\Sudoku_16.png" />
     <Content Include="DarkImages\Sudoku_32.png" />
+    <Content Include="Images\Jerry_16.png" />
+    <Content Include="Images\Jerry_32.png" />
+    <Content Include="DarkImages\Jerry_16.png" />
+    <Content Include="DarkImages\Jerry_32.png" />
     <!-- Sudoku skin fonts, embedded as WPF resources so they render on every
          machine with no installation (all SIL Open Font License; the OFL
          texts ship alongside as required for redistribution). -->
@@ -235,6 +239,18 @@
     <!-- The Thought-for-the-Day card background is loaded from disk by path at run
          time, so it must sit next to the assembly (copied to the output directory). -->
     <Content Include="Images\quote_bg.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- The ArcMap easter-egg artwork is loaded from disk by path at run time,
+         so it must sit next to the assembly (copied to the output directory). -->
+    <Content Include="Images\jerry_easteregg.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Low-resolution (360 px) thumbnail of Adrian Boot's Jerry Garcia at
+         Saqqara photograph, shown for historical illustration under a fair-use
+         rationale, credited to the photographer with a link to license the
+         original. Loaded from disk by path at run time. -->
+    <Content Include="Images\jerry_boot_photo.jpg">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
