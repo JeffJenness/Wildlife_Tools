@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.47.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.48.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -65,6 +65,7 @@
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
           <button refID="WildlifeTools_Sudoku" size="large" />
+          <button refID="WildlifeTools_SlidingPuzzle" size="large" />
           <button refID="WildlifeTools_EasterEgg" size="large" />
         </group>
       </groups>
@@ -678,6 +679,17 @@
                 keytip="SD">
           <tooltip heading="Sudoku">
             Opens a Sudoku puzzle in a floating window, so the map keeps working while you think. Three difficulty levels; every puzzle has exactly one solution. Click a cell and type 1-9; arrow keys move (wrapping at the edges) and Tab snakes through the grid. Check colors your entries blue (correct) or red (incorrect), and Reveal Cell will confess a single answer -- after asking if you are sure you want it.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_SlidingPuzzle"
+                caption="Sliding Puzzle"
+                className="Puzzle.SlidingPuzzleButton"
+                loadOnClick="true"
+                smallImage="Images\Puzzle_16.png"
+                largeImage="Images\Puzzle_32.png"
+                keytip="SP">
+          <tooltip heading="Sliding Puzzle">
+            Turns a snapshot of your current map or layout into a sliding-tile puzzle in a floating window, so the map keeps working while you play. A map is cropped to its largest visible square (switchable 4x4, 5x5, or 6x6 tiles); a layout uses the whole page, with the tile count you pick along the short edge and a matching near-square count along the long edge. One tile is removed and the rest are scrambled; slide tiles into the gap to rebuild the picture. Peek shows the finished image, and Numbers turns on an easier mode.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_EasterEgg"

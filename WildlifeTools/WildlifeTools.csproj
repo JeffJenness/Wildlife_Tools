@@ -223,6 +223,10 @@
     <Content Include="Images\Jerry_32.png" />
     <Content Include="DarkImages\Jerry_16.png" />
     <Content Include="DarkImages\Jerry_32.png" />
+    <Content Include="Images\Puzzle_16.png" />
+    <Content Include="Images\Puzzle_32.png" />
+    <Content Include="DarkImages\Puzzle_16.png" />
+    <Content Include="DarkImages\Puzzle_32.png" />
     <!-- Sudoku skin fonts, embedded as WPF resources so they render on every
          machine with no installation (all SIL Open Font License; the OFL
          texts ship alongside as required for redistribution). -->
