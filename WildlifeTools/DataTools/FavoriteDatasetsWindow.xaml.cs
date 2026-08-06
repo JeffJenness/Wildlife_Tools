@@ -277,16 +277,24 @@ namespace WildlifeTools.DataTools
             {
                 await QueuedTask.Run(() =>
                 {
+                    // Track how many new layers of each geometry band we've placed
+                    // this run, so several of the same type keep their selection
+                    // order within the band.
+                    var addedByRank = new Dictionary<int, int>();
                     foreach (var vm in chosen)
                     {
                         try
                         {
                             var uri = new Uri(vm.Path, UriKind.Absolute);
                             if (vm.IsTable)
+                            {
                                 StandaloneTableFactory.Instance
                                     .CreateStandaloneTable(uri, map);
-                            else
-                                LayerFactory.Instance.CreateLayer(uri, map);
+                                continue;
+                            }
+                            var layer = LayerFactory.Instance.CreateLayer(uri, map);
+                            if (layer != null)
+                                PlaceInBand(map, layer, addedByRank);
                         }
                         catch (Exception ex)
                         {
@@ -304,6 +312,50 @@ namespace WildlifeTools.DataTools
                     Environment.NewLine + Environment.NewLine +
                     string.Join(Environment.NewLine, failures),
                     "Load Favorite Datasets");
+        }
+
+        // ---- cartographic layer ordering -----------------------------------
+        // Higher rank draws higher (closer to the top) in the Contents pane:
+        // points (and any other layer type) on top, then polylines, then
+        // polygons, then rasters at the bottom.
+        private static int TypeRank(Layer layer)
+        {
+            if (layer is BasicFeatureLayer bfl)
+            {
+                switch (bfl.ShapeType)
+                {
+                    case ArcGIS.Core.CIM.esriGeometryType.esriGeometryPoint:
+                    case ArcGIS.Core.CIM.esriGeometryType.esriGeometryMultipoint:
+                        return 4;   // point feature classes
+                    case ArcGIS.Core.CIM.esriGeometryType.esriGeometryPolyline:
+                        return 3;   // polyline feature classes
+                    case ArcGIS.Core.CIM.esriGeometryType.esriGeometryPolygon:
+                        return 2;   // polygon feature classes
+                    default:
+                        return 5;   // other feature geometry -> top
+                }
+            }
+            if (layer is BasicRasterLayer)
+                return 1;           // rasters at the bottom
+            return 5;               // any other layer type -> top
+        }
+
+        /// <summary>
+        /// Moves a freshly added layer into its geometry band: below every
+        /// existing layer of a higher band, above every existing layer of the
+        /// same or lower band. Several new layers of one band keep their
+        /// selection order within it.
+        /// </summary>
+        private static void PlaceInBand(Map map, Layer layer,
+                                        Dictionary<int, int> addedByRank)
+        {
+            int rank = TypeRank(layer);
+            int above = map.Layers.Count(l => l != layer && TypeRank(l) > rank);
+            addedByRank.TryGetValue(rank, out int sameAdded);
+            int target = above + sameAdded;
+            try { map.MoveLayer(layer, target); }
+            catch { /* leave it where CreateLayer put it if the move fails */ }
+            addedByRank[rank] = sameAdded + 1;
         }
 
         // ---- save / close ---------------------------------------------------

@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.48.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.50.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -26,6 +26,7 @@
           <group refID="WildlifeTools_GroupCartography"/>
           <group refID="WildlifeTools_GroupTopo"/>
           <group refID="WildlifeTools_GroupDirectional"/>
+          <group refID="WildlifeTools_GroupCorridor"/>
           <group refID="WildlifeTools_GroupData"/>
           <group refID="WildlifeTools_GroupBreak"/>
         </tab>
@@ -58,15 +59,19 @@
           <button refID="WildlifeTools_PolarPlots" size="large" />
           <button refID="WildlifeTools_SlopeGraphic" size="large" />
         </group>
+        <group id="WildlifeTools_GroupCorridor" caption="Corridor Designer Tools" appearsOnAddInTab="false">
+          <button refID="WildlifeTools_DiversityIndices" size="large" />
+          <button refID="WildlifeTools_LandFacet" size="large" />
+        </group>
         <group id="WildlifeTools_GroupData" caption="Data Tools" appearsOnAddInTab="false">
           <button refID="WildlifeTools_FavoriteDatasets" size="large" />
           <button refID="WildlifeTools_AttributeSummary" size="large" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
-          <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
-          <button refID="WildlifeTools_Sudoku" size="large" />
-          <button refID="WildlifeTools_SlidingPuzzle" size="large" />
-          <button refID="WildlifeTools_EasterEgg" size="large" />
+          <button refID="WildlifeTools_ThoughtForTheDay" size="small" />
+          <button refID="WildlifeTools_Sudoku" size="small" />
+          <button refID="WildlifeTools_SlidingPuzzle" size="small" />
+          <button refID="WildlifeTools_EasterEgg" size="small" />
         </group>
       </groups>
 
@@ -547,6 +552,28 @@
                 keytip="AF">
           <tooltip heading="Aspect Focal Statistics">
             Opens the Aspect Focal Statistics tool from the Jenness Enterprises toolbox: neighborhood (focal) statistics for an aspect raster computed with CIRCULAR statistics. Aspect is a circular variable (0 and 360 degrees are the same direction), so ordinary Focal Statistics is invalid; this tool offers circular measures of central tendency and dispersion (mean direction, circular variance, standard deviation, resultant length, range, Rayleigh test, von Mises concentration, and more) over any neighborhood shape, on projected or geographic aspect rasters, with no Spatial Analyst. Flat cells (aspect -1) are ignored. D-infinity flow-direction rasters -- essentially aspect in the mathematical convention -- are supported via a convention toggle. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_LandFacet"
+                caption="Land Facet Clustering"
+                className="Corridor.LandFacetButton"
+                loadOnClick="true"
+                smallImage="Images\LandFacet_16.png"
+                largeImage="Images\LandFacet_32.png"
+                keytip="LF">
+          <tooltip heading="Land Facet Clustering">
+            Opens the Land Facet Clustering wizard: an all-in-ArcGIS-Pro replacement for the Land Facet Corridor Designer's export-to-R / run-fuzzy-clustering-in-R / import-from-R round trip. It groups the cells of a categorical landscape (for example topographic-position or soil classes) into land facets by fuzzy c-means clustering of continuous variables (elevation, slope, insolation, ...), with interactive outlier detection and cluster-number selection, and writes a land-facet raster -- no R required. A port and modernization of the Brost &amp; Beier method (Land Facet Corridor Designer). NOTE: in active development; the setup/read step is functional, the outlier/cluster/facet steps are being built.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_DiversityIndices"
+                caption="Diversity Indices"
+                className="DiversityIndicesButton"
+                loadOnClick="true"
+                smallImage="Images\Diversity_16.png"
+                largeImage="Images\Diversity_32.png"
+                keytip="DV">
+          <tooltip heading="Diversity Indices">
+            Opens the Diversity Indices tool from the Jenness Enterprises toolbox: neighborhood (focal) diversity of a CATEGORICAL raster, where each cell is a class (typically a species or vegetation/community type). Over a moving neighborhood of any shape and size it computes the effective number of species (Hill numbers of order q -- the default and most defensible modern measure), Shannon's index, the Gini-Simpson index, or Simpson's concentration. Works on projected or geographic rasters (with the same geodesic per-row adjustment as the other neighborhood tools) and needs no Spatial Analyst. A modernized port of the SSI ArcMap Shannon's Index tool; part of the Land Facet Corridor Designer tool family. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_SimpleTPI"

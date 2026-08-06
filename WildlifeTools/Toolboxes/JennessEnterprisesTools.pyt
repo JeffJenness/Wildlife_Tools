@@ -52,6 +52,7 @@ import lsri           # noqa: E402
 import tpi_tools      # noqa: E402
 import classification_store  # noqa: E402
 import line_surface_tools  # noqa: E402
+import diversity_tools  # noqa: E402
 import tool_metadata  # noqa: E402
 import error_report   # noqa: E402
 
@@ -305,7 +306,8 @@ class Toolbox(object):
                       SimpleTPI,
                       SlopePositionClassification, LandformClassification,
                       GeneralRasterClassification,
-                      LSRIOnDEM, LSRIOnContourPolylines]
+                      LSRIOnDEM, LSRIOnContourPolylines,
+                      DiversityIndices]
 
 
 class LoCoHStandard(object):
@@ -7358,3 +7360,257 @@ class LSRIOnContourPolylines(object):
             raise arcpy.ExecuteError(
                 "The tool stopped because of an unexpected error; see the report above.")
 
+
+
+class DiversityIndices(object):
+    """Diversity Indices -- neighborhood diversity of a CATEGORICAL raster
+    (each cell a class, typically a species or community). Effective number of
+    species (Hill numbers), Shannon, and Simpson measures over any neighborhood
+    shape/size, projected or geographic, with no Spatial Analyst. Part of the
+    Land Facet Corridor Designer tool family. See ``diversity_tools``."""
+
+    _RECT = {"width", "height"}
+    _CIRC = {"radius"}
+    _ANN = {"inner_radius", "outer_radius"}
+    _WEDGE = {"radius", "start_angle", "end_angle"}
+    _FILE = {"kernel_file"}
+
+    def __init__(self):
+        self.label = "Diversity Indices"
+        self.description = (
+            "Neighborhood (focal) diversity of a categorical raster -- each "
+            "cell is a class, typically a species or vegetation/community type. "
+            "Over a moving neighborhood of any shape and size it reports the "
+            "effective number of species (Hill numbers of order q -- the "
+            "default and most defensible modern measure), Shannon's index, the "
+            "Gini-Simpson index, or Simpson's concentration. Works on projected "
+            "or geographic rasters, with the same geodesic per-row adjustment "
+            "the other neighborhood tools use, and needs no Spatial Analyst. A "
+            "modernized port of the SSI ArcMap Shannon's Index tool; part of "
+            "the Land Facet Corridor Designer tool family.")
+        self.category = "Corridor Designer Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input categorical raster (single band)",
+            name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output diversity raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required",
+            direction="Output")
+        index = arcpy.Parameter(
+            displayName="Diversity measure", name="index",
+            datatype="GPString", parameterType="Required", direction="Input")
+        index.filter.type = "ValueList"
+        index.filter.list = diversity_tools.INDEX_LABELS
+        index.value = diversity_tools.INDEX_LABELS[0]
+        q = arcpy.Parameter(
+            displayName="Order (q) for the effective number", name="q",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        q.value = 1
+        neighborhood = arcpy.Parameter(
+            displayName="Neighborhood", name="neighborhood",
+            datatype="GPString", parameterType="Required", direction="Input")
+        neighborhood.filter.type = "ValueList"
+        neighborhood.filter.list = diversity_tools.NEIGHBORHOODS
+        neighborhood.value = "Circle"
+        nbr_units = arcpy.Parameter(
+            displayName="Neighborhood units", name="nbr_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        nbr_units.filter.type = "ValueList"
+        nbr_units.filter.list = diversity_tools.NBR_UNITS
+        nbr_units.value = "Cells"
+        radius = arcpy.Parameter(
+            displayName="Radius", name="radius",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        radius.value = 3
+        width = arcpy.Parameter(
+            displayName="Width", name="width",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        width.value = 3
+        height = arcpy.Parameter(
+            displayName="Height", name="height",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        height.value = 3
+        inner_radius = arcpy.Parameter(
+            displayName="Inner radius", name="inner_radius",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        inner_radius.value = 1
+        outer_radius = arcpy.Parameter(
+            displayName="Outer radius", name="outer_radius",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        outer_radius.value = 3
+        start_angle = arcpy.Parameter(
+            displayName="Start angle (deg, CCW from east)", name="start_angle",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        start_angle.value = 0
+        end_angle = arcpy.Parameter(
+            displayName="End angle (deg, CCW from east)", name="end_angle",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        end_angle.value = 90
+        kernel_file = arcpy.Parameter(
+            displayName="Kernel file", name="kernel_file",
+            datatype="DEFile", parameterType="Optional", direction="Input")
+        kernel_file.filter.list = ["txt"]
+        exclude_null = arcpy.Parameter(
+            displayName="Return NoData if the neighborhood includes any NoData "
+                        "cell", name="exclude_null",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        exclude_null.value = False
+        params = [in_raster, out_raster, index, q, neighborhood, nbr_units,
+                  radius, width, height, inner_radius, outer_radius,
+                  start_angle, end_angle, kernel_file, exclude_null]
+        saved = _load_tool_defaults("DiversityIndices")
+        for p in (index, neighborhood, nbr_units):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    def _relevant(self, nbr):
+        if nbr == "Rectangle":
+            return self._RECT
+        if nbr == "Circle":
+            return self._CIRC
+        if nbr == "Annulus":
+            return self._ANN
+        if nbr == "Wedge":
+            return self._WEDGE
+        if nbr in ("Irregular", "Weight"):
+            return self._FILE
+        return set()
+
+    def _abbr(self, index_key, q):
+        base = diversity_tools._ABBR.get(index_key, "Div")
+        if index_key == "EFFECTIVE" and q is not None:
+            try:
+                base += "_q{:g}".format(float(q))
+            except Exception:
+                pass
+        return base
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr = P["in_raster"], P["out_raster"]
+        index_key = diversity_tools.INDEX_KEY.get(
+            P["index"].valueAsText, "EFFECTIVE")
+        # q applies only to the effective number.
+        P["q"].enabled = (index_key == "EFFECTIVE")
+        nbr = P["neighborhood"].valueAsText or "Circle"
+        rel = self._relevant(nbr)
+        for nm in ("radius", "width", "height", "inner_radius", "outer_radius",
+                   "start_angle", "end_angle", "kernel_file"):
+            P[nm].enabled = nm in rel
+        P["nbr_units"].enabled = nbr not in ("Irregular", "Weight")
+
+        if inr.valueAsText:
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(os.path.basename(
+                        inr.valueAsText))[0] + "_"
+                        + self._abbr(index_key, P["q"].value))
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr = P["in_raster"]
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage(
+                        "The categorical raster must be single band.")
+            except Exception:
+                pass
+        index_key = diversity_tools.INDEX_KEY.get(
+            P["index"].valueAsText, "EFFECTIVE")
+        if index_key == "EFFECTIVE":
+            qv = P["q"].value
+            if qv is not None and qv < 0:
+                P["q"].setErrorMessage(
+                    "The order q must be zero or positive.")
+        nbr = P["neighborhood"].valueAsText or "Circle"
+        rel = self._relevant(nbr)
+        for nm in ("radius", "width", "height", "inner_radius", "outer_radius"):
+            if nm in rel:
+                v = P[nm].value
+                if v is not None and v <= 0:
+                    P[nm].setErrorMessage("Must be a positive value.")
+        if nbr == "Annulus":
+            ri, ro = P["inner_radius"].value, P["outer_radius"].value
+            if ri is not None and ro is not None and ri >= ro:
+                P["outer_radius"].setErrorMessage(
+                    "The outer radius must be greater than the inner radius.")
+        if nbr in ("Irregular", "Weight"):
+            kf = P["kernel_file"].valueAsText
+            if not kf:
+                P["kernel_file"].setErrorMessage(
+                    "The {} neighborhood needs a kernel file.".format(nbr))
+            elif not os.path.exists(kf):
+                P["kernel_file"].setErrorMessage("Kernel file not found.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(diversity_tools)
+            P = {p.name: p for p in parameters}
+            in_path = (_resolve_raster_path(P["in_raster"])
+                       or P["in_raster"].valueAsText)
+            index_key = diversity_tools.INDEX_KEY.get(
+                P["index"].valueAsText, "EFFECTIVE")
+            out_lyrx = diversity_tools.run_diversity(
+                in_raster=in_path,
+                out_raster=P["out_raster"].valueAsText,
+                index=index_key,
+                q=P["q"].value if P["q"].value is not None else 1.0,
+                neighborhood=P["neighborhood"].valueAsText or "Circle",
+                radius=P["radius"].value if P["radius"].value is not None else 3.0,
+                width=P["width"].value if P["width"].value is not None else 3.0,
+                height=P["height"].value if P["height"].value is not None else 3.0,
+                inner_radius=(P["inner_radius"].value
+                              if P["inner_radius"].value is not None else 1.0),
+                outer_radius=(P["outer_radius"].value
+                              if P["outer_radius"].value is not None else 3.0),
+                start_angle=(P["start_angle"].value
+                             if P["start_angle"].value is not None else 0.0),
+                end_angle=(P["end_angle"].value
+                           if P["end_angle"].value is not None else 90.0),
+                nbr_units=P["nbr_units"].valueAsText or "Cells",
+                kernel_file=P["kernel_file"].valueAsText,
+                exclude_if_any_null=bool(P["exclude_null"].value),
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+            if out_lyrx:
+                try:
+                    P["out_raster"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage(
+                        "Could not set output symbology: {}".format(e))
+            _save_tool_defaults("DiversityIndices", {
+                "index": P["index"].valueAsText,
+                "neighborhood": P["neighborhood"].valueAsText,
+                "nbr_units": P["nbr_units"].valueAsText,
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")

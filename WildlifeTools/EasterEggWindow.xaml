@@ -90,12 +90,9 @@
 
                 <TextBlock Foreground="#E7EEF8" FontSize="14.5" LineHeight="22"
                            TextWrapping="Wrap">
-                  The artwork was most likely created by
-                  <Hyperlink NavigateUri="https://www.linkedin.com/posts/nikolas-smilovsky-phd_gis-arcmap-esri-activity-7478408560956100608-_D0N"
-                             RequestNavigate="OnNavigate" Foreground="#8FBEFF">Jeff Jackson</Hyperlink>,
-                  and appears to be traced from a photograph of Jerry Garcia
-                  standing before the Step Pyramid at Saqqara, Egypt, taken in 1978
-                  by the photographer
+                  The artwork appears to be traced from a photograph of Jerry
+                  Garcia standing before the Step Pyramid at Saqqara, Egypt,
+                  taken in 1978 by the photographer
                   <Hyperlink NavigateUri="https://adrianboot.co.uk/"
                              RequestNavigate="OnNavigate" Foreground="#8FBEFF">Adrian Boot</Hyperlink>.
                 </TextBlock>

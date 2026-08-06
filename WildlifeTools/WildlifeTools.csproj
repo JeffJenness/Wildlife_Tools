@@ -227,6 +227,14 @@
     <Content Include="Images\Puzzle_32.png" />
     <Content Include="DarkImages\Puzzle_16.png" />
     <Content Include="DarkImages\Puzzle_32.png" />
+    <Content Include="Images\Diversity_16.png" />
+    <Content Include="Images\Diversity_32.png" />
+    <Content Include="DarkImages\Diversity_16.png" />
+    <Content Include="DarkImages\Diversity_32.png" />
+    <Content Include="Images\LandFacet_16.png" />
+    <Content Include="Images\LandFacet_32.png" />
+    <Content Include="DarkImages\LandFacet_16.png" />
+    <Content Include="DarkImages\LandFacet_32.png" />
     <!-- Sudoku skin fonts, embedded as WPF resources so they render on every
          machine with no installation (all SIL Open Font License; the OFL
          texts ship alongside as required for redistribution). -->
@@ -255,6 +263,11 @@
          rationale, credited to the photographer with a link to license the
          original. Loaded from disk by path at run time. -->
     <Content Include="Images\jerry_boot_photo.jpg">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Hidden GDAL raster-write helper for the Land Facet tool, run as a
+         subprocess under Pro's Python; must sit next to the assembly. -->
+    <Content Include="Corridor\corridor_write_raster.py">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
