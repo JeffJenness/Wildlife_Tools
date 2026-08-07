@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -31,15 +33,19 @@ namespace WildlifeTools.Corridor
         public static Task<string> WriteAsync(
             int[] clusterIds, int width, int height,
             double[] geotransform, string wkt, int noData, string outPath,
-            IProgress<double> progress, CancellationToken ct = default)
+            IProgress<double> progress,
+            IReadOnlyList<(int value, long count, string category, int cluster)> rat = null,
+            CancellationToken ct = default)
         {
             return Task.Run(() => Write(clusterIds, width, height, geotransform,
-                                        wkt, noData, outPath, progress, ct), ct);
+                                        wkt, noData, outPath, progress, rat, ct), ct);
         }
 
         private static string Write(int[] clusterIds, int width, int height,
             double[] geotransform, string wkt, int noData, string outPath,
-            IProgress<double> progress, CancellationToken ct)
+            IProgress<double> progress,
+            IReadOnlyList<(int value, long count, string category, int cluster)> rat,
+            CancellationToken ct)
         {
             if (clusterIds.Length != (long)width * height)
                 throw new ArgumentException("clusterIds length must equal width*height.");
@@ -67,6 +73,9 @@ namespace WildlifeTools.Corridor
                     nodata = noData,
                     geotransform,
                     wkt = wkt ?? string.Empty,
+                    // Optional raster attribute table: [value, count, category, cluster] rows.
+                    rat = rat?.Select(r => new object[]
+                        { r.value, r.count, r.category ?? string.Empty, r.cluster }).ToList(),
                 };
                 File.WriteAllText(jobPath, JsonSerializer.Serialize(job));
 

@@ -73,34 +73,41 @@ namespace WildlifeTools.Corridor
                                 stack.Extent.YMax, stack.CellSizeY, W, H)
                 : null;
 
-            // Align every variable raster onto the template grid (reproject +
-            // bilinear resample). The categorical raster already defines the grid.
+            // Align every variable raster onto the template grid. Use NEAREST
+            // resampling, not bilinear: bilinear blends a NoData cell (e.g. an aspect
+            // transform's -9999 flat/NoData) with its valid neighbours, producing
+            // spurious large-magnitude values that are not equal to the NoData value
+            // and so slip past the NoData test and wreck the analysis. Nearest keeps
+            // every value exact (NoData stays NoData), which is what clustering needs.
             var aligned = new Raster[V];
+            var varNoData = new object[V];
             for (int i = 0; i < V; i++)
             {
                 var r = variables[i].raster;
+                varNoData[i] = r.GetNoDataValue();   // capture BEFORE reconfiguring
                 r.SetSpatialReference(stack.SpatialRef);
                 r.SetExtent(stack.Extent);
                 r.SetWidth(W);
                 r.SetHeight(H);
-                r.SetResamplingType(ArcGIS.Core.CIM.RasterResamplingType.BilinearInterpolation);
+                r.SetResamplingType(ArcGIS.Core.CIM.RasterResamplingType.NearestNeighbor);
                 r.Refresh();
                 aligned[i] = r;
             }
 
             object catNoData = categorical.GetNoDataValue();
-            var varNoData = variables.Select(v => v.raster.GetNoDataValue()).ToArray();
 
             for (int y0 = 0; y0 < H; y0 += StripRows)
             {
                 int h = Math.Min(StripRows, H - y0);
 
                 ReadStrip(categorical, W, h, y0,
-                          out double[,] catVals, out bool[,] catValid, catNoData);
+                          out double[,] catVals, out bool[,] catValid, catNoData,
+                          useSentinel: false);
                 var varVals = new double[V][,];
                 var varValid = new bool[V][,];
                 for (int i = 0; i < V; i++)
-                    ReadStrip(aligned[i], W, h, y0, out varVals[i], out varValid[i], varNoData[i]);
+                    ReadStrip(aligned[i], W, h, y0, out varVals[i], out varValid[i],
+                              varNoData[i], useSentinel: true);
 
                 for (int row = 0; row < h; row++)
                 {
@@ -178,9 +185,16 @@ namespace WildlifeTools.Corridor
         /// is identified by the band's NoData value and non-finite checks -- the
         /// SDK's per-block NoData mask is a bit-packed 1-D byte array (8 pixels per
         /// byte), not worth unpacking when the NoData value suffices.</summary>
+        // The -9999 NoData sentinel shared by every Jenness Enterprises raster tool
+        // (NODATA_OUT). Some inputs (e.g. an aspect transform whose NoData value was
+        // never stamped on the file) carry -9999 as a plain pixel value; on a
+        // continuous VARIABLE that is never a real measurement, so it is excluded
+        // even when the raster declares no NoData value.
+        private const double SentinelNoData = -9999.0;
+
         private static void ReadStrip(Raster raster, int w, int h, int y0,
                                       out double[,] values, out bool[,] valid,
-                                      object noData)
+                                      object noData, bool useSentinel)
         {
             var pb = raster.CreatePixelBlock(w, h);
             raster.Read(0, y0, pb);
@@ -204,6 +218,11 @@ namespace WildlifeTools.Corridor
                     double v = Convert.ToDouble(data.GetValue(i0, i1));
                     bool ok = !double.IsNaN(v) && !double.IsInfinity(v);
                     if (ok && hasNd && v == nd) ok = false;
+                    // On a continuous variable, exclude the -9999 NoData sentinel and
+                    // any absurd-magnitude fill (e.g. the Float NoData 1.79e308 / FLT
+                    // MAX that the SDK may surface) -- never a real measurement.
+                    if (ok && useSentinel && (v == SentinelNoData || Math.Abs(v) >= 1e30))
+                        ok = false;
                     values[r, c] = v;
                     valid[r, c] = ok;
                 }

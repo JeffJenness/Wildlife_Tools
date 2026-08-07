@@ -40,10 +40,50 @@ namespace WildlifeTools.Corridor
             public override string ToString() => Name;
         }
 
-        private sealed class CategoryItem
+        /// <summary>Everything the wizard remembers for ONE category so all of the
+        /// categories can be tuned (steps 2–4) and then written together in one pass.
+        /// The step-2/3 UI edits the "current" category's fields; they are saved back
+        /// here on a category switch and reloaded for the newly chosen one.</summary>
+        private sealed class ClassAnalysis
         {
-            public string Label { get; set; }
-            public RasterStack.ClassData Data { get; set; }
+            public RasterStack.ClassData Data;
+            public double Fraction = 0.10;             // outlier fraction
+            public double[][] Sample;                  // step-2 subsample
+            public double[] SampleDensity;
+            public bool[] SampleOutlier;
+            public LandFacetEngine.KdeModel Kde;
+            public double[] StdMean, StdSd;            // step-3 standardization
+            public double Psi = 1.5;
+            public List<int> CValues;
+            public Dictionary<int, LandFacetEngine.ValidityIndices> IndicesByC;
+            public Dictionary<int, double[][]> CentroidsByC;
+            public int ChosenK;
+            public bool OutliersReady => SampleOutlier != null;
+            public bool Clustered => CentroidsByC != null && CentroidsByC.Count > 0 && ChosenK > 0;
+            public bool IsSet => OutliersReady && Clustered;   // ready to write
+        }
+
+        /// <summary>A row of the category selectors. The "✓ set" marker is
+        /// step-specific: the Step 2 list flags a category whose OUTLIERS are set, the
+        /// Step 3 list flags one whose CLUSTERING is set (the Step 4 table shows the
+        /// combined readiness).</summary>
+        private sealed class CategoryItem : System.ComponentModel.INotifyPropertyChanged
+        {
+            public double Value;
+            public string BaseLabel;
+            public ClassAnalysis Analysis;
+            public event System.ComponentModel.PropertyChangedEventHandler PropertyChanged;
+            public string LabelStep2 => BaseLabel
+                + (Analysis != null && Analysis.OutliersReady ? "   ✓ set" : "");
+            public string LabelStep3 => BaseLabel
+                + (Analysis != null && Analysis.Clustered ? "   ✓ set" : "");
+            public void Refresh()
+            {
+                PropertyChanged?.Invoke(this,
+                    new System.ComponentModel.PropertyChangedEventArgs(nameof(LabelStep2)));
+                PropertyChanged?.Invoke(this,
+                    new System.ComponentModel.PropertyChangedEventArgs(nameof(LabelStep3)));
+            }
         }
 
         private sealed class VarFlag
@@ -79,18 +119,28 @@ namespace WildlifeTools.Corridor
 
         private List<LayerItem> _rasters = new();
         private VatInfo _vat;                    // attribute table of the chosen template
+        private string _classNameField;          // VAT field to name classes by (null = value)
+        private string _symbologyWarning;        // set if applying the colorizer failed
         private RasterStack _stack;
         private List<VarFlag> _varFlags = new();
         private int _step = 1;
 
+        // Batch state: one analysis per category, and the category being edited now.
+        private readonly Dictionary<double, ClassAnalysis> _analyses = new();
+        private List<CategoryItem> _categoryItems = new();
+        private ClassAnalysis _current;
+        private bool _syncingCat;                 // guards the two synced selectors
+
         // Step 2 (outliers): the analysis sample of the active class, its density,
-        // and the current outlier flags.
+        // and the current outlier flags (a working view of _current).
         private RasterStack.ClassData _activeClass;
         private double[][] _sample;
         private double[] _sampleDensity;
         private bool[] _sampleOutlier;
         private LandFacetEngine.KdeModel _kdeModel;   // reused to score all cells in step 4
         private const int MaxSample = 4000;
+        private int _scatterX = 0, _scatterY = 1;     // which variables the 2-D slice plots
+        private bool _syncingAxes;
 
         // Step 3 (clusters): standardization params, the per-c results, chosen k.
         private double[] _stdMean, _stdSd;
@@ -125,6 +175,7 @@ namespace WildlifeTools.Corridor
         public LandFacetWindow()
         {
             InitializeComponent();
+            ShowStep(1);                 // paint the step chips for the initial state
             Loaded += (_, __) => PopulateLayers();
         }
 
@@ -188,8 +239,11 @@ namespace WildlifeTools.Corridor
             _stack = null;                       // inputs changed; a re-read is needed
             _varFlags = new();
             _vat = null;
+            ResetBatchState();
             lstClasses.ItemsSource = null;
             BuildClassColumns(null);
+            cboClassNameField.ItemsSource = null;
+            _classNameField = null;
             // Repopulate variables after the reset so the resulting selection-change
             // does not try to invalidate a stack that is already gone.
             lstVars.ItemsSource = _rasters.Where(r => r != cat).ToList();
@@ -201,6 +255,7 @@ namespace WildlifeTools.Corridor
                 var vat = await QueuedTask.Run(() => ReadVat(cat.Raster));
                 _vat = vat;
                 BuildClassColumns(vat?.Fields);
+                PopulateClassNameField();
                 if (vat != null && vat.Rows.Count > 0)
                 {
                     lstClasses.ItemsSource = vat.Rows;
@@ -231,8 +286,33 @@ namespace WildlifeTools.Corridor
             if (_stack == null) return;          // nothing loaded to invalidate
             _stack = null;
             _varFlags = new();
+            ResetBatchState();
             lstClasses.ItemsSource = _vat?.Rows;  // fall back to the raw VAT preview
             SetStatus(reason + " — click Read inputs to update.");
+        }
+
+        /// <summary>Clear the per-category analyses so a fresh Read inputs rebuilds
+        /// them (the category set, cells, and every tuning depend on the loaded data).</summary>
+        private void ResetBatchState()
+        {
+            _analyses.Clear();
+            _categoryItems = new List<CategoryItem>();
+            _current = null;
+            _syncingCat = true;
+            if (cboCategory != null) cboCategory.ItemsSource = null;
+            if (cboCategory3 != null) cboCategory3.ItemsSource = null;
+            _syncingCat = false;
+            _scatterX = 0; _scatterY = 1;
+            if (cboScatterX != null)
+            {
+                _syncingAxes = true;
+                cboScatterX.ItemsSource = null;
+                cboScatterY.ItemsSource = null;
+                _syncingAxes = false;
+            }
+            _activeClass = null; _sample = null; _sampleDensity = null; _sampleOutlier = null;
+            _kdeModel = null; _stdMean = null; _stdSd = null;
+            _cValues = new List<int>(); _indicesByC = new(); _centroidsByC = new(); _chosenK = 0;
         }
 
         /// <summary>Read a raster's attribute table (MCT): the descriptive fields
@@ -294,6 +374,42 @@ namespace WildlifeTools.Corridor
             return info;
         }
 
+        /// <summary>Fill the "Name classes by" picker with (value) plus the VAT's
+        /// descriptive fields. Defaults to the raster value.</summary>
+        private void PopulateClassNameField()
+        {
+            var items = new List<string> { "(value)" };
+            if (_vat != null) items.AddRange(_vat.Fields.Select(f => f.Name));
+            cboClassNameField.ItemsSource = items;
+            cboClassNameField.SelectedIndex = 0;   // (value) -> OnClassNameFieldChanged
+            _classNameField = null;
+        }
+
+        private void OnClassNameFieldChanged(object sender, SelectionChangedEventArgs e)
+        {
+            var sel = cboClassNameField.SelectedItem as string;
+            _classNameField = string.IsNullOrEmpty(sel) || sel == "(value)" ? null : sel;
+            // Re-label the category selectors (and step-4 overview) with the new names.
+            foreach (var ci in _categoryItems)
+            {
+                ci.BaseLabel = $"{CategoryLabel(ci.Value)}  ({ci.Analysis.Data.Count:N0} cells)";
+                ci.Refresh();
+            }
+            if (_step == 4) RefreshFacetStep();
+        }
+
+        /// <summary>A display name for a category: the chosen VAT field's value if one
+        /// is selected and present, else "Class &lt;value&gt;".</summary>
+        private string CategoryLabel(double value)
+        {
+            string key = FormatCode(value);
+            if (_classNameField != null && _vat != null &&
+                _vat.ByValue.TryGetValue(key, out var extra) &&
+                extra.TryGetValue(_classNameField, out var nm) && !string.IsNullOrWhiteSpace(nm))
+                return nm;
+            return "Class " + key;
+        }
+
         /// <summary>Rebuild the "Classes found" grid: the fixed Value and Cells
         /// columns followed by one column per descriptive attribute field.</summary>
         private void BuildClassColumns(IReadOnlyList<(string Name, string Alias)> fields)
@@ -337,6 +453,8 @@ namespace WildlifeTools.Corridor
                 var stack = res.st;
                 _stack = stack;
                 _varFlags = res.flags;
+                ResetBatchState();               // new data -> rebuild categories on step 2
+                int nClasses = stack.Classes.Count, nVars = stack.VariableNames.Length;
                 BuildClassColumns(_vat?.Fields);
                 lstClasses.ItemsSource = stack.Classes.Values.OrderBy(c => c.Value)
                     .Select(c =>
@@ -353,7 +471,8 @@ namespace WildlifeTools.Corridor
                     })
                     .ToList();
                 long total = stack.Classes.Values.Sum(c => (long)c.Count);
-                SetStatus($"{stack.Classes.Count} class(es), {stack.VariableNames.Length} variable(s), "
+                SetStatus($"{nClasses} {Plural(nClasses, "class", "classes")}, "
+                          + $"{nVars} {Plural(nVars, "variable", "variables")}, "
                           + $"{total:N0} complete-case cells.");
             }
             catch (Exception ex)
@@ -382,6 +501,9 @@ namespace WildlifeTools.Corridor
             if (geoms.Count == 0) return null;
             return GeometryEngine.Instance.Union(geoms) as Polygon;
         }
+
+        private static string Plural(int n, string singular, string plural)
+            => n == 1 ? singular : plural;
 
         private static string FormatCode(double code)
         {
@@ -423,13 +545,21 @@ namespace WildlifeTools.Corridor
 
         /// <summary>A small three-option dialog for a detected percent-slope
         /// variable (proceed as-is / convert to degrees / do not proceed).</summary>
-        private SlopeChoice AskSlope(string vars)
+        private SlopeChoice AskSlope(List<string> vars)
         {
+            string names = string.Join(", ", vars);
+            bool one = vars.Count == 1;
+            string lead = one
+                ? $"The variable raster {names} appears to be a PERCENT-slope raster "
+                  + "(its geoprocessing history uses PERCENT_RISE)."
+                : $"The variable rasters {names} appear to be PERCENT-slope rasters "
+                  + "(their geoprocessing history uses PERCENT_RISE).";
             var result = SlopeChoice.DoNotProceed;
             var dlg = new Window
             {
                 Title = "Land Facet Clustering",
                 Owner = this,
+                Icon = JennessIcon(),
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 ResizeMode = ResizeMode.NoResize,
                 SizeToContent = SizeToContent.WidthAndHeight,
@@ -438,8 +568,7 @@ namespace WildlifeTools.Corridor
             var sp = new StackPanel { Margin = new Thickness(18), Width = 440 };
             sp.Children.Add(new TextBlock
             {
-                Text = $"The variable raster(s) {vars} appear to be PERCENT-slope rasters "
-                     + "(their geoprocessing history uses PERCENT_RISE).\n\n"
+                Text = lead + "\n\n"
                      + "Percent slope is a non-linear measure of angle (it rises without bound "
                      + "on steep ground), so clustering on it weights steep slopes very "
                      + "differently than clustering on degrees. You can proceed with the percent "
@@ -478,37 +607,172 @@ namespace WildlifeTools.Corridor
         }
 
         // ---- step 2: outliers -----------------------------------------------
+        /// <summary>Build one analysis per category (once, after Read inputs) and fill
+        /// the category selectors on steps 2 and 3.</summary>
         private void PrepareStep2()
         {
-            if (_stack == null) return;
-            if (cboCategory.Items.Count == 0)
+            if (_stack == null || _categoryItems.Count > 0) return;   // build once per stack
+
+            _analyses.Clear();
+            _categoryItems = _stack.Classes.Values.OrderBy(c => c.Value).Select(c =>
             {
-                cboCategory.ItemsSource = _stack.Classes.Values.OrderBy(c => c.Value)
-                    .Select(c => new CategoryItem
-                    {
-                        Label = $"Class {FormatCode(c.Value)}  ({c.Count:N0} cells)",
-                        Data = c
-                    }).ToList();
-                if (cboCategory.Items.Count > 0) cboCategory.SelectedIndex = 0;
+                var ca = new ClassAnalysis { Data = c, Psi = _psi };
+                _analyses[c.Value] = ca;
+                return new CategoryItem
+                {
+                    Value = c.Value,
+                    BaseLabel = $"{CategoryLabel(c.Value)}  ({c.Count:N0} cells)",
+                    Analysis = ca,
+                };
+            }).ToList();
+
+            _syncingCat = true;
+            cboCategory.ItemsSource = _categoryItems;
+            cboCategory3.ItemsSource = _categoryItems;
+            _syncingCat = false;
+            PopulateScatterAxes();
+
+            _current = null;
+            if (_categoryItems.Count > 0) SelectCategory(_categoryItems[0]);
+        }
+
+        private CategoryItem CurrentItem()
+            => _categoryItems.FirstOrDefault(ci => ReferenceEquals(ci.Analysis, _current));
+
+        // Either category selector changed -> switch the working category (and, on the
+        // clustering step, auto-analyse a category whose outliers are not set yet).
+        private async void OnCategoryComboChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_syncingCat) return;
+            if ((sender as System.Windows.Controls.Primitives.Selector)?.SelectedItem is CategoryItem ci)
+            {
+                SelectCategory(ci);
+                if (_step == 3 && _current != null && !_current.OutliersReady)
+                    await EnsureOutliersAsync(announce: true);
             }
         }
 
-        private void OnCategoryChanged(object sender, SelectionChangedEventArgs e)
+        private void SelectCategory(CategoryItem ci)
         {
-            _activeClass = (cboCategory.SelectedItem as CategoryItem)?.Data;
-            _sample = null; _sampleDensity = null; _sampleOutlier = null;
-            scatterCanvas.Children.Clear();
-            txtOutlierInfo.Text = _activeClass != null ? "Click Detect outliers." : "";
+            SaveCurrent();
+            _current = ci.Analysis;
+            LoadCurrent();
+            _syncingCat = true;
+            cboCategory.SelectedItem = ci;
+            cboCategory3.SelectedItem = ci;
+            _syncingCat = false;
+            RefreshCurrentStep();
+        }
+
+        /// <summary>Copy the working fields into the current analysis.</summary>
+        private void SaveCurrent()
+        {
+            if (_current == null) return;
+            _current.Fraction = sldFraction.Value;
+            _current.Sample = _sample;
+            _current.SampleDensity = _sampleDensity;
+            _current.SampleOutlier = _sampleOutlier;
+            _current.Kde = _kdeModel;
+            _current.StdMean = _stdMean;
+            _current.StdSd = _stdSd;
+            _current.Psi = _psi;
+            _current.CValues = _cValues;
+            _current.IndicesByC = _indicesByC;
+            _current.CentroidsByC = _centroidsByC;
+            _current.ChosenK = _chosenK;
+        }
+
+        /// <summary>Load the current analysis into the working fields.</summary>
+        private void LoadCurrent()
+        {
+            _activeClass = _current?.Data;
+            _sample = _current?.Sample;
+            _sampleDensity = _current?.SampleDensity;
+            _sampleOutlier = _current?.SampleOutlier;
+            _kdeModel = _current?.Kde;
+            _stdMean = _current?.StdMean;
+            _stdSd = _current?.StdSd;
+            _cValues = _current?.CValues ?? new List<int>();
+            _indicesByC = _current?.IndicesByC ?? new();
+            _centroidsByC = _current?.CentroidsByC ?? new();
+            _chosenK = _current?.ChosenK ?? 0;
+            if (_current != null)
+            {
+                sldFraction.Value = _current.Fraction;      // reflect saved fraction
+                if (txtFractionEdit != null)
+                    txtFractionEdit.Text = $"{_current.Fraction * 100:F1}";
+            }
+        }
+
+        /// <summary>Redraw whatever the visible step shows for the current category.</summary>
+        private void RefreshCurrentStep()
+        {
+            if (_step == 2)
+            {
+                if (_sampleOutlier != null) { ApplyFraction(); RenderScatter(); }
+                else
+                {
+                    scatterCanvas.Children.Clear();
+                    txtOutlierInfo.Text = _activeClass != null ? "Click Detect outliers." : "";
+                }
+            }
+            else if (_step == 3)
+            {
+                RefreshClusterStep();
+            }
+        }
+
+        /// <summary>Show the current category's clustering charts, or a prompt if it
+        /// has not been clustered yet.</summary>
+        private void RefreshClusterStep()
+        {
+            if (_centroidsByC != null && _centroidsByC.Count > 0 && _cValues.Count > 0)
+            {
+                cboK.ItemsSource = _cValues;
+                cboK.SelectedItem = _chosenK;
+                txtSuggestK.Text = "";
+                txtClusterInfo.Text = "";
+            }
+            else
+            {
+                cboK.ItemsSource = null;
+                txtSuggestK.Text = "";
+                clusterCanvas.Children.Clear();
+                txtClusterInfo.Text = _activeClass != null
+                    ? "Run clustering for this category." : "";
+            }
+            RenderValidity();
         }
 
         private async void OnDetectOutliers(object sender, RoutedEventArgs e)
         {
             if (_activeClass == null) { MessageBox.Show("Pick a category.", "Land Facet Clustering"); return; }
             if (_activeClass.Count < 10)
-            {
-                MessageBox.Show("This class has too few cells to analyze.", "Land Facet Clustering");
-                return;
-            }
+            { MessageBox.Show("This category has too few cells to analyze.", "Land Facet Clustering"); return; }
+            await DetectOutliersCoreAsync();
+        }
+
+        /// <summary>If the current category has no outliers yet, optionally tell the
+        /// user (the auto-run notice) and run detection at the current fraction.
+        /// Returns true when outliers are ready.</summary>
+        private async System.Threading.Tasks.Task<bool> EnsureOutliersAsync(bool announce)
+        {
+            if (_sampleOutlier != null) return true;
+            if (_activeClass == null || _activeClass.Count < 10) return false;
+            if (announce)
+                MessageBox.Show(
+                    $"Outliers have not been set for {CurrentItem()?.BaseLabel ?? "this category"} yet.\n\n"
+                    + $"Running outlier detection now at the current fraction "
+                    + $"({sldFraction.Value * 100:F0}%). You can fine-tune it on the Outliers step "
+                    + "and re-run the clustering if you change it.",
+                    "Land Facet Clustering", MessageBoxButton.OK, MessageBoxImage.Information);
+            await DetectOutliersCoreAsync();
+            return _sampleOutlier != null;
+        }
+
+        private async System.Threading.Tasks.Task DetectOutliersCoreAsync()
+        {
+            if (_activeClass == null || _activeClass.Count < 10) return;
             btnDetect.IsEnabled = false;
             SetStatus("Estimating density...");
             try
@@ -521,6 +785,8 @@ namespace WildlifeTools.Corridor
                 _sampleDensity = density;
                 ApplyFraction();
                 RenderScatter();
+                SaveCurrent();
+                CurrentItem()?.Refresh();       // Step 2 list now shows "✓ set"
             }
             catch (Exception ex) { MessageBox.Show(ex.Message, "Land Facet Clustering"); }
             finally { btnDetect.IsEnabled = true; SetStatus(""); }
@@ -583,27 +849,83 @@ namespace WildlifeTools.Corridor
 
         private void OnScatterSizeChanged(object sender, SizeChangedEventArgs e) => RenderScatter();
 
+        /// <summary>Fill the X/Y axis pickers with the variable names. Outlier
+        /// detection is multidimensional (done once); these only change which 2-D
+        /// slice of that distribution is drawn.</summary>
+        private void PopulateScatterAxes()
+        {
+            var names = _stack.VariableNames;
+            _syncingAxes = true;
+            cboScatterX.ItemsSource = names;
+            cboScatterY.ItemsSource = names;
+            _scatterX = 0;
+            _scatterY = names.Length >= 2 ? 1 : 0;
+            cboScatterX.SelectedIndex = _scatterX;
+            cboScatterY.SelectedIndex = _scatterY;
+            _syncingAxes = false;
+            bool multi = names.Length >= 2;
+            cboScatterY.IsEnabled = multi;            // 1 variable -> Y is density
+            txtScatterHint.Text = names.Length > 2
+                ? $"outliers use all {names.Length} variables — this is a 2-D slice"
+                : (multi ? "" : "one variable — Y shows density");
+        }
+
+        private void OnScatterAxisChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_syncingAxes) return;
+            if (cboScatterX.SelectedIndex >= 0) _scatterX = cboScatterX.SelectedIndex;
+            if (cboScatterY.SelectedIndex >= 0) _scatterY = cboScatterY.SelectedIndex;
+            RenderScatter();
+        }
+
+        private static readonly Brush AxisBrush = Frozen(Color.FromRgb(0xCC, 0xCC, 0xCC));
+        private static readonly Brush TickBrush = Frozen(Color.FromRgb(0x8A, 0x8A, 0x8A));
+        private static readonly Brush AxisTitleBrush = Frozen(Color.FromRgb(0x66, 0x66, 0x66));
+
         private void RenderScatter()
         {
             scatterCanvas.Children.Clear();
             if (_sample == null || _sampleOutlier == null) return;
             double w = scatterCanvas.ActualWidth, h = scatterCanvas.ActualHeight;
-            if (w < 20 || h < 20) return;
+
+            const double padL = 58, padR = 16, padT = 12, padB = 34;
+            if (w < padL + padR + 30 || h < padT + padB + 30) return;
+            double x0 = padL, x1 = w - padR, y0 = padT, y1 = h - padB;
 
             int d = _sample[0].Length;
-            int vx = 0, vy = d >= 2 ? 1 : 0;
             bool oneD = d < 2;
+            int vx = Math.Min(Math.Max(_scatterX, 0), d - 1);
+            int vy = oneD ? vx : Math.Min(Math.Max(_scatterY, 0), d - 1);
             var xv = _sample.Select(r => r[vx]).ToArray();
             var yv = oneD ? _sampleDensity : _sample.Select(r => r[vy]).ToArray();
             double minx = xv.Min(), maxx = xv.Max(), miny = yv.Min(), maxy = yv.Max();
             if (maxx <= minx) maxx = minx + 1;
             if (maxy <= miny) maxy = miny + 1;
-            const double pad = 26;
 
+            // Axis lines.
+            AddAxisLine(x0, y0, x0, y1);
+            AddAxisLine(x0, y1, x1, y1);
+
+            // Tick marks + a few numeric labels (4 per axis), subdued.
+            for (int i = 0; i < 4; i++)
+            {
+                double f = i / 3.0;
+                double xpx = x0 + f * (x1 - x0);
+                AddAxisLine(xpx, y1, xpx, y1 + 3);
+                AddTick(FormatTick(minx + f * (maxx - minx)), xpx - 30, y1 + 5, 60,
+                        TextAlignment.Center);
+
+                double ypx = y1 - f * (y1 - y0);
+                AddAxisLine(x0 - 3, ypx, x0, ypx);
+                AddTick(FormatTick(miny + f * (maxy - miny)), 18, ypx - 7, x0 - 22,
+                        TextAlignment.Right);
+            }
+
+            // Sample points.
             for (int i = 0; i < xv.Length; i++)
             {
-                double px = pad + (xv[i] - minx) / (maxx - minx) * (w - 2 * pad);
-                double py = h - pad - (yv[i] - miny) / (maxy - miny) * (h - 2 * pad);
+                double px = x0 + (xv[i] - minx) / (maxx - minx) * (x1 - x0);
+                double py = y1 - (yv[i] - miny) / (maxy - miny) * (y1 - y0);
                 var dot = new Ellipse
                 {
                     Width = 3.5,
@@ -615,26 +937,69 @@ namespace WildlifeTools.Corridor
                 scatterCanvas.Children.Add(dot);
             }
 
-            AddLabel(_stack.VariableNames[vx], w / 2 - 30, h - 16);
-            AddLabel(oneD ? "density" : _stack.VariableNames[vy], 4, 4);
+            // Axis titles: X centered under the axis, Y vertical along the left.
+            var xt = new TextBlock
+            {
+                Text = _stack.VariableNames[vx], Foreground = AxisTitleBrush, FontSize = 11,
+                Width = Math.Max(10, x1 - x0), TextAlignment = TextAlignment.Center,
+            };
+            Canvas.SetLeft(xt, x0);
+            Canvas.SetTop(xt, h - 15);
+            scatterCanvas.Children.Add(xt);
+
+            var yt = new TextBlock
+            {
+                Text = oneD ? "density" : _stack.VariableNames[vy],
+                Foreground = AxisTitleBrush, FontSize = 11,
+                Width = Math.Max(10, y1 - y0), TextAlignment = TextAlignment.Center,
+                // Rotate -90 (counter-clockwise) about the element's top-left so the
+                // label climbs from the bottom of the plot to the top, reading
+                // bottom-to-top, in the left margin. (+90 sends it off-screen.)
+                RenderTransform = new RotateTransform(-90),
+            };
+            Canvas.SetLeft(yt, 2);
+            Canvas.SetTop(yt, y1);
+            scatterCanvas.Children.Add(yt);
         }
 
-        private void AddLabel(string text, double left, double top)
+        private void AddAxisLine(double x1, double y1, double x2, double y2)
         {
-            var t = new TextBlock { Text = text, Foreground = Brushes.Gray, FontSize = 11 };
+            scatterCanvas.Children.Add(new Line
+            {
+                X1 = x1, Y1 = y1, X2 = x2, Y2 = y2,
+                Stroke = AxisBrush, StrokeThickness = 1,
+            });
+        }
+
+        private void AddTick(string text, double left, double top, double width, TextAlignment align)
+        {
+            var t = new TextBlock
+            {
+                Text = text, Foreground = TickBrush, FontSize = 10,
+                Width = Math.Max(10, width), TextAlignment = align,
+            };
             Canvas.SetLeft(t, left);
             Canvas.SetTop(t, top);
             scatterCanvas.Children.Add(t);
         }
 
+        private static string FormatTick(double v)
+        {
+            double a = Math.Abs(v);
+            if (a >= 1000) return v.ToString("N0", CultureInfo.InvariantCulture);
+            if (a >= 10) return v.ToString("0.#", CultureInfo.InvariantCulture);
+            if (a >= 1) return v.ToString("0.##", CultureInfo.InvariantCulture);
+            return v.ToString("0.###", CultureInfo.InvariantCulture);
+        }
+
         // ---- step 3: clusters -----------------------------------------------
         private async void OnRunClustering(object sender, RoutedEventArgs e)
         {
-            if (_sample == null || _sampleOutlier == null)
-            { MessageBox.Show("Detect outliers first (step 2).", "Land Facet Clustering"); return; }
             if (!double.TryParse(txtPsi.Text, out double psi) || psi <= 1.0)
             { MessageBox.Show("Fuzziness must be greater than 1 (for example 1.5).", "Land Facet Clustering"); return; }
             if (!int.TryParse(txtRestarts.Text, out int restarts) || restarts < 1) restarts = 12;
+
+            if (!await EnsureOutliersAsync(announce: true)) return;   // outliers must exist first
 
             var raw = new List<double[]>();
             for (int i = 0; i < _sample.Length; i++)
@@ -644,6 +1009,9 @@ namespace WildlifeTools.Corridor
 
             _psi = psi;
             btnCluster.IsEnabled = false;
+            cboK.ItemsSource = null;      // clear k and its suggestion together while computing
+            txtSuggestK.Text = "";
+            StartSpinner();
             SetStatus("Running fuzzy c-means across cluster counts...");
             try
             {
@@ -656,9 +1024,27 @@ namespace WildlifeTools.Corridor
                 txtSuggestK.Text = $"suggested: {suggested}";
                 txtClusterInfo.Text = $"{raw.Count:N0} non-outlier cells; "
                     + $"c = {_cValues.First()}..{_cValues.Last()}, {restarts} restarts each";
+                SaveCurrent();
+                CurrentItem()?.Refresh();           // the category may now show "✓ set"
             }
             catch (Exception ex) { MessageBox.Show(ex.Message, "Land Facet Clustering"); }
-            finally { btnCluster.IsEnabled = true; SetStatus(""); }
+            finally { StopSpinner(); btnCluster.IsEnabled = true; SetStatus(""); }
+        }
+
+        // A small rotating spinner shown while the clustering runs.
+        private void StartSpinner()
+        {
+            clusterSpinner.Visibility = Visibility.Visible;
+            var anim = new System.Windows.Media.Animation.DoubleAnimation(0, 360,
+                new Duration(TimeSpan.FromSeconds(0.9)))
+            { RepeatBehavior = System.Windows.Media.Animation.RepeatBehavior.Forever };
+            spinnerRotate.BeginAnimation(RotateTransform.AngleProperty, anim);
+        }
+
+        private void StopSpinner()
+        {
+            spinnerRotate.BeginAnimation(RotateTransform.AngleProperty, null);
+            clusterSpinner.Visibility = Visibility.Collapsed;
         }
 
         private static (double[] mean, double[] sd, List<int> cValues,
@@ -877,6 +1263,9 @@ namespace WildlifeTools.Corridor
         {
             var args = ArcGIS.Desktop.Core.Geoprocessing.Geoprocessing.MakeValueArray(tempTif, gdbTarget);
             var env = ArcGIS.Desktop.Core.Geoprocessing.Geoprocessing.MakeEnvironmentArray(overwriteoutput: true);
+            // The plain 3-arg overload is the one that works (passing an explicit flags
+            // value makes the GP module's eval_modal throw). It adds the result layer to
+            // the map itself, so the caller does NOT create a second layer.
             var res = await ArcGIS.Desktop.Core.Geoprocessing.Geoprocessing.ExecuteToolAsync(
                 "management.CopyRaster", args, env);
             if (res.IsFailed)
@@ -886,78 +1275,222 @@ namespace WildlifeTools.Corridor
             return gdbTarget;
         }
 
+        // Distinct base hues (degrees) for successive categories.
+        private static readonly double[] CategoryHues =
+            { 210, 30, 130, 275, 0, 190, 50, 320, 100, 240, 60, 300 };
+
+        /// <summary>Colour the land-facet raster with a unique-value colorizer: one
+        /// hue per category, its clusters shaded light-to-dark, labelled
+        /// "Class 1, Cluster 1 (N cells)". Must run on the MCT.</summary>
+        private static void ApplyFacetSymbology(RasterLayer layer,
+            List<(int id, double catValue, string catLabel, int cluster, long count)> legend)
+        {
+            var groups = new List<ArcGIS.Core.CIM.CIMRasterUniqueValueGroup>();
+            int ci = 0;
+            foreach (var g in legend.GroupBy(l => l.catValue).OrderBy(g => g.Key))
+            {
+                double hue = CategoryHues[ci % CategoryHues.Length];
+                var items = g.OrderBy(l => l.cluster).ToList();
+                int k = items.Count;
+                var classes = new List<ArcGIS.Core.CIM.CIMRasterUniqueValueClass>();
+                for (int j = 0; j < k; j++)
+                {
+                    var it = items[j];
+                    double t = k > 1 ? (double)j / (k - 1) : 0.0;   // 0 = light, 1 = dark
+                    var (r, gg, b) = HsvToRgb(hue, 0.62, 0.94 - 0.46 * t);
+                    classes.Add(new ArcGIS.Core.CIM.CIMRasterUniqueValueClass
+                    {
+                        Values = new[] { it.id.ToString(CultureInfo.InvariantCulture) },
+                        Label = $"{it.catLabel}, Cluster {it.cluster} ({it.count:N0} cells)",
+                        Color = new ArcGIS.Core.CIM.CIMRGBColor
+                            { R = (float)r, G = (float)gg, B = (float)b, Alpha = 100 },
+                        Visible = true, Editable = true,
+                    });
+                }
+                groups.Add(new ArcGIS.Core.CIM.CIMRasterUniqueValueGroup
+                {
+                    Heading = items[0].catLabel,
+                    Classes = classes.ToArray(),
+                });
+                ci++;
+            }
+            var colorizer = new ArcGIS.Core.CIM.CIMRasterUniqueValueColorizer
+            {
+                FieldName = "Value",
+                Groups = groups.ToArray(),
+                UseDefaultColor = false,
+                IsDefaultColorVisible = false,
+            };
+            layer.SetColorizer(colorizer);
+        }
+
+        private static (double r, double g, double b) HsvToRgb(double h, double s, double v)
+        {
+            h = ((h % 360) + 360) % 360;
+            double c = v * s;
+            double x = c * (1 - Math.Abs(h / 60.0 % 2 - 1));
+            double m = v - c;
+            double r1, g1, b1;
+            if (h < 60) { r1 = c; g1 = x; b1 = 0; }
+            else if (h < 120) { r1 = x; g1 = c; b1 = 0; }
+            else if (h < 180) { r1 = 0; g1 = c; b1 = x; }
+            else if (h < 240) { r1 = 0; g1 = x; b1 = c; }
+            else if (h < 300) { r1 = x; g1 = 0; b1 = c; }
+            else { r1 = c; g1 = 0; b1 = x; }
+            return ((r1 + m) * 255.0, (g1 + m) * 255.0, (b1 + m) * 255.0);
+        }
+
+        /// <summary>Populate the step-4 overview of every category and its status.</summary>
+        private void RefreshFacetStep()
+        {
+            SaveCurrent();
+            lstFacetStatus.ItemsSource = _categoryItems.Select(ci =>
+            {
+                var a = ci.Analysis;
+                return new
+                {
+                    Category = CategoryLabel(ci.Value),
+                    Outlier = a.OutliersReady ? $"{a.Fraction * 100:F1}%" : "—",
+                    K = a.Clustered ? a.ChosenK.ToString() : "—",
+                    Status = a.IsSet ? "ready" : (a.OutliersReady ? "needs clustering" : "not set"),
+                };
+            }).ToList();
+            int nSet = _analyses.Values.Count(a => a.IsSet);
+            txtFacetSummary.Text = nSet == 0
+                ? "No categories are specified yet. Go back to set the outliers and clustering for "
+                  + "at least one category, then Generate."
+                : $"{nSet} of {_categoryItems.Count} categories are specified. Set the confusion "
+                  + "threshold and output raster, then Generate.";
+        }
+
         private async void OnGenerate(object sender, RoutedEventArgs e)
         {
-            if (_activeClass == null || _centroidsByC.Count == 0 || _chosenK == 0)
-            { MessageBox.Show("Run the clustering and choose k first.", "Land Facet Clustering"); return; }
+            SaveCurrent();
+            var setItems = _categoryItems.Where(ci => ci.Analysis.IsSet).ToList();
+            if (setItems.Count == 0)
+            { MessageBox.Show("Set the outliers and clustering for at least one category first.", "Land Facet Clustering"); return; }
             if (string.IsNullOrWhiteSpace(txtOut.Text))
-            { MessageBox.Show("Choose an output raster path.", "Land Facet Clustering"); return; }
+            { MessageBox.Show("Enter an output raster name or path.", "Land Facet Clustering"); return; }
             if (!double.TryParse(txtConf.Text, out double confThresh) || confThresh <= 0 || confThresh > 1)
             { MessageBox.Show("The confusion-index threshold must be between 0 and 1 (for example 0.6).", "Land Facet Clustering"); return; }
 
-            var centers = _centroidsByC[_chosenK];
-            double psi = _psi, frac = sldFraction.Value;
-            // outlier density cutoff: the frac-th lowest sample density.
-            var sorted = (double[])_sampleDensity.Clone();
-            Array.Sort(sorted);
-            int oc = (int)Math.Round(frac * sorted.Length);
-            double densThresh = oc >= 1 ? sorted[oc - 1] : double.NegativeInfinity;
+            int unset = _categoryItems.Count - setItems.Count;
+            if (unset > 0)
+            {
+                var ask = MessageBox.Show(
+                    $"{unset} of {_categoryItems.Count} categories are not set and will be left NoData "
+                    + $"in the output.\n\nGenerate the {setItems.Count} ready "
+                    + $"{Plural(setItems.Count, "category", "categories")} now?",
+                    "Land Facet Clustering", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+                if (ask != MessageBoxResult.OK) return;
+            }
 
-            int W = _stack.Width, H = _stack.Height, k = _chosenK;
-            var cls = _activeClass;
-
-            // Resolve the output: a bare name -> the project's default geodatabase; a
-            // full path -> used as given. Rasters can only be written as GeoTIFF, so a
-            // geodatabase target is written to a temp GeoTIFF and then copied in.
+            string typedOut = txtOut.Text;      // read the control on the UI thread
             OutputTarget target;
-            try { target = await QueuedTask.Run(() => ResolveOutputTarget(txtOut.Text)); }
-            catch (Exception ex)
-            { MessageBox.Show(ex.Message, "Land Facet Clustering"); return; }
+            try { target = await QueuedTask.Run(() => ResolveOutputTarget(typedOut)); }
+            catch (Exception ex) { MessageBox.Show(ex.Message, "Land Facet Clustering"); return; }
             if (target == null)
             { MessageBox.Show("Enter an output raster name or path.", "Land Facet Clustering"); return; }
+
+            int W = _stack.Width, H = _stack.Height;
+            var arr = new int[W * H];
+            for (int i = 0; i < arr.Length; i++) arr[i] = -9999;
 
             btnGenerate.IsEnabled = false;
             pbGen.Value = 0;
             txtGenInfo.Text = "";
-            SetStatus("Classifying cells...");
+            var legend = new List<(int id, double catValue, string catLabel, int cluster, long count)>();
+            int offset = 0;
+            int nSteps = setItems.Count + 3;            // classify each + write + copy + add
             try
             {
-                var r = await Task.Run(() => ClassifyAll(
-                    cls, W, H, centers, _stdMean, _stdSd, psi, _kdeModel, densThresh, confThresh, k));
+                // Classify each ready category into the shared grid, offsetting its
+                // cluster IDs so every facet across every category is unique.
+                for (int si = 0; si < setItems.Count; si++)
+                {
+                    var ci = setItems[si]; var a = ci.Analysis;
+                    string label = ci.BaseLabel;
+                    string catLabel = CategoryLabel(a.Data.Value);   // name / "Class <value>"
+                    txtGenInfo.Text = $"Classifying {label}  ({si + 1} of {setItems.Count})…";
+                    SetStatus(txtGenInfo.Text);
+                    pbGen.Value = (double)si / nSteps;
 
-                SetStatus("Writing the land-facet raster...");
+                    var sorted = (double[])a.SampleDensity.Clone();
+                    Array.Sort(sorted);
+                    int oc = (int)Math.Round(a.Fraction * sorted.Length);
+                    double densThresh = oc >= 1 ? sorted[oc - 1] : double.NegativeInfinity;
+
+                    int k = a.ChosenK, off = offset;
+                    var centers = a.CentroidsByC[k];
+                    var kde = a.Kde; var mean = a.StdMean; var sd = a.StdSd; double psi = a.Psi;
+                    var data = a.Data;
+                    var res = await Task.Run(() => ClassifyInto(
+                        arr, off, data, centers, mean, sd, psi, kde, densThresh, confThresh, k));
+                    for (int c = 0; c < k; c++)
+                        legend.Add((off + c + 1, a.Data.Value, catLabel, c + 1, res.counts[c]));
+                    offset += k;
+                }
+
+                txtGenInfo.Text = "Writing the combined land-facet raster…";
+                SetStatus(txtGenInfo.Text);
                 double[] gt = { _stack.Extent.XMin, _stack.CellSizeX, 0.0,
                                 _stack.Extent.YMax, 0.0, -_stack.CellSizeY };
                 string wkt = _stack.SpatialRef?.Wkt ?? string.Empty;
-                var progress = new Progress<double>(f => pbGen.Value = f);
+                var rat = legend.Select(l => (l.id, l.count, l.catLabel, l.cluster)).ToList();
+                double writeBase = (double)setItems.Count / nSteps, writeSpan = 1.0 / nSteps;
+                var progress = new Progress<double>(f => pbGen.Value = writeBase + f * writeSpan);
                 string written = await CorridorRasterWriter.WriteAsync(
-                    r.arr, W, H, gt, wkt, -9999, target.WritePath, progress);
+                    arr, W, H, gt, wkt, -9999, target.WritePath, progress, rat: rat);
 
                 string finalPath = written;
+                bool addedByGp = false;
                 if (target.CopyToGdb)
                 {
-                    SetStatus("Copying the raster into the geodatabase...");
+                    txtGenInfo.Text = "Copying the raster into the geodatabase…";
+                    SetStatus(txtGenInfo.Text);
+                    pbGen.Value = (double)(setItems.Count + 1) / nSteps;
                     finalPath = await CopyIntoGeodatabase(written, target.FinalPath);
+                    addedByGp = true;    // Copy Raster already added the layer to the map
                     foreach (var tmp in new[] { written, written + ".aux.xml", written + ".ovr" })
                         try { if (System.IO.File.Exists(tmp)) System.IO.File.Delete(tmp); } catch { }
                 }
 
+                txtGenInfo.Text = "Adding the result to the map…";
+                SetStatus(txtGenInfo.Text);
+                pbGen.Value = (double)(setItems.Count + 2) / nSteps;
+                var legendForSym = legend
+                    .Select(l => (l.id, l.catValue, l.catLabel, l.cluster, l.count)).ToList();
+                string dsName = System.IO.Path.GetFileNameWithoutExtension(finalPath);
+                _symbologyWarning = null;
                 await QueuedTask.Run(() =>
                 {
                     var map = MapView.Active?.Map;
-                    if (map != null)
-                        LayerFactory.Instance.CreateLayer(new Uri(finalPath), map);
+                    if (map == null) return;
+                    // The geodatabase path was added by Copy Raster; find that layer.
+                    // A GeoTIFF path is created here (Copy Raster was not used).
+                    RasterLayer lyr = addedByGp
+                        ? map.GetLayersAsFlattenedList().OfType<RasterLayer>()
+                             .LastOrDefault(l => string.Equals(l.Name, dsName,
+                                 StringComparison.OrdinalIgnoreCase))
+                        : LayerFactory.Instance.CreateLayer(new Uri(finalPath), map) as RasterLayer;
+                    // Custom symbology is best-effort: never let it abort a successful write.
+                    if (lyr != null)
+                        try { ApplyFacetSymbology(lyr, legendForSym); }
+                        catch (Exception sx) { _symbologyWarning = sx.Message; }
                 });
                 pbGen.Value = 1;
 
                 var sb = new StringBuilder();
-                sb.AppendLine($"Land facets written for category {FormatCode(cls.Value)} "
-                              + $"({k} clusters, fuzziness {psi:0.##}).");
-                sb.AppendLine($"{r.nWritten:N0} of {cls.Count:N0} cells classified; "
-                              + $"{r.nOut:N0} outliers and {r.nConf:N0} above the confusion "
-                              + "threshold were left NoData.");
-                for (int c = 0; c < r.counts.Length; c++)
-                    sb.AppendLine($"    Cluster {c + 1}:  {r.counts[c]:N0} cells");
+                sb.AppendLine($"Combined land-facet raster written: {finalPath}");
+                sb.AppendLine($"{legend.Count} facets across {setItems.Count} "
+                    + $"{Plural(setItems.Count, "category", "categories")} "
+                    + $"(fuzziness {_psi:0.##}, confusion threshold {confThresh:0.##}).");
+                sb.AppendLine();
+                foreach (var l in legend)
+                    sb.AppendLine($"    Facet {l.id}:  {l.catLabel}, cluster {l.cluster}  ({l.count:N0} cells)");
+                if (_symbologyWarning != null)
+                    sb.AppendLine().AppendLine("Note: default symbology was applied "
+                        + "(custom colors could not be set: " + _symbologyWarning + ").");
                 txtFacetSummary.Text = sb.ToString();
                 txtGenInfo.Text = "Done.";
                 SetStatus("Land facets written and added to the map: " + finalPath);
@@ -970,19 +1503,15 @@ namespace WildlifeTools.Corridor
             finally { btnGenerate.IsEnabled = true; }
         }
 
-        /// <summary>Classify every cell of the class into its highest-membership
-        /// cluster, leaving outliers and over-the-confusion-threshold cells NoData;
-        /// returns the full-grid cluster-ID array (1-based, -9999 NoData) plus
-        /// counts.</summary>
-        private static (int[] arr, long[] counts, long nOut, long nConf, long nWritten)
-            ClassifyAll(RasterStack.ClassData cls, int w, int h, double[][] centers,
-                        double[] mean, double[] sd, double psi, LandFacetEngine.KdeModel kde,
-                        double densThresh, double confThresh, int k)
+        /// <summary>Classify every cell of one category into its highest-membership
+        /// cluster and write <c>idOffset + cluster + 1</c> into the shared grid,
+        /// leaving outliers and over-the-confusion-threshold cells untouched.</summary>
+        private static (long[] counts, long nOut, long nConf, long nWritten)
+            ClassifyInto(int[] arr, int idOffset, RasterStack.ClassData cls,
+                        double[][] centers, double[] mean, double[] sd, double psi,
+                        LandFacetEngine.KdeModel kde, double densThresh, double confThresh, int k)
         {
             int n = cls.Count;
-            var arr = new int[w * h];
-            for (int i = 0; i < arr.Length; i++) arr[i] = -9999;
-
             var dens = LandFacetEngine.KdeEval(cls.Rows.ToArray(), kde);
             var counts = new long[k];
             long nOut = 0, nConf = 0, nWritten = 0;
@@ -997,12 +1526,12 @@ namespace WildlifeTools.Corridor
                 if (confused) nConf++;
                 if (!outlier && !confused)
                 {
-                    arr[(int)cls.CellIndex[i]] = c.TopCluster + 1;
+                    arr[(int)cls.CellIndex[i]] = idOffset + c.TopCluster + 1;
                     counts[c.TopCluster]++;
                     nWritten++;
                 }
             }
-            return (arr, counts, nOut, nConf, nWritten);
+            return (counts, nOut, nConf, nWritten);
         }
 
         // ---- wizard navigation ----------------------------------------------
@@ -1015,17 +1544,47 @@ namespace WildlifeTools.Corridor
             panelClusters.Visibility = s == 3 ? Visibility.Visible : Visibility.Collapsed;
             panelFacets.Visibility = s == 4 ? Visibility.Visible : Visibility.Collapsed;
 
-            step1lbl.Style = StepStyle(s == 1);
-            step2lbl.Style = StepStyle(s == 2);
-            step3lbl.Style = StepStyle(s == 3);
-            step4lbl.Style = StepStyle(s == 4);
+            if (s == 2) RefreshCurrentStep();
+            else if (s == 3) RefreshClusterStep();
+            else if (s == 4) RefreshFacetStep();
+
+            StyleStep(step1chip, step1lbl, 0, s == 1);
+            StyleStep(step2chip, step2lbl, 1, s == 2);
+            StyleStep(step3chip, step3lbl, 2, s == 3);
+            StyleStep(step4chip, step4lbl, 3, s == 4);
 
             btnBack.IsEnabled = s > 1;
             btnNext.IsEnabled = s < 4;
         }
 
-        private Style StepStyle(bool active) =>
-            (Style)FindResource(active ? "StepLabelActive" : "StepLabel");
+        // Per-step accent colors (matching the tool's facet-mosaic icon palette).
+        private static readonly Color[] StepColors =
+        {
+            Color.FromRgb(0x3B, 0x82, 0xC4),   // 1 Setup   – blue
+            Color.FromRgb(0xE8, 0x91, 0x2E),   // 2 Outliers – orange
+            Color.FromRgb(0x7E, 0x5E, 0xA8),   // 3 Clusters – purple
+            Color.FromRgb(0x57, 0xA6, 0x39),   // 4 Facets   – green
+        };
+
+        /// <summary>Paint a step chip: the active step is a filled pill in its accent
+        /// color with white text; the others show their accent color as text on a
+        /// transparent chip.</summary>
+        private void StyleStep(Border chip, TextBlock lbl, int idx, bool active)
+        {
+            var accent = StepColors[idx];
+            if (active)
+            {
+                chip.Background = new SolidColorBrush(accent);
+                lbl.Foreground = Brushes.White;
+                lbl.FontWeight = FontWeights.SemiBold;
+            }
+            else
+            {
+                chip.Background = Brushes.Transparent;
+                lbl.Foreground = new SolidColorBrush(accent);
+                lbl.FontWeight = FontWeights.Normal;
+            }
+        }
 
         private void OnBack(object sender, RoutedEventArgs e)
         {
@@ -1045,9 +1604,14 @@ namespace WildlifeTools.Corridor
                 var aspectVars = _varFlags.Where(f => f.AspectLike).Select(f => f.Name).ToList();
                 if (aspectVars.Count > 0)
                 {
+                    bool oneA = aspectVars.Count == 1;
+                    string aLead = oneA
+                        ? $"The variable raster {aspectVars[0]} appears to be an "
+                          + "ASPECT (or D-infinity flow-direction) raster.\n\n"
+                        : $"The variable rasters {string.Join(", ", aspectVars)} appear to be "
+                          + "ASPECT (or D-infinity flow-direction) rasters.\n\n";
                     var r = MessageBox.Show(
-                        $"The variable raster(s) {string.Join(", ", aspectVars)} appear to be "
-                        + "ASPECT (or D-infinity flow-direction) rasters.\n\n"
+                        aLead
                         + "This tool clusters variables with ordinary linear distance, which is "
                         + "not valid for a circular variable like aspect (0 and 360 degrees are the "
                         + "same direction). Consider transforming aspect to a linear form -- for "
@@ -1061,7 +1625,7 @@ namespace WildlifeTools.Corridor
                 var slopeVars = _varFlags.Where(f => f.PercentSlope).Select(f => f.Name).ToList();
                 if (slopeVars.Count > 0)
                 {
-                    var choice = AskSlope(string.Join(", ", slopeVars));
+                    var choice = AskSlope(slopeVars);
                     if (choice == SlopeChoice.DoNotProceed) return;
                     if (choice == SlopeChoice.ConvertDegrees) ConvertPercentToDegrees(slopeVars);
                 }
@@ -1070,13 +1634,17 @@ namespace WildlifeTools.Corridor
             }
             if (_step == 2 && _sampleOutlier == null)
             {
-                MessageBox.Show("Detect outliers first.", "Land Facet Clustering");
+                MessageBox.Show("Detect outliers for this category first.", "Land Facet Clustering");
                 return;
             }
-            if (_step == 3 && (_centroidsByC.Count == 0 || _chosenK == 0))
+            if (_step == 3)
             {
-                MessageBox.Show("Run the clustering and choose k first.", "Land Facet Clustering");
-                return;
+                SaveCurrent();
+                if (!_analyses.Values.Any(a => a.IsSet))
+                {
+                    MessageBox.Show("Cluster at least one category and choose k first.", "Land Facet Clustering");
+                    return;
+                }
             }
             if (_step < 4) ShowStep(_step + 1);
         }
@@ -1084,6 +1652,9 @@ namespace WildlifeTools.Corridor
         private void OnClose(object sender, RoutedEventArgs e) => Close();
 
         // ---- help windows ----------------------------------------------------
+        private void OnOutlierHelp(object sender, RoutedEventArgs e)
+            => ShowHelp("About excluding outliers", BuildOutlierHelp());
+
         private void OnClusterHelp(object sender, RoutedEventArgs e)
             => ShowHelp("Reading the clustering charts", BuildClusterHelp());
 
@@ -1104,6 +1675,7 @@ namespace WildlifeTools.Corridor
             {
                 Title = title,
                 Owner = this,
+                Icon = JennessIcon(),
                 Width = 660,
                 Height = 660,
                 MinWidth = 420,
@@ -1112,6 +1684,24 @@ namespace WildlifeTools.Corridor
                 ShowInTaskbar = false,
                 Content = viewer,
             }.Show();
+        }
+
+        private static ImageSource _jennessIcon;
+        private static bool _jennessIconTried;
+
+        /// <summary>The embedded Jenness Enterprises logo for code-created windows'
+        /// title bars (loaded once; null if unavailable).</summary>
+        private static ImageSource JennessIcon()
+        {
+            if (_jennessIconTried) return _jennessIcon;
+            _jennessIconTried = true;
+            try
+            {
+                _jennessIcon = System.Windows.Media.Imaging.BitmapFrame.Create(new Uri(
+                    "pack://application:,,,/WildlifeTools;component/Images/JennessEnterprises.ico"));
+            }
+            catch { _jennessIcon = null; }
+            return _jennessIcon;
         }
 
         // ---- flow-document helpers ----
@@ -1157,6 +1747,42 @@ namespace WildlifeTools.Corridor
                 list.ListItems.Add(new ListItem(para));
             }
             return list;
+        }
+
+        private static FlowDocument BuildOutlierHelp()
+        {
+            var d = HelpDoc();
+            d.Blocks.Add(BodyPara(
+                new Run("This step finds and sets aside "),
+                new Bold(new Run("outliers")),
+                new Run(" — cells whose combination of variable values is unusual for the selected category — before the clustering is run.")));
+
+            d.Blocks.Add(HeadPara("Why exclude outliers"));
+            d.Blocks.Add(BodyPara(new Run(
+                "Fuzzy c-means places cluster centres to fit the data. A handful of oddball cells (a strange mix of elevation, slope, insolation, …) can drag a centre toward themselves or spawn a tiny, meaningless cluster, distorting the facets that describe the rest of the landscape. Setting these cells aside first lets the clustering describe the typical terrain cleanly.")));
+
+            d.Blocks.Add(HeadPara("How they are found"));
+            d.Blocks.Add(BodyPara(
+                new Run("The tool standardizes every variable (so each counts equally) and estimates the "),
+                new Bold(new Run("multivariate density")),
+                new Run(" of the cells with a Gaussian kernel density estimate. Cells sitting in the sparse, low-density tails — the ones least like everything else — are flagged as outliers.")));
+            d.Blocks.Add(BodyPara(
+                new Run("The "),
+                new Bold(new Run("outlier fraction")),
+                new Run(" is simply how much of the low-density tail to remove: at 10% (the default) the 10% of cells with the lowest density become outliers. Raise it to be stricter, lower it to keep more cells. In the scatter plot, outliers are drawn in "),
+                new Run("red") { Foreground = Brushes.OrangeRed, FontWeight = FontWeights.SemiBold },
+                new Run(" and retained cells in "),
+                new Run("blue") { Foreground = new SolidColorBrush(Color.FromRgb(0x5B, 0x8D, 0xB8)), FontWeight = FontWeights.SemiBold },
+                new Run("; the plot updates as you move the slider or type a percentage.")));
+
+            d.Blocks.Add(HeadPara("Effect on the final land-facet raster"));
+            d.Blocks.Add(Bullets(
+                ("Outlier cells are left NoData", "they are not assigned to any facet in the output raster for this category."),
+                ("A higher fraction", "removes more cells (more NoData) but gives tighter, more representative facets."),
+                ("A lower fraction", "keeps more of the map but lets unusual cells influence — and slightly blur — the facets.")));
+            d.Blocks.Add(BodyPara(new Run(
+                "Outlier detection is done separately for each category, so you can tune it per category. It follows the Land Facet Corridor Designer method (density-based outlier removal before fuzzy clustering).")));
+            return d;
         }
 
         private static FlowDocument BuildClusterHelp()
@@ -1223,7 +1849,12 @@ namespace WildlifeTools.Corridor
             d.Blocks.Add(BodyPara(
                 new Run("This step turns the clustering into a "),
                 new Bold(new Run("land-facet raster")),
-                new Run(": every retained cell of the selected category is labelled with the cluster it belongs to most strongly (1, 2, … up to k). "),
+                new Run(": every retained cell is labelled with the cluster it belongs to most strongly. "),
+                new Run("It processes all of the "),
+                new Bold(new Run("fully-specified categories")),
+                new Run(" at once (those with both outliers and clustering set — marked “✓ set”) and writes them into "),
+                new Bold(new Run("one combined raster")),
+                new Run(", giving every facet a unique ID across categories. "),
                 new Run("Land facets are patches of ground with similar terrain — the building blocks the Corridor Designer approach uses to model how animals move across a landscape.")));
 
             d.Blocks.Add(HeadPara("Confusion-index threshold"));
@@ -1244,7 +1875,7 @@ namespace WildlifeTools.Corridor
             d.Blocks.Add(Bullets(
                 ("Outliers", "cells flagged in the Outliers step (unusual terrain that fits no facet well) are left NoData."),
                 ("Ambiguous cells", "cells above the confusion threshold, as above."),
-                ("Other categories", "only the selected category is written; every other cell is NoData.")));
+                ("Unspecified categories", "facets are written for every fully-specified category; cells in categories you have not specified (no outliers or clustering yet), and any cells outside the analysis, are left NoData.")));
 
             d.Blocks.Add(HeadPara("Output raster"));
             d.Blocks.Add(Bullets(

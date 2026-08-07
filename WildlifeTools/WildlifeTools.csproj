@@ -239,6 +239,10 @@
          machine with no installation (all SIL Open Font License; the OFL
          texts ship alongside as required for redistribution). -->
     <Resource Include="Fonts\*.ttf" />
+    <!-- Jenness Enterprises logo, embedded as a WPF resource so code-created
+         windows (the Land Facet help windows) can show it as their title-bar
+         icon via a pack URI regardless of where the add-in is installed. -->
+    <Resource Include="Images\JennessEnterprises.ico" />
     <Content Include="Fonts\Licenses\*.txt" />
     <Content Include="Images\LSRI_DEM_16.png" />
     <Content Include="Images\LSRI_DEM_32.png" />

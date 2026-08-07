@@ -1085,7 +1085,7 @@ def _reclass_codes(compass, dvalid, key):
 def run_aspect_transform(in_raster, out_workspace, transformations,
                          base_name=None, target_bearing=45.0,
                          input_convention=INPUT_CONVENTIONS[0],
-                         flat_handling=FLAT_TRANSFORM[0], messages=None):
+                         flat_handling=FLAT_TRANSFORM[1], messages=None):
     """Generate one or more transformations of an aspect raster (see the tool
     help). ``transformations`` is a list of transform keys or labels; each
     produces its own raster in ``out_workspace``. Returns the list of output

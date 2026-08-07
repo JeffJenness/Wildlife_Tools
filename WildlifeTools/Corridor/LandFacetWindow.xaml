@@ -6,29 +6,46 @@
         Width="760" Height="620" MinWidth="560" MinHeight="440"
         ResizeMode="CanResizeWithGrip" ShowInTaskbar="False">
   <controls:ProWindow.Resources>
-    <Style x:Key="StepLabel" TargetType="TextBlock">
-      <Setter Property="Margin" Value="0,0,18,0" />
-      <Setter Property="FontSize" Value="13" />
-      <Setter Property="Foreground" Value="#7A7A7A" />
-    </Style>
-    <Style x:Key="StepLabelActive" TargetType="TextBlock" BasedOn="{StaticResource StepLabel}">
-      <Setter Property="Foreground" Value="#1B3A5B" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-    </Style>
     <Style x:Key="H" TargetType="TextBlock">
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Margin" Value="0,10,0,3" />
     </Style>
+    <Style x:Key="StepChip" TargetType="Border">
+      <Setter Property="CornerRadius" Value="13" />
+      <Setter Property="Padding" Value="13,5" />
+      <Setter Property="Margin" Value="3,0" />
+    </Style>
+    <Style x:Key="StepSep" TargetType="TextBlock">
+      <Setter Property="Text" Value="&#x203A;" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Foreground" Value="#B4BAC2" />
+      <Setter Property="FontSize" Value="16" />
+      <Setter Property="Margin" Value="1,0" />
+    </Style>
   </controls:ProWindow.Resources>
 
   <DockPanel Margin="12">
-    <!-- Step indicator -->
-    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
-      <TextBlock x:Name="step1lbl" Text="1  Setup" Style="{StaticResource StepLabelActive}" />
-      <TextBlock x:Name="step2lbl" Text="2  Outliers" Style="{StaticResource StepLabel}" />
-      <TextBlock x:Name="step3lbl" Text="3  Clusters" Style="{StaticResource StepLabel}" />
-      <TextBlock x:Name="step4lbl" Text="4  Facets" Style="{StaticResource StepLabel}" />
-    </StackPanel>
+    <!-- Step indicator: colored pill chips in a banded bar -->
+    <Border DockPanel.Dock="Top" Margin="0,0,0,12" Background="#F1F3F6"
+            BorderBrush="#E1E4E9" BorderThickness="1" CornerRadius="8" Padding="6,5">
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+        <Border x:Name="step1chip" Style="{StaticResource StepChip}">
+          <TextBlock x:Name="step1lbl" Text="1  Setup" FontSize="13" />
+        </Border>
+        <TextBlock Style="{StaticResource StepSep}" />
+        <Border x:Name="step2chip" Style="{StaticResource StepChip}">
+          <TextBlock x:Name="step2lbl" Text="2  Outliers" FontSize="13" />
+        </Border>
+        <TextBlock Style="{StaticResource StepSep}" />
+        <Border x:Name="step3chip" Style="{StaticResource StepChip}">
+          <TextBlock x:Name="step3lbl" Text="3  Clusters" FontSize="13" />
+        </Border>
+        <TextBlock Style="{StaticResource StepSep}" />
+        <Border x:Name="step4chip" Style="{StaticResource StepChip}">
+          <TextBlock x:Name="step4lbl" Text="4  Facets" FontSize="13" />
+        </Border>
+      </StackPanel>
+    </Border>
 
     <!-- Navigation -->
     <Grid DockPanel.Dock="Bottom" Margin="0,10,0,0">
@@ -36,15 +53,16 @@
         <ColumnDefinition Width="*" />
         <ColumnDefinition Width="Auto" />
       </Grid.ColumnDefinitions>
-      <TextBlock x:Name="txtStatus" Grid.Column="0" VerticalAlignment="Center" Foreground="#555"
+      <TextBlock x:Name="txtStatus" Grid.Column="0" VerticalAlignment="Bottom" Foreground="#555"
                  Margin="0,0,10,0" TextWrapping="Wrap" MaxHeight="48" />
-      <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
-        <Button x:Name="btnBack" Content="&#x25C0; Back" Width="90" Margin="4,0"
-                Click="OnBack" IsEnabled="False" />
-        <Button x:Name="btnNext" Content="Next &#x25B6;" Width="90" Margin="4,0"
-                Click="OnNext" />
-        <Button x:Name="btnClose" Content="Close" Width="90" Margin="12,0,0,0"
-                Click="OnClose" />
+      <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
+                  VerticalAlignment="Bottom">
+        <Button x:Name="btnBack" Content="&#x25C0; Back" Width="90" Height="24" Margin="4,0"
+                VerticalAlignment="Bottom" Click="OnBack" IsEnabled="False" />
+        <Button x:Name="btnNext" Content="Next &#x25B6;" Width="90" Height="24" Margin="4,0"
+                VerticalAlignment="Bottom" Click="OnNext" />
+        <Button x:Name="btnClose" Content="Close" Width="90" Height="24" Margin="12,0,0,0"
+                VerticalAlignment="Bottom" Click="OnClose" />
       </StackPanel>
     </Grid>
 
@@ -100,6 +118,13 @@
               </GridView>
             </ListView.View>
           </ListView>
+          <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+            <TextBlock Text="Name classes by:" VerticalAlignment="Center" Margin="0,0,6,0"
+                       Foreground="#555" />
+            <ComboBox x:Name="cboClassNameField" Width="150"
+                      SelectionChanged="OnClassNameFieldChanged"
+                      ToolTip="Field used to label classes in the output legend (default: the raster value)." />
+          </StackPanel>
         </StackPanel>
       </Grid>
 
@@ -107,23 +132,38 @@
       <Grid x:Name="panelOutliers" Visibility="Collapsed">
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
           <RowDefinition Height="*" />
           <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-          <TextBlock Text="Category:" VerticalAlignment="Center" Margin="0,0,6,0" />
-          <ComboBox x:Name="cboCategory" Width="150" DisplayMemberPath="Label"
-                    SelectionChanged="OnCategoryChanged" />
+        <DockPanel Grid.Row="0" Margin="0,0,0,8" LastChildFill="False">
+          <TextBlock Text="Category:" VerticalAlignment="Center" Margin="0,0,6,0"
+                     DockPanel.Dock="Left" />
+          <ComboBox x:Name="cboCategory" Width="230" DisplayMemberPath="LabelStep2"
+                    SelectionChanged="OnCategoryComboChanged" DockPanel.Dock="Left" />
           <Button x:Name="btnDetect" Content="Detect outliers" Margin="12,0,0,0"
-                  Padding="8,2" Click="OnDetectOutliers" />
+                  Padding="8,2" Click="OnDetectOutliers" DockPanel.Dock="Left" />
+          <Button x:Name="btnOutlierHelp" Content="Help…" Padding="8,2"
+                  Click="OnOutlierHelp" DockPanel.Dock="Right" />
           <TextBlock x:Name="txtOutlierInfo" VerticalAlignment="Center"
-                     Margin="16,0,0,0" Foreground="#555" />
+                     Margin="16,0,0,0" Foreground="#555" DockPanel.Dock="Left" />
+        </DockPanel>
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,6">
+          <TextBlock Text="Plot axes —  X:" VerticalAlignment="Center" Margin="0,0,4,0"
+                     Foreground="#555" />
+          <ComboBox x:Name="cboScatterX" Width="150" VerticalAlignment="Center"
+                    SelectionChanged="OnScatterAxisChanged" />
+          <TextBlock Text="Y:" VerticalAlignment="Center" Margin="12,0,4,0" Foreground="#555" />
+          <ComboBox x:Name="cboScatterY" Width="150" VerticalAlignment="Center"
+                    SelectionChanged="OnScatterAxisChanged" />
+          <TextBlock x:Name="txtScatterHint" VerticalAlignment="Center" Margin="14,0,0,0"
+                     Foreground="#888" FontSize="11" />
         </StackPanel>
-        <Border Grid.Row="1" BorderBrush="#CCC" BorderThickness="1" Background="White">
+        <Border Grid.Row="2" BorderBrush="#CCC" BorderThickness="1" Background="White">
           <Canvas x:Name="scatterCanvas" ClipToBounds="True"
                   SizeChanged="OnScatterSizeChanged" />
         </Border>
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,8,0,0">
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
           <TextBlock Text="Outlier fraction:" VerticalAlignment="Center" />
           <Slider x:Name="sldFraction" Width="260" Minimum="0" Maximum="0.30" Value="0.10"
                   Margin="8,0" VerticalAlignment="Center" ValueChanged="OnFractionChanged" />
@@ -142,15 +182,28 @@
           <RowDefinition Height="*" />
           <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-          <TextBlock Text="Fuzziness (&#x3C8;):" VerticalAlignment="Center" Margin="0,0,4,0" />
-          <TextBox x:Name="txtPsi" Width="46" Text="1.5" VerticalAlignment="Center" />
-          <TextBlock Text="Restarts:" VerticalAlignment="Center" Margin="14,0,4,0" />
-          <TextBox x:Name="txtRestarts" Width="40" Text="12" VerticalAlignment="Center" />
-          <Button x:Name="btnCluster" Content="Run clustering" Margin="14,0,0,0"
-                  Padding="8,2" Click="OnRunClustering" />
-          <TextBlock x:Name="txtClusterInfo" VerticalAlignment="Center"
-                     Margin="16,0,0,0" Foreground="#555" />
+        <StackPanel Grid.Row="0" Margin="0,0,0,8">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="Category:" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <ComboBox x:Name="cboCategory3" Width="230" DisplayMemberPath="LabelStep3"
+                      SelectionChanged="OnCategoryComboChanged" VerticalAlignment="Center" />
+            <TextBlock Text="Fuzziness (&#x3C8;):" VerticalAlignment="Center" Margin="16,0,4,0" />
+            <TextBox x:Name="txtPsi" Width="46" Text="1.5" VerticalAlignment="Center" />
+            <TextBlock Text="Restarts:" VerticalAlignment="Center" Margin="14,0,4,0" />
+            <TextBox x:Name="txtRestarts" Width="40" Text="12" VerticalAlignment="Center" />
+            <Button x:Name="btnCluster" Content="Run clustering" Margin="14,0,0,0"
+                    Padding="8,2" Click="OnRunClustering" />
+            <Grid x:Name="clusterSpinner" Width="22" Height="22" Margin="10,0,0,0"
+                  Visibility="Collapsed" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+              <Grid.RenderTransform>
+                <RotateTransform x:Name="spinnerRotate" Angle="0" />
+              </Grid.RenderTransform>
+              <Path Stroke="#7E5EA8" StrokeThickness="3" StrokeStartLineCap="Round"
+                    StrokeEndLineCap="Round" Data="M 11,1 A 10,10 0 1 1 1,11" />
+            </Grid>
+          </StackPanel>
+          <TextBlock x:Name="txtClusterInfo" Margin="0,4,0,0" Foreground="#555"
+                     TextTrimming="CharacterEllipsis" />
         </StackPanel>
         <Border Grid.Row="1" BorderBrush="#CCC" BorderThickness="1" Background="White">
           <Canvas x:Name="clusterCanvas" ClipToBounds="True"
@@ -171,37 +224,59 @@
       <Grid x:Name="panelFacets" Visibility="Collapsed">
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto" />
-          <RowDefinition Height="Auto" />
-          <RowDefinition Height="Auto" />
           <RowDefinition Height="*" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <DockPanel Grid.Row="0" Margin="0,0,0,8" LastChildFill="False">
-          <TextBlock Text="Confusion-index threshold:" VerticalAlignment="Center" Margin="0,0,4,0"
-                     DockPanel.Dock="Left" />
-          <TextBox x:Name="txtConf" Width="46" Text="0.6" VerticalAlignment="Center"
-                   DockPanel.Dock="Left" />
+        <DockPanel Grid.Row="0" Margin="0,0,0,4" LastChildFill="False">
+          <TextBlock Text="Every specified category is written into ONE combined raster; each facet gets a unique ID."
+                     VerticalAlignment="Center" Foreground="#555" FontSize="11" TextWrapping="Wrap"
+                     DockPanel.Dock="Left" Width="560" />
           <Button x:Name="btnFacetHelp" Content="Help…" DockPanel.Dock="Right"
-                  Padding="8,2" Click="OnFacetHelp" />
-          <TextBlock Text="  (cells above this — too ambiguous — are left NoData; outliers too)"
-                     VerticalAlignment="Center" Foreground="#777" FontSize="11" DockPanel.Dock="Left" />
+                  Padding="8,2" Click="OnFacetHelp" VerticalAlignment="Top" />
         </DockPanel>
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+        <!-- The category table takes the extra vertical space on resize. -->
+        <DockPanel Grid.Row="1" Margin="0,0,0,8">
+          <TextBlock DockPanel.Dock="Top" Text="Categories" Style="{StaticResource H}" />
+          <ListView x:Name="lstFacetStatus" MinHeight="90">
+            <ListView.View>
+              <GridView>
+                <GridViewColumn Header="Category" Width="230" DisplayMemberBinding="{Binding Category}" />
+                <GridViewColumn Header="Outlier %" Width="90" DisplayMemberBinding="{Binding Outlier}" />
+                <GridViewColumn Header="Clusters (k)" Width="90" DisplayMemberBinding="{Binding K}" />
+                <GridViewColumn Header="Status" Width="130" DisplayMemberBinding="{Binding Status}" />
+              </GridView>
+            </ListView.View>
+          </ListView>
+        </DockPanel>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
+          <TextBlock Text="Confusion-index threshold:" VerticalAlignment="Center" Margin="0,0,4,0" />
+          <TextBox x:Name="txtConf" Width="46" Text="0.6" VerticalAlignment="Center" />
+          <TextBlock Text="  (cells above this — too ambiguous — are left NoData; outliers too)"
+                     VerticalAlignment="Center" Foreground="#777" FontSize="11" />
+        </StackPanel>
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,8">
           <TextBlock Text="Output raster:" VerticalAlignment="Center" Margin="0,0,6,0" />
           <TextBox x:Name="txtOut" Width="380" VerticalAlignment="Center" />
           <Button x:Name="btnBrowse" Content="Browse..." Margin="6,0,0,0" Padding="8,2"
                   Click="OnBrowseOut" />
         </StackPanel>
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
-          <Button x:Name="btnGenerate" Content="Generate land facets" Padding="10,3"
-                  Click="OnGenerate" />
-          <ProgressBar x:Name="pbGen" Width="220" Height="16" Margin="12,0"
+        <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,0,0,8">
+          <Button x:Name="btnGenerate" Content="Generate land facet raster from specified categories"
+                  Padding="10,3" Click="OnGenerate" />
+          <ProgressBar x:Name="pbGen" Width="150" Height="16" Margin="12,0"
                        Minimum="0" Maximum="1" VerticalAlignment="Center" />
-          <TextBlock x:Name="txtGenInfo" VerticalAlignment="Center" Foreground="#555" />
+          <TextBlock x:Name="txtGenInfo" VerticalAlignment="Center" Foreground="#555"
+                     TextTrimming="CharacterEllipsis" />
         </StackPanel>
-        <Border Grid.Row="3" BorderBrush="#DDD" BorderThickness="1" Background="#FAFAFA"
-                Padding="10">
-          <TextBlock x:Name="txtFacetSummary" TextWrapping="Wrap" Foreground="#444"
-                     Text="Set the confusion threshold and output path, then Generate. The land facets for the selected category will be written to the output raster (other cells NoData) and added to the map." />
+        <Border Grid.Row="5" Height="118" BorderBrush="#DDD" BorderThickness="1"
+                Background="#FAFAFA" Padding="10">
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <TextBlock x:Name="txtFacetSummary" TextWrapping="Wrap" Foreground="#444"
+                       Text="Set outliers and clustering for each category (steps 2 and 3), then set the confusion threshold and output raster and click Generate." />
+          </ScrollViewer>
         </Border>
       </Grid>
     </Grid>

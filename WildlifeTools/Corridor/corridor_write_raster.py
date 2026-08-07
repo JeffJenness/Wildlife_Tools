@@ -86,6 +86,25 @@ def write_raster(job):
             mean = ssum / count
             var = max(0.0, ssq / count - mean * mean)
             band.SetStatistics(smin, smax, mean, var ** 0.5)
+
+        # Optional attribute table: label each facet value with its source category
+        # and local cluster number (Value/Count/Category/Cluster).
+        rat = job.get("rat")
+        if rat:
+            grat = gdal.RasterAttributeTable()
+            grat.CreateColumn("Value", gdal.GFT_Integer, gdal.GFU_MinMax)
+            grat.CreateColumn("Count", gdal.GFT_Integer, gdal.GFU_PixelCount)
+            grat.CreateColumn("Category", gdal.GFT_String, gdal.GFU_Name)
+            grat.CreateColumn("Cluster", gdal.GFT_Integer, gdal.GFU_Generic)
+            grat.SetRowCount(len(rat))
+            for r, entry in enumerate(rat):
+                val, cnt, cat, clu = entry
+                grat.SetValueAsInt(r, 0, int(val))
+                grat.SetValueAsInt(r, 1, int(cnt))
+                grat.SetValueAsString(r, 2, str(cat))
+                grat.SetValueAsInt(r, 3, int(clu))
+            band.SetDefaultRAT(grat)
+
         band.FlushCache()
         ds.FlushCache()
     finally:

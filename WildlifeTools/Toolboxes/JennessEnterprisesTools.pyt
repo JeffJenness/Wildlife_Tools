@@ -4937,7 +4937,7 @@ class AspectTransformation(object):
             datatype="GPString", parameterType="Required", direction="Input")
         flat_handling.filter.type = "ValueList"
         flat_handling.filter.list = aspect_tools.FLAT_TRANSFORM
-        flat_handling.value = aspect_tools.FLAT_TRANSFORM[0]
+        flat_handling.value = aspect_tools.FLAT_TRANSFORM[1]
         out_rasters = arcpy.Parameter(
             displayName="Output rasters", name="out_rasters",
             datatype="DERasterDataset", parameterType="Derived",
@@ -5022,7 +5022,7 @@ class AspectTransformation(object):
                 input_convention=(P["input_convention"].valueAsText
                                   or aspect_tools.INPUT_CONVENTIONS[0]),
                 flat_handling=(P["flat_handling"].valueAsText
-                               or aspect_tools.FLAT_TRANSFORM[0]),
+                               or aspect_tools.FLAT_TRANSFORM[1]),
                 messages=messages)
             if outputs:
                 try:
