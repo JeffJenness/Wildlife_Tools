@@ -1,0 +1,337 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Windows;
+using System.Windows.Documents;
+using System.Windows.Media;
+using ArcGIS.Desktop.Catalog;
+using ArcGIS.Desktop.Core;
+using ArcGIS.Desktop.Framework.Threading.Tasks;
+using ArcGIS.Desktop.Mapping;
+using MessageBox = ArcGIS.Desktop.Framework.Dialogs.MessageBox;
+using R = WildlifeTools.Corridor.LandFacetRecordReader;
+
+namespace WildlifeTools.Corridor
+{
+    /// <summary>
+    /// "Describe Land Facet Background": pick a dataset (a raster layer in the
+    /// map, or browse to one on disk) and get a human-readable report of where
+    /// it stands in the Land Facet Corridor analysis -- its sources, how they
+    /// were analyzed, staleness warnings when a recorded source has since been
+    /// regenerated, and a you-are-here map of the analysis sequence. Datasets
+    /// with no Land Facet record fall back to their Jenness provenance summary,
+    /// or to a plain statement that nothing is known.
+    ///
+    /// Read-only: this window never modifies any dataset. All metadata reads
+    /// run on the MCT; the report is built there too (the chain walk follows
+    /// recorded source paths with more metadata reads) and only rendered on
+    /// the UI thread.
+    /// </summary>
+    public partial class LandFacetDescribeWindow
+        : ArcGIS.Desktop.Framework.Controls.ProWindow
+    {
+        private sealed class LayerItem
+        {
+            public string Name;
+            public BasicRasterLayer Layer;      // null for a browsed path
+            public string Path;
+            public override string ToString() => Name;
+        }
+
+        private List<R.Block> _blocks;          // last report, for copy/save
+
+        public LandFacetDescribeWindow()
+        {
+            InitializeComponent();
+            Loaded += (_, __) => PopulateLayers();
+        }
+
+        private void PopulateLayers()
+        {
+            var map = MapView.Active?.Map;
+            var items = new List<LayerItem>();
+            Layer selected = MapView.Active?.GetSelectedLayers()?.FirstOrDefault();
+            LayerItem select = null;
+            if (map != null)
+            {
+                foreach (var l in map.GetLayersAsFlattenedList()
+                                     .OfType<BasicRasterLayer>())
+                {
+                    var item = new LayerItem { Name = l.Name, Layer = l };
+                    items.Add(item);
+                    if (ReferenceEquals(l, selected)) select = item;
+                }
+            }
+            cboLayer.ItemsSource = items;
+            // Zero-click common case: default to the layer selected in Contents.
+            cboLayer.SelectedItem = select ?? items.FirstOrDefault();
+            txtStatus.Text = items.Count == 0
+                ? "No raster layers in the active map — use Browse."
+                : "";
+        }
+
+        private void OnBrowse(object sender, RoutedEventArgs e)
+        {
+            var dlg = new OpenItemDialog
+            {
+                Title = "Choose a dataset to describe",
+                MultiSelect = false,
+                Filter = ItemFilters.Rasters,
+            };
+            if (dlg.ShowDialog() != true || dlg.Items == null) return;
+            var item = dlg.Items.FirstOrDefault();
+            if (item == null) return;
+            var li = new LayerItem { Name = item.Name, Path = item.Path };
+            var items = (cboLayer.ItemsSource as List<LayerItem>) ?? new List<LayerItem>();
+            items = new List<LayerItem>(items) { li };
+            cboLayer.ItemsSource = items;
+            cboLayer.SelectedItem = li;
+        }
+
+        // ---- metadata fetching (MCT only) -----------------------------------
+        private static string XmlForPath(string path)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(path)) return null;
+                var item = ItemFactory.Instance.Create(path);
+                return (item as IMetadata)?.GetXml();
+            }
+            catch { return null; }
+        }
+
+        private static string XmlForLayer(BasicRasterLayer layer)
+        {
+            try { return (layer as IMetadataInfo)?.GetMetadata(); }
+            catch { return null; }
+        }
+
+        private static string PathForLayer(BasicRasterLayer layer)
+        {
+            try
+            {
+                var ds = layer.GetRaster()?.GetRasterDataset();
+                if (ds == null) return null;
+                string dir = ds.GetDatastore()?.GetPath()?.LocalPath;
+                string name = ds.GetName();
+                if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(name))
+                    return null;
+                return System.IO.Path.Combine(dir, name);
+            }
+            catch { return null; }
+        }
+
+        // ---- describe -------------------------------------------------------
+        private async void OnDescribe(object sender, RoutedEventArgs e)
+        {
+            var pick = cboLayer.SelectedItem as LayerItem;
+            if (pick == null)
+            {
+                MessageBox.Show("Choose a raster layer, or Browse to a dataset.",
+                                "Describe Land Facet Background");
+                return;
+            }
+            btnDescribe.IsEnabled = false;
+            txtStatus.Text = "Reading metadata and following the analysis chain…";
+            try
+            {
+                var blocks = await QueuedTask.Run(() =>
+                {
+                    string path = pick.Path ?? PathForLayer(pick.Layer);
+                    string xml = pick.Layer != null
+                        ? (XmlForLayer(pick.Layer) ?? XmlForPath(path))
+                        : XmlForPath(path);
+                    // The ancestor fetches run right here on the MCT too.
+                    return R.BuildReport(pick.Name, path, xml, XmlForPath);
+                });
+                _blocks = blocks;
+                viewer.Document = Render(blocks);
+                btnCopyText.IsEnabled = btnCopyRtf.IsEnabled = btnSave.IsEnabled = true;
+                int warns = blocks.Count(b => b.Kind == R.BlockKind.Warning);
+                txtStatus.Text = warns > 0
+                    ? warns + (warns == 1 ? " warning — see the report."
+                                          : " warnings — see the report.")
+                    : "";
+            }
+            catch (Exception ex)
+            {
+                txtStatus.Text = "";
+                MessageBox.Show("Could not describe the dataset:"
+                                + Environment.NewLine + ex.Message,
+                                "Describe Land Facet Background");
+            }
+            finally { btnDescribe.IsEnabled = true; }
+        }
+
+        // ---- rendering ------------------------------------------------------
+        private static FlowDocument Render(List<R.Block> blocks)
+        {
+            var doc = new FlowDocument
+            {
+                FontFamily = new FontFamily("Segoe UI"),
+                FontSize = 13,
+                PagePadding = new Thickness(10),
+                // FlowDocument defaults to Justify, which stretches long paths
+                // and prose into big inter-word gaps; ragged-right reads better.
+                TextAlignment = TextAlignment.Left,
+            };
+            var warnBrush = new SolidColorBrush(Color.FromRgb(0xA8, 0x28, 0x10));
+            var noteBrush = new SolidColorBrush(Color.FromRgb(0x50, 0x50, 0x50));
+            foreach (var b in blocks)
+            {
+                switch (b.Kind)
+                {
+                    case R.BlockKind.Title:
+                        doc.Blocks.Add(new Paragraph(new Bold(new Run(b.Text)))
+                        { FontSize = 17, TextAlignment = TextAlignment.Center,
+                          Margin = new Thickness(0, 0, 0, 8) });
+                        break;
+                    case R.BlockKind.Heading:
+                        doc.Blocks.Add(new Paragraph(new Bold(new Run(b.Text)))
+                        { FontSize = 14.5, Margin = new Thickness(0, 8, 0, 3) });
+                        break;
+                    case R.BlockKind.SubHeading:
+                        doc.Blocks.Add(new Paragraph(new Bold(new Run(b.Text)))
+                        { Margin = new Thickness(0, 5, 0, 1) });
+                        break;
+                    case R.BlockKind.Body:
+                        doc.Blocks.Add(new Paragraph(new Run(b.Text))
+                        { Margin = new Thickness(0, 1, 0, 3) });
+                        break;
+                    case R.BlockKind.Bullet:
+                        doc.Blocks.Add(new Paragraph(new Run("•  " + b.Text))
+                        { Margin = new Thickness(16, 0, 0, 1) });
+                        break;
+                    case R.BlockKind.KeyValue:
+                        var kv = new Paragraph { Margin = new Thickness(0, 0, 0, 1) };
+                        kv.Inlines.Add(new Bold(new Run(b.Text + ":  ")));
+                        kv.Inlines.Add(new Run(b.Value));
+                        doc.Blocks.Add(kv);
+                        break;
+                    case R.BlockKind.Warning:
+                        doc.Blocks.Add(new Paragraph(
+                            new Bold(new Run("⚠  " + b.Text)))
+                        { Foreground = warnBrush,
+                          Margin = new Thickness(0, 3, 0, 3) });
+                        break;
+                    case R.BlockKind.Note:
+                        doc.Blocks.Add(new Paragraph(
+                            new Italic(new Run(b.Text)))
+                        { Foreground = noteBrush,
+                          Margin = new Thickness(16, 1, 0, 3) });
+                        break;
+                    case R.BlockKind.ChainStep:
+                        doc.Blocks.Add(new Paragraph(new Run("     " + b.Text))
+                        { Margin = new Thickness(8, 0, 0, 0),
+                          Foreground = noteBrush });
+                        break;
+                    case R.BlockKind.ChainStepCurrent:
+                        doc.Blocks.Add(new Paragraph(
+                            new Bold(new Run("►  " + b.Text)))
+                        { Margin = new Thickness(8, 0, 0, 0) });
+                        break;
+                    case R.BlockKind.Separator:
+                        doc.Blocks.Add(new Paragraph
+                        { Margin = new Thickness(0, 0, 0, 4),
+                          BorderBrush = new SolidColorBrush(
+                              Color.FromArgb(45, 0, 0, 0)),
+                          BorderThickness = new Thickness(0, 0, 0, 1) });
+                        break;
+                }
+            }
+            return doc;
+        }
+
+        private string PlainText()
+        {
+            if (_blocks == null) return "";
+            var sb = new StringBuilder();
+            foreach (var b in _blocks)
+            {
+                switch (b.Kind)
+                {
+                    case R.BlockKind.Title:
+                        sb.AppendLine(b.Text).AppendLine(new string('=', b.Text.Length));
+                        break;
+                    case R.BlockKind.Heading:
+                        sb.AppendLine().AppendLine(b.Text)
+                          .AppendLine(new string('-', b.Text.Length));
+                        break;
+                    case R.BlockKind.SubHeading: sb.AppendLine(b.Text); break;
+                    case R.BlockKind.Body: sb.AppendLine(b.Text); break;
+                    case R.BlockKind.Bullet: sb.AppendLine("  * " + b.Text); break;
+                    case R.BlockKind.KeyValue:
+                        sb.AppendLine(b.Text + ": " + b.Value); break;
+                    case R.BlockKind.Warning:
+                        sb.AppendLine("!! " + b.Text); break;
+                    case R.BlockKind.Note: sb.AppendLine("   (" + b.Text + ")"); break;
+                    case R.BlockKind.ChainStep: sb.AppendLine("     " + b.Text); break;
+                    case R.BlockKind.ChainStepCurrent:
+                        sb.AppendLine(" >>> " + b.Text); break;
+                    case R.BlockKind.Separator: sb.AppendLine(); break;
+                }
+            }
+            return sb.ToString();
+        }
+
+        // ---- copy / save ----------------------------------------------------
+        private void OnCopyText(object sender, RoutedEventArgs e)
+        {
+            try { Clipboard.SetText(PlainText()); txtStatus.Text = "Report copied as plain text."; }
+            catch (Exception ex) { txtStatus.Text = "Copy failed: " + ex.Message; }
+        }
+
+        private void OnCopyRtf(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var range = new TextRange(viewer.Document.ContentStart,
+                                          viewer.Document.ContentEnd);
+                using var ms = new MemoryStream();
+                range.Save(ms, DataFormats.Rtf);
+                var data = new DataObject();
+                data.SetData(DataFormats.Rtf, Encoding.UTF8.GetString(ms.ToArray()));
+                data.SetData(DataFormats.UnicodeText, PlainText());
+                Clipboard.SetDataObject(data, true);
+                txtStatus.Text = "Report copied with formatting.";
+            }
+            catch (Exception ex) { txtStatus.Text = "Copy failed: " + ex.Message; }
+        }
+
+        private void OnSave(object sender, RoutedEventArgs e)
+        {
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Filter = "Rich Text (*.rtf)|*.rtf|Plain text (*.txt)|*.txt",
+                FileName = "LandFacetBackground.rtf",
+                Title = "Save the report",
+            };
+            if (dlg.ShowDialog() != true) return;
+            try
+            {
+                if (dlg.FileName.EndsWith(".rtf", StringComparison.OrdinalIgnoreCase))
+                {
+                    var range = new TextRange(viewer.Document.ContentStart,
+                                              viewer.Document.ContentEnd);
+                    using var fs = new FileStream(dlg.FileName, FileMode.Create);
+                    range.Save(fs, DataFormats.Rtf);
+                }
+                else
+                {
+                    File.WriteAllText(dlg.FileName, PlainText(), Encoding.UTF8);
+                }
+                txtStatus.Text = "Saved: " + dlg.FileName;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not save the report:"
+                                + Environment.NewLine + ex.Message,
+                                "Describe Land Facet Background");
+            }
+        }
+
+        private void OnClose(object sender, RoutedEventArgs e) => Close();
+    }
+}

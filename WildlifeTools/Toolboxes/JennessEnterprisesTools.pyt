@@ -8090,38 +8090,49 @@ class LandFacetMahalanobis(object):
 
 
 class InvertRaster(object):
-    """Invert Raster -- 1/(x + c), turning a high-is-good surface (density,
-    diversity) into a least-cost surface. Multi-band inputs produce one
-    single-band cost raster per band. See ``invert_raster``."""
+    """Invert Raster -- 1/(x + c), turning a high-is-good surface into a
+    least-cost surface. The dialog follows the input's shape: a single-band
+    input asks for one output raster; a multi-band input (a Land Facet Density
+    raster) asks for a workspace + prefix and fans out one single-band cost
+    raster per band. See ``invert_raster``."""
 
     def __init__(self):
         self.label = "Invert Raster"
         self.description = (
             "Numerically inverts a raster -- each output cell is 1/(x + c) -- "
-            "so a surface in which HIGH values mean good habitat (a land facet "
-            "density raster, a diversity index) becomes a least-cost surface "
-            "in which that good ground is CHEAP to cross. The small constant c "
-            "(default 0.1, strongly recommended by the Land Facet manual) "
-            "prevents zero cells from dividing to NoData. A multi-band Land "
-            "Facet Density raster produces one single-band cost raster per "
-            "facet, named from the density raster's own records, with the "
-            "stored integer scaling converted back to 0-1 proportions first so "
-            "the constant keeps its intended meaning. A modernized port of the "
-            "Land Facet Corridor Designer's Invert Raster tool.")
+            "so a surface in which HIGH values mean good habitat (a diversity "
+            "index, a Land Facet Density raster) becomes a least-cost surface "
+            "in which that good ground is CHEAP to cross. A single-band input "
+            "produces one output raster; a multi-band Land Facet Density "
+            "raster produces one single-band cost raster per facet, named from "
+            "its own records, with the stored integer scaling converted back "
+            "to 0-1 proportions first so the constant keeps its intended "
+            "meaning. The small constant c (default 0.1, strongly recommended "
+            "by the Land Facet manual) prevents zero cells from dividing to "
+            "NoData. Every output carries a record of its place in the Land "
+            "Facet chain. A modernized port of the Land Facet Corridor "
+            "Designer's Invert Raster tool.")
         self.category = "Corridor Designer Tools"
         self.canRunInBackground = False
+        self._auto_out = None
 
     def getParameterInfo(self):
         in_raster = arcpy.Parameter(
             displayName="Input raster (high values = good)", name="in_raster",
-            datatype=["GPRasterLayer", "DERasterDataset"],
+            datatype=["GPRasterLayer", "DERasterDataset", "DERasterBand"],
             parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output inverted raster (single-band input)",
+            name="out_raster",
+            datatype="DERasterDataset", parameterType="Optional",
+            direction="Output")
         out_ws = arcpy.Parameter(
-            displayName="Output workspace (folder or geodatabase)",
+            displayName="Output workspace (multi-band input)",
             name="out_workspace", datatype="DEWorkspace",
-            parameterType="Required", direction="Input")
+            parameterType="Optional", direction="Input")
         out_prefix = arcpy.Parameter(
-            displayName="Output name prefix", name="out_prefix",
+            displayName="Output name prefix (multi-band input)",
+            name="out_prefix",
             datatype="GPString", parameterType="Optional", direction="Input")
         out_prefix.value = "Inv"
         add_constant = arcpy.Parameter(
@@ -8133,31 +8144,78 @@ class InvertRaster(object):
             displayName="Facets / bands to invert (default: all)",
             name="facets", datatype="GPString", parameterType="Optional",
             direction="Input", multiValue=True)
-        return [in_raster, out_ws, out_prefix, add_constant, facets]
+        return [in_raster, out_raster, out_ws, out_prefix, add_constant, facets]
 
     def isLicensed(self):
         return True
 
+    def _band_count(self, inr):
+        try:
+            return getattr(arcpy.Describe(inr.valueAsText), "bandCount", 1)
+        except Exception:
+            return 1
+
     def updateParameters(self, parameters):
         P = {p.name: p for p in parameters}
-        inr = P["in_raster"]
+        inr, outr = P["in_raster"], P["out_raster"]
+        multi = bool(inr.valueAsText) and self._band_count(inr) > 1
+
+        # The dialog follows the input's shape: single-band -> one output
+        # raster; multi-band -> workspace + prefix (+ facet picker).
+        outr.enabled = not multi
+        P["out_workspace"].enabled = multi
+        P["out_prefix"].enabled = multi
+        P["facets"].enabled = multi
+        # A DISABLED output parameter still holding a value gets its dataset
+        # PRE-DELETED by the GP framework on Run -- empty it unconditionally
+        # (see pyt-dialog gotcha: the vanishing-raster bug).
+        if not outr.enabled and outr.valueAsText:
+            outr.value = None
+            self._auto_out = None
+
         if inr.valueAsText and not inr.hasBeenValidated:
             try:
                 path = _resolve_raster_path(inr) or inr.valueAsText
-                rec = land_facet_linkage.read(path, land_facet_linkage.DENSITY)
+                rec, _bn = invert_raster.source_density_record(path)
                 choices = []
                 if rec:
                     for b in rec.get("bands") or []:
                         choices.append("{} ({})".format(
-                            b.get("facet_id"), land_facet_linkage.facet_label(b)))
+                            b.get("facet_id"),
+                            land_facet_linkage.facet_label(b)))
                 if choices:
                     P["facets"].filter.list = choices
             except Exception:
                 pass
+
+        if inr.valueAsText and not multi:
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize("Inv_" + os.path.splitext(
+                        os.path.basename(inr.valueAsText))[0])
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
         return
 
     def updateMessages(self, parameters):
         P = {p.name: p for p in parameters}
+        inr = P["in_raster"]
+        if inr.valueAsText:
+            multi = self._band_count(inr) > 1
+            if multi and not P["out_workspace"].valueAsText:
+                P["out_workspace"].setErrorMessage(
+                    "The input is multi-band, so an output workspace is "
+                    "required; each band is written as its own single-band "
+                    "cost raster.")
+            if not multi and not P["out_raster"].valueAsText:
+                P["out_raster"].setErrorMessage(
+                    "The input is single band, so the output raster name is "
+                    "required.")
         c = P["add_constant"].value
         if c is not None and c < 0:
             P["add_constant"].setErrorMessage(
@@ -8185,11 +8243,14 @@ class InvertRaster(object):
                                 for t in picked.split(";") if t.strip()]
             invert_raster.run_invert(
                 in_raster=in_path,
+                out_raster=P["out_raster"].valueAsText,
                 out_workspace=P["out_workspace"].valueAsText,
                 out_prefix=P["out_prefix"].valueAsText or "Inv",
                 add_constant=P["add_constant"].value,
                 facet_values=facet_values,
                 messages=messages)
+            if P["out_raster"].valueAsText:
+                _writeback_resolved_raster(P, "out_raster")
         except arcpy.ExecuteError:
             raise
         except Exception:

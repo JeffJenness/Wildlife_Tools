@@ -41,6 +41,7 @@ import mahalanobis as _mh
 import hillshade as _hs
 import aspect_tools as _at
 import topographic_tools as _tt
+import land_facet_linkage as _lnk
 
 NEIGHBORHOODS = _at.NEIGHBORHOODS
 NBR_UNITS = _at.NBR_UNITS
@@ -369,6 +370,27 @@ def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
               "categorical, species diversity, community, Corridor Designer, "
               "Land Facet, Jenness Enterprises"),
         citation=_CD_CITATION)
+
+    # ---- linkage record ------------------------------------------------------
+    # Diversity of the land facets is the published step-3 alternative (its
+    # inversion is the interspersion corridor's cost surface), so the output
+    # joins the Land Facet chain: the analysis id chains from the input's facet
+    # record when it has one. On a plain species/community raster the record
+    # simply documents provenance under a fresh id.
+    try:
+        frec = _lnk.read(in_raster, _lnk.FACETS)
+        _lnk.write(out_raster, _lnk.diversity_record(
+            analysis_id=(frec or {}).get("analysis_id") or _lnk.new_analysis_id(),
+            source_raster=in_raster,
+            index_label=label, q=q, neighborhood_note=note,
+            source_analysis_id=(frec or {}).get("analysis_id"),
+            exclude_if_any_null=exclude_if_any_null), messages)
+        if frec:
+            _say(messages,
+                 "The input carries a land facet record; this diversity surface "
+                 "was recorded as part of the same analysis chain.")
+    except Exception as e:
+        _warn(messages, "Could not write the linkage record: {}".format(e))
 
     _mh.phase_advance("Creating layer file and symbology...")
     out_lyrx = None

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Describe Land Facet Background: a report page with a folded corner,
+       carrying a small facet mosaic (the family mark) above ruled report
+       lines -- "the story of the facet data, on paper". -->
+  <path d="M 5 2 L 22 2 L 27 7 L 27 30 L 5 30 Z" fill="#FDFBF3"
+        stroke="#8A7B5C" stroke-width="1.4"/>
+  <path d="M 22 2 L 22 7 L 27 7 Z" fill="#E8DFC8" stroke="#8A7B5C"
+        stroke-width="1.2"/>
+  <!-- mini facet mosaic -->
+  <rect x="8" y="6"  width="4" height="4" fill="#57A639"/>
+  <rect x="12.6" y="6"  width="4" height="4" fill="#3B82C4"/>
+  <rect x="8" y="10.6" width="4" height="4" fill="#E8912E"/>
+  <rect x="12.6" y="10.6" width="4" height="4" fill="#7E5EA8"/>
+  <!-- report lines -->
+  <rect x="8" y="18" width="16" height="1.7" rx="0.8" fill="#8A7B5C"/>
+  <rect x="8" y="21.4" width="16" height="1.7" rx="0.8" fill="#B3A888"/>
+  <rect x="8" y="24.8" width="11" height="1.7" rx="0.8" fill="#B3A888"/>
+</svg>

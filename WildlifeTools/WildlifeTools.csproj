@@ -247,6 +247,10 @@
     <Content Include="Images\InvertRaster_32.png" />
     <Content Include="DarkImages\InvertRaster_16.png" />
     <Content Include="DarkImages\InvertRaster_32.png" />
+    <Content Include="Images\LandFacetDescribe_16.png" />
+    <Content Include="Images\LandFacetDescribe_32.png" />
+    <Content Include="DarkImages\LandFacetDescribe_16.png" />
+    <Content Include="DarkImages\LandFacetDescribe_32.png" />
     <!-- Sudoku skin fonts, embedded as WPF resources so they render on every
          machine with no installation (all SIL Open Font License; the OFL
          texts ship alongside as required for redistribution). -->

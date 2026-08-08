@@ -71,7 +71,11 @@ STATS = [
     ("fractal_d", "Fractal Dimension"),
     ("sinuosity", "Sinuosity (3D)"),
     ("min_elev", "Minimum Elevation"),
+    ("min_elev_x", "Minimum Elevation X"),
+    ("min_elev_y", "Minimum Elevation Y"),
     ("max_elev", "Maximum Elevation"),
+    ("max_elev_x", "Maximum Elevation X"),
+    ("max_elev_y", "Maximum Elevation Y"),
     ("elev_range", "Elevation Range"),
     ("vert_relief", "Total Vertical Relief Traveled"),
     ("reversals", "Reversal Count"),
@@ -95,6 +99,8 @@ STAT_UNIT_KIND = {
     "elev_gain": "elevation", "elev_loss": "elevation", "net_elev": "elevation",
     "min_elev": "elevation", "max_elev": "elevation", "elev_range": "elevation",
     "vert_relief": "elevation",
+    "min_elev_x": "coord", "min_elev_y": "coord",
+    "max_elev_x": "coord", "max_elev_y": "coord",
     "avg_slope": "slope", "min_slope": "slope", "max_slope": "slope",
     "slope_sd": "degrees", "rms_slope": "degrees",
     "mean_dir": "degrees", "circ_sd": "degrees", "ang_dev": "degrees",
@@ -172,9 +178,23 @@ def _label_to_field(label):
     return re.sub(r"[^0-9A-Za-z]+", "_", base).strip("_")
 
 
+# Compact default names for the min/max-coordinate statistics: the full
+# label-derived names ("Minimum_Elevation_X") all truncate to "Minimum_El" on a
+# SHAPEFILE (10-character field limit), colliding with each other AND with
+# Minimum_Elevation -- the tool's duplicate-field validation then refuses to
+# run. These are exactly 10 characters and distinct, so the defaults work on
+# every output format.
+_FIELD_NAME_OVERRIDE = {
+    "min_elev_x": "Min_Elev_X", "min_elev_y": "Min_Elev_Y",
+    "max_elev_x": "Max_Elev_X", "max_elev_y": "Max_Elev_Y",
+}
+
+
 def default_field_name(key):
     """Default output field name for an along-line statistic (e.g. 'Surface
     Length (geodesic)' -> 'Surface_Length')."""
+    if key in _FIELD_NAME_OVERRIDE:
+        return _FIELD_NAME_OVERRIDE[key]
     return _label_to_field(STAT_LABEL[key]) or key
 
 
@@ -198,6 +218,8 @@ def field_units_phrase(key, length_unit, elev_unit, slope_unit):
         return "degrees" if slope_unit == "Degrees" else "percent"
     if kind == "count":
         return "count (integer)"
+    if kind == "coord":
+        return "coordinate system units of the polyline dataset"
     return "unitless"
 
 
@@ -210,6 +232,12 @@ def field_description(key, length_unit, elev_unit, slope_unit):
         txt += (" This value describes the line travelling in the direction of "
                 "its geometry, from the first vertex to the last (reversing the "
                 "line reverses this value).")
+    if key in ("min_elev_x", "min_elev_y", "max_elev_x", "max_elev_y"):
+        txt += (" The coordinate of the sampled point along the line with the "
+                "{} elevation; if that elevation occurs at more than one "
+                "sampled point, the first such point along the line is "
+                "reported.".format("lowest" if key.startswith("min") else
+                                   "highest"))
     return txt
 
 # Length units -> meters (the chosen Length Unit; matches Calculate Geometry's
@@ -643,6 +671,14 @@ def build_parts(shape, source, dem=None, elev_m_per_unit=1.0):
             "chord_dz_m": keep_z[-1] - keep_z[0],
             "base_step_m": (interval_m if source == "DEM"
                             else float(np.median(seg_plan))),
+            # For the min/max-elevation coordinate statistics: the kept sample
+            # points (in work_sr -- the DEM's SR when sampling a DEM) plus both
+            # references, so the winning point can be reported in the POLYLINE
+            # dataset's own coordinate system. Only the one winning point is
+            # ever projected, so keeping the whole list costs nothing extra.
+            "pts_work": keep_pts,
+            "work_sr": work_sr,
+            "dataset_sr": shape.spatialReference or work_sr,
         })
     return parts, diag
 
@@ -661,6 +697,11 @@ def compute_line_statistics(parts, length_unit="Meters", elev_unit="Meters",
         chord_horiz_m: geodesic distance between the part's first & last vertex
         chord_dz_m   : elevation difference between first & last vertex
         base_step_m  : the sampling interval (smallest fractal divider)
+    and, optionally (needed only for the min/max-elevation COORDINATE stats;
+    absent -> those stats come back NaN):
+        pts_work     : the kept sample points (arcpy Point, in work_sr)
+        work_sr      : the SR the samples are in
+        dataset_sr   : the polyline dataset's SR (coordinates are reported here)
     ``wanted``: iterable of stat keys to compute (default: all).
 
     Returns {stat_key: value} with values already in reporting units (NaN where
@@ -733,6 +774,50 @@ def compute_line_statistics(parts, length_unit="Meters", elev_unit="Meters",
         out["max_elev"] = to_elev(float(allz.max())) if allz.size else float("nan")
     if has("elev_range"):
         out["elev_range"] = to_elev(float(allz.max() - allz.min())) if allz.size else float("nan")
+
+    # --- coordinates of the lowest / highest sampled point -----------------
+    # np.argmin/argmax return the FIRST occurrence, so a tie reports the first
+    # such point along the line (parts in order, vertices in travel order).
+    # Coordinates are reported in the POLYLINE dataset's coordinate system;
+    # samples live in work_sr (the DEM's SR when sampling a DEM), so only the
+    # single winning point is projected back.
+    if keys & {"min_elev_x", "min_elev_y", "max_elev_x", "max_elev_y"}:
+        def _coords_at(flat_idx):
+            off = 0
+            for p in parts:
+                n = len(p["z_m"])
+                if flat_idx < off + n:
+                    pts = p.get("pts_work")
+                    if pts is None:
+                        return float("nan"), float("nan")
+                    pt = pts[flat_idx - off]
+                    wsr, dsr = p.get("work_sr"), p.get("dataset_sr")
+                    try:
+                        if (wsr is not None and dsr is not None
+                                and getattr(wsr, "factoryCode", 0)
+                                != getattr(dsr, "factoryCode", 0)):
+                            import arcpy
+                            g = arcpy.PointGeometry(pt, wsr).projectAs(dsr)
+                            return (float(g.centroid.X), float(g.centroid.Y))
+                    except Exception:
+                        pass
+                    return float(pt.X), float(pt.Y)
+                off += n
+            return float("nan"), float("nan")
+
+        if allz.size:
+            min_xy = _coords_at(int(np.argmin(allz)))
+            max_xy = _coords_at(int(np.argmax(allz)))
+        else:
+            min_xy = max_xy = (float("nan"), float("nan"))
+        if has("min_elev_x"):
+            out["min_elev_x"] = min_xy[0]
+        if has("min_elev_y"):
+            out["min_elev_y"] = min_xy[1]
+        if has("max_elev_x"):
+            out["max_elev_x"] = max_xy[0]
+        if has("max_elev_y"):
+            out["max_elev_y"] = max_xy[1]
 
     # --- slope statistics (surface-length weighted, |slope|) ---------------
     if keys & {"avg_slope", "slope_sd", "min_slope", "max_slope", "rms_slope"}:

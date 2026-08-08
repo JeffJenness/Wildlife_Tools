@@ -45,6 +45,8 @@ SCHEMA = "jenness.landfacet/1"
 FACETS = "facets"       # written by the Land Facet Clustering tool
 DENSITY = "density"     # written by the Land Facet Density tool
 MAHALANOBIS = "mahalanobis"   # written by the Land Facet Mahalanobis tool
+INVERTED = "inverted"   # written by the Invert Raster tool
+DIVERSITY = "diversity"       # written by the Diversity Indices tool
 
 # Marker prefix so the blob is recognizable (and so a human reading the
 # Supplemental Information field can see what it is) and separable from any
@@ -164,6 +166,61 @@ def mahalanobis_record(analysis_id, facet, source_facet_raster, variables,
         "out_type": out_type,
         "n_sample": n_sample,
         "tables": tables or {},
+    }
+
+
+def diversity_record(analysis_id, source_raster, index_label, q,
+                     neighborhood_note, source_analysis_id=None,
+                     exclude_if_any_null=False):
+    """Build the record stamped on a Diversity Indices output.
+
+    Diversity of the land facets is the published step-3 alternative -- its
+    inversion becomes the cost surface for the facet-interspersion corridor --
+    so its outputs are chain members: when the input categorical raster carries
+    a facets record the analysis id chains through, and the Invert Raster /
+    Describe tools can then follow the lineage. The tool also serves plain
+    species/community rasters, where the record simply documents provenance
+    with a fresh id.
+    """
+    return {
+        "schema": SCHEMA,
+        "record": DIVERSITY,
+        "analysis_id": analysis_id,
+        "created": _utc_now(),
+        "tool": "Diversity Indices",
+        "source_raster": str(source_raster),
+        "source_analysis_id": source_analysis_id,
+        "index": index_label,
+        "q": q,
+        "neighborhood": neighborhood_note,
+        "exclude_if_any_null": bool(exclude_if_any_null),
+    }
+
+
+def inverted_record(analysis_id, source_raster, constant, scale_applied,
+                    source_analysis_id=None, facet=None, band=None):
+    """Build the record stamped on an Invert Raster output.
+
+    Records where the surface stands in the Land Facet chain: what it was
+    inverted from (and, for a density band, WHICH facet's band), with what
+    constant, and whether the stored x10000 scaling was undone first. When the
+    source carried a record, the analysis id chains through; a source without
+    one (e.g. a Diversity Indices raster) gets a fresh id so later steps can
+    still group the products of one analysis.
+    """
+    return {
+        "schema": SCHEMA,
+        "record": INVERTED,
+        "analysis_id": analysis_id,
+        "created": _utc_now(),
+        "tool": "Invert Raster",
+        "source_raster": str(source_raster),
+        "source_analysis_id": source_analysis_id,
+        "facet": facet or None,
+        "band": band,
+        "formula": "1/(x + c)",
+        "constant": constant,
+        "scale_applied": scale_applied,
     }
 
 

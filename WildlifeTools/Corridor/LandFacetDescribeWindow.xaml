@@ -1,0 +1,62 @@
+<controls:ProWindow x:Class="WildlifeTools.Corridor.LandFacetDescribeWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        Title="Describe Land Facet Background"
+        Height="640" Width="720" MinHeight="360" MinWidth="520"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Dataset:" VerticalAlignment="Center"
+                       Margin="0,0,8,0"/>
+            <ComboBox Grid.Column="1" x:Name="cboLayer" VerticalAlignment="Center"
+                      ToolTip="Raster layers in the active map; or Browse to a dataset on disk"/>
+            <Button Grid.Column="2" x:Name="btnBrowse" Content="Browse..."
+                    Margin="8,0,0,0" Padding="10,3" Click="OnBrowse"/>
+            <Button Grid.Column="3" x:Name="btnDescribe" Content="Describe"
+                    Margin="8,0,0,0" Padding="14,3" FontWeight="SemiBold"
+                    Click="OnDescribe"/>
+        </Grid>
+
+        <Border Grid.Row="1" BorderBrush="#66000000" BorderThickness="1">
+            <FlowDocumentScrollViewer x:Name="viewer"
+                    VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled"/>
+        </Border>
+
+        <Grid Grid.Row="2" Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Button Grid.Column="0" x:Name="btnCopyText" Content="Copy as text"
+                    Padding="10,3" Click="OnCopyText" IsEnabled="False"/>
+            <Button Grid.Column="1" x:Name="btnCopyRtf" Content="Copy formatted"
+                    Margin="8,0,0,0" Padding="10,3" Click="OnCopyRtf"
+                    IsEnabled="False"/>
+            <Button Grid.Column="2" x:Name="btnSave" Content="Save..."
+                    Margin="8,0,0,0" Padding="10,3" Click="OnSave"
+                    IsEnabled="False"/>
+            <TextBlock Grid.Column="3" x:Name="txtStatus" Margin="12,0,8,0"
+                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                       Opacity="0.75"/>
+            <Button Grid.Column="4" Content="Close" Padding="14,3"
+                    Click="OnClose"/>
+        </Grid>
+    </Grid>
+</controls:ProWindow>
