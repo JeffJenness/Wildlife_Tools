@@ -37,6 +37,12 @@ namespace WildlifeTools.Corridor
             public BasicRasterLayer Raster { get; set; }
             public FeatureLayer Feature { get; set; }
             public bool IsCategorical { get; set; }   // integer or has an attribute table
+            /// <summary>Catalog path of the layer's source dataset, recorded in the
+            /// linkage metadata so the later tools can re-find the same variable
+            /// rasters even if the layer has since been renamed. Null if it could
+            /// not be resolved (a service or in-memory layer), in which case the
+            /// name is all downstream has to match on.</summary>
+            public string Path { get; set; }
             public override string ToString() => Name;
         }
 
@@ -121,8 +127,10 @@ namespace WildlifeTools.Corridor
         private VatInfo _vat;                    // attribute table of the chosen template
         private string _classNameField;          // VAT field to name classes by (null = value)
         private string _symbologyWarning;        // set if applying the colorizer failed
+        private string _analysisId;              // linkage id stamped on the last output
         private RasterStack _stack;
         private List<VarFlag> _varFlags = new();
+        private List<string> _varPaths = new();  // catalog paths, in VariableNames order
         private int _step = 1;
 
         // Batch state: one analysis per category, and the category being edited now.
@@ -181,6 +189,23 @@ namespace WildlifeTools.Corridor
 
         private void SetStatus(string t) => txtStatus.Text = t;
 
+        /// <summary>Catalog path of a raster's source dataset, or null. Call on the
+        /// MCT. Mirrors the idiom in SlopeGraphic\SlopeData.DetectRasterUnit:
+        /// the datastore gives the workspace, the dataset gives the name.</summary>
+        private static string RasterCatalogPath(ArcGIS.Core.Data.Raster.Raster raster)
+        {
+            try
+            {
+                var ds = raster?.GetRasterDataset();
+                if (ds == null) return null;
+                string dir = ds.GetDatastore()?.GetPath()?.LocalPath;
+                string name = ds.GetName();
+                if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(name)) return null;
+                return System.IO.Path.Combine(dir, name);
+            }
+            catch { return null; }
+        }
+
         // ---- setup: enumerate the map's layers -------------------------------
         private async void PopulateLayers()
         {
@@ -193,24 +218,28 @@ namespace WildlifeTools.Corridor
 
             // A raster is a valid categorical template if it is integer or has an
             // attribute table -- determine that on the MCT.
-            var eligible = await QueuedTask.Run(() =>
+            var probe = await QueuedTask.Run(() =>
             {
                 var set = new HashSet<BasicRasterLayer>();
+                var paths = new Dictionary<BasicRasterLayer, string>();
                 foreach (var l in rasterLayers)
                 {
                     try
                     {
                         var r = l.GetRaster();
                         if (r.IsInteger() || r.GetAttributeTable() != null) set.Add(l);
+                        string p = RasterCatalogPath(r);
+                        if (p != null) paths[l] = p;
                     }
                     catch { /* skip unreadable */ }
                 }
-                return set;
+                return (set, paths);
             });
 
             _rasters = rasterLayers.Select(l => new LayerItem
             {
-                Name = l.Name, Raster = l, IsCategorical = eligible.Contains(l)
+                Name = l.Name, Raster = l, IsCategorical = probe.set.Contains(l),
+                Path = probe.paths.TryGetValue(l, out var p) ? p : null,
             }).ToList();
 
             cboCat.ItemsSource = _rasters.Where(li => li.IsCategorical).ToList();
@@ -286,6 +315,7 @@ namespace WildlifeTools.Corridor
             if (_stack == null) return;          // nothing loaded to invalidate
             _stack = null;
             _varFlags = new();
+            _varPaths = new();
             ResetBatchState();
             lstClasses.ItemsSource = _vat?.Rows;  // fall back to the raw VAT preview
             SetStatus(reason + " — click Read inputs to update.");
@@ -453,6 +483,9 @@ namespace WildlifeTools.Corridor
                 var stack = res.st;
                 _stack = stack;
                 _varFlags = res.flags;
+                // Same order as stack.VariableNames -- recorded in the linkage
+                // metadata so the Mahalanobis tool can re-find these exact rasters.
+                _varPaths = vars.Select(v => v.Path).ToList();
                 ResetBatchState();               // new data -> rebuild categories on step 2
                 int nClasses = stack.Classes.Count, nVars = stack.VariableNames.Length;
                 BuildClassColumns(_vat?.Fields);
@@ -1084,14 +1117,22 @@ namespace WildlifeTools.Corridor
 
         private int ArgBest(Func<LandFacetEngine.ValidityIndices, double> get, bool higher)
         {
-            int best = _cValues[0];
-            double bv = get(_indicesByC[best]);
+            // A degenerate partition (an empty crisp cluster, or two centroids that
+            // land on the same point) drives the index formulas to infinity or NaN:
+            // the min-pairwise-centroid-distance denominator in XB/XB*, the
+            // centroid-distance denominator in DB, the fuzzy-distance denominator in
+            // PBM. Such a c is not a real optimum, so it does not get a vote -- an
+            // infinite PBM would otherwise always "win" the maximise indices, and a
+            // NaN first value would freeze the comparison (every NaN test is false).
+            int best = -1;
+            double bv = 0.0;
             foreach (int c in _cValues)
             {
                 double v = get(_indicesByC[c]);
-                if (higher ? v > bv : v < bv) { bv = v; best = c; }
+                if (double.IsNaN(v) || double.IsInfinity(v)) continue;
+                if (best < 0 || (higher ? v > bv : v < bv)) { bv = v; best = c; }
             }
-            return best;
+            return best < 0 ? _cValues[0] : best;   // no usable value -> smallest c
         }
 
         private void OnKChanged(object sender, SelectionChangedEventArgs e)
@@ -1116,20 +1157,29 @@ namespace WildlifeTools.Corridor
                 double x0 = col * cw + 6, y0 = row * ch + 4, pw = cw - 12, ph = ch - 26;
                 var info = IndexInfo[p];
                 var vals = _cValues.Select(c => info.get(_indicesByC[c])).ToArray();
-                double mn = vals.Min(), mx = vals.Max();
-                if (mx <= mn) mx = mn + 1;
-
-                var poly = new Polyline { Stroke = Brushes.SteelBlue, StrokeThickness = 1.5 };
-                for (int i = 0; i < _cValues.Count; i++)
+                // Scale to the plottable values only. A degenerate partition makes an
+                // index infinite or NaN (see ArgBest); including it would make the
+                // range infinite and every plotted y NaN, which WPF cannot draw. Such
+                // a c is simply left off its chart.
+                var finite = vals.Where(v => !double.IsNaN(v) && !double.IsInfinity(v)).ToArray();
+                if (finite.Length > 0)      // still label the chart if nothing is plottable
                 {
-                    double px = x0 + (_cValues.Count > 1 ? (double)i / (_cValues.Count - 1) : 0) * pw;
-                    double py = y0 + ph - (vals[i] - mn) / (mx - mn) * ph;
-                    poly.Points.Add(new Point(px, py));
-                    var dot = new Ellipse { Width = 4, Height = 4, Fill = Brushes.SteelBlue };
-                    Canvas.SetLeft(dot, px - 2); Canvas.SetTop(dot, py - 2);
-                    clusterCanvas.Children.Add(dot);
+                    double mn = finite.Min(), mx = finite.Max();
+                    if (mx <= mn) mx = mn + 1;
+
+                    var poly = new Polyline { Stroke = Brushes.SteelBlue, StrokeThickness = 1.5 };
+                    for (int i = 0; i < _cValues.Count; i++)
+                    {
+                        if (double.IsNaN(vals[i]) || double.IsInfinity(vals[i])) continue;
+                        double px = x0 + (_cValues.Count > 1 ? (double)i / (_cValues.Count - 1) : 0) * pw;
+                        double py = y0 + ph - (vals[i] - mn) / (mx - mn) * ph;
+                        poly.Points.Add(new Point(px, py));
+                        var dot = new Ellipse { Width = 4, Height = 4, Fill = Brushes.SteelBlue };
+                        Canvas.SetLeft(dot, px - 2); Canvas.SetTop(dot, py - 2);
+                        clusterCanvas.Children.Add(dot);
+                    }
+                    clusterCanvas.Children.Add(poly);
                 }
-                clusterCanvas.Children.Add(poly);
 
                 int ki = _cValues.IndexOf(_chosenK);
                 if (ki >= 0)
@@ -1221,12 +1271,30 @@ namespace WildlifeTools.Corridor
             return new OutputTarget { WritePath = fp, FinalPath = fp };
         }
 
-        private static bool InGdb(string p) =>
-            p.IndexOf(".gdb", StringComparison.OrdinalIgnoreCase) >= 0;
+        /// <summary>Index of the ".gdb" that actually ends a geodatabase segment
+        /// of <paramref name="p"/> -- i.e. followed by a path separator or the
+        /// end of the string -- or -1. A bare IndexOf(".gdb") is not enough: a
+        /// FOLDER merely named like "My.gdb_exports" would match it, the path
+        /// would be split at the wrong place, and the run would fail at the very
+        /// end when Copy Raster targets a geodatabase that does not exist.</summary>
+        private static int GdbIndex(string p)
+        {
+            for (int idx = p.IndexOf(".gdb", StringComparison.OrdinalIgnoreCase);
+                 idx >= 0;
+                 idx = p.IndexOf(".gdb", idx + 1, StringComparison.OrdinalIgnoreCase))
+            {
+                int after = idx + 4;
+                if (after == p.Length || p[after] == '\\' || p[after] == '/')
+                    return idx;
+            }
+            return -1;
+        }
+
+        private static bool InGdb(string p) => GdbIndex(p) >= 0;
 
         private static OutputTarget GdbTarget(string path)
         {
-            int idx = path.IndexOf(".gdb", StringComparison.OrdinalIgnoreCase);
+            int idx = GdbIndex(path);
             string gdbPath = path.Substring(0, idx + 4);
             string name = path.Length > idx + 4 ? path.Substring(idx + 4).Trim('\\', '/') : "";
             name = SanitizeGdbName(System.IO.Path.GetFileNameWithoutExtension(name));
@@ -1393,7 +1461,22 @@ namespace WildlifeTools.Corridor
             { MessageBox.Show("Enter an output raster name or path.", "Land Facet Clustering"); return; }
 
             int W = _stack.Width, H = _stack.Height;
-            var arr = new int[W * H];
+            // The output grid is held as one flat int[], and cell indices are cast
+            // down to int when the classified values are written back, so the cell
+            // count has to fit in an int. Fail with an explanation rather than
+            // overflowing the allocation into a wrong-sized (or negative) array.
+            long nCells = (long)W * H;
+            if (nCells > int.MaxValue)
+            {
+                MessageBox.Show(
+                    $"The categorical raster is {W:N0} x {H:N0} = {nCells:N0} cells, which is larger "
+                    + $"than this tool can hold in memory ({int.MaxValue:N0} cells).\n\n"
+                    + "Clip the analysis to a smaller area (the Wildland Blocks clip polygon on "
+                    + "step 1) or resample the categorical raster to a coarser cell size.",
+                    "Land Facet Clustering", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            var arr = new int[(int)nCells];
             for (int i = 0; i < arr.Length; i++) arr[i] = -9999;
 
             btnGenerate.IsEnabled = false;
@@ -1401,7 +1484,7 @@ namespace WildlifeTools.Corridor
             txtGenInfo.Text = "";
             var legend = new List<(int id, double catValue, string catLabel, int cluster, long count)>();
             int offset = 0;
-            int nSteps = setItems.Count + 3;            // classify each + write + copy + add
+            int nSteps = setItems.Count + 4;   // classify each + write + copy + metadata + add
             try
             {
                 // Classify each ready category into the shared grid, offsetting its
@@ -1455,9 +1538,21 @@ namespace WildlifeTools.Corridor
                         try { if (System.IO.File.Exists(tmp)) System.IO.File.Delete(tmp); } catch { }
                 }
 
-                txtGenInfo.Text = "Adding the result to the map…";
+                // Stamp the linkage record so the Land Facet Density and
+                // Mahalanobis tools can identify each facet and rebuild the
+                // variables in the SAME ORDER this run used. It has to happen
+                // here, after the raster is at its final location: the record
+                // rides in the Esri metadata, the only carrier that survives
+                // Copy Raster into a geodatabase. Best-effort -- an unstamped
+                // raster still works, the later tools just ask the user instead.
+                txtGenInfo.Text = "Recording the analysis metadata…";
                 SetStatus(txtGenInfo.Text);
                 pbGen.Value = (double)(setItems.Count + 2) / nSteps;
+                _analysisId = await StampLinkageMetadataAsync(finalPath, legend, W, H, confThresh);
+
+                txtGenInfo.Text = "Adding the result to the map…";
+                SetStatus(txtGenInfo.Text);
+                pbGen.Value = (double)(setItems.Count + 3) / nSteps;
                 var legendForSym = legend
                     .Select(l => (l.id, l.catValue, l.catLabel, l.cluster, l.count)).ToList();
                 string dsName = System.IO.Path.GetFileNameWithoutExtension(finalPath);
@@ -1488,6 +1583,17 @@ namespace WildlifeTools.Corridor
                 sb.AppendLine();
                 foreach (var l in legend)
                     sb.AppendLine($"    Facet {l.id}:  {l.catLabel}, cluster {l.cluster}  ({l.count:N0} cells)");
+                sb.AppendLine();
+                if (_analysisId != null)
+                    sb.AppendLine("Analysis metadata recorded (id " + _analysisId
+                        + "). The Land Facet Density and Mahalanobis tools will read "
+                        + "the facet list and variable order from this raster.");
+                else
+                    sb.AppendLine("Note: the analysis metadata could not be recorded on "
+                        + "this raster. It is still fully usable, but the Land Facet "
+                        + "Density and Mahalanobis tools will ask you to identify the "
+                        + "facets and re-enter the variables in the same order used here: "
+                        + string.Join(", ", _stack?.VariableNames ?? Array.Empty<string>()) + ".");
                 if (_symbologyWarning != null)
                     sb.AppendLine().AppendLine("Note: default symbology was applied "
                         + "(custom colors could not be set: " + _symbologyWarning + ").");
@@ -1501,6 +1607,67 @@ namespace WildlifeTools.Corridor
                 MessageBox.Show(ex.Message, "Land Facet Clustering");
             }
             finally { btnGenerate.IsEnabled = true; }
+        }
+
+        /// <summary>Assemble and stamp the land facet linkage record onto the
+        /// finished raster. Returns the analysis id, or null if it could not be
+        /// written (which is not fatal -- see CorridorMetadataWriter).
+        ///
+        /// The variable ORDER carried here is the load-bearing part: the
+        /// Mahalanobis mean vector and covariance matrix have to be built in the
+        /// same order the clustering used, and a mismatch produces distances
+        /// that are wrong without looking wrong.</summary>
+        private async Task<string> StampLinkageMetadataAsync(
+            string finalPath,
+            List<(int id, double catValue, string catLabel, int cluster, long count)> legend,
+            int width, int height, double confThresh)
+        {
+            try
+            {
+                string analysisId = Guid.NewGuid().ToString();
+                var facets = legend
+                    .Select(l => new CorridorMetadataWriter.FacetEntry(
+                        l.id, l.catValue, l.catLabel, l.cluster, l.count))
+                    .ToList();
+
+                // Per-category settings, so a later tool (or a puzzled user six
+                // months on) can see exactly how each class was clustered.
+                var perCategory = new List<object>();
+                foreach (var kv in _analyses)
+                {
+                    var a = kv.Value;
+                    if (a == null || a.ChosenK <= 0) continue;
+                    perCategory.Add(new Dictionary<string, object>
+                    {
+                        ["category_value"] = kv.Key,
+                        ["category_label"] = CategoryLabel(kv.Key),
+                        ["k"] = a.ChosenK,
+                        ["outlier_fraction"] = a.Fraction,
+                        ["fuzziness"] = a.Psi,
+                        ["cells"] = a.Data?.Count ?? 0,
+                    });
+                }
+
+                var parameters = new Dictionary<string, object>
+                {
+                    ["fuzziness"] = _psi,
+                    ["confusion_threshold"] = confThresh,
+                    ["outlier_method"] = "gaussian_kde_scott",
+                    ["distance"] = "squared_euclidean_standardized",
+                    ["class_name_field"] = _classNameField ?? string.Empty,
+                    ["categories"] = perCategory,
+                };
+
+                var catItem = cboCat.SelectedItem as LayerItem;
+                return await CorridorMetadataWriter.StampFacetsAsync(
+                    finalPath, analysisId, _stack?.VariableNames, _varPaths, facets,
+                    width, height, parameters,
+                    catItem?.Path ?? catItem?.Name ?? string.Empty);
+            }
+            catch
+            {
+                return null;   // never let metadata stamping fail a good run
+            }
         }
 
         /// <summary>Classify every cell of one category into its highest-membership

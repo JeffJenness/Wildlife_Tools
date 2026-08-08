@@ -837,8 +837,9 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
     # Copy the input (selection honored; all attributes carried).
     out_ws, out_name = os.path.split(str(out_points))
     arcpy.management.CopyFeatures(in_points, out_points)
-    null_ok = (".gdb" in str(out_points).lower()
-               or ".sde" in str(out_points).lower())
+    # Boundary-aware: the old bare substring test wrongly counted a FOLDER
+    # merely named like "x.gdb_backup" as a geodatabase (nullable fields).
+    null_ok = _mh.in_gdb_container(out_points)
 
     # Add the value field (sanitized + uniquified against the copied schema).
     taken = {f.name.lower() for f in arcpy.ListFields(out_points)}
@@ -1173,7 +1174,10 @@ def run_aspect_transform(in_raster, out_workspace, transformations,
     del a, valid
 
     ws = str(out_workspace)
-    is_gdb = ws.lower().endswith((".gdb", ".sde"))
+    # is_gdb_workspace, not a bare endswith: this is a USER-TYPED workspace, and
+    # a trailing separator ("...\Data.gdb\") would otherwise flip it to the
+    # folder branch and write .tif names inside the geodatabase.
+    is_gdb = _mh.is_gdb_workspace(ws)
     outputs = []
 
     for key in keys:

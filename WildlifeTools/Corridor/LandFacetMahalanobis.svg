@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Third of the Land Facet family (facet mosaic, density grid, this).
+       Concentric tilted ellipses = the Mahalanobis ellipsoid: constant distance
+       from a facet's prototype traces an ellipse, not a circle, because the
+       covariance rescales and de-correlates the variables. Coloured cool at the
+       centre and warm outward, matching the tool's own blue-yellow-red cost
+       stretch, so it reads as "cheap near the prototype, expensive away". -->
+  <g transform="rotate(-28 16 16)">
+    <ellipse cx="16" cy="16" rx="14.6" ry="9.4" fill="#C0392B"/>
+    <ellipse cx="16" cy="16" rx="11.2" ry="7.2" fill="#E8912E"/>
+    <ellipse cx="16" cy="16" rx="7.8" ry="5.0" fill="#EBD24B"/>
+    <ellipse cx="16" cy="16" rx="4.4" ry="2.8" fill="#5DADE2"/>
+    <ellipse cx="16" cy="16" rx="1.7" ry="1.7" fill="#12496F"/>
+  </g>
+</svg>

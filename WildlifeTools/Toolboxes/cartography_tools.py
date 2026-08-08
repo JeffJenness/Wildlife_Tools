@@ -122,7 +122,10 @@ def _write_layer_file(out_fc, name, messages):
     transparency visual variable bound to the Transparency field (the CIM
     analog of the legacy ITransparencyRenderer.TransparencyField)."""
     ws = os.path.dirname(out_fc)
-    is_gdb = ws.lower().endswith(".gdb")
+    # Normalized before the suffix test (trailing separators / forward slashes
+    # defeat a bare endswith), and .sde counts as a geodatabase too -- this
+    # mirrors mahalanobis.is_gdb_workspace inline (no mahalanobis import here).
+    is_gdb = ws.lower().replace("/", "\\").rstrip("\\").endswith((".gdb", ".sde"))
     lyr_dir = os.path.dirname(ws) if is_gdb else ws
     lyrx = os.path.join(lyr_dir, name + ".lyrx")
 

@@ -200,11 +200,18 @@ namespace WildlifeTools.Corridor
             raster.Read(0, y0, pb);
             Array data = pb.GetPixelData(0, true);   // 2-D array (own copy)
 
-            // The pixel block is (width x height); GetPixelData returns a 2-D array.
-            // Map [d0, d1] -> [row, col] by matching the known height, so we do not
-            // depend on the axis order.
-            int n0 = data.GetLength(0);
-            bool rowFirst = (n0 == h);
+            // GetPixelData returns a 2-D array indexed [column, row] -- the order the
+            // SDK's own PixelBlock samples use. Matching a length against the strip
+            // height can only decide the order when the strip is NOT square: a raster
+            // exactly StripRows wide yields a square block, where a plain (n0 == h)
+            // test would silently transpose the strip. So follow the documented order
+            // and let the lengths override it only when they are unambiguous.
+            int n0 = data.GetLength(0), n1 = data.GetLength(1);
+            bool rowFirst = false;
+            if (n0 != n1) rowFirst = (n0 == h);
+            if ((rowFirst ? n0 : n1) != h || (rowFirst ? n1 : n0) != w)
+                throw new InvalidOperationException(
+                    $"Unexpected pixel block shape {n0} x {n1} for a {w} x {h} strip.");
             values = new double[h, w];
             valid = new bool[h, w];
             bool hasNd = noData != null;

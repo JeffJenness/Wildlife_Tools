@@ -919,6 +919,34 @@ class _RasterStats(object):
                 "std": float(np.sqrt(var)), "count": self.n}
 
 
+def is_gdb_workspace(path):
+    """True if ``path`` IS a geodatabase-style container (.gdb or .sde).
+
+    Normalizes case, slash direction and -- critically -- trailing separators
+    first: a workspace typed as ``...\\Data.gdb\\`` otherwise fails a bare
+    ``endswith(".gdb")`` test, and the dataset that should have landed in the
+    geodatabase is created with the wrong format or in the wrong place
+    (2026-08-07, the Land Facet Mahalanobis statistics tables). Use this for
+    every .gdb/.sde suffix decision; never test the raw string.
+    """
+    return (str(path or "").lower().replace("/", "\\").rstrip("\\")
+            .endswith((".gdb", ".sde")))
+
+
+def in_gdb_container(path):
+    """True if ``path`` points INTO (or at) a geodatabase, boundary-aware.
+
+    Unlike a bare ``".gdb" in path`` substring test, a folder merely NAMED like
+    ``My.gdb_exports`` does not count -- its ".gdb" is not followed by a
+    separator. Feature-dataset paths (``x.gdb\\fds\\fc``) do count.
+    """
+    low = str(path or "").lower().replace("/", "\\").rstrip("\\")
+    for ext in (".gdb", ".sde"):
+        if low.endswith(ext) or (ext + "\\") in low:
+            return True
+    return False
+
+
 def resolve_raster_output(path, messages=None):
     """Folder-based raster outputs default to GeoTIFF (Jeff's no-more-GRID
     convention, 2026-07-19). Without this, CopyRaster writes an extensionless
@@ -930,9 +958,11 @@ def resolve_raster_output(path, messages=None):
     their tool's output parameter so add-to-map targets the real dataset."""
     if not path:
         return path
-    p = str(path)
-    low = p.lower().replace("/", "\\")
-    if ".gdb\\" in low or ".sde\\" in low:
+    # No dataset path legitimately ends with a separator; a typed trailing
+    # backslash would otherwise survive into the delivered path (or turn a
+    # folder output into "name\\.tif").
+    p = str(path).rstrip("\\/")
+    if in_gdb_container(p):
         return p
     if not os.path.splitext(p)[1]:
         if messages is not None:
@@ -983,7 +1013,7 @@ def default_stretch_lyrx(out_raster, colors, messages=None):
             messages.addWarningMessage("Could not create layer file: {}".format(e))
         return None
     ws = os.path.dirname(path)
-    lyr_dir = os.path.dirname(ws) if ws.lower().endswith((".gdb", ".sde")) else ws
+    lyr_dir = os.path.dirname(ws) if is_gdb_workspace(ws) else ws
     out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
     tmp = "jenness_symb_tmp"
     try:
@@ -1066,7 +1096,7 @@ def default_aspect_lyrx(out_raster, messages=None):
             messages.addWarningMessage("Could not create layer file: {}".format(e))
         return None
     ws = os.path.dirname(path)
-    lyr_dir = os.path.dirname(ws) if ws.lower().endswith((".gdb", ".sde")) else ws
+    lyr_dir = os.path.dirname(ws) if is_gdb_workspace(ws) else ws
     out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
     tmp = "jenness_aspect_tmp"
     try:
@@ -1158,7 +1188,7 @@ def default_unique_value_lyrx(out_raster, classes, field="Class_Name",
             messages.addWarningMessage("Could not create layer file: {}".format(e))
         return None
     ws = os.path.dirname(path)
-    lyr_dir = os.path.dirname(ws) if ws.lower().endswith((".gdb", ".sde")) else ws
+    lyr_dir = os.path.dirname(ws) if is_gdb_workspace(ws) else ws
     out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
     tmp = "jenness_uv_tmp"
     try:
@@ -1256,7 +1286,7 @@ def default_unclassed_lyrx(fc, field, colors, messages=None):
             messages.addWarningMessage("Could not create layer file: {}".format(e))
         return None
     ws = os.path.dirname(path)
-    lyr_dir = os.path.dirname(ws) if ws.lower().endswith((".gdb", ".sde")) else ws
+    lyr_dir = os.path.dirname(ws) if is_gdb_workspace(ws) else ws
     out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
 
     lo = hi = None
@@ -1691,7 +1721,7 @@ def write_raster_layer_file(out_raster, messages, stretch_stats=None, template=N
         ws = desc.path
     except Exception:
         return None
-    lyr_dir = os.path.dirname(ws) if ws.lower().endswith((".gdb", ".sde")) else ws
+    lyr_dir = os.path.dirname(ws) if is_gdb_workspace(ws) else ws
     out_lyrx = os.path.join(lyr_dir, name + ".lyrx")
     tmp = "mahal_tmp_raster_layer"
 

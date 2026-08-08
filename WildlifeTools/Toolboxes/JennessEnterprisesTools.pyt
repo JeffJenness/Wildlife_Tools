@@ -53,6 +53,10 @@ import tpi_tools      # noqa: E402
 import classification_store  # noqa: E402
 import line_surface_tools  # noqa: E402
 import diversity_tools  # noqa: E402
+import land_facet_density  # noqa: E402
+import land_facet_linkage  # noqa: E402
+import land_facet_mahalanobis  # noqa: E402
+import invert_raster  # noqa: E402
 import tool_metadata  # noqa: E402
 import error_report   # noqa: E402
 
@@ -307,7 +311,8 @@ class Toolbox(object):
                       SlopePositionClassification, LandformClassification,
                       GeneralRasterClassification,
                       LSRIOnDEM, LSRIOnContourPolylines,
-                      DiversityIndices]
+                      DiversityIndices, LandFacetDensity, LandFacetMahalanobis,
+                      InvertRaster]
 
 
 class LoCoHStandard(object):
@@ -7386,8 +7391,8 @@ class DiversityIndices(object):
             "Gini-Simpson index, or Simpson's concentration. Works on projected "
             "or geographic rasters, with the same geodesic per-row adjustment "
             "the other neighborhood tools use, and needs no Spatial Analyst. A "
-            "modernized port of the SSI ArcMap Shannon's Index tool; part of "
-            "the Land Facet Corridor Designer tool family.")
+            "modernized port of the Land Facet Corridor Designer's ArcMap "
+            "Shannon's Index tool.")
         self.category = "Corridor Designer Tools"
         self.canRunInBackground = False
         self._auto_out = None
@@ -7607,6 +7612,584 @@ class DiversityIndices(object):
                 "neighborhood": P["neighborhood"].valueAsText,
                 "nbr_units": P["nbr_units"].valueAsText,
             })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+# Dialog wording for the two denominator rules. The first reproduces the
+# original ArcMap tool exactly; see land_facet_density's module docstring for
+# why it is the default and why the second is not comparable across analyses.
+_DENOM_FAITHFUL = "Every neighborhood cell inside the raster (original rule)"
+_DENOM_NONNULL = "Only neighborhood cells that hold data (ignore NoData)"
+
+
+class LandFacetDensity(object):
+    """Land Facet Density -- the proportion of a neighborhood holding each land
+    facet, as ONE multi-band raster (a band per facet) rather than the original
+    ArcMap tool's one-raster-per-facet. See ``land_facet_density``."""
+
+    _RECT = {"width", "height"}
+    _CIRC = {"radius"}
+    _ANN = {"inner_radius", "outer_radius"}
+    _WEDGE = {"radius", "start_angle", "end_angle"}
+    _FILE = {"kernel_file"}
+
+    def __init__(self):
+        self.label = "Land Facet Density"
+        self.description = (
+            "For every land facet in a land facet raster, the proportion of the "
+            "surrounding neighborhood composed of that facet (0 to 1) -- "
+            "written as ONE multi-band raster with a band per facet, computed "
+            "in a single pass. The original ArcMap Calculate Density Surface "
+            "tool produced one single-band raster per facet, one run at a time. "
+            "The density surface places corridor termini inside the Wildland "
+            "Blocks and supplies one of the variables for the Mahalanobis cost "
+            "surface, where its ideal value is 100% rather than its mean. A "
+            "linkage record naming which band holds which facet is written into "
+            "the output's metadata, because raster band names do not survive "
+            "being copied into a geodatabase. Needs no Spatial Analyst.")
+        self.category = "Corridor Designer Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input land facet raster (single band)",
+            name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output multi-band density raster", name="out_raster",
+            datatype="DERasterDataset", parameterType="Required",
+            direction="Output")
+        facets = arcpy.Parameter(
+            displayName="Land facets to include (default: all)", name="facets",
+            datatype="GPString", parameterType="Optional", direction="Input",
+            multiValue=True)
+        neighborhood = arcpy.Parameter(
+            displayName="Neighborhood", name="neighborhood",
+            datatype="GPString", parameterType="Required", direction="Input")
+        neighborhood.filter.type = "ValueList"
+        neighborhood.filter.list = land_facet_density.NEIGHBORHOODS
+        neighborhood.value = "Circle"
+        nbr_units = arcpy.Parameter(
+            displayName="Neighborhood units", name="nbr_units",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        nbr_units.filter.type = "ValueList"
+        nbr_units.filter.list = land_facet_density.NBR_UNITS
+        nbr_units.value = "Cells"
+        radius = arcpy.Parameter(
+            displayName="Radius", name="radius",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        radius.value = 3
+        width = arcpy.Parameter(
+            displayName="Width", name="width",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        width.value = 3
+        height = arcpy.Parameter(
+            displayName="Height", name="height",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        height.value = 3
+        inner_radius = arcpy.Parameter(
+            displayName="Inner radius", name="inner_radius",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        inner_radius.value = 1
+        outer_radius = arcpy.Parameter(
+            displayName="Outer radius", name="outer_radius",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        outer_radius.value = 3
+        start_angle = arcpy.Parameter(
+            displayName="Start angle (deg, CCW from east)", name="start_angle",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        start_angle.value = 0
+        end_angle = arcpy.Parameter(
+            displayName="End angle (deg, CCW from east)", name="end_angle",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        end_angle.value = 90
+        kernel_file = arcpy.Parameter(
+            displayName="Kernel file", name="kernel_file",
+            datatype="DEFile", parameterType="Optional", direction="Input")
+        kernel_file.filter.list = ["txt"]
+        denominator = arcpy.Parameter(
+            displayName="Denominator", name="denominator",
+            datatype="GPString", parameterType="Optional", direction="Input",
+            category="Advanced")
+        denominator.filter.type = "ValueList"
+        denominator.filter.list = [_DENOM_FAITHFUL, _DENOM_NONNULL]
+        denominator.value = _DENOM_FAITHFUL
+        params = [in_raster, out_raster, facets, neighborhood, nbr_units,
+                  radius, width, height, inner_radius, outer_radius,
+                  start_angle, end_angle, kernel_file, denominator]
+        saved = _load_tool_defaults("LandFacetDensity")
+        for p in (neighborhood, nbr_units):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    def _relevant(self, nbr):
+        if nbr == "Rectangle":
+            return self._RECT
+        if nbr == "Circle":
+            return self._CIRC
+        if nbr == "Annulus":
+            return self._ANN
+        if nbr == "Wedge":
+            return self._WEDGE
+        if nbr in ("Irregular", "Weight"):
+            return self._FILE
+        return set()
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr = P["in_raster"], P["out_raster"]
+        nbr = P["neighborhood"].valueAsText or "Circle"
+        rel = self._relevant(nbr)
+        for nm in ("radius", "width", "height", "inner_radius", "outer_radius",
+                   "start_angle", "end_angle", "kernel_file"):
+            P[nm].enabled = nm in rel
+        P["nbr_units"].enabled = nbr not in ("Irregular", "Weight")
+
+        # Offer the facet values as a pick list, labelled from the linkage
+        # record when the input carries one. Gated on hasBeenValidated so it
+        # refreshes when the raster changes but does not fight the user.
+        if inr.valueAsText and not inr.hasBeenValidated:
+            try:
+                path = _resolve_raster_path(inr) or inr.valueAsText
+                rec = land_facet_linkage.read(path, land_facet_linkage.FACETS)
+                choices = []
+                if rec:
+                    for f in rec.get("facets") or []:
+                        choices.append("{} ({})".format(
+                            f.get("facet_id"), land_facet_linkage.facet_label(f)))
+                if choices:
+                    P["facets"].filter.list = choices
+            except Exception:
+                pass
+
+        if inr.valueAsText:
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(os.path.basename(
+                        inr.valueAsText))[0] + "_Density")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr = P["in_raster"]
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage(
+                        "The land facet raster must be single band.")
+            except Exception:
+                pass
+        nbr = P["neighborhood"].valueAsText or "Circle"
+        rel = self._relevant(nbr)
+        for nm in ("radius", "width", "height", "inner_radius", "outer_radius"):
+            if nm in rel:
+                v = P[nm].value
+                if v is not None and v <= 0:
+                    P[nm].setErrorMessage("Must be a positive value.")
+        if nbr == "Annulus":
+            ri, ro = P["inner_radius"].value, P["outer_radius"].value
+            if ri is not None and ro is not None and ri >= ro:
+                P["outer_radius"].setErrorMessage(
+                    "The outer radius must be greater than the inner radius.")
+        if nbr in ("Irregular", "Weight"):
+            kf = P["kernel_file"].valueAsText
+            if not kf:
+                P["kernel_file"].setErrorMessage(
+                    "The {} neighborhood needs a kernel file.".format(nbr))
+            elif not os.path.exists(kf):
+                P["kernel_file"].setErrorMessage("Kernel file not found.")
+        if P["denominator"].valueAsText == _DENOM_NONNULL:
+            P["denominator"].setWarningMessage(
+                "This is NOT the original tool's rule, and its values are not "
+                "comparable across analyses. Ignoring NoData makes the "
+                "proportion depend on how much of the raster is populated, so "
+                "the same landscape gives different values on a single-facet "
+                "raster than on a combined one. Use it only for a deliberate, "
+                "documented reason.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(land_facet_linkage)
+            importlib.reload(land_facet_density)
+            P = {p.name: p for p in parameters}
+            in_path = (_resolve_raster_path(P["in_raster"])
+                       or P["in_raster"].valueAsText)
+            picked = P["facets"].valueAsText
+            facet_values = None
+            if picked:
+                facet_values = []
+                for tok in picked.split(";"):
+                    tok = tok.strip().strip("'").strip()
+                    if tok:
+                        # Entries look like "7 (Valley, Cluster 2)".
+                        facet_values.append(tok.split("(", 1)[0].strip())
+            denom = (land_facet_linkage.DENOM_NON_NODATA
+                     if P["denominator"].valueAsText == _DENOM_NONNULL
+                     else land_facet_linkage.DENOM_IN_RASTER)
+            land_facet_density.run_density(
+                in_raster=in_path,
+                out_raster=P["out_raster"].valueAsText,
+                facet_values=facet_values,
+                neighborhood=P["neighborhood"].valueAsText or "Circle",
+                radius=P["radius"].value if P["radius"].value is not None else 3.0,
+                width=P["width"].value if P["width"].value is not None else 3.0,
+                height=P["height"].value if P["height"].value is not None else 3.0,
+                inner_radius=(P["inner_radius"].value
+                              if P["inner_radius"].value is not None else 1.0),
+                outer_radius=(P["outer_radius"].value
+                              if P["outer_radius"].value is not None else 3.0),
+                start_angle=(P["start_angle"].value
+                             if P["start_angle"].value is not None else 0.0),
+                end_angle=(P["end_angle"].value
+                           if P["end_angle"].value is not None else 90.0),
+                nbr_units=P["nbr_units"].valueAsText or "Cells",
+                kernel_file=P["kernel_file"].valueAsText,
+                denominator=denom,
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+            _save_tool_defaults("LandFacetDensity", {
+                "neighborhood": P["neighborhood"].valueAsText,
+                "nbr_units": P["nbr_units"].valueAsText,
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class LandFacetMahalanobis(object):
+    """Land Facet Mahalanobis -- one Mahalanobis distance cost surface per land
+    facet, sampled inside the Wildland Blocks. See ``land_facet_mahalanobis``."""
+
+    def __init__(self):
+        self.label = "Land Facet Mahalanobis"
+        self.description = (
+            "One Mahalanobis distance cost (resistance) surface per land facet: "
+            "how far every cell on the landscape departs, in multivariate "
+            "standard deviations, from the conditions typical of that facet. "
+            "The mean vector and covariance matrix are built only from the "
+            "facet's cells INSIDE the Wildland Blocks -- the training data -- "
+            "while the surface itself covers the whole analysis area. Each "
+            "facet gets its own single-band raster, ready to use directly as "
+            "the resistance surface in least-cost corridor modelling. If a Land "
+            "Facet Density raster is supplied, density joins the analysis with a "
+            "characteristic value of 100 percent rather than its mean, as the "
+            "Land Facet method requires. Needs no Spatial Analyst.")
+        self.category = "Corridor Designer Tools"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input land facet raster (single band)",
+            name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        # Single datatype, not a list: a geometry-type filter cannot be set on a
+        # parameter whose datatype is a list (the Filter has no 'list' attribute).
+        blocks = arcpy.Parameter(
+            displayName="Wildland Blocks (training polygons)", name="blocks",
+            datatype="GPFeatureLayer",
+            parameterType="Required", direction="Input")
+        blocks.filter.list = ["Polygon"]
+        variables = arcpy.Parameter(
+            displayName="Variable rasters (same order used for clustering)",
+            name="variables", datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input", multiValue=True)
+        density = arcpy.Parameter(
+            displayName="Land facet density raster (optional)",
+            name="density_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Optional", direction="Input")
+        facets = arcpy.Parameter(
+            displayName="Land facets to process (default: all)", name="facets",
+            datatype="GPString", parameterType="Optional", direction="Input",
+            multiValue=True)
+        out_ws = arcpy.Parameter(
+            displayName="Output workspace (folder or geodatabase)",
+            name="out_workspace", datatype="DEWorkspace",
+            parameterType="Required", direction="Input")
+        out_prefix = arcpy.Parameter(
+            displayName="Output name prefix", name="out_prefix",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        # A trailing underscore reads naturally in the dialog; safe_name() strips
+        # it before the facet label is appended, so the result is Mahal_<facet>
+        # rather than Mahal__<facet>.
+        out_prefix.value = "Mahal_"
+        out_type = arcpy.Parameter(
+            displayName="Output values", name="out_type",
+            datatype="GPString", parameterType="Required", direction="Input")
+        out_type.filter.type = "ValueList"
+        out_type.filter.list = land_facet_mahalanobis.OUT_TYPES
+        out_type.value = mahalanobis.OUT_D2
+        inversion = arcpy.Parameter(
+            displayName="Covariance inversion", name="inversion",
+            datatype="GPString", parameterType="Optional", direction="Input",
+            category="Advanced")
+        inversion.filter.type = "ValueList"
+        inversion.filter.list = land_facet_mahalanobis.INVERSIONS
+        inversion.value = mahalanobis.INV_STANDARD
+        save_tables = arcpy.Parameter(
+            displayName="Also save each facet's mean vector and covariance table",
+            name="save_tables", datatype="GPBoolean",
+            parameterType="Optional", direction="Input", category="Advanced")
+        save_tables.value = False
+        params = [in_raster, blocks, variables, density, facets, out_ws,
+                  out_prefix, out_type, inversion, save_tables]
+        saved = _load_tool_defaults("LandFacetMahalanobis")
+        for p in (out_type, inversion):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr = P["in_raster"]
+        # When the facet raster changes, pull the clustering's own variable list
+        # and facet list out of its linkage record. Matching on the recorded
+        # catalog path first means a renamed layer still resolves.
+        if inr.valueAsText and not inr.hasBeenValidated:
+            try:
+                path = _resolve_raster_path(inr) or inr.valueAsText
+                rec = land_facet_linkage.read(path, land_facet_linkage.FACETS)
+                if rec:
+                    srcs = []
+                    for v in rec.get("variables") or []:
+                        s = (v.get("source") or "").strip()
+                        if s and arcpy.Exists(s):
+                            srcs.append(s)
+                        elif v.get("name"):
+                            srcs.append(v["name"])
+                    if srcs and not P["variables"].valueAsText:
+                        P["variables"].values = srcs
+                    choices = ["{} ({})".format(
+                        f.get("facet_id"), land_facet_linkage.facet_label(f))
+                        for f in (rec.get("facets") or [])]
+                    if choices:
+                        P["facets"].filter.list = choices
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr = P["in_raster"]
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage(
+                        "The land facet raster must be single band.")
+            except Exception:
+                pass
+        dens = P["density_raster"]
+        if dens.valueAsText and inr.valueAsText:
+            try:
+                dpath = _resolve_raster_path(dens) or dens.valueAsText
+                fpath = _resolve_raster_path(inr) or inr.valueAsText
+                drec = land_facet_linkage.read(dpath, land_facet_linkage.DENSITY)
+                frec = land_facet_linkage.read(fpath, land_facet_linkage.FACETS)
+                if drec is None:
+                    dens.setErrorMessage(
+                        "This raster carries no land facet density record, so "
+                        "there is no way to tell which band holds which facet. "
+                        "Use a raster made by the Land Facet Density tool, or "
+                        "leave this empty to run without density.")
+                elif frec and drec.get("source_analysis_id") != frec.get("analysis_id"):
+                    have = {b.get("facet_id") for b in (drec.get("bands") or [])}
+                    want = {f.get("facet_id") for f in (frec.get("facets") or [])}
+                    if want - have:
+                        dens.setErrorMessage(
+                            "This density raster has no band for land facet(s) "
+                            + ", ".join(str(x) for x in sorted(want - have))
+                            + ". It was built from a different set of facets, so "
+                              "its bands cannot be matched to this land facet "
+                              "raster. Rebuild it from this raster.")
+                    else:
+                        dens.setWarningMessage(
+                            "This density raster does not record the same "
+                            "analysis as the land facet raster, though it does "
+                            "cover every facet. Check it was built from THIS "
+                            "raster and not an earlier version.")
+            except Exception:
+                pass
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(land_facet_linkage)
+            importlib.reload(land_facet_mahalanobis)
+            P = {p.name: p for p in parameters}
+            in_path = (_resolve_raster_path(P["in_raster"])
+                       or P["in_raster"].valueAsText)
+            var_txt = P["variables"].valueAsText or ""
+            variables = [t.strip().strip("'") for t in var_txt.split(";")
+                         if t.strip()]
+            picked = P["facets"].valueAsText
+            facet_values = None
+            if picked:
+                facet_values = [t.strip().strip("'").split("(", 1)[0].strip()
+                                for t in picked.split(";") if t.strip()]
+            dens = (_resolve_raster_path(P["density_raster"])
+                    or P["density_raster"].valueAsText) or None
+            land_facet_mahalanobis.run_facet_mahalanobis(
+                in_raster=in_path,
+                blocks=P["blocks"].valueAsText,
+                variables=variables,
+                out_workspace=P["out_workspace"].valueAsText,
+                out_prefix=P["out_prefix"].valueAsText,
+                density_raster=dens,
+                facet_values=facet_values,
+                out_type=P["out_type"].valueAsText,
+                inversion=P["inversion"].valueAsText,
+                save_tables=bool(P["save_tables"].value),
+                messages=messages)
+            _save_tool_defaults("LandFacetMahalanobis", {
+                "out_type": P["out_type"].valueAsText,
+                "inversion": P["inversion"].valueAsText,
+            })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class InvertRaster(object):
+    """Invert Raster -- 1/(x + c), turning a high-is-good surface (density,
+    diversity) into a least-cost surface. Multi-band inputs produce one
+    single-band cost raster per band. See ``invert_raster``."""
+
+    def __init__(self):
+        self.label = "Invert Raster"
+        self.description = (
+            "Numerically inverts a raster -- each output cell is 1/(x + c) -- "
+            "so a surface in which HIGH values mean good habitat (a land facet "
+            "density raster, a diversity index) becomes a least-cost surface "
+            "in which that good ground is CHEAP to cross. The small constant c "
+            "(default 0.1, strongly recommended by the Land Facet manual) "
+            "prevents zero cells from dividing to NoData. A multi-band Land "
+            "Facet Density raster produces one single-band cost raster per "
+            "facet, named from the density raster's own records, with the "
+            "stored integer scaling converted back to 0-1 proportions first so "
+            "the constant keeps its intended meaning. A modernized port of the "
+            "Land Facet Corridor Designer's Invert Raster tool.")
+        self.category = "Corridor Designer Tools"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input raster (high values = good)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        out_ws = arcpy.Parameter(
+            displayName="Output workspace (folder or geodatabase)",
+            name="out_workspace", datatype="DEWorkspace",
+            parameterType="Required", direction="Input")
+        out_prefix = arcpy.Parameter(
+            displayName="Output name prefix", name="out_prefix",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        out_prefix.value = "Inv"
+        add_constant = arcpy.Parameter(
+            displayName="Constant added before inverting (blank = none)",
+            name="add_constant",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        add_constant.value = invert_raster.DEFAULT_CONSTANT
+        facets = arcpy.Parameter(
+            displayName="Facets / bands to invert (default: all)",
+            name="facets", datatype="GPString", parameterType="Optional",
+            direction="Input", multiValue=True)
+        return [in_raster, out_ws, out_prefix, add_constant, facets]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr = P["in_raster"]
+        if inr.valueAsText and not inr.hasBeenValidated:
+            try:
+                path = _resolve_raster_path(inr) or inr.valueAsText
+                rec = land_facet_linkage.read(path, land_facet_linkage.DENSITY)
+                choices = []
+                if rec:
+                    for b in rec.get("bands") or []:
+                        choices.append("{} ({})".format(
+                            b.get("facet_id"), land_facet_linkage.facet_label(b)))
+                if choices:
+                    P["facets"].filter.list = choices
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        c = P["add_constant"].value
+        if c is not None and c < 0:
+            P["add_constant"].setErrorMessage(
+                "The constant must be zero or positive.")
+        if c is None or c == 0:
+            P["add_constant"].setWarningMessage(
+                "Without a constant, any cell whose value is exactly zero "
+                "becomes NoData in the output (division by zero). The Land "
+                "Facet manual strongly recommends 0.1.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(land_facet_linkage)
+            importlib.reload(land_facet_mahalanobis)
+            importlib.reload(invert_raster)
+            P = {p.name: p for p in parameters}
+            in_path = (_resolve_raster_path(P["in_raster"])
+                       or P["in_raster"].valueAsText)
+            picked = P["facets"].valueAsText
+            facet_values = None
+            if picked:
+                facet_values = [t.strip().strip("'").split("(", 1)[0].strip()
+                                for t in picked.split(";") if t.strip()]
+            invert_raster.run_invert(
+                in_raster=in_path,
+                out_workspace=P["out_workspace"].valueAsText,
+                out_prefix=P["out_prefix"].valueAsText or "Inv",
+                add_constant=P["add_constant"].value,
+                facet_values=facet_values,
+                messages=messages)
         except arcpy.ExecuteError:
             raise
         except Exception:

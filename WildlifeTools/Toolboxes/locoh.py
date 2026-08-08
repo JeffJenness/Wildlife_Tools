@@ -411,7 +411,11 @@ def write_layer_file(out_fc, messages=None):
         return None
     ws = os.path.dirname(out_fc)
     name = arcpy.Describe(out_fc).baseName
-    lyr_dir = os.path.dirname(ws) if ws.lower().endswith((".gdb", ".sde")) else ws
+    # Normalized before the suffix test (trailing separators / forward slashes
+    # defeat a bare endswith); locoh deliberately does not import mahalanobis,
+    # so this mirrors mahalanobis.is_gdb_workspace inline.
+    ws_norm = ws.lower().replace("/", "\\").rstrip("\\")
+    lyr_dir = os.path.dirname(ws) if ws_norm.endswith((".gdb", ".sde")) else ws
     out_lyrx = os.path.join(lyr_dir, name + ".lyrx")
     prop_field = "Point_Prop" if _is_shapefile(out_fc) else "Point_Proportion"
     tmp = "loc_locoh_tmp_layer"            # unique name; renamed in the .lyrx below

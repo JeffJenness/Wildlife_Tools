@@ -1,7 +1,8 @@
 """Diversity Indices -- neighborhood diversity of a categorical raster.
 
-A modernized, generalized port of the SSI ArcMap Shannon's Index tool
-(``cmdShannon.cls`` / ``TopoCor_Functions.CreateDiversityRaster``). Over a
+A modernized, generalized port of the Land Facet Corridor Designer's ArcMap
+Shannon's Index tool (``cmdShannon.cls`` /
+``TopoCor_Functions.CreateDiversityRaster``). Over a
 moving neighborhood of any shape and size, it summarizes the diversity of the
 categorical cell values (each cell is a class -- typically a species or a
 vegetation/community type) and writes a continuous diversity raster.
@@ -359,9 +360,9 @@ def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
         description=(
             "Neighborhood diversity of a categorical raster -- the {lab} of the "
             "class values (for example species or community types) within a "
-            "{nbr} moving neighborhood. Ported and generalized from the SSI "
-            "ArcMap Shannon's Index tool; part of the Land Facet Corridor "
-            "Designer tool family; needs no Spatial Analyst. {cite}").format(
+            "{nbr} moving neighborhood. Ported and generalized from the Land "
+            "Facet Corridor Designer's ArcMap Shannon's Index tool; needs no "
+            "Spatial Analyst. {cite}").format(
                 lab=label, nbr=note, cite=_CD_CITATION),
         tags=("diversity, Shannon index, Simpson index, effective number of "
               "species, Hill numbers, richness, evenness, neighborhood, focal, "

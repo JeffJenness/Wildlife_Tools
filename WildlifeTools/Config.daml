@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.50.1" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.53.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -60,8 +60,11 @@
           <button refID="WildlifeTools_SlopeGraphic" size="large" />
         </group>
         <group id="WildlifeTools_GroupCorridor" caption="Corridor Designer Tools" appearsOnAddInTab="false">
-          <button refID="WildlifeTools_DiversityIndices" size="large" />
           <button refID="WildlifeTools_LandFacet" size="large" />
+          <button refID="WildlifeTools_LandFacetDensity" size="large" />
+          <button refID="WildlifeTools_LandFacetMahalanobis" size="large" />
+          <button refID="WildlifeTools_DiversityIndices" size="large" />
+          <button refID="WildlifeTools_InvertRaster" size="large" />
         </group>
         <group id="WildlifeTools_GroupData" caption="Data Tools" appearsOnAddInTab="false">
           <button refID="WildlifeTools_FavoriteDatasets" size="large" />
@@ -562,7 +565,40 @@
                 largeImage="Images\LandFacet_32.png"
                 keytip="LF">
           <tooltip heading="Land Facet Clustering">
-            Opens the Land Facet Clustering wizard: an all-in-ArcGIS-Pro replacement for the Land Facet Corridor Designer's export-to-R / run-fuzzy-clustering-in-R / import-from-R round trip. It groups the cells of a categorical landscape (for example topographic-position or soil classes) into land facets by fuzzy c-means clustering of continuous variables (elevation, slope, insolation, ...), with interactive outlier detection and cluster-number selection, and writes a land-facet raster -- no R required. A port and modernization of the Brost &amp; Beier method (Land Facet Corridor Designer). NOTE: in active development; the setup/read step is functional, the outlier/cluster/facet steps are being built.<disabledText />
+            Opens the Land Facet Clustering wizard: an all-in-ArcGIS-Pro replacement for the Land Facet Corridor Designer's export-to-R / run-fuzzy-clustering-in-R / import-from-R round trip. It groups the cells of a categorical landscape (for example topographic-position or soil classes) into land facets by fuzzy c-means clustering of continuous variables (elevation, slope, insolation, ...) -- no R required. A four-step wizard walks through reading the inputs (with an optional Wildland Blocks clip), interactive kernel-density outlier detection, choosing the number of clusters from eight validity indices with a suggested consensus value, and generating the facets. It classifies every category in one pass into a SINGLE combined raster with unique facet IDs, symbolized by category hue and cluster shade, and records the analysis (facet list, variable order, clustering settings) in the output's metadata so the Land Facet Density and Mahalanobis tools can pick up from there. A port and modernization of the Brost &amp; Beier method (Land Facet Corridor Designer), with the clustering and validity numerics validated against the original R.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_LandFacetDensity"
+                caption="Land Facet Density"
+                className="Corridor.LandFacetDensityButton"
+                loadOnClick="true"
+                smallImage="Images\LandFacetDensity_16.png"
+                largeImage="Images\LandFacetDensity_32.png"
+                keytip="DS">
+          <tooltip heading="Land Facet Density">
+            Opens the Land Facet Density tool from the Jenness Enterprises toolbox: for every land facet in a land facet raster, the proportion of the surrounding neighborhood composed of that facet, from 0 to 1. The result is ONE multi-band raster with a band per facet, computed in a single pass, rather than the one-raster-per-facet the original ArcMap Calculate Density Surface tool produced. Density is used twice in a Land Facet corridor analysis: the high-density regions inside the Wildland Blocks become the corridor termini, and density is one of the variables in the Mahalanobis cost surface, where its ideal value is 100% rather than its mean. Values are stored as integers scaled by 10,000 (divide by 10,000 for the proportion), and the band-to-facet mapping is recorded in the output's metadata, since raster band names do not survive a copy into a geodatabase. Run it on the output of the Land Facet Clustering tool and every band is labelled with its category and cluster automatically. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_LandFacetMahalanobis"
+                caption="Land Facet Mahalanobis"
+                className="Corridor.LandFacetMahalanobisButton"
+                loadOnClick="true"
+                smallImage="Images\LandFacetMahal_16.png"
+                largeImage="Images\LandFacetMahal_32.png"
+                keytip="MD">
+          <tooltip heading="Land Facet Mahalanobis">
+            Opens the Land Facet Mahalanobis tool from the Jenness Enterprises toolbox: one Mahalanobis distance cost (resistance) surface per land facet, measuring how far every cell departs, in multivariate standard deviations, from the conditions typical of that facet. The mean vector and covariance matrix come ONLY from the facet's cells inside the Wildland Blocks, which act as training data, while the surface itself covers the whole analysis area -- so the output extends well beyond the blocks, as a corridor must. Each facet gets its own single-band raster, ready to use directly as the cost surface in least-cost corridor modelling. Supply a Land Facet Density raster and density joins the analysis with a characteristic value of 100% rather than its mean, the substitution the original workflow left to the analyst to remember. Variables and facets are filled in automatically from the land facet raster's own analysis record. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_InvertRaster"
+                caption="Invert Raster"
+                className="Corridor.InvertRasterButton"
+                loadOnClick="true"
+                smallImage="Images\InvertRaster_16.png"
+                largeImage="Images\InvertRaster_32.png"
+                keytip="IR">
+          <tooltip heading="Invert Raster">
+            Opens the Invert Raster tool from the Jenness Enterprises toolbox: numerically inverts a raster (each cell becomes 1/(x + c)) so a surface where HIGH values mean good habitat -- a Land Facet Density raster, a Diversity Indices surface -- becomes a least-cost surface where that good ground is CHEAP to cross, ready for CorridorDesigner or Cost Distance. The small constant c (default 0.1, the Land Facet manual's strong recommendation) prevents zero cells from dividing to NoData and reproduces the published diversity resistance formula 1/(H' + 0.1). A multi-band Land Facet Density raster produces one single-band cost raster per facet in a single run, named from the density raster's own records, with the stored integer scaling converted back to 0-1 proportions first so the constant keeps its intended meaning. A modernized port of the Land Facet Corridor Designer's Invert Raster tool. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_DiversityIndices"
@@ -573,7 +609,7 @@
                 largeImage="Images\Diversity_32.png"
                 keytip="DV">
           <tooltip heading="Diversity Indices">
-            Opens the Diversity Indices tool from the Jenness Enterprises toolbox: neighborhood (focal) diversity of a CATEGORICAL raster, where each cell is a class (typically a species or vegetation/community type). Over a moving neighborhood of any shape and size it computes the effective number of species (Hill numbers of order q -- the default and most defensible modern measure), Shannon's index, the Gini-Simpson index, or Simpson's concentration. Works on projected or geographic rasters (with the same geodesic per-row adjustment as the other neighborhood tools) and needs no Spatial Analyst. A modernized port of the SSI ArcMap Shannon's Index tool; part of the Land Facet Corridor Designer tool family. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
+            Opens the Diversity Indices tool from the Jenness Enterprises toolbox: neighborhood (focal) diversity of a CATEGORICAL raster, where each cell is a class (typically a species or vegetation/community type). Over a moving neighborhood of any shape and size it computes the effective number of species (Hill numbers of order q -- the default and most defensible modern measure), Shannon's index, the Gini-Simpson index, or Simpson's concentration. Works on projected or geographic rasters (with the same geodesic per-row adjustment as the other neighborhood tools) and needs no Spatial Analyst. A modernized port of the Land Facet Corridor Designer's ArcMap Shannon's Index tool, which built the diversity surface used for the facet-interspersion corridor. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_SimpleTPI"

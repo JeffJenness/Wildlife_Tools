@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Invert Raster: a good-habitat ramp (green, dark = high value) flipped
+       into a cost ramp (warm, dark = high cost at the BOTTOM), with the swap
+       arrows between. Reads as "high-is-good becomes low-is-cheap". -->
+  <g>
+    <rect x="2" y="2"  width="9" height="6.5" rx="1" fill="#1E6B34"/>
+    <rect x="2" y="9.5" width="9" height="6.5" rx="1" fill="#57A639"/>
+    <rect x="2" y="17" width="9" height="6.5" rx="1" fill="#9CCB7A"/>
+    <rect x="2" y="24.5" width="9" height="5.5" rx="1" fill="#DDEFCB"/>
+  </g>
+  <g>
+    <rect x="21" y="2"  width="9" height="6.5" rx="1" fill="#F5E1C8"/>
+    <rect x="21" y="9.5" width="9" height="6.5" rx="1" fill="#E8B074"/>
+    <rect x="21" y="17" width="9" height="6.5" rx="1" fill="#D9772E"/>
+    <rect x="21" y="24.5" width="9" height="5.5" rx="1" fill="#B03A2E"/>
+  </g>
+  <!-- swap arrows -->
+  <path d="M 12.6 9.6 L 19.4 9.6 L 19.4 6.4 L 24 11.2 L 19.4 16 L 19.4 12.8 L 12.6 12.8 Z"
+        fill="#2C3E50" transform="translate(-2.6 0) scale(0.86 0.9)"/>
+  <path d="M 19.4 22.4 L 12.6 22.4 L 12.6 19.2 L 8 24 L 12.6 28.8 L 12.6 25.6 L 19.4 25.6 Z"
+        fill="#2C3E50" transform="translate(4.4 -1.6) scale(0.86 0.9)"/>
+</svg>

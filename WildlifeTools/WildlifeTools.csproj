@@ -235,6 +235,18 @@
     <Content Include="Images\LandFacet_32.png" />
     <Content Include="DarkImages\LandFacet_16.png" />
     <Content Include="DarkImages\LandFacet_32.png" />
+    <Content Include="Images\LandFacetDensity_16.png" />
+    <Content Include="Images\LandFacetDensity_32.png" />
+    <Content Include="DarkImages\LandFacetDensity_16.png" />
+    <Content Include="DarkImages\LandFacetDensity_32.png" />
+    <Content Include="Images\LandFacetMahal_16.png" />
+    <Content Include="Images\LandFacetMahal_32.png" />
+    <Content Include="DarkImages\LandFacetMahal_16.png" />
+    <Content Include="DarkImages\LandFacetMahal_32.png" />
+    <Content Include="Images\InvertRaster_16.png" />
+    <Content Include="Images\InvertRaster_32.png" />
+    <Content Include="DarkImages\InvertRaster_16.png" />
+    <Content Include="DarkImages\InvertRaster_32.png" />
     <!-- Sudoku skin fonts, embedded as WPF resources so they render on every
          machine with no installation (all SIL Open Font License; the OFL
          texts ship alongside as required for redistribution). -->
@@ -272,6 +284,12 @@
     <!-- Hidden GDAL raster-write helper for the Land Facet tool, run as a
          subprocess under Pro's Python; must sit next to the assembly. -->
     <Content Include="Corridor\corridor_write_raster.py">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Hidden linkage-metadata helper for the Land Facet tool. Runs under Pro's
+         Python so it can reuse Toolboxes\land_facet_linkage.py, the single
+         definition of the record format the density and Mahalanobis tools read. -->
+    <Content Include="Corridor\corridor_write_metadata.py">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

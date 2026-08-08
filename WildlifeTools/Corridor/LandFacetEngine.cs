@@ -439,13 +439,17 @@ namespace WildlifeTools.Corridor
             var kernels = model.Kernels;
             var inv = model.BwInv;
             var density = new double[query.Length];
-            for (int i = 0; i < query.Length; i++)
+            // Each query point is independent and its kernel sum keeps the same
+            // order, so the result is identical to the serial loop -- only spread
+            // across cores. This is the dominant cost when classifying every cell.
+            System.Threading.Tasks.Parallel.For(0, query.Length, i =>
             {
+                var q = query[i];
                 double s = 0.0;
                 foreach (var k in kernels)
-                    s += Math.Exp(-0.5 * QuadForm(query[i], k, inv));
+                    s += Math.Exp(-0.5 * QuadForm(q, k, inv));
                 density[i] = s;
-            }
+            });
             return density;
         }
 
@@ -486,15 +490,17 @@ namespace WildlifeTools.Corridor
 
         private static double QuadForm(double[] a, double[] b, double[][] inv)
         {
+            // (a-b)^T inv (a-b) computed without allocating a difference vector --
+            // this is called cells x kernels times in KdeEval, so the per-call
+            // allocation dominated GC on large rasters.
             int d = a.Length;
-            var diff = new double[d];
-            for (int i = 0; i < d; i++) diff[i] = a[i] - b[i];
             double s = 0.0;
             for (int i = 0; i < d; i++)
             {
+                double[] invi = inv[i];
                 double row = 0.0;
-                for (int j = 0; j < d; j++) row += inv[i][j] * diff[j];
-                s += diff[i] * row;
+                for (int j = 0; j < d; j++) row += invi[j] * (a[j] - b[j]);
+                s += (a[i] - b[i]) * row;
             }
             return s;
         }
