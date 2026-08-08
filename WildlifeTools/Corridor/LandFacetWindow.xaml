@@ -90,8 +90,14 @@
           <TextBlock Text="Restrict the analysis to a Wildland-Blocks polygon layer."
                      TextWrapping="Wrap" Foreground="#777" FontSize="11" Margin="0,2,0,0" />
 
-          <Button x:Name="btnRead" Content="Read inputs" Width="120"
-                  HorizontalAlignment="Left" Margin="0,16,0,0" Click="OnReadInputs" />
+          <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+            <Button x:Name="btnRead" Content="Read inputs" Width="120"
+                    Click="OnReadInputs" />
+            <Button x:Name="btnExportR" Content="Export tables for R..."
+                    Width="150" Margin="10,0,0,0" IsEnabled="False"
+                    Click="OnExportR"
+                    ToolTip="Write one FuzzyData_Class&lt;value&gt;.csv per class from the data just read — the original Export-for-R schema — for running the fuzzy clustering in R instead of in this wizard." />
+          </StackPanel>
         </StackPanel>
 
         <StackPanel Grid.Column="2">

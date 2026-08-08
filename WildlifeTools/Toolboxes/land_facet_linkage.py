@@ -47,6 +47,7 @@ DENSITY = "density"     # written by the Land Facet Density tool
 MAHALANOBIS = "mahalanobis"   # written by the Land Facet Mahalanobis tool
 INVERTED = "inverted"   # written by the Invert Raster tool
 DIVERSITY = "diversity"       # written by the Diversity Indices tool
+TERMINI = "termini"     # written by the Identify Termini Polygons tool
 
 # Marker prefix so the blob is recognizable (and so a human reading the
 # Supplemental Information field can see what it is) and separable from any
@@ -194,6 +195,41 @@ def diversity_record(analysis_id, source_raster, index_label, q,
         "q": q,
         "neighborhood": neighborhood_note,
         "exclude_if_any_null": bool(exclude_if_any_null),
+    }
+
+
+def termini_record(analysis_id, source_raster, blocks, threshold_mode,
+                   relative_size_pct, source_analysis_id=None, facets=None,
+                   threshold_value=None, n_blocks=None):
+    """Build the record stamped on an Identify Termini Polygons output.
+
+    Termini are the POLYGON product of the chain -- the high-density (or
+    high-diversity) concentrations inside each Wildland Block that the
+    least-cost corridors will run between -- so the record carries what they
+    were cut from and how: the source surface, the threshold rule (a fixed
+    value, or the median computed within each block), the relative-size
+    retention rule, and the facets present in the output (the future corridor
+    creation tools group the feature class by its Facet field and can build
+    every facet's corridor in one run).
+
+    ``facets``: ``[{"facet_id", "label", "band", "n_termini"}]``.
+    ``threshold_value`` is the fixed threshold (None in median mode, where
+    each block computed its own).
+    """
+    return {
+        "schema": SCHEMA,
+        "record": TERMINI,
+        "analysis_id": analysis_id,
+        "created": _utc_now(),
+        "tool": "Identify Termini Polygons",
+        "source_raster": str(source_raster),
+        "source_analysis_id": source_analysis_id,
+        "wildland_blocks": str(blocks) if blocks else None,
+        "n_blocks": n_blocks,
+        "threshold_mode": threshold_mode,
+        "threshold_value": threshold_value,
+        "relative_size_pct": relative_size_pct,
+        "facets": list(facets or []),
     }
 
 

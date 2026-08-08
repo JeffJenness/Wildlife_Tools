@@ -57,6 +57,8 @@ import land_facet_density  # noqa: E402
 import land_facet_linkage  # noqa: E402
 import land_facet_mahalanobis  # noqa: E402
 import invert_raster  # noqa: E402
+import land_facet_termini  # noqa: E402
+import raster_extremes  # noqa: E402
 import tool_metadata  # noqa: E402
 import error_report   # noqa: E402
 
@@ -312,7 +314,8 @@ class Toolbox(object):
                       GeneralRasterClassification,
                       LSRIOnDEM, LSRIOnContourPolylines,
                       DiversityIndices, LandFacetDensity, LandFacetMahalanobis,
-                      InvertRaster]
+                      InvertRaster, IdentifyTerminiPolygons,
+                      FindRasterExtremeValues]
 
 
 class LoCoHStandard(object):
@@ -8080,6 +8083,329 @@ class LandFacetMahalanobis(object):
                 "out_type": P["out_type"].valueAsText,
                 "inversion": P["inversion"].valueAsText,
             })
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class IdentifyTerminiPolygons(object):
+    """Identify Termini Polygons -- the concentrations of a land facet (or of
+    facet diversity) inside each Wildland Block, as the polygons the
+    least-cost corridors will run between. See ``land_facet_termini``."""
+
+    _MODE_FIXED_UI = "Fixed value (density surfaces: 0)"
+    _MODE_MEDIAN_UI = "Median within each Wildland Block (diversity surfaces)"
+
+    def __init__(self):
+        self.label = "Identify Termini Polygons"
+        self.description = (
+            "Finds the corridor termini polygons within each Wildland Block: "
+            "the regions of an analysis surface (typically a Land Facet "
+            "Density raster or a Diversity surface) whose cells exceed a "
+            "threshold, aggregated so that cells touching along an edge or "
+            "at a corner form one region, keeping regions at least a given "
+            "percentage (default 50%) of the size of the largest region in "
+            "their block. Fed this suite's multi-band Land Facet Density "
+            "raster it processes every facet in one run and writes ONE "
+            "polygon feature class with a Facet field; any number of "
+            "Wildland Block features is allowed (each feature is one "
+            "block). The threshold is a fixed value (use 0 for density: any "
+            "density at all) or, for diversity surfaces, the median of each "
+            "block's own cells -- the manual's 'top half of H-prime' rule "
+            "computed exactly. Areas are geodesic. Every output records its "
+            "place in the Land Facet analysis chain. A modernized port of "
+            "the Land Facet Corridor Designer's Identify Termini Polygons "
+            "tool. Needs no Spatial Analyst.")
+        self.category = "Corridor Designer Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Analysis surface (density or diversity raster)",
+            name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset", "DERasterBand"],
+            parameterType="Required", direction="Input")
+        blocks = arcpy.Parameter(
+            displayName="Wildland Block polygons (each feature = one block)",
+            name="blocks",
+            datatype="GPFeatureLayer",
+            parameterType="Required", direction="Input")
+        # NOTE: filter.list with a LIST of datatypes silently breaks
+        # getParameterInfo (the zero-params trap) -- single datatype only.
+        blocks.filter.list = ["Polygon"]
+        out_fc = arcpy.Parameter(
+            displayName="Output termini polygon feature class", name="out_fc",
+            datatype="DEFeatureClass", parameterType="Required",
+            direction="Output")
+        thr_mode = arcpy.Parameter(
+            displayName="Threshold rule", name="threshold_mode",
+            datatype="GPString", parameterType="Required", direction="Input")
+        thr_mode.filter.type = "ValueList"
+        thr_mode.filter.list = [self._MODE_FIXED_UI, self._MODE_MEDIAN_UI]
+        thr_mode.value = self._MODE_FIXED_UI
+        thr_value = arcpy.Parameter(
+            displayName="Threshold value (keep cells above this)",
+            name="threshold_value",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        thr_value.value = 0.0
+        pct = arcpy.Parameter(
+            displayName="Relative size threshold (% of the largest polygon "
+                        "in each block)",
+            name="relative_size_pct",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        pct.value = land_facet_termini.DEFAULT_PCT
+        facets = arcpy.Parameter(
+            displayName="Facets / bands to analyze (default: all)",
+            name="facets", datatype="GPString", parameterType="Optional",
+            direction="Input", multiValue=True)
+        return [in_raster, blocks, out_fc, thr_mode, thr_value, pct, facets]
+
+    def isLicensed(self):
+        return True
+
+    def _band_count(self, inr):
+        try:
+            return getattr(arcpy.Describe(inr.valueAsText), "bandCount", 1)
+        except Exception:
+            return 1
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr = P["in_raster"], P["out_fc"]
+        multi = bool(inr.valueAsText) and self._band_count(inr) > 1
+        P["facets"].enabled = multi
+
+        if inr.valueAsText and not inr.hasBeenValidated:
+            try:
+                path = _resolve_raster_path(inr) or inr.valueAsText
+                rec, _bn = invert_raster.source_density_record(path)
+                choices = []
+                if rec:
+                    for b in rec.get("bands") or []:
+                        choices.append("{} ({})".format(
+                            b.get("facet_id"),
+                            land_facet_linkage.facet_label(b)))
+                if choices:
+                    P["facets"].filter.list = choices
+                # The manual's rules, applied automatically when the input's
+                # own records identify it: a Land Facet Density raster ->
+                # fixed threshold 0 (any density at all); a Diversity
+                # Indices surface -> each block's own median. Suggested only
+                # on the cycle where the INPUT changed, so a later manual
+                # choice of rule is left alone.
+                if rec:
+                    P["threshold_mode"].value = self._MODE_FIXED_UI
+                    P["threshold_value"].value = 0.0
+                elif land_facet_linkage.read(
+                        path, land_facet_linkage.DIVERSITY) is not None:
+                    P["threshold_mode"].value = self._MODE_MEDIAN_UI
+            except Exception:
+                pass
+
+        # After the auto-select, so the value field greys out on the same
+        # validation cycle that switches the rule to median.
+        P["threshold_value"].enabled = (
+            P["threshold_mode"].valueAsText != self._MODE_MEDIAN_UI)
+
+        if inr.valueAsText:
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(os.path.basename(
+                        inr.valueAsText))[0] + "_Termini")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        pct = P["relative_size_pct"].value
+        if pct is not None and not (0 <= pct <= 100):
+            P["relative_size_pct"].setErrorMessage(
+                "The relative size threshold must be between 0 and 100 "
+                "percent.")
+        blocks = P["blocks"]
+        if blocks.valueAsText:
+            try:
+                if arcpy.Describe(blocks.value or
+                                  blocks.valueAsText).shapeType != "Polygon":
+                    blocks.setErrorMessage(
+                        "The Wildland Blocks must be a polygon layer.")
+            except Exception:
+                pass
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(land_facet_linkage)
+            importlib.reload(land_facet_mahalanobis)
+            importlib.reload(invert_raster)
+            importlib.reload(land_facet_termini)
+            P = {p.name: p for p in parameters}
+            in_path = (_resolve_raster_path(P["in_raster"])
+                       or P["in_raster"].valueAsText)
+            picked = P["facets"].valueAsText
+            facet_values = None
+            if picked:
+                facet_values = [t.strip().strip("'").split("(", 1)[0].strip()
+                                for t in picked.split(";") if t.strip()]
+            mode = (land_facet_termini.MODE_MEDIAN
+                    if P["threshold_mode"].valueAsText == self._MODE_MEDIAN_UI
+                    else land_facet_termini.MODE_FIXED)
+            out_lyrx = land_facet_termini.run_termini(
+                in_raster=in_path,
+                blocks=(P["blocks"].value or P["blocks"].valueAsText),
+                out_fc=P["out_fc"].valueAsText,
+                threshold_mode=mode,
+                threshold_value=P["threshold_value"].value or 0.0,
+                pct=(P["relative_size_pct"].value
+                     if P["relative_size_pct"].value is not None
+                     else land_facet_termini.DEFAULT_PCT),
+                facet_values=facet_values,
+                messages=messages)
+            if out_lyrx:
+                try:
+                    P["out_fc"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage(
+                        "Could not set output symbology: {}".format(e))
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class FindRasterExtremeValues(object):
+    """Find Raster Extreme Values -- peaks and low points of a DEM as a point
+    feature class, with topographic prominence / depression depth and an
+    edge-of-data flag. See ``raster_extremes``."""
+
+    def __init__(self):
+        self.label = "Find Raster Extreme Values"
+        self.description = (
+            "Finds the regional extremes of ANY raster surface and writes one "
+            "point per extreme. On a DEM those are summits and sinks -- a low "
+            "point is a cell (or connected flat) with no lower neighbor, a "
+            "peak the same on the inverted surface -- but the tool works "
+            "identically on any continuous raster: a slope raster gives the "
+            "steepest and flattest points on the landscape, a habitat-"
+            "suitability surface gives the locations of best and worst "
+            "habitat, and the same goes for temperature, wetness, or any "
+            "other modeled value. Flat tops and flat-bottomed basins yield "
+            "ONE point each; flats that drain (benches) are excluded. Each "
+            "point carries the source raster name and workspace, its value, "
+            "X and Y (in the output's coordinate system -- the raster's, "
+            "unless the Output Coordinates environment overrides it, which "
+            "this tool honors), its prominence (for a DEM: topographic "
+            "prominence or depression depth; for other surfaces: how far the "
+            "value stands above or below its surroundings), and a flag "
+            "marking extremes on the edge of the data whose neighbors are "
+            "unknown. Optional filters: minimum prominence/depth, and a "
+            "dominance window keeping only the most extreme point within a "
+            "radius. Needs no Spatial Analyst.")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input raster surface (DEM)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        extreme_type = arcpy.Parameter(
+            displayName="Extremes to find", name="extreme_type",
+            datatype="GPString", parameterType="Required", direction="Input")
+        extreme_type.filter.type = "ValueList"
+        extreme_type.filter.list = raster_extremes.EXTREME_TYPES
+        extreme_type.value = raster_extremes.EXTREME_TYPES[0]
+        out_fc = arcpy.Parameter(
+            displayName="Output point feature class", name="out_fc",
+            datatype="DEFeatureClass", parameterType="Required",
+            direction="Output")
+        min_prom = arcpy.Parameter(
+            displayName="Minimum prominence / depth (raster units)",
+            name="min_prominence",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        min_prom.value = 0.0
+        window = arcpy.Parameter(
+            displayName="Dominance window radius (cells; 1 = every extreme)",
+            name="window",
+            datatype="GPLong", parameterType="Optional", direction="Input")
+        window.value = 1
+        return [in_raster, extreme_type, out_fc, min_prom, window]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr = P["in_raster"], P["out_fc"]
+        if inr.valueAsText:
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(os.path.basename(
+                        inr.valueAsText))[0] + "_Extremes")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr = P["in_raster"]
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage("The raster must be single band.")
+            except Exception:
+                pass
+        mp = P["min_prominence"].value
+        if mp is not None and mp < 0:
+            P["min_prominence"].setErrorMessage(
+                "The minimum prominence must be zero or positive.")
+        w = P["window"].value
+        if w is not None and w < 1:
+            P["window"].setErrorMessage(
+                "The dominance window radius must be at least 1 cell.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(raster_extremes)
+            P = {p.name: p for p in parameters}
+            in_path = (_resolve_raster_path(P["in_raster"])
+                       or P["in_raster"].valueAsText)
+            out_lyrx = raster_extremes.run_find_extremes(
+                in_raster=in_path,
+                out_fc=P["out_fc"].valueAsText,
+                extreme_type=P["extreme_type"].valueAsText,
+                min_prominence=P["min_prominence"].value or 0.0,
+                window=P["window"].value or 1,
+                messages=messages)
+            if out_lyrx:
+                try:
+                    P["out_fc"].symbology = out_lyrx
+                except Exception as e:
+                    messages.addWarningMessage(
+                        "Could not set output symbology: {}".format(e))
         except arcpy.ExecuteError:
             raise
         except Exception:

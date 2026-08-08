@@ -1,11 +1,11 @@
-<?xml version="1.0" encoding="utf-8" ?>
+﻿<?xml version="1.0" encoding="utf-8" ?>
 <ArcGIS defaultAssembly="WildlifeTools.dll"
         defaultNamespace="WildlifeTools"
         xmlns="http://schemas.esri.com/DADF/Registry"
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.54.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.56.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -33,51 +33,91 @@
       </tabs>
 
       <groups>
-        <group id="WildlifeTools_Group1" caption="Home Range" appearsOnAddInTab="false">
+        <group id="WildlifeTools_Group1" caption="Home Range" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\LoCoH_32.png" smallImage="Images\LoCoH_32.png">
+          <subgroup refID="WildlifeTools_SubHomeRange" />
+        </group>
+        <group id="WildlifeTools_GroupGraphics" caption="Graphics" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\CircleBackground_32.png" smallImage="Images\CircleBackground_32.png">
+          <subgroup refID="WildlifeTools_SubGraphics" />
+        </group>
+        <group id="WildlifeTools_GroupCartography" caption="Cartography" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\CompassRose_32.png" smallImage="Images\CompassRose_32.png">
+          <subgroup refID="WildlifeTools_SubCartography" />
+        </group>
+        <group id="WildlifeTools_GroupTopo" caption="Topographic Analysis" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\TRI_32.png" smallImage="Images\TRI_32.png">
+          <subgroup refID="WildlifeTools_SubTopo" />
+        </group>
+        <group id="WildlifeTools_GroupDirectional" caption="Terrain Graphs" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\PolarPlot_32.png" smallImage="Images\PolarPlot_32.png">
+          <subgroup refID="WildlifeTools_SubDirectional" />
+        </group>
+        <group id="WildlifeTools_GroupCorridor" caption="Corridor Designer Tools" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\LandFacet_32.png" smallImage="Images\LandFacet_32.png">
+          <subgroup refID="WildlifeTools_SubCorridor" />
+        </group>
+        <group id="WildlifeTools_GroupData" caption="Data Tools" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\FavoriteData_32.png" smallImage="Images\FavoriteData_32.png">
+          <subgroup refID="WildlifeTools_SubData" />
+        </group>
+        <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\Sudoku_32.png" smallImage="Images\Sudoku_32.png">
+          <subgroup refID="WildlifeTools_SubBreak" />
+        </group>
+      </groups>
+      <subgroups>
+        <!-- One subgroup per group so the ribbon can DEMOTE the buttons (large
+             -> captioned small icons) as the window narrows, BEFORE the group
+             collapses to its single chunk; without subgroups the only shrink
+             the framework can perform is the collapse itself. -->
+        <subgroup id="WildlifeTools_SubGraphics" size="LargeThenMediumWhenMedium">
+
+          <toolPalette refID="WildlifeTools_AddGraphicsPalette" size="large" />
+          <toolPalette refID="WildlifeTools_GraphicBackgroundsPalette" size="large" />
+        </subgroup>
+        <subgroup id="WildlifeTools_SubHomeRange" size="LargeThenMediumWhenMedium">
+
           <menu refID="WildlifeTools_LoCoHMenu" size="large" />
           <menu refID="WildlifeTools_KernelDensityMenu" size="large" />
           <menu refID="WildlifeTools_MahalanobisMenu" size="large" />
-        </group>
-        <group id="WildlifeTools_GroupGraphics" caption="Graphics" appearsOnAddInTab="false">
-          <toolPalette refID="WildlifeTools_AddGraphicsPalette" size="large" />
-          <toolPalette refID="WildlifeTools_GraphicBackgroundsPalette" size="large" />
-        </group>
-        <group id="WildlifeTools_GroupCartography" caption="Cartography" appearsOnAddInTab="false">
+        </subgroup>
+        <subgroup id="WildlifeTools_SubCartography" size="LargeThenMediumWhenMedium">
+
           <toolPalette refID="WildlifeTools_NorthArrowsPalette" size="large" />
           <button refID="WildlifeTools_RemoveSlc" size="large" />
           <button refID="WildlifeTools_ShadowPolygons" size="large" />
           <menu refID="WildlifeTools_HillshadeVariationsMenu" size="large" />
-        </group>
-        <group id="WildlifeTools_GroupTopo" caption="Topographic Analysis" appearsOnAddInTab="false">
+        </subgroup>
+        <subgroup id="WildlifeTools_SubTopo" size="LargeThenMediumWhenMedium">
+
           <menu refID="WildlifeTools_TopographicRoughnessMenu" size="large" />
           <button refID="WildlifeTools_TopographicWetnessIndex" size="large" />
           <button refID="WildlifeTools_SlopeZonalStatistics" size="large" />
+          <button refID="WildlifeTools_FindRasterExtremes" size="large" />
           <menu refID="WildlifeTools_TPIMenu" size="large" />
           <menu refID="WildlifeTools_AspectToolsMenu" size="large" />
-        </group>
-        <group id="WildlifeTools_GroupDirectional" caption="Terrain Graphs" appearsOnAddInTab="false">
-          <button refID="WildlifeTools_PolarPlots" size="large" />
-          <button refID="WildlifeTools_SlopeGraphic" size="large" />
-        </group>
-        <group id="WildlifeTools_GroupCorridor" caption="Corridor Designer Tools" appearsOnAddInTab="false">
+        </subgroup>
+        <subgroup id="WildlifeTools_SubCorridor" size="LargeThenMediumWhenMedium">
+
           <button refID="WildlifeTools_LandFacet" size="large" />
           <button refID="WildlifeTools_LandFacetDensity" size="large" />
           <button refID="WildlifeTools_LandFacetMahalanobis" size="large" />
           <button refID="WildlifeTools_DiversityIndices" size="large" />
           <button refID="WildlifeTools_InvertRaster" size="large" />
+          <button refID="WildlifeTools_IdentifyTermini" size="large" />
           <button refID="WildlifeTools_LandFacetDescribe" size="large" />
-        </group>
-        <group id="WildlifeTools_GroupData" caption="Data Tools" appearsOnAddInTab="false">
+        </subgroup>
+        <subgroup id="WildlifeTools_SubDirectional" size="LargeThenMediumWhenMedium">
+
+          <button refID="WildlifeTools_PolarPlots" size="large" />
+          <button refID="WildlifeTools_SlopeGraphic" size="large" />
+        </subgroup>
+        <subgroup id="WildlifeTools_SubData" size="LargeThenMediumWhenMedium">
+
           <button refID="WildlifeTools_FavoriteDatasets" size="large" />
           <button refID="WildlifeTools_AttributeSummary" size="large" />
-        </group>
-        <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false">
-          <button refID="WildlifeTools_ThoughtForTheDay" size="small" />
-          <button refID="WildlifeTools_Sudoku" size="small" />
-          <button refID="WildlifeTools_SlidingPuzzle" size="small" />
-          <button refID="WildlifeTools_EasterEgg" size="small" />
-        </group>
-      </groups>
+        </subgroup>
+        <subgroup id="WildlifeTools_SubBreak" size="LargeThenMediumWhenMedium">
+          <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
+          <button refID="WildlifeTools_Sudoku" size="large" />
+          <button refID="WildlifeTools_SlidingPuzzle" size="large" />
+          <button refID="WildlifeTools_EasterEgg" size="large" />
+        </subgroup>
+      </subgroups>
+
 
       <controls>
         <button id="WildlifeTools_LoCoHStandard"
@@ -602,14 +642,36 @@
             Opens the Invert Raster tool from the Jenness Enterprises toolbox: numerically inverts a raster (each cell becomes 1/(x + c)) so a surface where HIGH values mean good habitat -- a Diversity Indices surface, a Land Facet Density raster -- becomes a least-cost surface where that good ground is CHEAP to cross, ready for CorridorDesigner or Cost Distance. The dialog follows the input: a single-band raster asks for one output raster, while a multi-band Land Facet Density raster asks for a workspace and prefix and writes one single-band cost raster per facet in a single run, named from the density raster's own records, with the stored integer scaling converted back to 0-1 proportions first so the constant keeps its intended meaning. The small constant c (default 0.1, the Land Facet manual's strong recommendation) prevents zero cells from dividing to NoData and reproduces the published diversity resistance formula 1/(H' + 0.1). Every output records its place in the Land Facet analysis chain. A modernized port of the Land Facet Corridor Designer's Invert Raster tool. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
+        <button id="WildlifeTools_FindRasterExtremes"
+                caption="Find Raster Extreme Values"
+                className="FindRasterExtremesButton"
+                loadOnClick="true"
+                smallImage="Images\FindExtremes_16.png"
+                largeImage="Images\FindExtremes_32.png"
+                keytip="FE">
+          <tooltip heading="Find Raster Extreme Values">
+            Opens the Find Raster Extreme Values tool from the Jenness Enterprises toolbox: finds the regional extremes of ANY raster surface and writes one point per extreme. On a DEM those are summits and sinks — a low point is a cell (or connected flat) with no lower neighbor, a peak is the same thing on the inverted surface — but the tool works identically on any continuous raster: run it on a slope raster to find the steepest and flattest points on the landscape, on a habitat-suitability surface to pin the locations of best and worst habitat, on temperature, wetness, density, or any other modeled surface. Flat tops and flat-bottomed basins yield one point each; flats that drain (benches) are excluded. Each point carries the source raster name and workspace, the cell value, X and Y (honoring the Output Coordinates environment), its prominence — for a DEM, true topographic prominence or depression depth; for any other surface, how far the value stands above or below its surroundings — and an edge-of-data flag for extremes whose neighbors are unknown. Optional minimum-prominence and dominance-window filters screen out noise. Needs no Spatial Analyst. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_IdentifyTermini"
+                caption="Identify Termini Polygons"
+                className="Corridor.IdentifyTerminiButton"
+                loadOnClick="true"
+                smallImage="Images\Termini_16.png"
+                largeImage="Images\Termini_32.png"
+                keytip="IT">
+          <tooltip heading="Identify Termini Polygons">
+            Opens the Identify Termini Polygons tool from the Jenness Enterprises toolbox: finds the corridor termini within each Wildland Block -- the concentrations of a land facet (from a Land Facet Density raster) or of facet diversity (from a Diversity surface) that the least-cost corridors will run between. Cells above a threshold are aggregated into regions (edge- or corner-touching cells connect), and each block keeps the regions at least a given percentage (default 50%) of the size of its largest region. A multi-band Land Facet Density raster is processed facet by facet in ONE run, into a single polygon feature class with a Facet field; any number of Wildland Block features is allowed. The threshold is a fixed value (0 for density: any density at all) or each block's own median (the manual's rule for diversity, computed exactly). Every output records its place in the Land Facet analysis chain. A modernized port of the Land Facet Corridor Designer's Identify Termini Polygons tool. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
         <button id="WildlifeTools_LandFacetDescribe"
-                caption="Describe Land Facet Background"
+                caption="Land Facet Data Report"
                 className="Corridor.LandFacetDescribeButton"
                 loadOnClick="true"
                 smallImage="Images\LandFacetDescribe_16.png"
                 largeImage="Images\LandFacetDescribe_32.png"
                 keytip="DB">
-          <tooltip heading="Describe Land Facet Background">
+          <tooltip heading="Land Facet Data Report">
             Opens a window that reports, in plain language, where a dataset stands in the Land Facet Corridor analysis: which source data led to it, how each step was analyzed (the clustering variables in order, the density neighborhood and its denominator rule, the Mahalanobis sampling inside the Wildland Blocks, the inversion constant), and its position in the overall sequence. The report follows the dataset's recorded sources back to the original clustering run and WARNS when a source has been regenerated since -- a sign the described dataset may be out of date. Datasets not involved in a Land Facet analysis are reported as such (with their Jenness provenance summary quoted when they were made by these tools). Read-only; the report can be copied as text or formatted, or saved to a file for a methods section or a data delivery.<disabledText />
           </tooltip>
         </button>

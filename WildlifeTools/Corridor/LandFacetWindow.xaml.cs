@@ -266,6 +266,7 @@ namespace WildlifeTools.Corridor
             // Keep the chosen categorical raster out of the variable list.
             var cat = cboCat.SelectedItem as LayerItem;
             _stack = null;                       // inputs changed; a re-read is needed
+            btnExportR.IsEnabled = false;
             _varFlags = new();
             _vat = null;
             ResetBatchState();
@@ -310,10 +311,67 @@ namespace WildlifeTools.Corridor
         private void OnClipChanged(object sender, SelectionChangedEventArgs e)
             => InvalidateRead("Clip layer changed");
 
+        /// <summary>Write the per-class Export-for-R tables from the loaded
+        /// stack (the original workflow's branch point: users who prefer to run
+        /// the fuzzy clustering in R take these CSVs to LF_fxns.R instead of
+        /// continuing in this wizard). Enabled only while a read stack is
+        /// current, so the tables always match what the wizard would analyze —
+        /// including the clip and the complete-case filtering.</summary>
+        private async void OnExportR(object sender, RoutedEventArgs e)
+        {
+            if (_stack == null)
+            {
+                MessageBox.Show("Read the inputs first; the tables are written "
+                    + "from the data just read.", "Land Facet Clustering");
+                return;
+            }
+            var dlg = new ArcGIS.Desktop.Catalog.OpenItemDialog
+            {
+                Title = "Choose the folder for the R tables",
+                MultiSelect = false,
+                Filter = ArcGIS.Desktop.Catalog.ItemFilters.Folders,
+            };
+            if (dlg.ShowDialog() != true) return;
+            string folder = dlg.Items?.FirstOrDefault()?.Path;
+            if (string.IsNullOrEmpty(folder)) return;
+
+            var stack = _stack;          // capture: the UI may invalidate later
+            btnExportR.IsEnabled = false;
+            SetStatus("Writing the R tables…");
+            try
+            {
+                var written = await Task.Run(
+                    () => CorridorRExport.WriteTables(stack, folder));
+                SetStatus("Wrote " + written.Count + " R table"
+                    + (written.Count == 1 ? "" : "s") + " to " + folder);
+                MessageBox.Show(
+                    "Wrote " + written.Count + " table"
+                    + (written.Count == 1 ? "" : "s") + ":\n\n"
+                    + string.Join("\n", written.Select(System.IO.Path.GetFileName))
+                    + "\n\nSchema matches the original Export-for-R tool: one CSV "
+                    + "per class, one row per complete-case cell, one column per "
+                    + "variable (raw values; no id or coordinate columns). Use "
+                    + "them with the Land Facet R functions (LF_fxns.R), then "
+                    + "either continue in R or come back to this wizard.",
+                    "Export tables for R");
+            }
+            catch (Exception ex)
+            {
+                SetStatus("Export failed.");
+                MessageBox.Show("Could not write the R tables:\n" + ex.Message,
+                                "Export tables for R");
+            }
+            finally
+            {
+                btnExportR.IsEnabled = _stack != null;
+            }
+        }
+
         private void InvalidateRead(string reason)
         {
             if (_stack == null) return;          // nothing loaded to invalidate
             _stack = null;
+            btnExportR.IsEnabled = false;
             _varFlags = new();
             _varPaths = new();
             ResetBatchState();
@@ -482,6 +540,7 @@ namespace WildlifeTools.Corridor
                 });
                 var stack = res.st;
                 _stack = stack;
+                btnExportR.IsEnabled = true;
                 _varFlags = res.flags;
                 // Same order as stack.VariableNames -- recorded in the linkage
                 // metadata so the Mahalanobis tool can re-find these exact rasters.

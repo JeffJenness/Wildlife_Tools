@@ -6,8 +6,8 @@ using ArcGIS.Desktop.Framework.Dialogs;
 namespace WildlifeTools.Corridor
 {
     /// <summary>
-    /// Corridor Designer Tools-group ribbon button that opens the "Describe
-    /// Land Facet Background" window (a single shared non-modal instance):
+    /// Corridor Designer Tools-group ribbon button that opens the "Land Facet
+    /// Data Report" window (a single shared non-modal instance):
     /// pick a dataset and get a human-readable report of its sources, how they
     /// were analyzed, and where it sits in the Land Facet Corridor analysis
     /// sequence, with staleness warnings when a recorded source has since been
@@ -30,9 +30,9 @@ namespace WildlifeTools.Corridor
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    "Could not open the Describe Land Facet Background window:"
+                    "Could not open the Land Facet Data Report window:"
                     + Environment.NewLine + Environment.NewLine + ex.Message,
-                    "Describe Land Facet Background");
+                    "Land Facet Data Report");
             }
         }
     }

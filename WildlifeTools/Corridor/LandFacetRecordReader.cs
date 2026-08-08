@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -9,8 +9,8 @@ namespace WildlifeTools.Corridor
 {
     /// <summary>
     /// Reads the machine-readable Land Facet linkage records out of dataset
-    /// metadata and turns them into the human-readable "Describe Land Facet
-    /// Background" report.
+    /// metadata and turns them into the human-readable "Land Facet Data
+    /// Report".
     ///
     /// This file deliberately has NO ArcGIS references: everything here works
     /// on metadata XML strings handed in by a fetch delegate, so the chain
@@ -32,8 +32,8 @@ namespace WildlifeTools.Corridor
         // ---- report model ---------------------------------------------------
         internal enum BlockKind
         {
-            Title, Heading, SubHeading, Body, Bullet, KeyValue, Warning, Note,
-            ChainStep, ChainStepCurrent, Separator,
+            Title, Heading, HeadingTarget, SubHeading, Body, Bullet, KeyValue,
+            Warning, Note, ChainStep, ChainStepCurrent, Separator,
         }
 
         internal sealed class Block
@@ -212,7 +212,7 @@ namespace WildlifeTools.Corridor
         {
             var blocks = new List<Block>
             {
-                new Block(BlockKind.Title, "Land Facet Background"),
+                new Block(BlockKind.Title, "Land Facet Data Report"),
                 new Block(BlockKind.KeyValue, "Dataset", datasetLabel),
             };
             if (!string.IsNullOrEmpty(datasetPath) && datasetPath != datasetLabel)
@@ -288,8 +288,11 @@ namespace WildlifeTools.Corridor
                 (new[] { "inverted" },
                  "4.  Invert Raster — high-is-good surface into a least-cost "
                  + "surface"),
+                (new[] { "termini" },
+                 "5.  Identify Termini Polygons — the corridor endpoints "
+                 + "inside the Wildland Blocks (from Density or Diversity)"),
                 (Array.Empty<string>(),
-                 "5.  Least-cost corridor modelling (CorridorDesigner / "
+                 "6.  Least-cost corridor modelling (CorridorDesigner / "
                  + "Cost Distance)"),
             };
             foreach (var (stepKeys, text) in steps)
@@ -313,8 +316,8 @@ namespace WildlifeTools.Corridor
         {
             "facets" => 0, "density" => 1,
             "mahalanobis" => 2, "diversity" => 2,
-            "inverted" => 3,
-            _ => 4,
+            "inverted" => 3, "termini" => 4,
+            _ => 5,
         };
 
         private static List<Node> CollectChain(string targetPath,
@@ -362,6 +365,9 @@ namespace WildlifeTools.Corridor
             if (kind == "diversity")
                 yield return (S(rec, "source_raster"),
                               "the categorical raster this was computed from");
+            if (kind == "termini")
+                yield return (S(rec, "source_raster"),
+                              "the analysis surface the termini were cut from");
         }
 
         // ---- per-kind narratives -------------------------------------------
@@ -376,6 +382,7 @@ namespace WildlifeTools.Corridor
                 case "mahalanobis": DescribeMahalanobis(blocks, node, fetchXml); break;
                 case "diversity": DescribeDiversity(blocks, node, fetchXml); break;
                 case "inverted": DescribeInverted(blocks, node, fetchXml); break;
+                case "termini": DescribeTermini(blocks, node, fetchXml); break;
                 default:
                     blocks.Add(new Block(BlockKind.Heading,
                         (node.IsTarget ? "This dataset" : node.Path)
@@ -388,6 +395,14 @@ namespace WildlifeTools.Corridor
         private static string Header(Node node, string title)
         {
             return node.IsTarget ? title + "  (this dataset)" : title;
+        }
+
+        /// <summary>The heading kind for a section: the described dataset's own
+        /// section is highlighted (rendered in Ganado Red) so the eye lands on
+        /// it among the ancestor sections.</summary>
+        private static BlockKind HeadKind(Node node)
+        {
+            return node.IsTarget ? BlockKind.HeadingTarget : BlockKind.Heading;
         }
 
         private static void AddOrigin(List<Block> blocks, Node node)
@@ -404,7 +419,7 @@ namespace WildlifeTools.Corridor
         private static void DescribeFacets(List<Block> blocks, Node node)
         {
             var rec = node.Record;
-            blocks.Add(new Block(BlockKind.Heading,
+            blocks.Add(new Block(HeadKind(node),
                 Header(node, "Step 1 — Land Facet Clustering")));
             AddOrigin(blocks, node);
 
@@ -504,7 +519,7 @@ namespace WildlifeTools.Corridor
                                             Func<string, string> fetchXml)
         {
             var rec = node.Record;
-            blocks.Add(new Block(BlockKind.Heading,
+            blocks.Add(new Block(HeadKind(node),
                 Header(node, "Step 2 — Land Facet Density")));
             AddOrigin(blocks, node);
 
@@ -562,7 +577,7 @@ namespace WildlifeTools.Corridor
                                                 Func<string, string> fetchXml)
         {
             var rec = node.Record;
-            blocks.Add(new Block(BlockKind.Heading,
+            blocks.Add(new Block(HeadKind(node),
                 Header(node, "Step 3 — Land Facet Mahalanobis cost surface")));
             AddOrigin(blocks, node);
 
@@ -623,7 +638,7 @@ namespace WildlifeTools.Corridor
                                               Func<string, string> fetchXml)
         {
             var rec = node.Record;
-            blocks.Add(new Block(BlockKind.Heading,
+            blocks.Add(new Block(HeadKind(node),
                 Header(node, "Step 3 (alternative) — Diversity Indices "
                              + "(facet interspersion)")));
             AddOrigin(blocks, node);
@@ -654,7 +669,7 @@ namespace WildlifeTools.Corridor
                                              Func<string, string> fetchXml)
         {
             var rec = node.Record;
-            blocks.Add(new Block(BlockKind.Heading,
+            blocks.Add(new Block(HeadKind(node),
                 Header(node, "Step 4 — Invert Raster (least-cost surface)")));
             AddOrigin(blocks, node);
 
@@ -684,6 +699,113 @@ namespace WildlifeTools.Corridor
                     + "the published cost curve."));
 
             AddSourceCheck(blocks, "Inverted from",
+                S(rec, "source_raster"), S(rec, "source_analysis_id"),
+                Created(rec), fetchXml);
+        }
+
+        private static void DescribeTermini(List<Block> blocks, Node node,
+                                            Func<string, string> fetchXml)
+        {
+            var rec = node.Record;
+            blocks.Add(new Block(HeadKind(node),
+                Header(node, "Step 5 — Identify Termini Polygons "
+                             + "(corridor endpoints)")));
+            AddOrigin(blocks, node);
+
+            string blocksPath = S(rec, "wildland_blocks");
+            double? nBlocks = D(rec, "n_blocks");
+            double? pct = D(rec, "relative_size_pct");
+            string mode = S(rec, "threshold_mode");
+            double? thr = D(rec, "threshold_value");
+
+            blocks.Add(new Block(BlockKind.Body,
+                "The corridor termini: the concentrations of the analysis "
+                + "surface inside each Wildland Block"
+                + (blocksPath == null ? "" : " (" + blocksPath
+                    + (nBlocks.HasValue
+                        ? ", " + nBlocks.Value.ToString("0",
+                            CultureInfo.InvariantCulture) + " blocks" : "")
+                    + ")")
+                + " that the least-cost corridors run between. Cells above the "
+                + "threshold were aggregated into regions (edge- or corner-"
+                + "touching cells connect), each region clipped to its block."));
+
+            if (mode == "block_median")
+                blocks.Add(new Block(BlockKind.Body,
+                    "Threshold rule: each Wildland Block's own MEDIAN, computed "
+                    + "from its own cells — the manual's rule for diversity "
+                    + "surfaces (\"the half of all cells inside each Wildland "
+                    + "Block with the highest H'\"). Each polygon's Threshold "
+                    + "field holds the median its block used."));
+            else
+                blocks.Add(new Block(BlockKind.Body,
+                    "Threshold rule: cells strictly greater than "
+                    + (thr.HasValue
+                        ? thr.Value.ToString("0.####", CultureInfo.InvariantCulture)
+                        : "the fixed value")
+                    + (thr.HasValue && thr.Value == 0
+                        ? " — any density at all, the manual's recommendation "
+                          + "for density surfaces." : ".")));
+
+            if (pct.HasValue)
+                blocks.Add(new Block(BlockKind.Body, string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Within each block (and each facet), only regions at least "
+                    + "{0:0.#}% of the size of the block's largest region were "
+                    + "kept (geodesic areas).", pct.Value)));
+
+            var facets = Arr(rec, "facets").ToList();
+            if (facets.Count > 0)
+            {
+                blocks.Add(new Block(BlockKind.SubHeading,
+                    "Termini per facet and Wildland Block (the output's Facet "
+                    + "and Block fields):"));
+                int incomplete = 0;
+                foreach (var f in facets)
+                {
+                    double? nt = D(f, "n_termini");
+                    string lab = S(f, "label") ?? FacetLabel(f) ?? "(unlabelled)";
+
+                    // Per-block counts (records from 2026-08-08 on carry
+                    // "by_block"; older ones degrade to the total alone).
+                    var perBlock = new List<(int block, int n)>();
+                    foreach (var bb in Arr(f, "by_block"))
+                    {
+                        double? blk = D(bb, "block");
+                        double? n = D(bb, "n_termini");
+                        if (blk.HasValue && n.HasValue)
+                            perBlock.Add(((int)blk.Value, (int)n.Value));
+                    }
+                    bool missingSome = perBlock.Any(p => p.n == 0);
+                    if (missingSome) incomplete++;
+
+                    string text;
+                    if (perBlock.Count > 0 && perBlock.All(p => p.n == 0))
+                        text = lab + " — NO termini in any Wildland Block";
+                    else
+                    {
+                        text = lab + (nt.HasValue
+                            ? " — " + nt.Value.ToString("0") + " terminus polygon"
+                              + (nt.Value == 1 ? "" : "s") : "");
+                        if (perBlock.Count > 0)
+                            text += " (" + string.Join("; ", perBlock.Select(p =>
+                                p.n == 0
+                                    ? "NONE in Block " + p.block
+                                    : "Block " + p.block + ": " + p.n)) + ")";
+                    }
+                    blocks.Add(new Block(BlockKind.Bullet, text));
+                }
+                if (incomplete > 0)
+                    blocks.Add(new Block(BlockKind.Warning,
+                        (incomplete == 1
+                            ? "One facet lacks" : incomplete + " facets lack")
+                        + " termini in one or more Wildland Blocks (marked "
+                        + "above) — a corridor for such a facet has nothing to "
+                        + "connect to in the missing block, so no corridor can "
+                        + "be built for it between those blocks."));
+            }
+
+            AddSourceCheck(blocks, "Cut from",
                 S(rec, "source_raster"), S(rec, "source_analysis_id"),
                 Created(rec), fetchXml);
         }

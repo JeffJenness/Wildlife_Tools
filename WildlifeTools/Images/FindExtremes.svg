@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Find Raster Extreme Values (Jeff's sketch, 2026-08-08): a gray terrain
+       profile, blue dot on the summit, red dot in the low point. -->
+  <path d="M 0 16 L 11 5 L 20 19 L 28 10 L 32 13 L 32 30 L 0 30 Z"
+        fill="#A6A6A6"/>
+  <polyline points="0,16 11,5 20,19 28,10 32,13"
+            fill="none" stroke="#1A1A1A" stroke-width="2.2"
+            stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="11" cy="5" r="4" fill="#1F4FD8"/>
+  <circle cx="20" cy="19" r="4" fill="#D82A1F"/>
+</svg>

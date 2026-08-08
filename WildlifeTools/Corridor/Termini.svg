@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Identify Termini Polygons: two Wildland Blocks (rounded outlines,
+       upper-left and lower-right) each holding an orange terminus polygon
+       (the facet concentration), joined by the dashed corridor-to-be. -->
+  <path d="M 25 9 C 22 13, 18 15, 16 16 C 13 17.5, 9 20, 7 24"
+        fill="none" stroke="#8A7B5C" stroke-width="2"
+        stroke-dasharray="2.6 2.2" stroke-linecap="round"/>
+  <rect x="1.2" y="1.2" width="14" height="14" rx="2.6"
+        fill="#EAF3E4" stroke="#4E7A3A" stroke-width="1.8"/>
+  <rect x="16.8" y="16.8" width="14" height="14" rx="2.6"
+        fill="#EAF3E4" stroke="#4E7A3A" stroke-width="1.8"/>
+  <path d="M 4.4 9.8 L 5.6 5.6 L 9.4 3.8 L 12.4 6.2 L 11.6 10.2 L 7.6 12.2 Z"
+        fill="#E8912E" stroke="#B05E10" stroke-width="1"/>
+  <path d="M 19.8 25.6 L 21.2 21.0 L 25.2 19.6 L 28.0 22.4 L 27.0 26.6 L 22.6 27.8 Z"
+        fill="#E8912E" stroke="#B05E10" stroke-width="1"/>
+</svg>

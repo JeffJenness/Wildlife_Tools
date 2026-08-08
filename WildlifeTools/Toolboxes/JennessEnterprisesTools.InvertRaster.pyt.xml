@@ -31,7 +31,7 @@ REFERENCES. Land Facet Corridor Designer: Beier, P., and B. Brost. 2010, "Use of
 		<scriptExamples><scriptExample><title>Invert Raster example (stand-alone script)</title><para>A whole density raster (one cost surface per facet, into a workspace), then the diversity corridor's cost surface (single band, plain output path), then one facet's density band. Pass None for the constant to add nothing (zero cells then become NoData).</para><code>import arcpy
 arcpy.ImportToolbox(r"C:\path\to\JennessEnterprisesTools.pyt")  # your installed path is shown in this tool's run messages
 
-# Multi-band density -> one inverted cost raster per facet
+# Multi-band density -&gt; one inverted cost raster per facet
 arcpy.jenness.InvertRaster(
     "landfacets_Density.tif", None, r"C:\project\cost", "Inv", 0.1)
 

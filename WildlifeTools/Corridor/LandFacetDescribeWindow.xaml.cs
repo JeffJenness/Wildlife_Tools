@@ -16,7 +16,7 @@ using R = WildlifeTools.Corridor.LandFacetRecordReader;
 namespace WildlifeTools.Corridor
 {
     /// <summary>
-    /// "Describe Land Facet Background": pick a dataset (a raster layer in the
+    /// "Land Facet Data Report": pick a dataset (a raster layer in the
     /// map, or browse to one on disk) and get a human-readable report of where
     /// it stands in the Land Facet Corridor analysis -- its sources, how they
     /// were analyzed, staleness warnings when a recorded source has since been
@@ -35,7 +35,8 @@ namespace WildlifeTools.Corridor
         private sealed class LayerItem
         {
             public string Name;
-            public BasicRasterLayer Layer;      // null for a browsed path
+            public Layer Layer;                 // raster or polygon feature
+                                                // layer; null for a browsed path
             public string Path;
             public override string ToString() => Name;
         }
@@ -56,9 +57,15 @@ namespace WildlifeTools.Corridor
             LayerItem select = null;
             if (map != null)
             {
-                foreach (var l in map.GetLayersAsFlattenedList()
-                                     .OfType<BasicRasterLayer>())
+                // Rasters carry most of the chain's records; polygon feature
+                // layers are listed too for the Identify Termini Polygons
+                // output.
+                foreach (var l in map.GetLayersAsFlattenedList())
                 {
+                    bool eligible = l is BasicRasterLayer
+                        || (l is FeatureLayer fl && fl.ShapeType
+                            == ArcGIS.Core.CIM.esriGeometryType.esriGeometryPolygon);
+                    if (!eligible) continue;
                     var item = new LayerItem { Name = l.Name, Layer = l };
                     items.Add(item);
                     if (ReferenceEquals(l, selected)) select = item;
@@ -68,7 +75,7 @@ namespace WildlifeTools.Corridor
             // Zero-click common case: default to the layer selected in Contents.
             cboLayer.SelectedItem = select ?? items.FirstOrDefault();
             txtStatus.Text = items.Count == 0
-                ? "No raster layers in the active map — use Browse."
+                ? "No raster or polygon layers in the active map — use Browse."
                 : "";
         }
 
@@ -78,7 +85,9 @@ namespace WildlifeTools.Corridor
             {
                 Title = "Choose a dataset to describe",
                 MultiSelect = false,
-                Filter = ItemFilters.Rasters,
+                // The GP geodataset filter: rasters AND feature classes (the
+                // Identify Termini Polygons output is a polygon FC).
+                Filter = "esri_browseDialogFilters_gp_geoDatasets",
             };
             if (dlg.ShowDialog() != true || dlg.Items == null) return;
             var item = dlg.Items.FirstOrDefault();
@@ -102,23 +111,40 @@ namespace WildlifeTools.Corridor
             catch { return null; }
         }
 
-        private static string XmlForLayer(BasicRasterLayer layer)
+        private static string XmlForLayer(Layer layer)
         {
             try { return (layer as IMetadataInfo)?.GetMetadata(); }
             catch { return null; }
         }
 
-        private static string PathForLayer(BasicRasterLayer layer)
+        private static string PathForLayer(Layer layer)
         {
             try
             {
-                var ds = layer.GetRaster()?.GetRasterDataset();
-                if (ds == null) return null;
-                string dir = ds.GetDatastore()?.GetPath()?.LocalPath;
-                string name = ds.GetName();
+                string dir = null, name = null;
+                if (layer is BasicRasterLayer rl)
+                {
+                    var ds = rl.GetRaster()?.GetRasterDataset();
+                    if (ds == null) return null;
+                    dir = ds.GetDatastore()?.GetPath()?.LocalPath;
+                    name = ds.GetName();
+                }
+                else if (layer is FeatureLayer fl)
+                {
+                    var fc = fl.GetFeatureClass();
+                    if (fc == null) return null;
+                    dir = fc.GetDatastore()?.GetPath()?.LocalPath;
+                    name = fc.GetName();
+                }
                 if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(name))
                     return null;
-                return System.IO.Path.Combine(dir, name);
+                string path = System.IO.Path.Combine(dir, name);
+                // A shapefile feature class reports its name without the
+                // extension; the on-disk item needs it.
+                if (!System.IO.Path.HasExtension(path)
+                    && File.Exists(path + ".shp"))
+                    path += ".shp";
+                return path;
             }
             catch { return null; }
         }
@@ -129,8 +155,9 @@ namespace WildlifeTools.Corridor
             var pick = cboLayer.SelectedItem as LayerItem;
             if (pick == null)
             {
-                MessageBox.Show("Choose a raster layer, or Browse to a dataset.",
-                                "Describe Land Facet Background");
+                MessageBox.Show("Choose a raster or polygon layer, or Browse "
+                                + "to a dataset.",
+                                "Land Facet Data Report");
                 return;
             }
             btnDescribe.IsEnabled = false;
@@ -160,7 +187,7 @@ namespace WildlifeTools.Corridor
                 txtStatus.Text = "";
                 MessageBox.Show("Could not describe the dataset:"
                                 + Environment.NewLine + ex.Message,
-                                "Describe Land Facet Background");
+                                "Land Facet Data Report");
             }
             finally { btnDescribe.IsEnabled = true; }
         }
@@ -179,6 +206,9 @@ namespace WildlifeTools.Corridor
             };
             var warnBrush = new SolidColorBrush(Color.FromRgb(0xA8, 0x28, 0x10));
             var noteBrush = new SolidColorBrush(Color.FromRgb(0x50, 0x50, 0x50));
+            // Ganado Red (Jeff's pick, 2026-08-08): highlights the described
+            // dataset's own section heading among the ancestor sections.
+            var ganadoBrush = new SolidColorBrush(Color.FromRgb(125, 27, 40));
             foreach (var b in blocks)
             {
                 switch (b.Kind)
@@ -191,6 +221,11 @@ namespace WildlifeTools.Corridor
                     case R.BlockKind.Heading:
                         doc.Blocks.Add(new Paragraph(new Bold(new Run(b.Text)))
                         { FontSize = 14.5, Margin = new Thickness(0, 8, 0, 3) });
+                        break;
+                    case R.BlockKind.HeadingTarget:
+                        doc.Blocks.Add(new Paragraph(new Bold(new Run(b.Text)))
+                        { FontSize = 14.5, Margin = new Thickness(0, 8, 0, 3),
+                          Foreground = ganadoBrush });
                         break;
                     case R.BlockKind.SubHeading:
                         doc.Blocks.Add(new Paragraph(new Bold(new Run(b.Text)))
@@ -256,6 +291,7 @@ namespace WildlifeTools.Corridor
                         sb.AppendLine(b.Text).AppendLine(new string('=', b.Text.Length));
                         break;
                     case R.BlockKind.Heading:
+                    case R.BlockKind.HeadingTarget:
                         sb.AppendLine().AppendLine(b.Text)
                           .AppendLine(new string('-', b.Text.Length));
                         break;
@@ -305,7 +341,7 @@ namespace WildlifeTools.Corridor
             var dlg = new Microsoft.Win32.SaveFileDialog
             {
                 Filter = "Rich Text (*.rtf)|*.rtf|Plain text (*.txt)|*.txt",
-                FileName = "LandFacetBackground.rtf",
+                FileName = "LandFacetDataReport.rtf",
                 Title = "Save the report",
             };
             if (dlg.ShowDialog() != true) return;
@@ -328,7 +364,7 @@ namespace WildlifeTools.Corridor
             {
                 MessageBox.Show("Could not save the report:"
                                 + Environment.NewLine + ex.Message,
-                                "Describe Land Facet Background");
+                                "Land Facet Data Report");
             }
         }
 
