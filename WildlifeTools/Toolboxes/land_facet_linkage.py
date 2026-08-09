@@ -49,6 +49,7 @@ INVERTED = "inverted"   # written by the Invert Raster tool
 DIVERSITY = "diversity"       # written by the Diversity Indices tool
 TERMINI = "termini"     # written by the Identify Termini Polygons tool
 CORRIDOR = "corridor"   # written by the Least-Cost Corridor tool
+UNION = "union"         # written by the Union Corridors tool
 
 # Marker prefix so the blob is recognizable (and so a human reading the
 # Supplemental Information field can see what it is) and separable from any
@@ -282,6 +283,62 @@ def corridor_summary_record(analysis_id, source_termini, corridors,
         "source_analysis_id": source_analysis_id,
         "percentiles": list(percentiles or []),
         "corridors": list(corridors or []),
+    }
+
+
+def add_post_processing_step(record, tool, detail=None):
+    """Return a COPY of ``record`` with a post-processing step appended.
+
+    For a tool that edits an EXISTING analysis product in place (e.g. Fill
+    Corridor Holes closing small holes in a corridor or HSM polygon output)
+    rather than deriving a new kind of dataset. The record's own kind,
+    analysis_id and every other field are left untouched -- only a step is
+    appended to ``post_processing`` -- so the chain-walking report keeps
+    treating the output as the SAME analysis product, just also noting what
+    else happened to it. Works for ANY record kind; the report reader
+    renders this list generically, with no per-kind knowledge needed.
+    """
+    rec = dict(record or {})
+    steps = list(rec.get("post_processing") or [])
+    steps.append({
+        "tool": tool,
+        "applied": _utc_now(),
+        "detail": detail,
+    })
+    rec["post_processing"] = steps
+    return rec
+
+
+def union_record(sources, mixed_analysis, source_analysis_ids):
+    """Build the record stamped on a Union Corridors output.
+
+    Unlike every other record kind, a union has MULTIPLE sources, possibly
+    from entirely different analyses -- so it gets its own fresh
+    ``analysis_id`` rather than chaining one through, and instead of a
+    single ``source_*`` path it carries a full ``sources`` list: one entry
+    per input actually used, ``{"path", "record_kind", "analysis_id",
+    "label", "n_total", "n_selected", "selected"}`` (the last three from
+    ``mahalanobis.selection_info`` -- ``selected`` True when that input had
+    an active selection at run time, so a re-read later can tell "all
+    features were used" from "only some were, and that's expected"). An
+    input with no Land Facet record of its own gets ``record_kind`` /
+    ``analysis_id`` / ``label`` all None -- still listed, not an error.
+
+    ``mixed_analysis`` is True when more than one DISTINCT analysis_id was
+    found among the sources that DID carry a record -- the tool warns on
+    this at run time (see ``union_corridors.run_union_corridors``); storing
+    it here lets the Land Facet Data Report re-surface the same warning
+    later from the record alone, without re-reading every source.
+    """
+    return {
+        "schema": SCHEMA,
+        "record": UNION,
+        "analysis_id": new_analysis_id(),
+        "created": _utc_now(),
+        "tool": "Union Corridors",
+        "sources": list(sources or []),
+        "mixed_analysis": bool(mixed_analysis),
+        "source_analysis_ids": list(source_analysis_ids or []),
     }
 
 

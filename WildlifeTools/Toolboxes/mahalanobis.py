@@ -975,6 +975,35 @@ def resolve_raster_output(path, messages=None):
     return p
 
 
+def selection_info(item, path):
+    """``(n_total, n_selected, has_selection)`` for one Feature Layer GP
+    input.
+
+    ``item`` MUST be the ORIGINAL parameter value (a layer name/reference
+    when the input came from the map -- the only way arcpy can know about a
+    selection at all); ``path`` is its resolved catalog path, safe to count
+    against directly regardless of selection state. A dataset picked via
+    the GP dialog's Browse button (no map layer involved) has no selection
+    concept at all -- for it, ``n_selected`` always equals ``n_total`` and
+    ``has_selection`` is False, same as a layer with an empty selection.
+    Never raises; an unreadable count comes back as ``(None, None, False)``.
+    """
+    try:
+        n_total = int(arcpy.management.GetCount(path)[0])
+    except Exception:                                              # noqa: BLE001
+        return None, None, False
+    has_selection = False
+    n_selected = n_total
+    try:
+        fids = getattr(arcpy.Describe(item), "FIDSet", "") or ""
+        if fids.strip():
+            has_selection = True
+            n_selected = int(arcpy.management.GetCount(item)[0])
+    except Exception:                                              # noqa: BLE001
+        pass
+    return n_total, n_selected, has_selection
+
+
 def default_stretch_lyrx(out_raster, colors, messages=None):
     """Create a .lyrx beside ``out_raster`` with a linear multi-stop stretch
     (minimum-maximum off the dataset's own stored statistics) running low to

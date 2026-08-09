@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Xml;
@@ -250,15 +251,24 @@ namespace WildlifeTools.Corridor
             var nodes = CollectChain(datasetPath, rec.Value, fetchXml);
 
             // ---- the "you are here" map -----------------------------------
+            // A union has MULTIPLE parallel sources, not one linear chain
+            // position -- the fixed step-by-step map doesn't apply; skip it
+            // and let DescribeUnion's own "Sources used" section stand in.
             string kind = S(rec.Value, "record") ?? "";
-            blocks.Add(new Block(BlockKind.Heading,
-                "Where this dataset sits in the analysis"));
-            AddChainMap(blocks, kind);
-            blocks.Add(new Block(BlockKind.Separator, ""));
+            if (kind != "union")
+            {
+                blocks.Add(new Block(BlockKind.Heading,
+                    "Where this dataset sits in the analysis"));
+                AddChainMap(blocks, kind);
+                blocks.Add(new Block(BlockKind.Separator, ""));
+            }
 
             // ---- one section per ancestor, root first ---------------------
             foreach (var node in nodes)
+            {
                 DescribeNode(blocks, node, fetchXml);
+                AddPostProcessingSteps(blocks, node.Record);
+            }
 
             string created = Created(rec.Value)?.ToString(
                 "yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
@@ -271,6 +281,36 @@ namespace WildlifeTools.Corridor
                 blocks.Add(new Block(BlockKind.KeyValue, "Analysis identifier",
                                      aid));
             return blocks;
+        }
+
+        /// <summary>
+        /// Generic "this dataset was also modified afterward" list -- works
+        /// for ANY record kind, not just corridors. A record carries this
+        /// when a later tool (e.g. Fill Corridor Holes) edited it in place
+        /// rather than deriving a new kind of analysis product; the
+        /// record's own kind/analysis id are left untouched, only a step is
+        /// appended. Silently does nothing if the record has none.
+        /// </summary>
+        private static void AddPostProcessingSteps(List<Block> blocks, JsonElement rec)
+        {
+            var steps = Arr(rec, "post_processing").ToList();
+            if (steps.Count == 0) return;
+            blocks.Add(new Block(BlockKind.SubHeading, "Also processed afterward:"));
+            foreach (var step in steps)
+            {
+                string tool = S(step, "tool") ?? "(unknown tool)";
+                string when = null;
+                string appliedRaw = S(step, "applied");
+                if (appliedRaw != null && DateTime.TryParse(appliedRaw,
+                        CultureInfo.InvariantCulture,
+                        DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal,
+                        out var dt))
+                    when = dt.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
+                string detail = S(step, "detail");
+                blocks.Add(new Block(BlockKind.Bullet, tool
+                    + (when == null ? "" : " (" + when + ")")
+                    + (string.IsNullOrEmpty(detail) ? "" : ": " + detail)));
+            }
         }
 
         private static void AddChainMap(List<Block> blocks, string kind)
@@ -320,7 +360,8 @@ namespace WildlifeTools.Corridor
             "facets" => 0, "density" => 1,
             "mahalanobis" => 2, "diversity" => 2,
             "inverted" => 3, "termini" => 4, "corridor" => 5,
-            _ => 6,
+            "union" => 6,
+            _ => 7,
         };
 
         private static List<Node> CollectChain(string targetPath,
@@ -399,6 +440,7 @@ namespace WildlifeTools.Corridor
                 case "inverted": DescribeInverted(blocks, node, fetchXml); break;
                 case "termini": DescribeTermini(blocks, node, fetchXml); break;
                 case "corridor": DescribeCorridor(blocks, node, fetchXml); break;
+                case "union": DescribeUnion(blocks, node, fetchXml); break;
                 default:
                     blocks.Add(new Block(BlockKind.Heading,
                         (node.IsTarget ? "This dataset" : node.Path)
@@ -828,6 +870,32 @@ namespace WildlifeTools.Corridor
                 Created(rec), fetchXml);
         }
 
+        /// <summary>
+        /// A short "what kind of cost surface is this" label, resolved by
+        /// reading the raster's OWN linkage record (Mahalanobis vs Invert
+        /// Raster). Null if the path is empty or the record can't be read
+        /// or recognized -- callers just omit the parenthetical in that
+        /// case, they don't treat it as an error.
+        /// </summary>
+        private static string CostSurfaceKindLabel(string path,
+                                                    Func<string, string> fetchXml)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return null;
+            string xml = fetchXml?.Invoke(path);
+            if (xml == null) return null;
+            var rec = ExtractRecord(xml);
+            if (!rec.HasValue) return null;
+            string kind = S(rec.Value, "record");
+            if (kind == "mahalanobis")
+            {
+                string ot = S(rec.Value, "out_type");
+                return "Mahalanobis distance"
+                    + (string.IsNullOrEmpty(ot) ? "" : ", " + ot);
+            }
+            if (kind == "inverted") return "inverted raster";
+            return null;
+        }
+
         private static void DescribeCorridor(List<Block> blocks, Node node,
                                              Func<string, string> fetchXml)
         {
@@ -867,20 +935,22 @@ namespace WildlifeTools.Corridor
                     double? ba = D(c, "block_a");
                     double? bb = D(c, "block_b");
                     double? np = D(c, "n_pieces");
+                    string entryCostPath = S(c, "cost_raster");
+                    string costKind = CostSurfaceKindLabel(entryCostPath, fetchXml);
+                    string costText = string.IsNullOrEmpty(entryCostPath) ? "" :
+                        " — cost surface: " + Path.GetFileName(entryCostPath)
+                        + (costKind == null ? "" : " (" + costKind + ")");
                     blocks.Add(new Block(BlockKind.Bullet, string.Format(
                         CultureInfo.InvariantCulture,
-                        "{0} — Wildland Block {1} ↔ {2}{3}", lab,
+                        "{0} — Wildland Block {1} ↔ {2}{3}{4}", lab,
                         ba.HasValue ? ba.Value.ToString("0") : "?",
                         bb.HasValue ? bb.Value.ToString("0") : "?",
                         np.HasValue
                             ? " (" + np.Value.ToString("0") + " percentile "
                               + "polygon piece" + (np.Value == 1 ? "" : "s")
-                              + ")" : "")));
+                              + ")" : "",
+                        costText)));
                 }
-                blocks.Add(new Block(BlockKind.Note,
-                    "Each category/block-pair combination also has its own "
-                    + "corridor cost raster, alongside this feature class, "
-                    + "carrying the same linkage record individually."));
             }
             else
             {
@@ -921,6 +991,76 @@ namespace WildlifeTools.Corridor
                 AddSourceCheck(blocks, "Cost surface",
                     costPath, S(rec, "source_analysis_id"), Created(rec),
                     fetchXml);
+        }
+
+        /// <summary>
+        /// A union has MULTIPLE sources, possibly from entirely different
+        /// analyses -- unlike every other kind, there is no single linear
+        /// ancestor chain to walk (see the ``kind != "union"`` skip in
+        /// BuildReport), so this renders its own "Sources used" section,
+        /// each with an independent staleness check via the same
+        /// AddSourceCheck helper every other kind uses for ONE source.
+        /// </summary>
+        private static void DescribeUnion(List<Block> blocks, Node node,
+                                          Func<string, string> fetchXml)
+        {
+            var rec = node.Record;
+            var sources = Arr(rec, "sources").ToList();
+            blocks.Add(new Block(HeadKind(node),
+                Header(node, "Union of " + sources.Count + " source"
+                    + (sources.Count == 1 ? "" : "s"))));
+            AddOrigin(blocks, node);
+
+            blocks.Add(new Block(BlockKind.Body,
+                "The geometric union of every source's selected (or all) "
+                + "features, dissolved into ONE combined multipart polygon "
+                + "-- per-input attributes are NOT preserved; the point is "
+                + "a single combined shape answering \"is this ground part "
+                + "of ANY corridor\", not which one. A modernized port of "
+                + "the CorridorDesigner \"Create union of all corridors\" "
+                + "tool."));
+
+            if (B(rec, "mixed_analysis") == true)
+            {
+                var ids = Arr(rec, "source_analysis_ids")
+                    .Select(v => v.ValueKind == JsonValueKind.String ? v.GetString() : null)
+                    .Where(v => !string.IsNullOrEmpty(v));
+                blocks.Add(new Block(BlockKind.Warning,
+                    "These sources carried DIFFERENT Land Facet analysis "
+                    + "ids (" + string.Join(", ", ids) + ") -- this union "
+                    + "combines genuinely unrelated analyses (different "
+                    + "species, different clustering runs), not just "
+                    + "different categories within one analysis."));
+            }
+
+            blocks.Add(new Block(BlockKind.SubHeading, "Sources used:"));
+            int i = 1;
+            foreach (var s in sources)
+            {
+                string path = S(s, "path");
+                AddSourceCheck(blocks, "Source " + i++, path,
+                    S(s, "analysis_id"), Created(rec), fetchXml);
+
+                string kind2 = S(s, "record_kind");
+                string label = S(s, "label");
+                blocks.Add(new Block(BlockKind.Note, kind2 == null
+                    ? "No Land Facet linkage record."
+                    : "Kind: " + kind2
+                      + (string.IsNullOrEmpty(label) ? "" : " (\"" + label + "\")")
+                      + "."));
+
+                double? nTotal = D(s, "n_total");
+                double? nSel = D(s, "n_selected");
+                bool selected = B(s, "selected") == true;
+                if (nTotal.HasValue && nSel.HasValue)
+                    blocks.Add(new Block(BlockKind.Note, selected
+                        ? string.Format(CultureInfo.InvariantCulture,
+                            "{0:0} of {1:0} features were selected and used.",
+                            nSel.Value, nTotal.Value)
+                        : string.Format(CultureInfo.InvariantCulture,
+                            "All {0:0} features were used (no selection "
+                            + "was active).", nTotal.Value)));
+            }
         }
 
         // ---- staleness ------------------------------------------------------

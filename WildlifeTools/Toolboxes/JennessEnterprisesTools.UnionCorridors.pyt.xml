@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<metadata xml:lang="en"><Esri><CreaDate>20260809</CreaDate><CreaTime>00000000</CreaTime><ArcGISFormat>1.0</ArcGISFormat><SyncOnce>TRUE</SyncOnce></Esri>
+	<tool name="UnionCorridors" displayname="Union Corridors" toolboxalias="jenness">
+		<arcToolboxHelpPath>c:\program files\arcgis\pro\Resources\Help\gp</arcToolboxHelpPath>
+		<summary>Combines every input polygon feature class into ONE seamless combined shape -- unions them together, then dissolves the result into a single multipart polygon. Per-input attributes are deliberately NOT preserved: the point is a single combined shape answering "is this ground part of ANY corridor", not which one. Respects any active selection on each input independently, and warns when the inputs carry different Land Facet analysis ids.</summary>
+		<usage>A modernized port of the original CorridorDesigner Python toolbox's "Create union of all corridors" tool. Its documented purpose (the CorridorDesigner workshop book, ch. 4.1): "The union of single-species corridors constitutes a preliminary linkage design... this union of corridors is the most obvious way to fulfill our goal of 'no species left behind.'" You don't care which species' corridor covers a given patch of ground -- only whether ANY corridor does -- so per-input attributes are dropped by design when the result is dissolved into one shape, matching the original exactly.
+
+SELECT BEFORE YOU RUN -- THIS IS THE KEY WORKFLOW. A corridor feature class typically holds MANY percentile-width bands as separate features in one output (the Percentile field) -- to union just the 5% bands across several species, SELECT Percentile = 5 on EACH input's layer in the map before running this tool. An input with no active selection contributes every one of its features, same as always. Each input's selection is entirely independent -- one feature class can be filtered to a subset while another, in the very same run, is used in full.
+
+THIS ONLY WORKS FOR INPUTS ALREADY LOADED IN THE MAP. A dataset added to this tool's input list via the GP dialog's Browse button is a bare catalog path with no concept of a selection at all -- selection state lives on a map layer, not on the dataset itself, so a Browse-picked entry always contributes every one of its features regardless of anything selected elsewhere. If you want a SUBSET of a feature class, load it into the map, make the selection there, and pick that map layer here instead of browsing to the dataset directly.
+
+WARNS WHEN SOURCES COME FROM DIFFERENT ANALYSES. Every input's OWN Land Facet linkage record (when it has one) is read and compared by its analysis id -- the id shared by every dataset descended from the SAME land facet clustering run or the same species habitat-suitability corridor lineage, inherited unchanged through every downstream step (including Fill Corridor Holes). More than one distinct id among the inputs means this union combines genuinely UNRELATED analyses -- different species, different clustering runs -- not just different categories within one coherent analysis. This is not blocked, just warned about, both in the run messages and (so it can be checked again later) in the output's own linkage record, viewable in the Land Facet Data Report.
+
+Needs no Spatial Analyst (the original checked for the extension even though neither Union nor Dissolve ever used it).</usage>
+		<parameters>
+			<param name="in_features" displayname="Input polygon feature classes" type="Required" direction="Input" datatype="Feature Layer" expression="in_features"><dialogReference><para>One or more polygon feature classes or layers to combine. Add a layer FROM THE MAP (not via Browse) and pre-select the features you want if you only want a subset -- see the tool summary above for the full strategy and why Browse-picked datasets can't carry a selection at all. A non-polygon input is skipped with a warning rather than stopping the run.</para></dialogReference></param>
+			<param name="out_features" displayname="Output feature class" type="Required" direction="Output" datatype="Feature Class" expression="out_features"><dialogReference><para>The combined output: one multipart polygon feature, the union of every input's selected (or all) features, dissolved together. Per-input attribute fields are not carried through.</para></dialogReference></param>
+		</parameters>
+		<scriptExamples><scriptExample><title>Union Corridors example (stand-alone script)</title><para>Unions two corridor outputs into one combined linkage-design shape.</para><code>import arcpy
+arcpy.ImportToolbox(r"C:\path\to\JennessEnterprisesTools.pyt")  # your installed path is shown in this tool's run messages
+
+arcpy.jenness.UnionCorridors(
+    [r"C:\data\out.gdb\Facet_Corridors", r"C:\data\out.gdb\Species_Corridor"],
+    r"C:\data\out.gdb\Combined_Linkage")
+</code></scriptExample></scriptExamples>
+	</tool>
+</metadata>

@@ -60,6 +60,8 @@ import land_facet_mahalanobis  # noqa: E402
 import invert_raster  # noqa: E402
 import land_facet_termini  # noqa: E402
 import least_cost_corridor  # noqa: E402
+import fill_corridor_holes  # noqa: E402
+import union_corridors  # noqa: E402
 import raster_extremes  # noqa: E402
 import tool_metadata  # noqa: E402
 import error_report   # noqa: E402
@@ -317,7 +319,8 @@ class Toolbox(object):
                       LSRIOnDEM, LSRIOnContourPolylines,
                       DiversityIndices, LandFacetDensity, LandFacetMahalanobis,
                       InvertRaster, IdentifyTerminiPolygons,
-                      LeastCostCorridor, FindRasterExtremeValues]
+                      LeastCostCorridor, FillCorridorHoles, UnionCorridors,
+                      FindRasterExtremeValues]
 
 
 class LoCoHStandard(object):
@@ -8524,6 +8527,202 @@ class LeastCostCorridor(object):
                            or None,
                 block_pairs=_split(P["block_pairs"]),
                 facet_values=facet_values,
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class FillCorridorHoles(object):
+    """Fill Corridor Holes -- close small interior holes in polygon outputs
+    (a corridor, a dissolved species HSM polygon, or any other polygon
+    feature class), leaving genuinely large holes alone. Accepts multiple
+    input feature classes in one run. See ``fill_corridor_holes``."""
+
+    def __init__(self):
+        self.label = "Fill Corridor Holes"
+        self.description = (
+            "Closes small interior holes in one or more polygon feature "
+            "classes -- typically a Least-Cost Corridor output, but works "
+            "on any polygon dataset. Every hole (interior ring) smaller "
+            "than the given size threshold is filled; holes at or above "
+            "the threshold are left as real, meaningful gaps (a lake, a "
+            "genuinely excluded area). Hole size is measured as TRUE "
+            "GEODESIC area, correct on any coordinate system including a "
+            "geographic one -- Esri's own Eliminate Polygon Part tool was "
+            "tested and rejected for this because its area threshold is "
+            "planar only and silently misbehaves on unprojected data. "
+            "Every attribute field is preserved unchanged; only the "
+            "geometry is edited. Each output is named "
+            "<input><name suffix> in the output workspace. When an input "
+            "already carries a Land Facet linkage record (most commonly a "
+            "Least-Cost Corridor output), the SAME record is kept on the "
+            "output with this step noted, so the Land Facet Data Report "
+            "keeps describing it as the same analysis product.")
+        self.category = "Corridor Designer Tools\\Corridor Designer"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        in_features = arcpy.Parameter(
+            displayName="Input polygon feature classes",
+            name="in_features", datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input", multiValue=True)
+        threshold_value = arcpy.Parameter(
+            displayName="Hole size threshold (holes smaller than this are "
+                        "filled)",
+            name="threshold_value", datatype="GPDouble",
+            parameterType="Required", direction="Input")
+        threshold_units = arcpy.Parameter(
+            displayName="Threshold units", name="threshold_units",
+            datatype="GPString", parameterType="Required", direction="Input")
+        threshold_units.filter.type = "ValueList"
+        threshold_units.filter.list = fill_corridor_holes.UNIT_CHOICES
+        threshold_units.value = fill_corridor_holes.DEFAULT_UNITS
+        out_workspace = arcpy.Parameter(
+            displayName="Output workspace", name="out_workspace",
+            datatype="DEWorkspace", parameterType="Required", direction="Input")
+        name_suffix = arcpy.Parameter(
+            displayName="Output name suffix", name="name_suffix",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        name_suffix.value = fill_corridor_holes.DEFAULT_SUFFIX
+        out_features = arcpy.Parameter(
+            displayName="Output feature classes", name="out_features",
+            datatype="DEFeatureClass", parameterType="Derived",
+            direction="Output", multiValue=True)
+        return [in_features, threshold_value, threshold_units, out_workspace,
+                name_suffix, out_features]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inf, outws = P["in_features"], P["out_workspace"]
+        if inf.values and not outws.altered:
+            try:
+                first = str(inf.values[0])
+                ws = os.path.dirname(arcpy.Describe(first).catalogPath)
+                outws.value = ws
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        tv = P["threshold_value"]
+        if tv.value is not None and tv.value <= 0:
+            tv.setErrorMessage("The hole-size threshold must be greater "
+                               "than zero.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(land_facet_linkage)
+            importlib.reload(land_facet_termini)
+            importlib.reload(fill_corridor_holes)
+            P = {p.name: p for p in parameters}
+            outputs = fill_corridor_holes.run_fill_corridor_holes(
+                in_features_list=list(P["in_features"].values or []),
+                threshold_value=P["threshold_value"].value,
+                threshold_units=(P["threshold_units"].valueAsText
+                                or fill_corridor_holes.DEFAULT_UNITS),
+                out_workspace=P["out_workspace"].valueAsText,
+                name_suffix=(P["name_suffix"].valueAsText
+                            or fill_corridor_holes.DEFAULT_SUFFIX),
+                messages=messages)
+            if outputs:
+                try:
+                    P["out_features"].value = ";".join(outputs)
+                except Exception:
+                    pass
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class UnionCorridors(object):
+    """Union Corridors -- combine every input polygon feature class into
+    ONE seamless dissolved shape, matching the original CorridorDesigner
+    "Create union of all corridors" tool. See ``union_corridors``."""
+
+    def __init__(self):
+        self.label = "Union Corridors"
+        self.description = (
+            "Combines every input polygon feature class into ONE seamless "
+            "combined shape: unions them together (arcpy Union, keeping "
+            "every overlap distinct) then dissolves the result into a "
+            "single multipart polygon with no dissolve field -- per-input "
+            "attributes are deliberately NOT preserved, matching the "
+            "original tool and its purpose: a single combined shape "
+            "answering \"is this ground part of ANY corridor\", not which "
+            "one. A modernized port of the CorridorDesigner \"Create union "
+            "of all corridors\" tool. "
+            "SELECT BEFORE YOU RUN. A corridor feature class typically "
+            "holds many percentile-width bands as separate features (the "
+            "Percentile field) -- to union just the 5% bands across "
+            "several species, SELECT Percentile = 5 on each input's layer "
+            "in the map before running this tool; an input with no active "
+            "selection contributes all of its features, same as always. "
+            "THIS ONLY WORKS FOR INPUTS ALREADY IN THE MAP -- a dataset "
+            "added here via the Browse button is a bare path with no "
+            "concept of a selection at all; to use a subset of a feature "
+            "class, load it into the map and select there first, then "
+            "pick that layer here instead of browsing to the dataset. "
+            "Warns when the inputs carry DIFFERENT Land Facet analysis "
+            "ids -- combining genuinely unrelated analyses, not just "
+            "different categories within one. Needs no Spatial Analyst.")
+        self.category = "Corridor Designer Tools\\Corridor Designer"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_features = arcpy.Parameter(
+            displayName="Input polygon feature classes",
+            name="in_features", datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input", multiValue=True)
+        out_features = arcpy.Parameter(
+            displayName="Output feature class", name="out_features",
+            datatype="DEFeatureClass", parameterType="Required",
+            direction="Output")
+        return [in_features, out_features]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inf, outr = P["in_features"], P["out_features"]
+        if inf.valueAsText and not inf.hasBeenValidated:
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    first = str(inf.values[0])
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(first).catalogPath)
+                    sug = _unique_name("Corridor_Union", ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(land_facet_linkage)
+            importlib.reload(union_corridors)
+            P = {p.name: p for p in parameters}
+            union_corridors.run_union_corridors(
+                in_features_list=list(P["in_features"].values or []),
+                out_features=P["out_features"].valueAsText,
                 messages=messages)
         except arcpy.ExecuteError:
             raise
