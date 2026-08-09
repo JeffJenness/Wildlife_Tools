@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.56.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.57.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -92,13 +92,11 @@
         </subgroup>
         <subgroup id="WildlifeTools_SubCorridor" size="LargeThenMediumWhenMedium">
 
-          <button refID="WildlifeTools_LandFacet" size="large" />
-          <button refID="WildlifeTools_LandFacetDensity" size="large" />
-          <button refID="WildlifeTools_LandFacetMahalanobis" size="large" />
+          <menu refID="WildlifeTools_LandFacetCorridorMenu" size="large" />
           <button refID="WildlifeTools_DiversityIndices" size="large" />
           <button refID="WildlifeTools_InvertRaster" size="large" />
           <button refID="WildlifeTools_IdentifyTermini" size="large" />
-          <button refID="WildlifeTools_LandFacetDescribe" size="large" />
+          <button refID="WildlifeTools_LeastCostCorridor" size="large" />
         </subgroup>
         <subgroup id="WildlifeTools_SubDirectional" size="LargeThenMediumWhenMedium">
 
@@ -639,7 +637,7 @@
                 largeImage="Images\InvertRaster_32.png"
                 keytip="IR">
           <tooltip heading="Invert Raster">
-            Opens the Invert Raster tool from the Jenness Enterprises toolbox: numerically inverts a raster (each cell becomes 1/(x + c)) so a surface where HIGH values mean good habitat -- a Diversity Indices surface, a Land Facet Density raster -- becomes a least-cost surface where that good ground is CHEAP to cross, ready for CorridorDesigner or Cost Distance. The dialog follows the input: a single-band raster asks for one output raster, while a multi-band Land Facet Density raster asks for a workspace and prefix and writes one single-band cost raster per facet in a single run, named from the density raster's own records, with the stored integer scaling converted back to 0-1 proportions first so the constant keeps its intended meaning. The small constant c (default 0.1, the Land Facet manual's strong recommendation) prevents zero cells from dividing to NoData and reproduces the published diversity resistance formula 1/(H' + 0.1). Every output records its place in the Land Facet analysis chain. A modernized port of the Land Facet Corridor Designer's Invert Raster tool. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
+            Opens the Invert Raster tool from the Jenness Enterprises toolbox: numerically inverts a raster (each cell becomes 1/(x + c)) so a surface where HIGH values mean good habitat -- a Diversity Indices surface, a Land Facet Density raster -- becomes a least-cost surface where that good ground is CHEAP to cross, ready for CorridorDesigner or Cost Distance. The dialog follows the input: a single-band raster asks for one output raster, while a multi-band Land Facet Density raster asks for a workspace and prefix and writes one single-band cost raster per facet in a single run, named from the density raster's own records, with the stored integer scaling converted back to 0-1 proportions first so the constant keeps its intended meaning. The small constant c (default 0.1, the Land Facet manual's strong recommendation) prevents zero cells from dividing to NoData and reproduces the published diversity resistance formula 1/(H' + 0.1). Every output records its place in the Land Facet analysis chain. DO NOT invert a Land Facet Mahalanobis distance raster (D or D2) -- it is already a valid cost surface (low distance = near-ideal = cheap), and inverting it reverses that meaning; the tool warns if you try. A modernized port of the Land Facet Corridor Designer's Invert Raster tool. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_FindRasterExtremes"
@@ -661,7 +659,18 @@
                 largeImage="Images\Termini_32.png"
                 keytip="IT">
           <tooltip heading="Identify Termini Polygons">
-            Opens the Identify Termini Polygons tool from the Jenness Enterprises toolbox: finds the corridor termini within each Wildland Block -- the concentrations of a land facet (from a Land Facet Density raster) or of facet diversity (from a Diversity surface) that the least-cost corridors will run between. Cells above a threshold are aggregated into regions (edge- or corner-touching cells connect), and each block keeps the regions at least a given percentage (default 50%) of the size of its largest region. A multi-band Land Facet Density raster is processed facet by facet in ONE run, into a single polygon feature class with a Facet field; any number of Wildland Block features is allowed. The threshold is a fixed value (0 for density: any density at all) or each block's own median (the manual's rule for diversity, computed exactly). Every output records its place in the Land Facet analysis chain. A modernized port of the Land Facet Corridor Designer's Identify Termini Polygons tool. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
+            Opens the Identify Termini Polygons tool from the Jenness Enterprises toolbox: finds the corridor termini within each Wildland Block -- the concentrations of a quality surface that the least-cost corridors will run between. Works equally on a species habitat-suitability surface (traditional Corridor Designer workflows) or a Land Facet Density/Diversity surface (climate-resilience corridors). Cells above a threshold are aggregated into regions (edge- or corner-touching cells connect), and each block keeps the regions at least a given percentage (default 50%) of the size of its largest region. A multi-band raster is processed category by category in ONE run, into a single polygon feature class with a Category field; any number of Wildland Block features is allowed. The threshold is a fixed value (0 for density: any density at all), each block's own median (for diversity and habitat-suitability surfaces), or -- with no thresholding at all -- the whole Wildland Block polygon used directly as its own terminus, a baseline corridor endpoint that needs no quality surface. Every output records its place in the analysis chain. A modernized, generalized port of the Land Facet Corridor Designer's Identify Termini Polygons tool. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_LeastCostCorridor"
+                caption="Least-Cost Corridor"
+                className="Corridor.LeastCostCorridorButton"
+                loadOnClick="true"
+                smallImage="Images\LeastCostCorridor_16.png"
+                largeImage="Images\LeastCostCorridor_32.png"
+                keytip="CR">
+          <tooltip heading="Least-Cost Corridor">
+            Opens the Least-Cost Corridor tool from the Jenness Enterprises toolbox: combines cost-distance surfaces and Wildland Block start/end points into corridor polygons between every pair of blocks, for every category present in an Identify Termini Polygons output (run that tool first -- its output, not the raw Wildland Blocks layer, is what this tool needs). A modernized, generalized port of the CorridorDesigner CorridorModel tool -- its traditional and still most common use is a species habitat-suitability surface (inverted with Invert Raster into a cost surface); a Land Facet Mahalanobis distance raster is used directly with no inversion (low distance is already cheap to cross); a Land Facet Density or Diversity surface needs inversion first, used when the corridor should not depend on any particular future vegetation type. Computes accumulated cost distance and the corridor combine internally (no Spatial Analyst), honors geodesic distances on a geographic coordinate system, and extracts the result at a series of percentile-width thresholds (0.1%, 1%, 2%, ... by default) in one combined output. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_LandFacetDescribe"
@@ -998,6 +1007,19 @@
           <button refID="WildlifeTools_Landform" />
           <button refID="WildlifeTools_GeneralClassification" />
           <button refID="WildlifeTools_ClassificationBuilder" />
+        </menu>
+        <menu id="WildlifeTools_LandFacetCorridorMenu"
+              caption="Land Facet Corridor Modeling"
+              keytip="LM"
+              smallImage="Images\LandFacet_16.png"
+              largeImage="Images\LandFacet_32.png">
+          <tooltip heading="Land Facet Corridor Modeling">
+            The Land Facet Corridor Designer chain from the Jenness Enterprises toolbox: cluster the landscape into land facets, measure each facet's neighborhood density, build per-facet Mahalanobis cost surfaces, and describe any dataset's place in the analysis. A modernized, all-in-Pro replacement for the Land Facet Corridor Designer's export-to-R workflow, built for climate-resilience corridors that do not depend on any particular future vegetation type. Diversity Indices, Invert Raster, Identify Termini Polygons and Least-Cost Corridor are kept out of this menu, as standalone buttons, because they are useful well beyond Land Facet analyses -- Identify Termini Polygons in particular is shared equally by traditional Corridor Designer (species habitat-suitability) and Land Facet workflows.<disabledText />
+          </tooltip>
+          <button refID="WildlifeTools_LandFacet" />
+          <button refID="WildlifeTools_LandFacetDensity" />
+          <button refID="WildlifeTools_LandFacetMahalanobis" />
+          <button refID="WildlifeTools_LandFacetDescribe" />
         </menu>
       </menus>
 

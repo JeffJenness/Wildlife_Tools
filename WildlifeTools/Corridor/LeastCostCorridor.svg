@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Least-Cost Corridor: the same two Wildland Blocks as the Termini icon,
+       now joined by an ACTUAL corridor: a solid tapered band, warm at the
+       center (cheapest, the literal least-cost path) and cooling toward its
+       edges (rising cost, the wider percentile bands). -->
+  <defs>
+    <linearGradient id="corr" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#5DADE2"/>
+      <stop offset="0.5" stop-color="#F2C230"/>
+      <stop offset="1" stop-color="#5DADE2"/>
+    </linearGradient>
+  </defs>
+  <path d="M 12.6 12.6 C 10.6 15, 9 16.6, 6.6 19.4
+           M 19.4 19.4 C 21.4 17, 23 15.4, 25.4 12.6"
+        fill="none" stroke="url(#corr)" stroke-width="5.4"
+        stroke-linecap="round"/>
+  <rect x="1.2" y="1.2" width="13.2" height="13.2" rx="2.6"
+        fill="#EAF3E4" stroke="#4E7A3A" stroke-width="1.8"/>
+  <rect x="17.6" y="17.6" width="13.2" height="13.2" rx="2.6"
+        fill="#EAF3E4" stroke="#4E7A3A" stroke-width="1.8"/>
+</svg>

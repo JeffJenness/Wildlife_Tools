@@ -287,13 +287,16 @@ namespace WildlifeTools.Corridor
                  + "Diversity Indices for the interspersion corridor)"),
                 (new[] { "inverted" },
                  "4.  Invert Raster — high-is-good surface into a least-cost "
-                 + "surface"),
+                 + "surface (from a land facet Mahalanobis/Diversity "
+                 + "surface, or a species habitat-suitability model built "
+                 + "independently)"),
                 (new[] { "termini" },
                  "5.  Identify Termini Polygons — the corridor endpoints "
-                 + "inside the Wildland Blocks (from Density or Diversity)"),
-                (Array.Empty<string>(),
-                 "6.  Least-cost corridor modelling (CorridorDesigner / "
-                 + "Cost Distance)"),
+                 + "inside the Wildland Blocks (from Density, Diversity, "
+                 + "or a species habitat-suitability surface)"),
+                (new[] { "corridor" },
+                 "6.  Least-Cost Corridor — the corridor polygons between "
+                 + "each pair of Wildland Blocks"),
             };
             foreach (var (stepKeys, text) in steps)
                 blocks.Add(new Block(
@@ -316,8 +319,8 @@ namespace WildlifeTools.Corridor
         {
             "facets" => 0, "density" => 1,
             "mahalanobis" => 2, "diversity" => 2,
-            "inverted" => 3, "termini" => 4,
-            _ => 5,
+            "inverted" => 3, "termini" => 4, "corridor" => 5,
+            _ => 6,
         };
 
         private static List<Node> CollectChain(string targetPath,
@@ -368,6 +371,18 @@ namespace WildlifeTools.Corridor
             if (kind == "termini")
                 yield return (S(rec, "source_raster"),
                               "the analysis surface the termini were cut from");
+            if (kind == "corridor")
+            {
+                yield return (S(rec, "source_termini"),
+                              "the termini this corridor connects");
+                // Only the single-corridor (per-raster) shape carries this;
+                // the shared polygon output's summary shape has one cost
+                // raster PER corridor instead (listed, not chased here).
+                if (S(rec, "source_cost_raster") != null)
+                    yield return (S(rec, "source_cost_raster"),
+                                  "the cost surface this corridor was built "
+                                  + "from");
+            }
         }
 
         // ---- per-kind narratives -------------------------------------------
@@ -383,6 +398,7 @@ namespace WildlifeTools.Corridor
                 case "diversity": DescribeDiversity(blocks, node, fetchXml); break;
                 case "inverted": DescribeInverted(blocks, node, fetchXml); break;
                 case "termini": DescribeTermini(blocks, node, fetchXml); break;
+                case "corridor": DescribeCorridor(blocks, node, fetchXml); break;
                 default:
                     blocks.Add(new Block(BlockKind.Heading,
                         (node.IsTarget ? "This dataset" : node.Path)
@@ -750,16 +766,16 @@ namespace WildlifeTools.Corridor
             if (pct.HasValue)
                 blocks.Add(new Block(BlockKind.Body, string.Format(
                     CultureInfo.InvariantCulture,
-                    "Within each block (and each facet), only regions at least "
-                    + "{0:0.#}% of the size of the block's largest region were "
-                    + "kept (geodesic areas).", pct.Value)));
+                    "Within each block (and each category), only regions at "
+                    + "least {0:0.#}% of the size of the block's largest "
+                    + "region were kept (geodesic areas).", pct.Value)));
 
-            var facets = Arr(rec, "facets").ToList();
+            var facets = Arr(rec, "categories").ToList();
             if (facets.Count > 0)
             {
                 blocks.Add(new Block(BlockKind.SubHeading,
-                    "Termini per facet and Wildland Block (the output's Facet "
-                    + "and Block fields):"));
+                    "Termini per category and Wildland Block (the output's "
+                    + "Category and Block fields):"));
                 int incomplete = 0;
                 foreach (var f in facets)
                 {
@@ -798,16 +814,113 @@ namespace WildlifeTools.Corridor
                 if (incomplete > 0)
                     blocks.Add(new Block(BlockKind.Warning,
                         (incomplete == 1
-                            ? "One facet lacks" : incomplete + " facets lack")
+                            ? "One category lacks"
+                            : incomplete + " categories lack")
                         + " termini in one or more Wildland Blocks (marked "
-                        + "above) — a corridor for such a facet has nothing to "
-                        + "connect to in the missing block, so no corridor can "
-                        + "be built for it between those blocks."));
+                        + "above) — a corridor for such a category has "
+                        + "nothing to connect to in the missing block, so no "
+                        + "corridor can be built for it between those "
+                        + "blocks."));
             }
 
             AddSourceCheck(blocks, "Cut from",
                 S(rec, "source_raster"), S(rec, "source_analysis_id"),
                 Created(rec), fetchXml);
+        }
+
+        private static void DescribeCorridor(List<Block> blocks, Node node,
+                                             Func<string, string> fetchXml)
+        {
+            var rec = node.Record;
+            blocks.Add(new Block(HeadKind(node),
+                Header(node, "Step 6 — Least-Cost Corridor")));
+            AddOrigin(blocks, node);
+
+            var pcts = Arr(rec, "percentiles")
+                .Select(p => p.ValueKind == JsonValueKind.Number
+                            ? p.GetDouble() : (double?)null)
+                .Where(v => v.HasValue).Select(v => v.Value).ToList();
+            string pctText = pcts.Count > 0
+                ? string.Join(", ", pcts.Select(p => p.ToString("0.##",
+                    CultureInfo.InvariantCulture) + "%"))
+                : null;
+
+            var corridors = Arr(rec, "corridors").ToList();
+            if (corridors.Count > 0)
+            {
+                // The shared polygon output: every category/block-pair this
+                // run produced, in ONE feature class.
+                blocks.Add(new Block(BlockKind.Body,
+                    "The least-cost corridor polygons between pairs of "
+                    + "Wildland Blocks, combining the accumulated cost "
+                    + "distance from each block (computed without Spatial "
+                    + "Analyst) into a surface that is zero along the "
+                    + "literal least-cost path and rises away from it, cut "
+                    + "at percentile-width thresholds"
+                    + (pctText == null ? "." : " (" + pctText + ").")));
+                blocks.Add(new Block(BlockKind.SubHeading,
+                    "Corridors in this output (the Category, Block_A and "
+                    + "Block_B fields):"));
+                foreach (var c in corridors)
+                {
+                    string lab = S(c, "label") ?? FacetLabel(c) ?? "(unlabelled)";
+                    double? ba = D(c, "block_a");
+                    double? bb = D(c, "block_b");
+                    double? np = D(c, "n_pieces");
+                    blocks.Add(new Block(BlockKind.Bullet, string.Format(
+                        CultureInfo.InvariantCulture,
+                        "{0} — Wildland Block {1} ↔ {2}{3}", lab,
+                        ba.HasValue ? ba.Value.ToString("0") : "?",
+                        bb.HasValue ? bb.Value.ToString("0") : "?",
+                        np.HasValue
+                            ? " (" + np.Value.ToString("0") + " percentile "
+                              + "polygon piece" + (np.Value == 1 ? "" : "s")
+                              + ")" : "")));
+                }
+                blocks.Add(new Block(BlockKind.Note,
+                    "Each category/block-pair combination also has its own "
+                    + "corridor cost raster, alongside this feature class, "
+                    + "carrying the same linkage record individually."));
+            }
+            else
+            {
+                // A single corridor's own cost raster. The category dict
+                // here is this tool's own {"category_id","label"} shape,
+                // not the land-facet-clustering shape FacetLabel reads.
+                var catObj = O(rec, "category");
+                string lab = catObj.HasValue ? S(catObj.Value, "label") : null;
+                double? ba = D(rec, "block_a");
+                double? bb = D(rec, "block_b");
+                blocks.Add(new Block(BlockKind.Body,
+                    "A least-cost corridor cost surface"
+                    + (lab == null ? "" : " for \"" + lab + "\"")
+                    + (ba.HasValue && bb.HasValue
+                        ? ", between Wildland Blocks "
+                          + ba.Value.ToString("0", CultureInfo.InvariantCulture)
+                          + " and "
+                          + bb.Value.ToString("0", CultureInfo.InvariantCulture)
+                        : "")
+                    + ": the accumulated cost distance from each block "
+                    + "(computed without Spatial Analyst), combined into a "
+                    + "surface that is zero along the literal least-cost "
+                    + "path and rises away from it."
+                    + (pctText == null ? "" : " Cut into percentile-width "
+                        + "polygons at " + pctText + ".")));
+            }
+            if (B(rec, "geodesic") == true)
+                blocks.Add(new Block(BlockKind.Body,
+                    "The source cost raster's coordinate system is "
+                    + "geographic, so true geodesic ground distances were "
+                    + "used rather than planar ones."));
+
+            AddSourceCheck(blocks, "Termini used",
+                S(rec, "source_termini"), S(rec, "source_analysis_id"),
+                Created(rec), fetchXml);
+            string costPath = S(rec, "source_cost_raster");
+            if (!string.IsNullOrEmpty(costPath))
+                AddSourceCheck(blocks, "Cost surface",
+                    costPath, S(rec, "source_analysis_id"), Created(rec),
+                    fetchXml);
         }
 
         // ---- staleness ------------------------------------------------------

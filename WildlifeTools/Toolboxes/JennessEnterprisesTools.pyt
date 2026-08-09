@@ -9,6 +9,7 @@ add-in's ribbon buttons invoke these tools so the analysis logic lives in one
 place. Add further tools/categories here as more sub-toolboxes are needed.
 """
 
+import itertools
 import math
 import os
 import sys
@@ -58,6 +59,7 @@ import land_facet_linkage  # noqa: E402
 import land_facet_mahalanobis  # noqa: E402
 import invert_raster  # noqa: E402
 import land_facet_termini  # noqa: E402
+import least_cost_corridor  # noqa: E402
 import raster_extremes  # noqa: E402
 import tool_metadata  # noqa: E402
 import error_report   # noqa: E402
@@ -315,7 +317,7 @@ class Toolbox(object):
                       LSRIOnDEM, LSRIOnContourPolylines,
                       DiversityIndices, LandFacetDensity, LandFacetMahalanobis,
                       InvertRaster, IdentifyTerminiPolygons,
-                      FindRasterExtremeValues]
+                      LeastCostCorridor, FindRasterExtremeValues]
 
 
 class LoCoHStandard(object):
@@ -7396,7 +7398,7 @@ class DiversityIndices(object):
             "the other neighborhood tools use, and needs no Spatial Analyst. A "
             "modernized port of the Land Facet Corridor Designer's ArcMap "
             "Shannon's Index tool.")
-        self.category = "Corridor Designer Tools"
+        self.category = "Corridor Designer Tools\\Land Facet Corridor Designer"
         self.canRunInBackground = False
         self._auto_out = None
 
@@ -7656,7 +7658,7 @@ class LandFacetDensity(object):
             "linkage record naming which band holds which facet is written into "
             "the output's metadata, because raster band names do not survive "
             "being copied into a geodatabase. Needs no Spatial Analyst.")
-        self.category = "Corridor Designer Tools"
+        self.category = "Corridor Designer Tools\\Land Facet Corridor Designer"
         self.canRunInBackground = False
         self._auto_out = None
 
@@ -7905,7 +7907,7 @@ class LandFacetMahalanobis(object):
             "Facet Density raster is supplied, density joins the analysis with a "
             "characteristic value of 100 percent rather than its mean, as the "
             "Land Facet method requires. Needs no Spatial Analyst.")
-        self.category = "Corridor Designer Tools"
+        self.category = "Corridor Designer Tools\\Land Facet Corridor Designer"
         self.canRunInBackground = False
 
     def getParameterInfo(self):
@@ -8098,7 +8100,9 @@ class IdentifyTerminiPolygons(object):
     least-cost corridors will run between. See ``land_facet_termini``."""
 
     _MODE_FIXED_UI = "Fixed value (density surfaces: 0)"
-    _MODE_MEDIAN_UI = "Median within each Wildland Block (diversity surfaces)"
+    _MODE_MEDIAN_UI = ("Median within each Wildland Block (diversity and "
+                       "habitat suitability surfaces)")
+    _MODE_WHOLE_UI = "Treat entire block polygons as Termini polygons"
 
     def __init__(self):
         self.label = "Identify Termini Polygons"
@@ -8110,17 +8114,21 @@ class IdentifyTerminiPolygons(object):
             "at a corner form one region, keeping regions at least a given "
             "percentage (default 50%) of the size of the largest region in "
             "their block. Fed this suite's multi-band Land Facet Density "
-            "raster it processes every facet in one run and writes ONE "
-            "polygon feature class with a Facet field; any number of "
+            "raster it processes every category in one run and writes ONE "
+            "polygon feature class with a Category field; any number of "
             "Wildland Block features is allowed (each feature is one "
             "block). The threshold is a fixed value (use 0 for density: any "
             "density at all) or, for diversity surfaces, the median of each "
             "block's own cells -- the manual's 'top half of H-prime' rule "
-            "computed exactly. Areas are geodesic. Every output records its "
+            "computed exactly -- or, with no thresholding at all, the "
+            "whole Wildland Block polygon used directly as its own "
+            "terminus (a baseline corridor endpoint, or a way to use "
+            "Least-Cost Corridor with no quality surface at all). Areas "
+            "are geodesic. Every output records its "
             "place in the Land Facet analysis chain. A modernized port of "
             "the Land Facet Corridor Designer's Identify Termini Polygons "
             "tool. Needs no Spatial Analyst.")
-        self.category = "Corridor Designer Tools"
+        self.category = "Corridor Designer Tools\\Land Facet Corridor Designer"
         self.canRunInBackground = False
         self._auto_out = None
 
@@ -8146,7 +8154,8 @@ class IdentifyTerminiPolygons(object):
             displayName="Threshold rule", name="threshold_mode",
             datatype="GPString", parameterType="Required", direction="Input")
         thr_mode.filter.type = "ValueList"
-        thr_mode.filter.list = [self._MODE_FIXED_UI, self._MODE_MEDIAN_UI]
+        thr_mode.filter.list = [self._MODE_FIXED_UI, self._MODE_MEDIAN_UI,
+                                self._MODE_WHOLE_UI]
         thr_mode.value = self._MODE_FIXED_UI
         thr_value = arcpy.Parameter(
             displayName="Threshold value (keep cells above this)",
@@ -8160,7 +8169,7 @@ class IdentifyTerminiPolygons(object):
             datatype="GPDouble", parameterType="Optional", direction="Input")
         pct.value = land_facet_termini.DEFAULT_PCT
         facets = arcpy.Parameter(
-            displayName="Facets / bands to analyze (default: all)",
+            displayName="Categories / bands to analyze (default: all)",
             name="facets", datatype="GPString", parameterType="Optional",
             direction="Input", multiValue=True)
         return [in_raster, blocks, out_fc, thr_mode, thr_value, pct, facets]
@@ -8208,9 +8217,14 @@ class IdentifyTerminiPolygons(object):
                 pass
 
         # After the auto-select, so the value field greys out on the same
-        # validation cycle that switches the rule to median.
-        P["threshold_value"].enabled = (
-            P["threshold_mode"].valueAsText != self._MODE_MEDIAN_UI)
+        # validation cycle that switches the rule. Neither the threshold
+        # value nor the relative-size filter mean anything once whole
+        # blocks are used directly; only the threshold value is irrelevant
+        # in median mode (the block computes its own).
+        mode_now = P["threshold_mode"].valueAsText
+        P["threshold_value"].enabled = mode_now not in (
+            self._MODE_MEDIAN_UI, self._MODE_WHOLE_UI)
+        P["relative_size_pct"].enabled = mode_now != self._MODE_WHOLE_UI
 
         if inr.valueAsText:
             if not outr.altered or outr.valueAsText == self._auto_out:
@@ -8259,9 +8273,13 @@ class IdentifyTerminiPolygons(object):
             if picked:
                 facet_values = [t.strip().strip("'").split("(", 1)[0].strip()
                                 for t in picked.split(";") if t.strip()]
-            mode = (land_facet_termini.MODE_MEDIAN
-                    if P["threshold_mode"].valueAsText == self._MODE_MEDIAN_UI
-                    else land_facet_termini.MODE_FIXED)
+            mode_ui = P["threshold_mode"].valueAsText
+            if mode_ui == self._MODE_MEDIAN_UI:
+                mode = land_facet_termini.MODE_MEDIAN
+            elif mode_ui == self._MODE_WHOLE_UI:
+                mode = land_facet_termini.MODE_WHOLE_BLOCK
+            else:
+                mode = land_facet_termini.MODE_FIXED
             out_lyrx = land_facet_termini.run_termini(
                 in_raster=in_path,
                 blocks=(P["blocks"].value or P["blocks"].valueAsText),
@@ -8279,6 +8297,234 @@ class IdentifyTerminiPolygons(object):
                 except Exception as e:
                     messages.addWarningMessage(
                         "Could not set output symbology: {}".format(e))
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class LeastCostCorridor(object):
+    """Least-Cost Corridor -- combine cost-distance surfaces (from Invert
+    Raster) and start/end points (from Identify Termini Polygons) into
+    corridor polygons between every pair of Wildland Blocks. A modernized,
+    generalized port of the CorridorDesigner CorridorModel tool -- its
+    traditional and still most common use is a species habitat-suitability
+    surface; a Land Facet surface is one specific kind of input. See
+    ``least_cost_corridor``."""
+
+    def __init__(self):
+        self.label = "Least-Cost Corridor"
+        self.description = (
+            "Builds least-cost corridor polygons between every pair of "
+            "Wildland Blocks represented in an Identify Termini Polygons "
+            "output, for every category (facet) present. Combines the "
+            "accumulated cost distance from each block -- computed "
+            "internally with no Spatial Analyst -- into a corridor surface "
+            "that is zero along the literal least-cost path and rises away "
+            "from it, then extracts that surface at a series of "
+            "percentile-width thresholds (default 0.1%, 1%, 2%, ..., 10%, "
+            "matching the original CorridorDesigner CorridorModel tool) as "
+            "polygons. Its traditional and still most common use is a "
+            "species habitat-suitability surface inverted to a cost "
+            "surface (Invert Raster); a Land Facet Mahalanobis distance "
+            "raster is used directly with no inversion (low distance is "
+            "already cheap), and a Land Facet Density or Diversity "
+            "surface is one specific kind of input needing inversion "
+            "first, used for corridors that do not depend on any "
+            "particular future vegetation type. "
+            "Geodesic distances are used automatically on a geographic "
+            "coordinate system.")
+        self.category = "Corridor Designer Tools\\Corridor Designer"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_termini = arcpy.Parameter(
+            displayName="Termini feature class (Identify Termini Polygons "
+                        "output)",
+            name="in_termini", datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        cost_raster = arcpy.Parameter(
+            displayName="Cost raster (single category)", name="cost_raster",
+            datatype=["GPRasterLayer", "DERasterDataset", "DERasterBand"],
+            parameterType="Optional", direction="Input")
+        cost_ws = arcpy.Parameter(
+            displayName="Cost raster workspace (multiple categories, e.g. "
+                        "Land Facet Mahalanobis's or Invert Raster's "
+                        "output workspace)",
+            name="cost_workspace", datatype="DEWorkspace",
+            parameterType="Optional", direction="Input")
+        out_ws = arcpy.Parameter(
+            displayName="Output workspace (corridor cost rasters)",
+            name="out_workspace", datatype="DEWorkspace",
+            parameterType="Required", direction="Input")
+        out_prefix = arcpy.Parameter(
+            displayName="Output raster name prefix", name="out_prefix",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        out_prefix.value = "Cor"
+        out_fc = arcpy.Parameter(
+            displayName="Output corridor polygon feature class",
+            name="out_fc", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        percentiles = arcpy.Parameter(
+            displayName="Percentile-width thresholds (% of the analysis "
+                        "area)",
+            name="percentiles", datatype="GPDouble", parameterType="Optional",
+            direction="Input", multiValue=True)
+        percentiles.value = ";".join(
+            "{:g}".format(p) for p in least_cost_corridor.DEFAULT_PERCENTILES)
+        block_pairs = arcpy.Parameter(
+            displayName="Wildland Block pairs to connect (default: all "
+                        "pairs)",
+            name="block_pairs", datatype="GPString", parameterType="Optional",
+            direction="Input", multiValue=True)
+        facets = arcpy.Parameter(
+            displayName="Categories to process (default: all)",
+            name="facets", datatype="GPString", parameterType="Optional",
+            direction="Input", multiValue=True)
+        return [in_termini, cost_raster, cost_ws, out_ws, out_prefix, out_fc,
+                percentiles, block_pairs, facets]
+
+    def isLicensed(self):
+        return True
+
+    def _termini_field_names(self, in_termini):
+        try:
+            path = in_termini.value or in_termini.valueAsText
+            return {f.name for f in arcpy.ListFields(path)}
+        except Exception:
+            return set()
+
+    def _distinct_facets_and_blocks(self, in_termini):
+        facets, blocks = {}, set()
+        try:
+            with arcpy.da.SearchCursor(
+                    in_termini.value or in_termini.valueAsText,
+                    ["Category", "CategoryID", "Block"]) as cur:
+                for category, cid, block in cur:
+                    facets.setdefault(cid, category)
+                    if block is not None:
+                        blocks.add(block)
+        except Exception:
+            pass
+        return facets, blocks
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        term, outr = P["in_termini"], P["out_fc"]
+
+        if term.valueAsText and not term.hasBeenValidated:
+            have = self._termini_field_names(term)
+            if {"Category", "CategoryID", "Block"} <= have:
+                facet_map, blocks = self._distinct_facets_and_blocks(term)
+                multi = len(facet_map) > 1
+                P["cost_raster"].enabled = not multi
+                if multi and P["cost_raster"].valueAsText:
+                    P["cost_raster"].value = None
+                if facet_map:
+                    P["facets"].filter.list = [
+                        "{} ({})".format(fid, lab) for fid, lab in
+                        sorted(facet_map.items(),
+                              key=lambda kv: (kv[0] is None, kv[0]))]
+                # The dropdown is built from the pairs that actually occur in
+                # THIS termini feature class, so a user never has to know
+                # what the Block field's numbers mean -- just pick a pair.
+                pairs = list(itertools.combinations(sorted(blocks), 2))
+                P["block_pairs"].filter.list = [
+                    "{}-{}".format(a, b) for a, b in pairs]
+
+        if term.valueAsText:
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(os.path.basename(
+                        term.valueAsText))[0] + "_Corridors")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(term.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        term = P["in_termini"]
+        if term.valueAsText:
+            have = self._termini_field_names(term)
+            missing = [f for f in ("Category", "CategoryID", "Block")
+                      if f not in have]
+            if missing:
+                term.setErrorMessage(
+                    "This does not look like an Identify Termini Polygons "
+                    "output -- missing field{} {}. Run Identify Termini "
+                    "Polygons first (on your cost surface and Wildland "
+                    "Blocks) and use ITS output here, not the Wildland "
+                    "Blocks layer itself.".format(
+                        "" if len(missing) == 1 else "s",
+                        ", ".join(missing)))
+        cr, cw = P["cost_raster"], P["cost_workspace"]
+        if cr.valueAsText and cw.valueAsText:
+            cw.setErrorMessage(
+                "Supply either a single cost raster or a cost-raster "
+                "workspace, not both.")
+        elif not cr.valueAsText and not cw.valueAsText:
+            cw.setErrorMessage(
+                "Supply either a single cost raster or a cost-raster "
+                "workspace.")
+        pct = P["percentiles"]
+        if pct.valueAsText:
+            for tok in pct.valueAsText.split(";"):
+                try:
+                    v = float(tok.strip().strip("'"))
+                except ValueError:
+                    pct.setErrorMessage(
+                        "Percentile thresholds must be numbers.")
+                    break
+                if not (0 < v <= 100):
+                    pct.setErrorMessage(
+                        "Percentile thresholds must be greater than 0 and "
+                        "at most 100.")
+                    break
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(land_facet_linkage)
+            importlib.reload(land_facet_mahalanobis)
+            importlib.reload(land_facet_termini)
+            importlib.reload(least_cost_corridor)
+            P = {p.name: p for p in parameters}
+
+            def _split(p):
+                text = p.valueAsText
+                if not text:
+                    return None
+                return [t.strip().strip("'") for t in text.split(";")
+                        if t.strip()]
+
+            picked = _split(P["facets"])
+            facet_values = ([t.split("(", 1)[0].strip() for t in picked]
+                            if picked else None)
+
+            least_cost_corridor.run_least_cost_corridor(
+                in_termini=(P["in_termini"].value
+                           or P["in_termini"].valueAsText),
+                cost_raster=(_resolve_raster_path(P["cost_raster"])
+                            if P["cost_raster"].valueAsText else None),
+                cost_workspace=P["cost_workspace"].valueAsText or None,
+                out_workspace=P["out_workspace"].valueAsText,
+                out_prefix=P["out_prefix"].valueAsText or "Cor",
+                out_fc=P["out_fc"].valueAsText,
+                percentiles=[float(t) for t in _split(P["percentiles"]) or []]
+                           or None,
+                block_pairs=_split(P["block_pairs"]),
+                facet_values=facet_values,
+                messages=messages)
         except arcpy.ExecuteError:
             raise
         except Exception:
@@ -8438,7 +8684,7 @@ class InvertRaster(object):
             "NoData. Every output carries a record of its place in the Land "
             "Facet chain. A modernized port of the Land Facet Corridor "
             "Designer's Invert Raster tool.")
-        self.category = "Corridor Designer Tools"
+        self.category = "Corridor Designer Tools\\Land Facet Corridor Designer"
         self.canRunInBackground = False
         self._auto_out = None
 

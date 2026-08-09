@@ -28,11 +28,14 @@ DIFFERENCES FROM THE ORIGINAL, all deliberate:
   polygons. Here every FEATURE of the block layer is one block (selection
   honored), each analyzed independently -- the schema below lets the future
   corridor-creation tools build every block pair's corridor in one run.
-* ONE FEATURE CLASS FOR ALL FACETS. Fed this suite's multi-band Land Facet
-  Density raster, the tool runs every band (facet) in a single pass and writes
-  ONE polygon feature class with a ``Facet`` field, rather than the original's
-  one-shapefile-per-facet-run. Group or filter by ``Facet`` to recover the
-  per-facet termini.
+* ONE FEATURE CLASS FOR ALL CATEGORIES. Fed this suite's multi-band Land
+  Facet Density raster, the tool runs every band (facet) in a single pass
+  and writes ONE polygon feature class with a ``Category`` field, rather
+  than the original's one-shapefile-per-facet-run. Group or filter by
+  ``Category`` to recover the per-category termini. The field is named
+  ``Category``, not ``Facet``, because this tool is equally at home on a
+  species habitat-suitability surface, where "facet" would be the wrong
+  word entirely.
 * THE DIVERSITY THRESHOLD MATCHES THE PUBLISHED INTENT. Manual p. 13 defines
   diversity termini from "the half of all cells inside each Wildland Block
   with the highest H'" -- a PER-BLOCK median of IN-BLOCK cells, which the
@@ -45,6 +48,13 @@ DIFFERENCES FROM THE ORIGINAL, all deliberate:
 * Stored density values are UNSCALED first (x 1/10,000 back to proportions)
   when the source carries a density linkage record, so the default threshold
   of 0 means "any density at all", exactly as the manual recommends.
+* A THIRD THRESHOLD MODE, ``MODE_WHOLE_BLOCK``, is not in the original at
+  all: it skips thresholding entirely and writes each Wildland Block polygon
+  itself as that block's one terminus, per category. This is the baseline
+  case -- connect the protected areas directly, with no attempt to target a
+  quality concentration inside them -- and it is also how a user with no
+  land-facet or diversity surface at all still gets a valid Least-Cost
+  Corridor input from the Wildland Blocks alone.
 
 No Spatial Analyst required (the original needed it). Every output is stamped
 with a ``termini`` linkage record so the corridor tools and the Land Facet
@@ -64,8 +74,13 @@ import tool_metadata as _tm
 # Threshold modes.
 MODE_FIXED = "fixed"            # value > threshold_value (density default: 0)
 MODE_MEDIAN = "block_median"    # value > median of in-block values, per block
+MODE_WHOLE_BLOCK = "whole_block"  # the block polygon itself, no thresholding
 
 DEFAULT_PCT = 50.0              # the original's relative-size default
+NO_THRESHOLD = -9999.0          # sentinel: whole-block mode applies none
+                                # (arcpy's shapefile cursor rejects both None
+                                # and NaN in a DOUBLE field with "the field
+                                # is not nullable" -- verified 2026-08-09)
 
 _CD_CITATION = (
     "CorridorDesigner: Majka, D., J. Jenness, and P. Beier. 2007. "
@@ -254,9 +269,9 @@ def _geodesic_area_m2(geom):
 
 def write_layer_file(out_fc, facet_names, messages=None):
     """A .lyrx beside ``out_fc`` symbolizing the termini by Unique Values on
-    the ``Facet`` field (semi-transparent fills, one hue per facet), built by
-    saving a layer file from the real output and replacing its renderer.
-    Returns the .lyrx path, or None on any failure."""
+    the ``Category`` field (semi-transparent fills, one hue per category),
+    built by saving a layer file from the real output and replacing its
+    renderer. Returns the .lyrx path, or None on any failure."""
     import json
     import arcpy
 
@@ -289,9 +304,9 @@ def write_layer_file(out_fc, facet_names, messages=None):
                              "color": {"type": "CIMRGBColor",
                                        "values": [r, g, b, 50]}},
                         ]}}})
-        renderer = {"type": "CIMUniqueValueRenderer", "fields": ["Facet"],
+        renderer = {"type": "CIMUniqueValueRenderer", "fields": ["Category"],
                     "groups": [{"type": "CIMUniqueValueGroup",
-                                "heading": "Facet", "classes": classes}],
+                                "heading": "Category", "classes": classes}],
                     "useDefaultSymbol": False,
                     "polygonSymbolColorTarget": "ColorTargetFill"}
 
@@ -315,7 +330,7 @@ def write_layer_file(out_fc, facet_names, messages=None):
         layer["renderer"] = renderer
         layer["name"] = name
         if "featureTable" in layer:
-            layer["featureTable"]["displayField"] = "Facet"
+            layer["featureTable"]["displayField"] = "Category"
         with open(out_lyrx, "w", encoding="utf-8") as fh:
             json.dump(doc, fh, indent=2)
         return out_lyrx
@@ -348,7 +363,7 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
     if not 0.0 <= pct <= 100.0:
         raise arcpy.ExecuteError(
             "The relative size threshold must be between 0 and 100 percent.")
-    if threshold_mode not in (MODE_FIXED, MODE_MEDIAN):
+    if threshold_mode not in (MODE_FIXED, MODE_MEDIAN, MODE_WHOLE_BLOCK):
         raise arcpy.ExecuteError(
             "Unknown threshold mode: {}".format(threshold_mode))
 
@@ -484,6 +499,32 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
                           "{}: Wildland Block {} contains no valid raster "
                           "cells.".format(_label(b), blk))
                     continue
+                if threshold_mode == MODE_WHOLE_BLOCK:
+                    # No thresholding, labelling or clipping: the block
+                    # polygon itself IS the terminus. Appended straight to
+                    # ``rows`` (bypassing the ``info``/``glab`` machinery
+                    # below, which exists only to polygonize thresholded
+                    # cells) so it survives the relative-size filter
+                    # trivially -- it is always its own group's only, and
+                    # therefore largest, region.
+                    geom = block_geoms[blk - 1]
+                    area, was_geodesic = _geodesic_area_m2(geom)
+                    geodesic_all &= was_geodesic
+                    if area <= 0:
+                        continue
+                    rows.append({
+                        # Sentinel, not None/NaN: arcpy's shapefile cursor
+                        # rejects BOTH None and NaN into a DOUBLE field with
+                        # "The field is not nullable" (verified 2026-08-09;
+                        # DBF has no true NULL for numerics) -- -9999 is this
+                        # suite's existing not-applicable convention.
+                        "category": _label(b), "category_id": _facet_id(b),
+                        "band": b, "block": blk, "thr": NO_THRESHOLD,
+                        "cells": int(vm.sum()), "mean": float(a[vm].mean()),
+                        "max": float(a[vm].max()),
+                        "geom": geom, "area": area,
+                    })
+                    continue
                 if threshold_mode == MODE_MEDIAN:
                     thr = float(np.median(a[vm]))
                 else:
@@ -505,7 +546,7 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
                 glab[sel] = lab[sel] + offset
                 for k in range(n_lab):
                     info[offset + k + 1] = {
-                        "facet": _label(b), "facet_id": _facet_id(b),
+                        "category": _label(b), "category_id": _facet_id(b),
                         "band": b, "block": blk, "thr": thr,
                         "cells": int(counts[k]), "mean": float(means[k]),
                         "max": float(maxes[k]),
@@ -556,17 +597,29 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
         kept = []
         for (bnd, blk), grp in sorted(groups.items()):
             biggest = max(r["area"] for r in grp)
-            floor = biggest * pct / 100.0
-            surv = [r for r in grp if r["area"] >= floor]
+            # Cross-multiplied (area*100 >= biggest*pct), NOT
+            # "area >= biggest*pct/100.0": a region that IS the group's
+            # biggest must always survive at pct=100, but multiplying then
+            # dividing by 100.0 can round-trip to a value a hair above the
+            # original area, dropping it. Cross-multiplying puts area and
+            # biggest through the same single rounding, so area==biggest
+            # compares equal regardless of floating-point noise.
+            threshold = biggest * pct
+            surv = [r for r in grp if r["area"] * 100.0 >= threshold]
             for r in surv:
                 r["pctmax"] = 100.0 * r["area"] / biggest if biggest else 0.0
             kept.extend(surv)
             _say(messages,
                  "{}, Wildland Block {}: {} of {} region{} kept (>= {:g}% "
                  "of the largest, {:,.1f} sq m).".format(
-                     grp[0]["facet"], blk, len(surv), len(grp),
+                     grp[0]["category"], blk, len(surv), len(grp),
                      "" if len(grp) == 1 else "s", pct, biggest))
         if not kept:
+            if threshold_mode == MODE_WHOLE_BLOCK:
+                raise arcpy.ExecuteError(
+                    "No termini polygons were written. Check that the "
+                    "Wildland Blocks overlap the analysis surface and that "
+                    "each block polygon has a positive area.")
             raise arcpy.ExecuteError(
                 "No termini polygons were found in any Wildland Block. "
                 "Nothing exceeded the threshold -- check that the analysis "
@@ -615,7 +668,7 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
         out_ws, out_name = os.path.split(str(out_fc))
         arcpy.management.CreateFeatureclass(out_ws, out_name, "POLYGON",
                                             spatial_reference=rast_sr)
-        fields = [("Facet", "TEXT", 64), ("Facet_ID", "LONG", None),
+        fields = [("Category", "TEXT", 64), ("CategoryID", "LONG", None),
                   ("Block", "LONG", None), ("Terminus", "LONG", None),
                   ("Area_SqM", "DOUBLE", None), ("Cells", "LONG", None),
                   ("PctOfMax", "DOUBLE", None), ("MeanValue", "DOUBLE", None),
@@ -627,12 +680,12 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
                 arcpy.management.AddField(out_fc, nm, tp)
 
         with arcpy.da.InsertCursor(
-                out_fc, ["SHAPE@", "Facet", "Facet_ID", "Block", "Terminus",
-                         "Area_SqM", "Cells", "PctOfMax", "MeanValue",
-                         "MaxValue", "Threshold"]) as cur:
+                out_fc, ["SHAPE@", "Category", "CategoryID", "Block",
+                         "Terminus", "Area_SqM", "Cells", "PctOfMax",
+                         "MeanValue", "MaxValue", "Threshold"]) as cur:
             for i, r in enumerate(kept, start=1):
-                cur.insertRow([r["geom"], r["facet"],
-                               int(r["facet_id"] or 0), r["block"], i,
+                cur.insertRow([r["geom"], r["category"],
+                               int(r["category_id"] or 0), r["block"], i,
                                r["area"], r["cells"], r["pctmax"], r["mean"],
                                r["max"], r["thr"]])
                 if i % 100 == 0:
@@ -641,10 +694,14 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
             len(kept), "" if len(kept) == 1 else "s"))
 
         # ---- metadata + linkage record --------------------------------------
-        facet_names = sorted({r["facet"] for r in kept})
-        mode_text = ("value > median of the in-block cells, computed per "
-                     "Wildland Block" if threshold_mode == MODE_MEDIAN
-                     else "value > {:g}".format(thr_fixed))
+        facet_names = sorted({r["category"] for r in kept})
+        if threshold_mode == MODE_WHOLE_BLOCK:
+            mode_text = "no threshold -- each block polygon used whole"
+        elif threshold_mode == MODE_MEDIAN:
+            mode_text = ("value > median of the in-block cells, computed "
+                         "per Wildland Block")
+        else:
+            mode_text = "value > {:g}".format(thr_fixed)
         try:
             _tm.set_entity_and_fields(
                 out_fc,
@@ -653,15 +710,16 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
                         "at least {:g}% of the size of the largest "
                         "concentration in its block.".format(pct)),
                 fields=[
-                    {"name": "Facet", "description":
-                        "The land facet (or analysis surface) this terminus "
-                        "belongs to. One feature class holds every facet's "
-                        "termini; group or filter by this field to recover "
-                        "the per-facet sets."},
-                    {"name": "Facet_ID", "description":
-                        "The facet's id from the source raster's linkage "
-                        "record, or the band number when the source carries "
-                        "none."},
+                    {"name": "Category", "description":
+                        "The category this terminus belongs to -- a land "
+                        "facet, a species habitat-suitability surface, or "
+                        "any other analysis surface. One feature class "
+                        "holds every category's termini; group or filter "
+                        "by this field to recover the per-category sets."},
+                    {"name": "CategoryID", "description":
+                        "The category's id from the source raster's "
+                        "linkage record, or the band number when the "
+                        "source carries none."},
                     {"name": "Block", "description":
                         "Which Wildland Block feature contains this terminus "
                         "(1-based, in the block layer's feature order)."},
@@ -679,8 +737,8 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
                     {"name": "PctOfMax", "description":
                         "This polygon's area as a percentage of the largest "
                         "terminus polygon in the same Wildland Block (for "
-                        "the same facet). The retention rule keeps polygons "
-                        "at or above the size threshold."},
+                        "the same category). The retention rule keeps "
+                        "polygons at or above the size threshold."},
                     {"name": "MeanValue", "description":
                         "Mean of the analysis surface over the region's "
                         "cells (density rasters: as a 0-1 proportion)."},
@@ -690,7 +748,10 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
                     {"name": "Threshold", "description":
                         "The threshold this region had to exceed -- the "
                         "fixed value, or the block's own median in "
-                        "median mode."},
+                        "median mode. -9999 (not a real threshold value) "
+                        "when the whole Wildland Block polygon was used "
+                        "as its own terminus, since no threshold was "
+                        "applied."},
                 ],
                 messages=messages)
             from arcpy import metadata as md
@@ -708,15 +769,17 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
                     src=str(in_raster), mode=mode_text, pct=pct,
                     blocks=str(blocks))
             m.description = (
-                "Corridor termini polygons -- the concentrations of a land "
-                "facet (or of facet diversity) inside each Wildland Block "
-                "that least-cost corridors run between. Regions of the "
-                "analysis surface above the threshold are kept when they "
-                "reach the relative size threshold against the largest "
-                "region in their block, each block analyzed separately. One "
-                "feature class holds every facet's termini (the Facet "
-                "field). A modernized port of the Land Facet Corridor "
-                "Designer's Identify Termini Polygons tool. " + _CD_CITATION)
+                "Corridor termini polygons -- the concentrations of a "
+                "quality surface (a species habitat-suitability surface, a "
+                "land facet, or facet diversity) inside each Wildland "
+                "Block that least-cost corridors run between. Regions of "
+                "the analysis surface above the threshold are kept when "
+                "they reach the relative size threshold against the "
+                "largest region in their block, each block analyzed "
+                "separately. One feature class holds every category's "
+                "termini (the Category field). A modernized, generalized "
+                "port of the Land Facet Corridor Designer's Identify "
+                "Termini Polygons tool. " + _CD_CITATION)
             m.credits = ("Tool by Jeff Jenness, Jenness Enterprises "
                          "(http://www.jennessent.com). Method: " +
                          _CD_CITATION)
@@ -730,7 +793,7 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
         facets_meta = []
         for b in band_nos:
             facets_meta.append({
-                "facet_id": _facet_id(b), "label": _label(b), "band": b,
+                "category_id": _facet_id(b), "label": _label(b), "band": b,
                 "n_termini": sum(coverage[b].values()),
                 "by_block": [{"block": blk, "n_termini": coverage[b][blk]}
                              for blk in range(1, n_blocks + 1)],
@@ -743,8 +806,9 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
             analysis_id=analysis_id, source_raster=in_raster,
             blocks=blocks_path, threshold_mode=threshold_mode,
             relative_size_pct=pct, source_analysis_id=src_analysis,
-            facets=facets_meta,
-            threshold_value=(None if threshold_mode == MODE_MEDIAN
+            categories=facets_meta,
+            threshold_value=(None if threshold_mode in (MODE_MEDIAN,
+                                                        MODE_WHOLE_BLOCK)
                              else thr_fixed),
             n_blocks=n_blocks), messages)
 

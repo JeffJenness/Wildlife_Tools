@@ -646,7 +646,6 @@
             "heading" : "Type"
           }
         ],
-        "useDefaultSymbol" : true,
         "isDefaultSymbolVisible" : false,
         "polygonSymbolColorTarget" : "Fill"
       },

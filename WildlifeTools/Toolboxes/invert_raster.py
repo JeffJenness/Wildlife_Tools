@@ -237,6 +237,25 @@ def run_invert(in_raster, out_raster=None, out_workspace=None,
     analysis_id = (chain_rec or {}).get("analysis_id") or _lnk.new_analysis_id()
     src_analysis = (chain_rec or {}).get("analysis_id")
 
+    if (chain_rec or {}).get("record") == _lnk.MAHALANOBIS:
+        out_type = chain_rec.get("out_type")
+        if out_type in (_mh.OUT_D2, _mh.OUT_D):
+            _warn(messages,
+                  "The input is a Land Facet Mahalanobis distance raster "
+                  "({}). It is ALREADY a valid cost surface -- low values "
+                  "mean close to the facet's typical conditions, which is "
+                  "the 'cheap to cross' sense a corridor needs -- so "
+                  "inverting it REVERSES that meaning: the least typical "
+                  "cells would become the cheapest to cross. Feed it "
+                  "directly to Least-Cost Corridor instead, without "
+                  "inverting.".format(out_type))
+        elif out_type == _mh.OUT_PVALUE:
+            _say(messages,
+                 "The input is a Land Facet Mahalanobis p-value raster: "
+                 "high values mean typical (like a density proportion), so "
+                 "inverting it to a cost surface -- unlike a D or D2 "
+                 "distance raster -- is the correct direction.")
+
     src, in_copy = _hs._open_source(in_raster, scratch, messages)
     try:
         nbands = src.RasterCount

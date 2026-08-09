@@ -259,6 +259,10 @@
     <Content Include="Images\Termini_32.png" />
     <Content Include="DarkImages\Termini_16.png" />
     <Content Include="DarkImages\Termini_32.png" />
+    <Content Include="Images\LeastCostCorridor_16.png" />
+    <Content Include="Images\LeastCostCorridor_32.png" />
+    <Content Include="DarkImages\LeastCostCorridor_16.png" />
+    <Content Include="DarkImages\LeastCostCorridor_32.png" />
     <!-- Sudoku skin fonts, embedded as WPF resources so they render on every
          machine with no installation (all SIL Open Font License; the OFL
          texts ship alongside as required for redistribution). -->
