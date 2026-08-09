@@ -451,6 +451,20 @@ def run_least_cost_corridor(in_termini, cost_raster=None, cost_workspace=None,
     scratch = arcpy.env.scratchFolder
     gdal = _mh._gdal()
 
+    # Resolve to a real catalog path BEFORE anything gets stamped into a
+    # linkage record. A map-layer parameter's value (the common case when
+    # the termini output is already loaded) stringifies to just its LAYER
+    # NAME, not a path -- fine for arcpy's own calls below (which resolve a
+    # layer against the map automatically), but useless as "source_termini"
+    # for a report run in a different session: the reader could not find
+    # the source at all, so the chain walk stopped at this dataset instead
+    # of continuing back through Termini/Density/Clustering (found from
+    # Jeff's real report, 2026-08-09).
+    try:
+        in_termini = arcpy.Describe(in_termini).catalogPath
+    except Exception:                                            # noqa: BLE001
+        pass
+
     trec = _lnk.read(in_termini, _lnk.TERMINI)
     groups = _read_termini(in_termini)
     if facet_values:
