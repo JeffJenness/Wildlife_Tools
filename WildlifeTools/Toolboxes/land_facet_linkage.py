@@ -50,6 +50,7 @@ DIVERSITY = "diversity"       # written by the Diversity Indices tool
 TERMINI = "termini"     # written by the Identify Termini Polygons tool
 CORRIDOR = "corridor"   # written by the Least-Cost Corridor tool
 UNION = "union"         # written by the Union Corridors tool
+HSM = "hsm"             # written by the CorridorDesigner HSM chain tools
 
 # Marker prefix so the blob is recognizable (and so a human reading the
 # Supplemental Information field can see what it is) and separable from any
@@ -339,6 +340,37 @@ def union_record(sources, mixed_analysis, source_analysis_ids):
         "sources": list(sources or []),
         "mixed_analysis": bool(mixed_analysis),
         "source_analysis_ids": list(source_analysis_ids or []),
+    }
+
+
+def hsm_record(analysis_id, tool, method, factors=None, source_raster=None,
+               source_analysis_id=None, params=None):
+    """Build the record stamped on a habitat-suitability-model (HSM) raster.
+
+    Written by the CorridorDesigner HSM chain (``hsm_tools``): the Habitat
+    Suitability Model and Combine Habitat Factors tools (``method``
+    'geometric'/'additive', with a ``factors`` list of
+    ``{"path", "weight"[, "remap_file"]}``), the Normalize Existing HSM tool
+    (``method`` 'normalized', anchors in ``params``), and -- via
+    ``hsm_tools._carry_record_forward`` -- as the fresh base record
+    (``method`` 'external') when a Modify HSM tool runs on a raster carrying
+    no record at all. The Modify tools themselves append ``post_processing``
+    steps (``add_post_processing_step``) rather than minting new records, so
+    an HSM keeps one identity through its whole edit history. An HSM surface
+    is high-is-good: Invert Raster (not direct use) is the path to a cost
+    surface, same as a density or diversity raster.
+    """
+    return {
+        "schema": SCHEMA,
+        "record": HSM,
+        "analysis_id": analysis_id,
+        "created": _utc_now(),
+        "tool": tool,
+        "method": method,
+        "source_raster": str(source_raster) if source_raster else None,
+        "source_analysis_id": source_analysis_id,
+        "factors": list(factors or []),
+        "params": params or {},
     }
 
 

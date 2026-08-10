@@ -66,6 +66,7 @@ import numpy as np
 
 import mahalanobis as _mh
 import hillshade as _hs
+import topographic_tools as _tt
 import land_facet_linkage as _lnk
 import land_facet_mahalanobis as _lfm
 import invert_raster as _inv
@@ -476,6 +477,12 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
             if nod is not None:
                 with np.errstate(invalid="ignore"):
                     valid &= (a != float(nod))
+            # Also exclude the suite's NODATA_OUT sentinel: a surface that
+            # lost its NoData declaration (the geodatabase scenario warned
+            # about below) would otherwise drag per-block medians and
+            # region statistics toward -9999.
+            with np.errstate(invalid="ignore"):
+                valid &= (a != float(_tt.NODATA_OUT))
             if scale:
                 over = valid & (a > 1.0 / scale)
                 n_over = int(over.sum())

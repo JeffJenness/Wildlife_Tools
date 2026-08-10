@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<metadata xml:lang="en"><Esri><CreaDate>20260809</CreaDate><CreaTime>00000000</CreaTime><ArcGISFormat>1.0</ArcGISFormat><SyncOnce>TRUE</SyncOnce></Esri>
+	<tool name="HabitatSuitabilityModel" displayname="Create Habitat Suitability Model" toolboxalias="jenness">
+		<arcToolboxHelpPath>c:\program files\arcgis\pro\Resources\Help\gp</arcToolboxHelpPath>
+		<summary>Builds a habitat suitability model (HSM) on the 0-100 scale (100 = best habitat) from any number of habitat factor rasters -- land cover, elevation, distance to roads, topographic position... Each factor is first reclassified onto 0-100 with a tab- or space-delimited ASCII remap file (the original CorridorDesigner format), then the factors are combined by weighted GEOMETRIC mean (recommended: a 0 score in any factor zeroes the cell, reflecting Liebig's Law of the Minimum) or weighted ADDITIVE mean (equivalent to Esri's Weighted Overlay). Weights must sum to 100. Optionally saves each reclassified factor for reuse in Combine Habitat Factors. A modernized port of the CorridorDesigner Habitat Suitability Model tool. Needs no Spatial Analyst.</summary>
+		<usage>WHAT THIS TOOL DOES. This is step one of the CorridorDesigner habitat-modeling chain: it turns raw GIS factor layers into one habitat suitability surface for a focal species. For each factor you supply a raster, an ASCII remap file translating that raster's values into 0-100 suitability scores, and a weight expressing the factor's relative importance; the tool reclassifies every factor and combines them into a single per-cell suitability score. The result feeds directly into the patch and corridor tools (and, inverted or subtracted, becomes a travel-cost surface -- in the CorridorDesigner framing, suitability and permeability are two names for the same thing, and cost is 100 minus suitability).
+
+THE 0-100 SCALE IS BIOLOGICALLY MEANINGFUL, NOT ARBITRARY. The CorridorDesigner workshop book (section 2.3) anchors the scale to the species' biology, and scoring against these anchors is what makes downstream patch and corridor modeling defensible: 100 = best habitat, highest survival and reproductive success; 80 = the lowest score typically associated with successful breeding; 60 = the lowest score associated with consistent use and breeding; 30 = the lowest score associated with occasional use for non-breeding activities; anything below 30 = avoided; and 0 = absolute non-habitat. Assign a zero ONLY when the animal would not use the class even if every other factor were optimal -- under the geometric mean a zero anywhere makes the whole cell zero, so (as the workshop book puts it) the scorer must be warned that a score of zero means zero. Whenever possible have a biologist who knows the species set the scores against the literature; lacking an expert, have several people score independently and reconcile.
+
+THE REMAP FILE FORMAT -- THE ORIGINAL, UNCHANGED. Each factor's remap file is plain ASCII text, one rule per line, in either of two forms: a single input value ("value : score") or an input range ("from to : score"). Blank lines and lines starting with # are ignored. A worked example for a land-cover raster and then an elevation raster:
+
+    1 : 100
+    2 : 60
+    3 : 30
+    4 : 0
+
+    0 1500 : 20
+    1500 2200 : 100
+    2200 4000 : 40
+
+Lines MUST be in ascending numerical order -- the original tool simply failed otherwise (workshop book p.98); this version checks and tells you exactly which line is out of order. Range boundaries follow first-match: a value falling on a shared boundary (1500 above) belongs to the EARLIER line. Input cells matching no line become NoData, with a warning giving the count -- extend the remap file if those cells should score. Existing CorridorDesigner remap files, including the published Arizona species files, drop straight in.
+
+GEOMETRIC OR ADDITIVE MEAN -- WHY GEOMETRIC IS THE DEFAULT. Weights are normalized to w/100 and the factors combined either as the weighted geometric mean (each score raised to its normalized weight, the results multiplied) or the weighted additive mean (each score times its normalized weight, the results summed). Both keep the result on 0-100. The difference matters most at low scores: the ADDITIVE mean lets a deficiency in one factor be compensated by the others -- a cell of ideal vegetation above the species' hard elevation limit still averages out to decent habitat -- while the GEOMETRIC mean takes limits literally: a 0 in ANY factor makes the cell 0, however good the rest are. That is Liebig's Law of the Minimum, one of the oldest ideas in ecology (suitability is set by the scarcest essential factor), and the workshop book's own recommendation (section 2.4): because habitat suitability probably IS limited by the worst factor, use the geometric mean routinely. The additive mean is equivalent to Esri's Weighted Overlay and is provided for continuity with models built that way.
+
+WEIGHTS MUST SUM TO 100. Each factor's weight expresses its relative importance -- land cover 60, topographic position 20, distance to roads 20 makes land cover three times as important as either of the others. The tool checks the sum and stops with a message if it is not exactly 100. A factor that does not matter for the species should simply be left out rather than given a tiny weight.
+
+THE FIRST FACTOR DEFINES THE OUTPUT GRID. The output raster takes its cell size, extent, and coordinate system from the FIRST factor in the list; any other factor on a different grid is resampled onto it (nearest neighbour) with a message saying so. Put your finest, most trustworthy layer -- typically land cover -- first. The originals delegated this silently to the Spatial Analyst environment; this version tells you.
+
+SAVE THE RECLASSIFIED FACTORS TO EXPERIMENT FASTER. With the save option checked, each factor's reclassified 0-100 raster is also written next to the output (named with an _r suffix) and listed in the run messages. Feed those into the Combine Habitat Factors tool to try different weights or switch between geometric and additive combining without re-running the reclassification -- the intended workflow for tuning a model.
+
+UNLIMITED FACTORS. The original dialog had six fixed factor slots; this version accepts any number of rows. A single factor is allowed (the "model" is then just that factor's reclassified scores, and the tool says so). Cells that are NoData in ANY factor are NoData in the output.
+
+EVERY OUTPUT KNOWS ITS PLACE IN THE CHAIN. The output is stamped with a machine-readable record (the same Supplemental Information mechanism the Land Facet and corridor tools use) naming every factor, weight, and remap file and the combining method, so the Land Facet Data Report and the downstream corridor tools can trace exactly how the model was built.
+
+CREDITS AND REFERENCES. The original CorridorDesigner HSM tools are by Dan Majka (dan@corridordesign.org, 2006-2007); these ArcGIS Pro versions are by Jeff Jenness and Dan Majka equally. Please cite: Majka, D., J. Jenness, and P. Beier. 2007. CorridorDesigner: ArcGIS tools for designing and evaluating corridors. http://corridordesign.org.</usage>
+		<parameters>
+			<param name="factors" displayname="Habitat factors (raster, remap file, weight; weights must sum to 100)" type="Required" direction="Input" datatype="Value Table" expression="factors"><dialogReference><para>One row per habitat factor: the factor raster, the ASCII remap file translating its values to 0-100 suitability scores, and the factor's weight. Any number of rows (the original capped at six). Weights must be positive and sum to exactly 100. The FIRST row defines the output grid; other factors on a different grid are resampled onto it (nearest neighbour) with a message.</para><para>The remap file is the original CorridorDesigner ASCII format, one rule per line: "value : score" for a single input value or "from to : score" for a range (for example "762 1219 : 44"). Lines must be in ascending numerical order; a value on a shared range boundary takes the EARLIER line's score; cells matching no line become NoData with a warning. Blank lines and # comment lines are ignored. Existing CorridorDesigner remap files work unchanged.</para></dialogReference></param>
+			<param name="method" displayname="Method of combining factors" type="Required" direction="Input" datatype="String" expression="method"><dialogReference><para>Geometric Mean (the default and the workshop book's recommendation) multiplies each factor's score raised to its normalized weight: a 0 in ANY factor zeroes the cell, however good the others -- Liebig's Law of the Minimum, appropriate when a deficit in one factor cannot be compensated. Additive Mean sums score times normalized weight (equivalent to Esri's Weighted Overlay): deficiencies in one factor CAN be averaged away by the others. Both keep the result on 0-100, and away from very low scores they produce similar models.</para></dialogReference></param>
+			<param name="out_raster" displayname="Output habitat suitability model" type="Required" direction="Output" datatype="Raster Dataset" expression="out_raster"><dialogReference><para>The combined habitat suitability model, on the 0-100 scale with 100 = best habitat. A path in a folder without an extension is written as a GeoTIFF. The output carries full statistics plus metadata recording every factor, weight, remap file, and the combining method.</para></dialogReference></param>
+			<param name="save_reclassified" displayname="Save reclassified habitat factors (for Combine Habitat Factors)" type="Optional" direction="Input" datatype="Boolean" expression="save_reclassified"><dialogReference><para>Checked: each factor's reclassified 0-100 raster is also saved next to the output, named with an _r suffix and listed in the run messages. Feed those into the Combine Habitat Factors tool to experiment with different weights or combining methods without repeating the reclassification. Unchecked (the default): only the combined model is written.</para></dialogReference></param>
+		</parameters>
+		<scriptExamples><scriptExample><title>Create Habitat Suitability Model example (stand-alone script)</title><para>Builds a three-factor HSM by weighted geometric mean, saving the reclassified factors for later weight experiments in Combine Habitat Factors.</para><code>import arcpy
+arcpy.ImportToolbox(r"C:\path\to\JennessEnterprisesTools.pyt")  # your installed path is shown in this tool's run messages
+
+# method options: "Geometric Mean" (recommended), "Additive Mean"
+arcpy.jenness.HabitatSuitabilityModel(
+    [[r"C:\data\landcover.tif", r"C:\data\remaps\landcover_remap.txt", 60],
+     [r"C:\data\elevation.tif", r"C:\data\remaps\elevation_remap.txt", 20],
+     [r"C:\data\dist_roads.tif", r"C:\data\remaps\roads_remap.txt", 20]],
+    "Geometric Mean",
+    r"C:\project\hsm\Badger_HSM.tif",
+    True)   # also save landcover_r, elevation_r, dist_roads_r
+</code></scriptExample></scriptExamples>
+	</tool>
+</metadata>

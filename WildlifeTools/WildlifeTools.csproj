@@ -263,6 +263,22 @@
     <Content Include="Images\LeastCostCorridor_32.png" />
     <Content Include="DarkImages\LeastCostCorridor_16.png" />
     <Content Include="DarkImages\LeastCostCorridor_32.png" />
+    <Content Include="Images\FillCorridorHoles_16.png" />
+    <Content Include="Images\FillCorridorHoles_32.png" />
+    <Content Include="Images\UnionCorridors_16.png" />
+    <Content Include="Images\UnionCorridors_32.png" />
+    <Content Include="Images\HabitatSuitability_16.png" />
+    <Content Include="Images\HabitatSuitability_32.png" />
+    <Content Include="Images\CombineFactors_16.png" />
+    <Content Include="Images\CombineFactors_32.png" />
+    <Content Include="Images\NormalizeHSM_16.png" />
+    <Content Include="Images\NormalizeHSM_32.png" />
+    <Content Include="Images\ReclassFeaturesHSM_16.png" />
+    <Content Include="Images\ReclassFeaturesHSM_32.png" />
+    <Content Include="Images\CriticalFeature_16.png" />
+    <Content Include="Images\CriticalFeature_32.png" />
+    <Content Include="Images\HsmMenu_16.png" />
+    <Content Include="Images\HsmMenu_32.png" />
     <!-- Sudoku skin fonts, embedded as WPF resources so they render on every
          machine with no installation (all SIL Open Font License; the OFL
          texts ship alongside as required for redistribution). -->

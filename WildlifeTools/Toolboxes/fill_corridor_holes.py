@@ -110,9 +110,21 @@ def _fill_small_holes(geom, threshold_m2):
             pass
 
     sr = geom.spatialReference
-    gi = geom.__geo_interface__
-    gtype = gi.get("type")
-    parts = gi["coordinates"] if gtype == "MultiPolygon" else [gi["coordinates"]]
+    # Iterate arcpy parts directly (exterior ring, then interior rings
+    # separated by None points) rather than __geo_interface__: the GeoJSON
+    # round trip flattens coordinates to 2-D, silently zeroing Z and M on
+    # exactly the features that get rebuilt. Z/M-awareness must be read off
+    # the POINTS (None / NaN when absent) -- arcpy geometry objects expose
+    # no hasZ/hasM here.
+    parts = []
+    for part in geom:
+        rings = [[]]
+        for pt in part:
+            if pt is None:
+                rings.append([])
+            else:
+                rings[-1].append(pt)
+        parts.append([r for r in rings if r])
 
     was_geodesic = True
     n_removed = 0
@@ -126,7 +138,7 @@ def _fill_small_holes(geom, threshold_m2):
         for ring in rings[1:]:
             n_total += 1
             ring_poly = arcpy.Polygon(
-                arcpy.Array([arcpy.Point(pt[0], pt[1]) for pt in ring]), sr)
+                arcpy.Array([arcpy.Point(pt.X, pt.Y) for pt in ring]), sr)
             area, is_geo = _term._geodesic_area_m2(ring_poly)
             was_geodesic = was_geodesic and is_geo
             if area < threshold_m2:
@@ -139,9 +151,19 @@ def _fill_small_holes(geom, threshold_m2):
     if not changed:
         return geom, 0, n_total, was_geodesic
 
-    rebuilt = arcpy.AsShape({"type": "MultiPolygon", "coordinates": new_parts},
-                            esri_json=False)
-    rebuilt = arcpy.Polygon(rebuilt.getPart(), sr)
+    arr = arcpy.Array()
+    for rings in new_parts:
+        pts = []
+        for i, ring in enumerate(rings):
+            if i:
+                pts.append(None)          # ring separator within a part
+            pts.extend(ring)
+        arr.add(arcpy.Array(pts))
+    probe = next((p for rings in new_parts for r in rings for p in r), None)
+    has_z = probe is not None and probe.Z is not None
+    has_m = (probe is not None and probe.M is not None
+             and probe.M == probe.M)                    # NaN = no M
+    rebuilt = arcpy.Polygon(arr, sr, has_z, has_m)
     return rebuilt, n_removed, n_total, was_geodesic
 
 

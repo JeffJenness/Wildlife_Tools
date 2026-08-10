@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<metadata xml:lang="en"><Esri><CreaDate>20260809</CreaDate><CreaTime>00000000</CreaTime><ArcGISFormat>1.0</ArcGISFormat><SyncOnce>TRUE</SyncOnce></Esri>
+	<tool name="NormalizeExistingHSM" displayname="Normalize Existing HSM" toolboxalias="jenness">
+		<arcToolboxHelpPath>c:\program files\arcgis\pro\Resources\Help\gp</arcToolboxHelpPath>
+		<summary>Linearly stretches a habitat suitability model built OUTSIDE this tool chain -- a logistic-regression probability surface on 0-1, an expert model on 1-10, any consistent scale -- onto the 0-100 suitability scale the CorridorDesigner chain expects (100 = best habitat). You name the value in YOUR model meaning worst habitat (it becomes 0) and the value meaning best habitat (it becomes 100); everything between is stretched proportionally. A model where LOW values mean good habitat inverts naturally (give a worst value larger than the best). Values beyond the anchors are clamped to 0-100 by default. A modernized port of the CorridorDesigner Normalize Existing HSM tool. Needs no Spatial Analyst.</summary>
+		<usage>WHAT THIS TOOL DOES. The rest of the habitat and corridor chain -- Reclassify Features in HSM, Critical Habitat Feature, the patch and corridor tools -- expects suitability on the CorridorDesigner 0-100 scale. Habitat models arrive from many other places: a logistic regression predicting probability of occurrence on 0-1, a Maxent surface, an HSI model on 0-1, an expert scoring on 1-10, a published model on some idiosyncratic scale. This tool brings any of them onto 0-100 with a simple linear stretch: output = ((x - worst) / (best - worst)) * 100.
+
+THE ANCHORS ARE MEANINGS, NOT NECESSARILY THE RASTER'S MIN AND MAX. The two values you supply are the values that MEAN worst and best habitat in your model's own terms -- for a probability surface, worst 0 and best 1, even if the raster's actual values only span 0.03 to 0.91. Anchoring to meaning rather than to the observed extremes keeps the output comparable across models and study areas.
+
+THE 0-100 SCALE HAS BIOLOGICAL ANCHOR POINTS -- LINE YOUR MODEL UP WITH THEM. On the CorridorDesigner scale (workshop book section 2.3): 100 = best habitat, highest survival and reproductive success; 80 = the lowest score typically associated with successful breeding; 60 = the lowest score associated with consistent use and breeding; 30 = the lowest score associated with occasional non-breeding use; below 30 = avoided; 0 = absolute non-habitat. Downstream tools lean on those interpretations (patch modeling in particular keys on the breeding thresholds), so after normalizing, sanity-check that your model's scores land sensibly against them -- a stretched surface whose "60" does not roughly mean consistent breeding habitat will mislead every tool that consumes it. A plain linear stretch cannot always achieve that on its own; if your model's relationship to suitability is strongly nonlinear, consider reclassifying it with Create Habitat Suitability Model (as a single factor with a remap file) instead, which lets you place every value range exactly.
+
+MODELS WHERE LOW MEANS GOOD INVERT NATURALLY. If your source model runs the other way -- low values are good habitat, high values are poor (a cost or resistance surface, some HSI conventions) -- simply give a worst value LARGER than the best (worst 10, best 1). The stretch then reverses the scale in the same operation, exactly as the original tool allowed.
+
+CLAMPING, AN IMPROVEMENT OVER THE ORIGINAL. Cells beyond your anchors would stretch below 0 or above 100. By default they are pinned to 0 and 100, with a message giving the count -- the original wrote such values out silently, quietly handing downstream tools scores like -12 or 117. Uncheck the clamp to reproduce that original behavior faithfully; the tool then warns instead, since downstream HSM tools expect 0-100.
+
+NODATA AND OUTPUT. Input NoData stays NoData. The output raster carries full statistics plus a machine-readable record of the source raster and both anchor values, so the Land Facet Data Report and the downstream corridor tools can trace exactly how the surface was made.
+
+CREDITS AND REFERENCES. The original CorridorDesigner HSM tools are by Dan Majka (dan@corridordesign.org, 2006-2007); these ArcGIS Pro versions are by Jeff Jenness and Dan Majka equally. Please cite: Majka, D., J. Jenness, and P. Beier. 2007. CorridorDesigner: ArcGIS tools for designing and evaluating corridors. http://corridordesign.org.</usage>
+		<parameters>
+			<param name="in_raster" displayname="Input existing habitat suitability model" type="Required" direction="Input" datatype="Raster Layer" expression="in_raster"><dialogReference><para>The habitat model built outside this tool chain, on whatever consistent scale it uses -- a 0-1 probability surface, a 1-10 expert scoring, anything linear. Single band (a specific band of a multi-band raster can be given as its Band path).</para></dialogReference></param>
+			<param name="worst" displayname="Value for WORST habitat in your model" type="Required" direction="Input" datatype="Double" expression="worst"><dialogReference><para>The value that MEANS worst habitat in your model's own terms -- 0 for a probability surface, 1 for a 1-10 scoring -- not necessarily the smallest value present in the raster. This value maps to 0. If your model runs low-is-good, put its GOOD end in the best parameter and its poor end here; a worst value larger than the best inverts the scale naturally.</para></dialogReference></param>
+			<param name="best" displayname="Value for BEST habitat in your model" type="Required" direction="Input" datatype="Double" expression="best"><dialogReference><para>The value that MEANS best habitat in your model's own terms; it maps to 100. Must differ from the worst value (the stretch would otherwise divide by zero -- the dialog checks).</para></dialogReference></param>
+			<param name="clamp" displayname="Clamp results to 0-100" type="Optional" direction="Input" datatype="Boolean" expression="clamp"><dialogReference><para>Checked (the default): cells beyond the worst/best anchors are pinned to 0 and 100, with a message giving the count. Unchecked: out-of-range values are written as-is, as the original tool silently did -- the tool then warns, because downstream HSM tools expect 0-100.</para></dialogReference></param>
+			<param name="out_raster" displayname="Output normalized habitat suitability model" type="Required" direction="Output" datatype="Raster Dataset" expression="out_raster"><dialogReference><para>The stretched habitat suitability model on the 0-100 scale (100 = best habitat), ready for the Modify HSM and corridor tools. A name is suggested from the input; a path in a folder without an extension is written as a GeoTIFF.</para></dialogReference></param>
+		</parameters>
+		<scriptExamples><scriptExample><title>Normalize Existing HSM example (stand-alone script)</title><para>A 0-1 logistic-regression probability surface stretched onto 0-100, then a low-is-good 1-10 resistance-style model inverted onto the same scale by swapping the anchors.</para><code>import arcpy
+arcpy.ImportToolbox(r"C:\path\to\JennessEnterprisesTools.pyt")  # your installed path is shown in this tool's run messages
+
+# Probability of occurrence (0 = worst, 1 = best)
+arcpy.jenness.NormalizeExistingHSM(
+    r"C:\data\models\badger_logistic.tif", 0, 1, True,
+    r"C:\project\hsm\HSM_Norm_badger_logistic.tif")
+
+# Low-is-good expert model on 1-10: worst = 10, best = 1 inverts it
+arcpy.jenness.NormalizeExistingHSM(
+    r"C:\data\models\expert_resistance.tif", 10, 1, True,
+    r"C:\project\hsm\HSM_Norm_expert.tif")
+</code></scriptExample></scriptExamples>
+	</tool>
+</metadata>

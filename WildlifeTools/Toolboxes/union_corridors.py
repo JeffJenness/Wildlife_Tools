@@ -161,7 +161,11 @@ def run_union_corridors(in_features_list, out_features, messages=None):
     _mh.begin_phases([("Union", 3), ("Dissolve", 1)])
     _mh.phase_advance()
     out_ws, out_name = os.path.split(out_features)
-    scratch = os.path.join(out_ws, "_" + out_name + "_union_scratch")
+    # Keep any format extension (.shp) at the END of the scratch name -- an
+    # embedded mid-name '.shp' is an invalid folder dataset name and made
+    # every shapefile destination fail before producing anything.
+    base, ext = os.path.splitext(out_name)
+    scratch = os.path.join(out_ws, "_" + base + "_union_scratch" + ext)
     if arcpy.Exists(scratch):
         arcpy.management.Delete(scratch)
     try:

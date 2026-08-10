@@ -151,6 +151,16 @@ def discover_cost_rasters(workspace, messages=None):
                 continue
             finfo = rec.get("facet") or None
             fid = finfo.get("facet_id") if finfo else None
+            if fid is None and kind == _lnk.INVERTED:
+                # An inverted raster with no facet -- an inverted HSM or
+                # diversity surface, the suite's own documented species
+                # path -- keys by its band (single-band sources record
+                # band 1, matching the category id termini assign a
+                # facet-less surface). Skipping it silently dead-ended
+                # the HSM -> Invert Raster -> corridor workflow.
+                fid = rec.get("band") or 1
+                finfo = {"facet_id": fid,
+                         "category_label": os.path.splitext(f)[0]}
             if fid is None:
                 continue
             if kind == _lnk.MAHALANOBIS:

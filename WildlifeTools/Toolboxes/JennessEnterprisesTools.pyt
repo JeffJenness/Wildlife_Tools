@@ -62,6 +62,7 @@ import land_facet_termini  # noqa: E402
 import least_cost_corridor  # noqa: E402
 import fill_corridor_holes  # noqa: E402
 import union_corridors  # noqa: E402
+import hsm_tools       # noqa: E402
 import raster_extremes  # noqa: E402
 import tool_metadata  # noqa: E402
 import error_report   # noqa: E402
@@ -320,6 +321,9 @@ class Toolbox(object):
                       DiversityIndices, LandFacetDensity, LandFacetMahalanobis,
                       InvertRaster, IdentifyTerminiPolygons,
                       LeastCostCorridor, FillCorridorHoles, UnionCorridors,
+                      HabitatSuitabilityModel, CombineHabitatFactors,
+                      NormalizeExistingHSM, ReclassifyFeaturesInHSM,
+                      CriticalHabitatFeature,
                       FindRasterExtremeValues]
 
 
@@ -9022,6 +9026,556 @@ class InvertRaster(object):
                 messages=messages)
             if P["out_raster"].valueAsText:
                 _writeback_resolved_raster(P, "out_raster")
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+# ---------------------------------------------------------------------------
+# CorridorDesigner HSM-building chain (hsm_tools) -- original tools by Dan
+# Majka (primary author); ArcGIS Pro versions by Jeff Jenness and Dan Majka.
+# ---------------------------------------------------------------------------
+def _vt_raster_path(v):
+    """A usable catalog path for one raster cell of a value table (may be a
+    Layer object, a CIMPATH string, or a plain path)."""
+    try:
+        cp = getattr(arcpy.Describe(v), "catalogPath", None)
+        if cp:
+            return cp
+    except Exception:
+        pass
+    return str(v)
+
+
+def _hsm_weights_message(factors_param, weight_col):
+    """Set an error on ``factors_param`` when complete rows' weights do not
+    sum to 100 (the original tools' hard rule)."""
+    rows = factors_param.values or []
+    if not rows:
+        return
+    weights = []
+    for row in rows:
+        wt = row[weight_col]
+        if wt in (None, ""):
+            return                       # row still being edited; stay quiet
+        try:
+            weights.append(float(wt))
+        except (TypeError, ValueError):
+            return
+        if weights[-1] <= 0:
+            factors_param.setErrorMessage(
+                "Every factor weight must be a positive number.")
+            return
+    total = sum(weights)
+    if abs(total - 100) > 1e-9:
+        factors_param.setErrorMessage(
+            "The factor weights must sum to exactly 100 (they sum to "
+            "{:g}). The weights are relative importances, normalized to "
+            "w/100 when combined.".format(total))
+
+
+class HabitatSuitabilityModel(object):
+    """HSM 1 -- reclassify factor rasters via ASCII remap files and combine
+    by weighted geometric or additive mean. See ``hsm_tools.run_hsm``."""
+
+    def __init__(self):
+        self.label = "Create Habitat Suitability Model"
+        self.description = (
+            "Builds a habitat suitability model (HSM) on the 0-100 scale "
+            "(100 = best habitat) from any number of habitat factor rasters "
+            "(land cover, elevation, distance to roads...). Each factor is "
+            "first reclassified onto 0-100 with a tab-delimited ASCII remap "
+            "file (the original CorridorDesigner format: 'value : score' or "
+            "'from to : score', ascending), then the factors are combined "
+            "by weighted GEOMETRIC mean (recommended: a 0 score in any "
+            "factor zeroes the cell -- Liebig's Law of the Minimum) or "
+            "weighted ADDITIVE mean (equivalent to Weighted Overlay). "
+            "Weights are numbers summing to 100. The first factor defines "
+            "the output grid; others are resampled onto it if needed. "
+            "Optionally saves each reclassified factor (as <name>_r) for "
+            "reuse in Combine Habitat Factors when experimenting with "
+            "weights. A modernized port of the CorridorDesigner Habitat "
+            "Suitability Model tool by Dan Majka; this ArcGIS Pro version "
+            "by Jeff Jenness and Dan Majka. Needs no Spatial Analyst.")
+        self.category = "Corridor Designer Tools\\Corridor Designer"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        factors = arcpy.Parameter(
+            displayName="Habitat factors (raster, remap file, weight; "
+                        "weights must sum to 100)",
+            name="factors", datatype="GPValueTable",
+            parameterType="Required", direction="Input")
+        factors.columns = [["GPRasterLayer", "Habitat factor raster"],
+                           ["DEFile", "ASCII remap file"],
+                           ["GPDouble", "Weight (sum to 100)"]]
+        method = arcpy.Parameter(
+            displayName="Method of combining factors", name="method",
+            datatype="GPString", parameterType="Required",
+            direction="Input")
+        method.filter.list = [hsm_tools.GEOMETRIC, hsm_tools.ADDITIVE]
+        method.value = hsm_tools.GEOMETRIC
+        out_raster = arcpy.Parameter(
+            displayName="Output habitat suitability model",
+            name="out_raster", datatype="DERasterDataset",
+            parameterType="Required", direction="Output")
+        save_reclass = arcpy.Parameter(
+            displayName="Save reclassified habitat factors (for Combine "
+                        "Habitat Factors)",
+            name="save_reclassified", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        save_reclass.value = False
+        return [factors, method, out_raster, save_reclass]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        _hsm_weights_message(P["factors"], weight_col=2)
+        for row in (P["factors"].values or []):
+            rf = row[1]
+            if rf not in (None, "") and not os.path.isfile(str(rf)):
+                P["factors"].setErrorMessage(
+                    "The remap file {} does not exist.".format(rf))
+                break
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(land_facet_linkage)
+            importlib.reload(hsm_tools)
+            P = {p.name: p for p in parameters}
+            facs = [(_vt_raster_path(row[0]), str(row[1]), float(row[2]))
+                    for row in (P["factors"].values or [])]
+            hsm_tools.run_hsm(
+                factors=facs,
+                method=P["method"].valueAsText,
+                out_raster=P["out_raster"].valueAsText,
+                save_reclassified=bool(P["save_reclassified"].value),
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class CombineHabitatFactors(object):
+    """HSM 2 -- weighted combine of ALREADY-reclassified (0-100) factors.
+    See ``hsm_tools.run_combine``."""
+
+    def __init__(self):
+        self.label = "Combine Habitat Factors"
+        self.description = (
+            "Combines habitat factor rasters that are ALREADY scored on the "
+            "0-100 suitability scale into one habitat suitability model, by "
+            "weighted geometric mean (recommended) or weighted additive "
+            "mean, with weights summing to 100. Use this to "
+            "experiment with different weights or combination methods "
+            "without re-running the reclassification step -- the Create "
+            "Habitat Suitability Model tool can save its reclassified "
+            "factors (<name>_r) exactly for this. The first factor defines "
+            "the output grid. A modernized port of the CorridorDesigner "
+            "Combine Habitat Factors tool by Dan Majka; this ArcGIS Pro "
+            "version by Jeff Jenness and Dan Majka. Needs no Spatial "
+            "Analyst.")
+        self.category = "Corridor Designer Tools\\Corridor Designer"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        factors = arcpy.Parameter(
+            displayName="Reclassified habitat factors (raster, weight; "
+                        "weights must sum to 100)",
+            name="factors", datatype="GPValueTable",
+            parameterType="Required", direction="Input")
+        factors.columns = [["GPRasterLayer",
+                            "Reclassified factor raster (0-100)"],
+                           ["GPDouble", "Weight (sum to 100)"]]
+        method = arcpy.Parameter(
+            displayName="Method of combining factors", name="method",
+            datatype="GPString", parameterType="Required",
+            direction="Input")
+        method.filter.list = [hsm_tools.GEOMETRIC, hsm_tools.ADDITIVE]
+        method.value = hsm_tools.GEOMETRIC
+        out_raster = arcpy.Parameter(
+            displayName="Output habitat suitability model",
+            name="out_raster", datatype="DERasterDataset",
+            parameterType="Required", direction="Output")
+        return [factors, method, out_raster]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        _hsm_weights_message(P["factors"], weight_col=1)
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(land_facet_linkage)
+            importlib.reload(hsm_tools)
+            P = {p.name: p for p in parameters}
+            facs = [(_vt_raster_path(row[0]), float(row[1]))
+                    for row in (P["factors"].values or [])]
+            hsm_tools.run_combine(
+                factors=facs,
+                method=P["method"].valueAsText,
+                out_raster=P["out_raster"].valueAsText,
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class NormalizeExistingHSM(object):
+    """HSM 3 -- linear stretch of an externally built HSM onto 0-100.
+    See ``hsm_tools.run_normalize``."""
+
+    def __init__(self):
+        self.label = "Normalize Existing HSM"
+        self.description = (
+            "Linearly stretches a habitat suitability model built OUTSIDE "
+            "CorridorDesigner (a logistic-regression surface, an expert "
+            "model on some other scale...) onto the 0-100 suitability scale "
+            "the HSM chain expects: you name the value meaning WORST "
+            "habitat (becomes 0) and BEST habitat (becomes 100), and the "
+            "stretch is ((x - worst) / (best - worst)) * 100. A model where "
+            "LOW values mean good habitat inverts naturally (give worst > "
+            "best). Values beyond the anchors are clamped to 0-100 by "
+            "default (uncheck to write them as-is, as the original did). A "
+            "modernized port of the CorridorDesigner Normalize Existing "
+            "HSM tool by Dan Majka; this ArcGIS Pro version by Jeff "
+            "Jenness and Dan Majka. Needs no Spatial Analyst.")
+        self.category = "Corridor Designer Tools\\Corridor Designer"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_raster = arcpy.Parameter(
+            displayName="Input existing habitat suitability model",
+            name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset", "DERasterBand"],
+            parameterType="Required", direction="Input")
+        worst = arcpy.Parameter(
+            displayName="Value for WORST habitat in your model",
+            name="worst", datatype="GPDouble", parameterType="Required",
+            direction="Input")
+        best = arcpy.Parameter(
+            displayName="Value for BEST habitat in your model",
+            name="best", datatype="GPDouble", parameterType="Required",
+            direction="Input")
+        clamp = arcpy.Parameter(
+            displayName="Clamp results to 0-100", name="clamp",
+            datatype="GPBoolean", parameterType="Optional",
+            direction="Input")
+        clamp.value = True
+        out_raster = arcpy.Parameter(
+            displayName="Output normalized habitat suitability model",
+            name="out_raster", datatype="DERasterDataset",
+            parameterType="Required", direction="Output")
+        return [in_raster, worst, best, clamp, out_raster]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr = P["in_raster"], P["out_raster"]
+        if inr.valueAsText and not inr.hasBeenValidated:
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize("HSM_Norm_" + os.path.splitext(
+                        os.path.basename(inr.valueAsText))[0])
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        if (P["worst"].value is not None and P["best"].value is not None
+                and float(P["worst"].value) == float(P["best"].value)):
+            P["best"].setErrorMessage(
+                "The worst and best habitat values are equal; the stretch "
+                "would divide by zero.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(land_facet_linkage)
+            importlib.reload(hsm_tools)
+            P = {p.name: p for p in parameters}
+            in_path = (_resolve_raster_path(P["in_raster"])
+                       or P["in_raster"].valueAsText)
+            hsm_tools.run_normalize(
+                in_raster=in_path,
+                worst=float(P["worst"].value),
+                best=float(P["best"].value),
+                out_raster=P["out_raster"].valueAsText,
+                clamp=bool(P["clamp"].value),
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class ReclassifyFeaturesInHSM(object):
+    """Modify HSM 1 -- burn polygon features into an HSM at a fixed score.
+    See ``hsm_tools.run_reclassify_features``."""
+
+    def __init__(self):
+        self.label = "Reclassify Features in HSM"
+        self.description = (
+            "Assigns a fixed suitability score (0-100) to every cell of a "
+            "habitat suitability model that falls inside your polygon "
+            "features -- for influences the base habitat factors could not "
+            "capture: a fenced right-of-way scored 0, a wildlife-friendly "
+            "easement scored higher, a mapped disturbance footprint... "
+            "Cells outside the polygons keep their original scores; NoData "
+            "stays NoData. If the polygon layer has an active selection in "
+            "the map, only the selected features are used (a dataset "
+            "picked via Browse has no selection and uses all features). A "
+            "modernized port of the CorridorDesigner Reclassify Features "
+            "tool by Dan Majka; this ArcGIS Pro version by Jeff Jenness "
+            "and Dan Majka. Needs no Spatial Analyst.")
+        self.category = "Corridor Designer Tools\\Corridor Designer"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_hsm = arcpy.Parameter(
+            displayName="Input habitat suitability model",
+            name="in_hsm",
+            datatype=["GPRasterLayer", "DERasterDataset", "DERasterBand"],
+            parameterType="Required", direction="Input")
+        in_features = arcpy.Parameter(
+            displayName="Polygon features to reclassify in the HSM",
+            name="in_features",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        try:
+            in_features.filter.list = ["Polygon"]
+        except Exception:
+            pass
+        new_score = arcpy.Parameter(
+            displayName="New habitat suitability score for those cells "
+                        "(0-100)",
+            name="new_score", datatype="GPDouble",
+            parameterType="Required", direction="Input")
+        out_raster = arcpy.Parameter(
+            displayName="Output modified habitat suitability model",
+            name="out_raster", datatype="DERasterDataset",
+            parameterType="Required", direction="Output")
+        return [in_hsm, in_features, new_score, out_raster]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr = P["in_hsm"], P["out_raster"]
+        if inr.valueAsText and not inr.hasBeenValidated:
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize("HSM_Reclass_" + os.path.splitext(
+                        os.path.basename(inr.valueAsText))[0])
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        sc = P["new_score"].value
+        if sc is not None and not (0 <= float(sc) <= 100):
+            P["new_score"].setErrorMessage(
+                "The suitability score must be between 0 and 100.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(land_facet_linkage)
+            importlib.reload(hsm_tools)
+            P = {p.name: p for p in parameters}
+            in_path = (_resolve_raster_path(P["in_hsm"])
+                       or P["in_hsm"].valueAsText)
+            hsm_tools.run_reclassify_features(
+                in_hsm=in_path,
+                in_features=P["in_features"].value
+                or P["in_features"].valueAsText,
+                new_score=float(P["new_score"].value),
+                out_raster=P["out_raster"].valueAsText,
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class CriticalHabitatFeature(object):
+    """Modify HSM 2 -- scale an HSM by distance-band percentages from a
+    critical feature. See ``hsm_tools.run_critical_feature``."""
+
+    def __init__(self):
+        self.label = "Critical Habitat Feature"
+        self.description = (
+            "Rescales a habitat suitability model by DISTANCE from a "
+            "critical habitat feature -- a resource the species must stay "
+            "near (or a hazard it must stay away from). You provide "
+            "distance bands (in the raster's map units) with a percentage "
+            "for each; every cell's suitability is multiplied by the "
+            "percentage of the band its distance to the nearest "
+            "critical-feature cell falls in. The workshop book's example: "
+            "a riparian species keeps 100% of its score within 30 m of "
+            "water, 80% from 30-60 m, 60% from 60-100 m, and 0% beyond "
+            "100 m. The critical feature can be a feature layer (an active "
+            "map selection is honored) or a raster (every data cell is the "
+            "feature). Cells beyond your last band are left unchanged, "
+            "with a warning -- end with a band out to a very large "
+            "distance (e.g. '100 999999 : 0') to control that explicitly. "
+            "A modernized port of the CorridorDesigner Critical Feature "
+            "tool by Dan Majka; this ArcGIS Pro version by Jeff Jenness "
+            "and Dan Majka. Needs no Spatial Analyst.")
+        self.category = "Corridor Designer Tools\\Corridor Designer"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_hsm = arcpy.Parameter(
+            displayName="Input habitat suitability model",
+            name="in_hsm",
+            datatype=["GPRasterLayer", "DERasterDataset", "DERasterBand"],
+            parameterType="Required", direction="Input")
+        in_critical = arcpy.Parameter(
+            displayName="Critical habitat feature (features or raster)",
+            name="in_critical",
+            datatype=["GPFeatureLayer", "DEFeatureClass", "GPRasterLayer",
+                      "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        bands = arcpy.Parameter(
+            displayName="Distance bands (from, to, percent of score kept)",
+            name="bands", datatype="GPValueTable",
+            parameterType="Required", direction="Input")
+        bands.columns = [["GPDouble", "From distance (map units)"],
+                         ["GPDouble", "To distance (map units)"],
+                         ["GPDouble", "Percent of score kept (0-100)"]]
+        out_raster = arcpy.Parameter(
+            displayName="Output modified habitat suitability model",
+            name="out_raster", datatype="DERasterDataset",
+            parameterType="Required", direction="Output")
+        return [in_hsm, in_critical, bands, out_raster]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outr = P["in_hsm"], P["out_raster"]
+        if inr.valueAsText and not inr.hasBeenValidated:
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = _legalize("HSM_Critical_" + os.path.splitext(
+                        os.path.basename(inr.valueAsText))[0])
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        rows = P["bands"].values or []
+        prev = None
+        for row in rows:
+            lo, hi, pc = row[0], row[1], row[2]
+            if lo is None or hi is None or pc is None:
+                continue
+            lo, hi, pc = float(lo), float(hi), float(pc)
+            if hi < lo:
+                P["bands"].setErrorMessage(
+                    "The band {:g} to {:g} runs backwards.".format(lo, hi))
+                return
+            if not (0 <= pc <= 100):
+                P["bands"].setErrorMessage(
+                    "The percentage for band {:g}-{:g} must be between 0 "
+                    "and 100.".format(lo, hi))
+                return
+            if prev is not None and (lo < prev[0] or hi < prev[1]):
+                P["bands"].setErrorMessage(
+                    "The distance bands must be in ascending order.")
+                return
+            prev = (lo, hi)
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(land_facet_linkage)
+            importlib.reload(hsm_tools)
+            P = {p.name: p for p in parameters}
+            in_path = (_resolve_raster_path(P["in_hsm"])
+                       or P["in_hsm"].valueAsText)
+            crit = P["in_critical"].value or P["in_critical"].valueAsText
+            try:
+                if arcpy.Describe(crit).dataType in (
+                        "RasterDataset", "RasterLayer", "RasterBand"):
+                    crit = (_resolve_raster_path(P["in_critical"])
+                            or P["in_critical"].valueAsText)
+            except Exception:
+                pass
+            bands = [(float(r[0]), float(r[1]), float(r[2]))
+                     for r in (P["bands"].values or [])]
+            hsm_tools.run_critical_feature(
+                in_hsm=in_path,
+                in_critical=crit,
+                bands=bands,
+                out_raster=P["out_raster"].valueAsText,
+                messages=messages)
+            _writeback_resolved_raster(P, "out_raster")
         except arcpy.ExecuteError:
             raise
         except Exception:
