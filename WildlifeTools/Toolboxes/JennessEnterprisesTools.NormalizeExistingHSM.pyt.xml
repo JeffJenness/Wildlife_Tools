@@ -13,7 +13,7 @@ MODELS WHERE LOW MEANS GOOD INVERT NATURALLY. If your source model runs the othe
 
 CLAMPING, AN IMPROVEMENT OVER THE ORIGINAL. Cells beyond your anchors would stretch below 0 or above 100. By default they are pinned to 0 and 100, with a message giving the count -- the original wrote such values out silently, quietly handing downstream tools scores like -12 or 117. Uncheck the clamp to reproduce that original behavior faithfully; the tool then warns instead, since downstream HSM tools expect 0-100.
 
-NODATA AND OUTPUT. Input NoData stays NoData. The output raster carries full statistics plus a machine-readable record of the source raster and both anchor values, so the Land Facet Data Report and the downstream corridor tools can trace exactly how the surface was made.
+NODATA AND OUTPUT. Input NoData stays NoData. The output raster carries full statistics plus a machine-readable record of the source raster and both anchor values, so the Corridor Analysis Data Report and the downstream corridor tools can trace exactly how the surface was made.
 
 CREDITS AND REFERENCES. The original CorridorDesigner HSM tools are by Dan Majka (dan@corridordesign.org, 2006-2007); these ArcGIS Pro versions are by Jeff Jenness and Dan Majka equally. Please cite: Majka, D., J. Jenness, and P. Beier. 2007. CorridorDesigner: ArcGIS tools for designing and evaluating corridors. http://corridordesign.org.</usage>
 		<parameters>

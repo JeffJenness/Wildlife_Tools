@@ -35,6 +35,10 @@ namespace WildlifeTools.Corridor
         {
             Title, Heading, HeadingTarget, SubHeading, Body, Bullet, KeyValue,
             Warning, Note, ChainStep, ChainStepCurrent, Separator,
+            // A bullet that needs the reader's eye: rendered in the same
+            // alert red as Warning (e.g. a termini category with NO termini
+            // in one or more Wildland Blocks).
+            BulletAlert,
         }
 
         internal sealed class Block
@@ -213,7 +217,7 @@ namespace WildlifeTools.Corridor
         {
             var blocks = new List<Block>
             {
-                new Block(BlockKind.Title, "Land Facet Data Report"),
+                new Block(BlockKind.Title, "Corridor Analysis Data Report"),
                 new Block(BlockKind.KeyValue, "Dataset", datasetLabel),
             };
             if (!string.IsNullOrEmpty(datasetPath) && datasetPath != datasetLabel)
@@ -268,6 +272,42 @@ namespace WildlifeTools.Corridor
             {
                 DescribeNode(blocks, node, fetchXml);
                 AddPostProcessingSteps(blocks, node.Record);
+            }
+
+            // ---- a union fans IN: append each source's own background -----
+            // A union's sources are parallel, possibly unrelated analyses, so
+            // CollectChain deliberately never walks them as a single ancestor
+            // chain. Instead each record-carrying source gets its full
+            // analysis history appended here, exactly as that source's own
+            // report would read (Jeff, 2026-08-10).
+            if (kind == "union")
+            {
+                int si = 0;
+                foreach (var s in Arr(rec.Value, "sources"))
+                {
+                    si++;
+                    string sPath = S(s, "path");
+                    if (string.IsNullOrWhiteSpace(sPath)) continue;
+                    var sRec = ExtractRecord(fetchXml?.Invoke(sPath));
+                    if (!sRec.HasValue) continue;
+
+                    string leaf = sPath.Substring(
+                        sPath.LastIndexOfAny(new[] { '\\', '/' }) + 1);
+                    blocks.Add(new Block(BlockKind.Separator, ""));
+                    blocks.Add(new Block(BlockKind.Heading,
+                        "Background of Source " + si + " — " + leaf));
+                    blocks.Add(new Block(BlockKind.Note,
+                        "The full analysis history of this union input, as "
+                        + "its own report would read."));
+                    foreach (var n in CollectChain(sPath, sRec.Value, fetchXml))
+                    {
+                        // The Ganado-red highlight marks the DESCRIBED
+                        // dataset only, never a source's sub-chain.
+                        n.IsTarget = false;
+                        DescribeNode(blocks, n, fetchXml);
+                        AddPostProcessingSteps(blocks, n.Record);
+                    }
+                }
             }
 
             string created = Created(rec.Value)?.ToString(
@@ -364,6 +404,21 @@ namespace WildlifeTools.Corridor
             _ => 7,
         };
 
+        /// <summary>
+        /// A recorded source path, made followable. Corridor records written
+        /// before v1.57.1 could store ``source_termini`` as a bare layer
+        /// NAME; a name with no separator is tried next to the dataset that
+        /// recorded it (its own workspace), which is where the termini
+        /// live in every real run.
+        /// </summary>
+        private static string ResolveSourcePath(string src, string basePath)
+        {
+            if (string.IsNullOrWhiteSpace(src)) return src;
+            if (src.IndexOfAny(new[] { '\\', '/' }) >= 0) return src;
+            int cut = (basePath ?? "").LastIndexOfAny(new[] { '\\', '/' });
+            return cut > 0 ? basePath.Substring(0, cut + 1) + src : src;
+        }
+
         private static List<Node> CollectChain(string targetPath,
                                                JsonElement targetRec,
                                                Func<string, string> fetchXml)
@@ -380,8 +435,9 @@ namespace WildlifeTools.Corridor
                     Path = path, Record = rec, Kind = S(rec, "record") ?? "?",
                     IsTarget = isTarget, ViaNote = via,
                 });
-                foreach (var (srcPath, via2) in SourcePaths(rec))
+                foreach (var (srcPath0, via2) in SourcePaths(rec))
                 {
+                    string srcPath = ResolveSourcePath(srcPath0, path);
                     if (string.IsNullOrWhiteSpace(srcPath)) continue;
                     if (visited.Contains(srcPath.Trim())) continue;
                     var xml = fetchXml?.Invoke(srcPath);
@@ -851,7 +907,12 @@ namespace WildlifeTools.Corridor
                                     ? "NONE in Block " + p.block
                                     : "Block " + p.block + ": " + p.n)) + ")";
                     }
-                    blocks.Add(new Block(BlockKind.Bullet, text));
+                    // A category missing termini in any block renders in the
+                    // alert red -- these are the lines the summary warning
+                    // below refers to (Jeff, 2026-08-10).
+                    blocks.Add(new Block(
+                        missingSome ? BlockKind.BulletAlert : BlockKind.Bullet,
+                        text));
                 }
                 if (incomplete > 0)
                     blocks.Add(new Block(BlockKind.Warning,
@@ -984,9 +1045,11 @@ namespace WildlifeTools.Corridor
                     + "used rather than planar ones."));
 
             AddSourceCheck(blocks, "Termini used",
-                S(rec, "source_termini"), S(rec, "source_analysis_id"),
+                ResolveSourcePath(S(rec, "source_termini"), node.Path),
+                S(rec, "source_analysis_id"),
                 Created(rec), fetchXml);
-            string costPath = S(rec, "source_cost_raster");
+            string costPath = ResolveSourcePath(
+                S(rec, "source_cost_raster"), node.Path);
             if (!string.IsNullOrEmpty(costPath))
                 AddSourceCheck(blocks, "Cost surface",
                     costPath, S(rec, "source_analysis_id"), Created(rec),

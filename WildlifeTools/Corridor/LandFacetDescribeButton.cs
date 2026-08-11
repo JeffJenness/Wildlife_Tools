@@ -30,9 +30,9 @@ namespace WildlifeTools.Corridor
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    "Could not open the Land Facet Data Report window:"
+                    "Could not open the Corridor Analysis Data Report window:"
                     + Environment.NewLine + Environment.NewLine + ex.Message,
-                    "Land Facet Data Report");
+                    "Corridor Analysis Data Report");
             }
         }
     }

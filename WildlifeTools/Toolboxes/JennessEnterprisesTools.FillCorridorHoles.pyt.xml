@@ -11,7 +11,7 @@ NOT ESRI'S ELIMINATE POLYGON PART. That tool was tested directly against this ne
 
 MULTIPLE INPUTS IN ONE RUN. Every polygon feature class listed is processed independently and written to its own output -- named "&lt;input base name&gt;&lt;name suffix&gt;" (default suffix "_holes_removed") in the output workspace. Every attribute field from the source is preserved exactly; a straight schema copy, with only the geometry edited where a hole qualified for removal. A non-polygon input is skipped with a warning rather than failing the whole run.
 
-METADATA CHAINING. When an input already carries a Land Facet linkage record -- most commonly a Least-Cost Corridor output -- the SAME record (same kind, same analysis id) is stamped on the output, with a note appended describing this step (the threshold, the units, how many holes were removed). The Land Facet Data Report keeps describing the output as the same analysis product, now also noting it was hole-cleaned. An input with no linkage record gets none on the output either -- there is nothing to chain from, and none is invented.
+METADATA CHAINING. When an input already carries a Land Facet linkage record -- most commonly a Least-Cost Corridor output -- the SAME record (same kind, same analysis id) is stamped on the output, with a note appended describing this step (the threshold, the units, how many holes were removed). The Corridor Analysis Data Report keeps describing the output as the same analysis product, now also noting it was hole-cleaned. An input with no linkage record gets none on the output either -- there is nothing to chain from, and none is invented.
 
 Needs no Spatial Analyst.</usage>
 		<parameters>

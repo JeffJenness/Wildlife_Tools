@@ -645,7 +645,7 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
         # only some blocks (no eligible cells there, or every region clipped
         # away) cannot anchor a corridor to the missing block. Say so
         # explicitly, and carry the per-block counts in the linkage record so
-        # the Land Facet Data Report can show them.
+        # the Corridor Analysis Data Report can show them.
         coverage = {b: {blk: 0 for blk in range(1, n_blocks + 1)}
                     for b in band_nos}
         for r in kept:

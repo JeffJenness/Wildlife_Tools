@@ -11,7 +11,7 @@ INPUTS ARE EXPECTED ON 0-100, AND THE TOOL CHECKS. A factor with cells outside 0
 
 THE FIRST FACTOR DEFINES THE OUTPUT GRID. The output takes its cell size, extent, and coordinate system from the first factor; any factor on a different grid is resampled onto it (nearest neighbour) with a message. Cells that are NoData in ANY factor are NoData in the output. Any number of factors is accepted (the original capped at six).
 
-EVERY OUTPUT KNOWS ITS PLACE IN THE CHAIN. The output is stamped with a machine-readable record naming every factor and weight and the combining method, so the Land Facet Data Report and the downstream corridor tools can trace exactly how the model was built.
+EVERY OUTPUT KNOWS ITS PLACE IN THE CHAIN. The output is stamped with a machine-readable record naming every factor and weight and the combining method, so the Corridor Analysis Data Report and the downstream corridor tools can trace exactly how the model was built.
 
 CREDITS AND REFERENCES. The original CorridorDesigner HSM tools are by Dan Majka (dan@corridordesign.org, 2006-2007); these ArcGIS Pro versions are by Jeff Jenness and Dan Majka equally. Please cite: Majka, D., J. Jenness, and P. Beier. 2007. CorridorDesigner: ArcGIS tools for designing and evaluating corridors. http://corridordesign.org.</usage>
 		<parameters>

@@ -214,8 +214,25 @@ namespace WildlifeTools.Corridor
                     $"Unexpected pixel block shape {n0} x {n1} for a {w} x {h} strip.");
             values = new double[h, w];
             valid = new bool[h, w];
+            // GetNoDataValue() may return a scalar OR a per-band array (a
+            // byte[] for a Byte-type GRID); Convert.ToDouble on the array
+            // throws. Normalize to the first band's scalar.
+            if (noData is Array ndArr)
+                noData = ndArr.Length > 0 ? ndArr.GetValue(0) : null;
             bool hasNd = noData != null;
-            double nd = hasNd ? Convert.ToDouble(noData) : 0.0;
+            double nd = 0.0;
+            if (hasNd)
+            {
+                try { nd = Convert.ToDouble(noData); }
+                catch { hasNd = false; }
+            }
+
+            // The pixel block's own NoData MASK is authoritative -- an
+            // integer GRID accessed through a layer may declare no NoData
+            // value at all, its masked cells reading as phantom zeros.
+            bool useMask = true;
+            try { pb.GetNoDataMaskValue(0, 0, 0); }
+            catch { useMask = false; }
 
             for (int r = 0; r < h; r++)
             {
@@ -224,6 +241,9 @@ namespace WildlifeTools.Corridor
                     int i0 = rowFirst ? r : c, i1 = rowFirst ? c : r;
                     double v = Convert.ToDouble(data.GetValue(i0, i1));
                     bool ok = !double.IsNaN(v) && !double.IsInfinity(v);
+                    if (ok && useMask && Convert.ToInt32(
+                            pb.GetNoDataMaskValue(0, c, r)) == 0)
+                        ok = false;
                     if (ok && hasNd && v == nd) ok = false;
                     // On a continuous variable, exclude the -9999 NoData sentinel and
                     // any absurd-magnitude fill (e.g. the Float NoData 1.79e308 / FLT

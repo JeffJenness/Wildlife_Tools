@@ -8565,7 +8565,7 @@ class FillCorridorHoles(object):
             "<input><name suffix> in the output workspace. When an input "
             "already carries a Land Facet linkage record (most commonly a "
             "Least-Cost Corridor output), the SAME record is kept on the "
-            "output with this step noted, so the Land Facet Data Report "
+            "output with this step noted, so the Corridor Analysis Data Report "
             "keeps describing it as the same analysis product.")
         self.category = "Corridor Designer Tools\\Corridor Designer"
         self.canRunInBackground = False
@@ -8676,11 +8676,13 @@ class UnionCorridors(object):
             "several species, SELECT Percentile = 5 on each input's layer "
             "in the map before running this tool; an input with no active "
             "selection contributes all of its features, same as always. "
-            "THIS ONLY WORKS FOR INPUTS ALREADY IN THE MAP -- a dataset "
-            "added here via the Browse button is a bare path with no "
-            "concept of a selection at all; to use a subset of a feature "
-            "class, load it into the map and select there first, then "
-            "pick that layer here instead of browsing to the dataset. "
+            "HONORING A SELECTION ONLY WORKS FOR INPUTS ALREADY IN THE "
+            "MAP -- the tool itself happily accepts datasets added via "
+            "the Browse button (all of their features are used), but a "
+            "browsed dataset is a bare path with no concept of a "
+            "selection at all; to use a subset of a feature class, load "
+            "it into the map and select there first, then pick that "
+            "layer here instead of browsing to the dataset. "
             "Warns when the inputs carry DIFFERENT Land Facet analysis "
             "ids -- combining genuinely unrelated analyses, not just "
             "different categories within one. Needs no Spatial Analyst.")
@@ -9051,6 +9053,101 @@ def _vt_raster_path(v):
     return str(v)
 
 
+def _hsm_lyrx():
+    """The bundled default HSM symbology (Jeff's Black Bear HSI classified
+    ramp, generalized to every 0-100 suitability surface), or None if the
+    file is missing."""
+    p = os.path.join(os.path.dirname(_PYT_PATH), "hsm_symbology.lyrx")
+    return p if os.path.isfile(p) else None
+
+
+def _apply_hsm_symbology(P, messages, name="out_raster"):
+    """Set the bundled HSM lyrx on an output parameter (run-end pattern)."""
+    lyrx = _hsm_lyrx()
+    if not lyrx:
+        return
+    try:
+        P[name].symbology = lyrx
+    except Exception as e:
+        messages.addWarningMessage(
+            "Could not set output symbology: {}".format(e))
+
+
+def _remap_candidates(container):
+    """Remap-source names inside ``container``: .txt files in a folder,
+    tables in a geodatabase. Returns [] when the container is unusable."""
+    try:
+        if mahalanobis.is_gdb_workspace(container):
+            names = []
+            for _root, _dirs, tables in arcpy.da.Walk(
+                    container, datatype="Table"):
+                names.extend(tables)
+            return names
+        return [f for f in os.listdir(container)
+                if f.lower().endswith(".txt")]
+    except Exception:
+        return []
+
+
+def _raster_container(v):
+    """The workspace holding a raster row value (catalog path's parent)."""
+    try:
+        cp = getattr(arcpy.Describe(v), "catalogPath", None) or str(v)
+    except Exception:
+        cp = str(v)
+    return os.path.dirname(cp)
+
+
+def _suggest_remap_files(factors_param):
+    """Fill empty remap cells from rasters' names (suggest-once).
+
+    Pro's GP Browse dialog offers no way for a toolbox to set its starting
+    folder, so picking many remap sources means re-navigating every time.
+    This softens that: an empty remap cell is filled when the row's raster
+    base name matches exactly one candidate -- a .txt file when looking in
+    a folder, a TABLE when looking in a geodatabase (a gdb cannot hold
+    loose text files; the Create HSM Remap Table tool writes whichever
+    kind fits) -- searching the folder/gdb of the last remap source named
+    in the table first, then the raster's OWN workspace. Name matching is
+    substring either way (the CorridorDesigner <species>_<factor>.txt
+    convention). Wrong guesses can simply be overwritten; only EMPTY
+    cells are ever touched.
+    """
+    rows = factors_param.values or []
+    named = None
+    for row in rows:
+        rf = row[1]
+        if rf not in (None, ""):
+            d = os.path.dirname(str(rf))
+            if d:
+                named = d           # last named container wins
+    cand_cache = {}
+
+    def candidates(container):
+        if not container:
+            return []
+        if container not in cand_cache:
+            cand_cache[container] = _remap_candidates(container)
+        return cand_cache[container]
+
+    changed = False
+    for row in rows:
+        if row[0] in (None, "") or row[1] not in (None, ""):
+            continue
+        base = os.path.splitext(
+            os.path.basename(str(row[0])))[0].lower()
+        for container in (named, _raster_container(row[0])):
+            hits = [f for f in candidates(container)
+                    if base in os.path.splitext(f)[0].lower()
+                    or os.path.splitext(f)[0].lower() in base]
+            if len(hits) == 1:
+                row[1] = os.path.join(container, hits[0])
+                changed = True
+                break
+    if changed:
+        factors_param.values = rows
+
+
 def _hsm_weights_message(factors_param, weight_col):
     """Set an error on ``factors_param`` when complete rows' weights do not
     sum to 100 (the original tools' hard rule)."""
@@ -9088,9 +9185,14 @@ class HabitatSuitabilityModel(object):
             "Builds a habitat suitability model (HSM) on the 0-100 scale "
             "(100 = best habitat) from any number of habitat factor rasters "
             "(land cover, elevation, distance to roads...). Each factor is "
-            "first reclassified onto 0-100 with a tab-delimited ASCII remap "
-            "file (the original CorridorDesigner format: 'value : score' or "
-            "'from to : score', ascending), then the factors are combined "
+            "first reclassified onto 0-100 with a remap source of either "
+            "kind: a tab-delimited ASCII remap file (the original "
+            "CorridorDesigner format: 'value : score' or 'from to : "
+            "score', ascending) or a geodatabase remap table (FromValue/"
+            "ToValue/NewValue fields, or OriginalValue/NewValue) -- build "
+            "either with the Create HSM Remap Table button on the ribbon, "
+            "which writes the kind matching where your raster lives. The "
+            "factors are then combined "
             "by weighted GEOMETRIC mean (recommended: a 0 score in any "
             "factor zeroes the cell -- Liebig's Law of the Minimum) or "
             "weighted ADDITIVE mean (equivalent to Weighted Overlay). "
@@ -9111,7 +9213,7 @@ class HabitatSuitabilityModel(object):
             name="factors", datatype="GPValueTable",
             parameterType="Required", direction="Input")
         factors.columns = [["GPRasterLayer", "Habitat factor raster"],
-                           ["DEFile", "ASCII remap file"],
+                           ["DETable", "Remap file or table"],
                            ["GPDouble", "Weight (sum to 100)"]]
         method = arcpy.Parameter(
             displayName="Method of combining factors", name="method",
@@ -9135,6 +9237,12 @@ class HabitatSuitabilityModel(object):
         return True
 
     def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        if P["factors"].valueAsText and not P["factors"].hasBeenValidated:
+            try:
+                _suggest_remap_files(P["factors"])
+            except Exception:
+                pass
         return
 
     def updateMessages(self, parameters):
@@ -9142,9 +9250,12 @@ class HabitatSuitabilityModel(object):
         _hsm_weights_message(P["factors"], weight_col=2)
         for row in (P["factors"].values or []):
             rf = row[1]
-            if rf not in (None, "") and not os.path.isfile(str(rf)):
+            if rf in (None, ""):
+                continue
+            rfs = str(rf)
+            if not os.path.isfile(rfs) and not arcpy.Exists(rfs):
                 P["factors"].setErrorMessage(
-                    "The remap file {} does not exist.".format(rf))
+                    "The remap file/table {} does not exist.".format(rfs))
                 break
         return
 
@@ -9163,6 +9274,7 @@ class HabitatSuitabilityModel(object):
                 save_reclassified=bool(P["save_reclassified"].value),
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
+            _apply_hsm_symbology(P, messages)
         except arcpy.ExecuteError:
             raise
         except Exception:
@@ -9240,6 +9352,7 @@ class CombineHabitatFactors(object):
                 out_raster=P["out_raster"].valueAsText,
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
+            _apply_hsm_symbology(P, messages)
         except arcpy.ExecuteError:
             raise
         except Exception:
@@ -9342,6 +9455,7 @@ class NormalizeExistingHSM(object):
                 clamp=bool(P["clamp"].value),
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
+            _apply_hsm_symbology(P, messages)
         except arcpy.ExecuteError:
             raise
         except Exception:
@@ -9444,6 +9558,7 @@ class ReclassifyFeaturesInHSM(object):
                 out_raster=P["out_raster"].valueAsText,
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
+            _apply_hsm_symbology(P, messages)
         except arcpy.ExecuteError:
             raise
         except Exception:
@@ -9576,6 +9691,7 @@ class CriticalHabitatFeature(object):
                 out_raster=P["out_raster"].valueAsText,
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
+            _apply_hsm_symbology(P, messages)
         except arcpy.ExecuteError:
             raise
         except Exception:

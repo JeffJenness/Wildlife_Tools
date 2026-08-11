@@ -43,7 +43,7 @@ combining genuinely UNRELATED analyses (different species, different
 clustering runs) -- not necessarily wrong, but worth a clear warning
 rather than a silent merge. The finding is also stamped on the output's
 own linkage record (``union_record``'s ``mixed_analysis`` /
-``source_analysis_ids``) so the Land Facet Data Report can re-surface it
+``source_analysis_ids``) so the Corridor Analysis Data Report can re-surface it
 later without re-reading every source.
 
 Needs no Spatial Analyst (the original checked for the extension anyway,
@@ -199,7 +199,7 @@ def run_union_corridors(in_features_list, out_features, messages=None):
             "corridor). A modernized port of the CorridorDesigner "
             "\"Create union of all corridors\" tool."
             + (" WARNING: sources carried different Land Facet analysis "
-               "ids -- see the Land Facet Data Report."
+               "ids -- see the Corridor Analysis Data Report."
                if mixed_analysis else ""))
         m.save()
     except Exception as e:                                          # noqa: BLE001

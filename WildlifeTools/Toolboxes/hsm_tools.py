@@ -44,6 +44,14 @@ Range boundaries follow first-match: a value on a shared boundary belongs to
 the EARLIER line. Input cells matching no line become NoData, the original's
 "NODATA" missing-values option.
 
+GEODATABASE REMAP TABLES are accepted interchangeably with the ASCII files
+(``parse_remap_source`` dispatches on which kind the path is): a table with
+FromValue / ToValue / NewValue fields (reclassify by range) or
+OriginalValue / NewValue fields (reclassify by value), as written by the
+Create HSM Remap Table ribbon tool. A geodatabase cannot hold loose text
+files, so gdb-based projects get remap TABLES living right next to their
+rasters. Table rows are sorted rather than order-validated.
+
 DIFFERENCES FROM THE ORIGINALS, all deliberate and user-visible:
 
 * No Spatial Analyst. ``SingleOutputMapAlgebra`` (removed from Pro entirely),
@@ -64,7 +72,7 @@ DIFFERENCES FROM THE ORIGINALS, all deliberate and user-visible:
 
 Every output carries a Land Facet linkage record (see ``land_facet_linkage``)
 so downstream chain tools -- Invert Raster, Identify Termini Polygons,
-Least-Cost Corridor, the Land Facet Data Report -- can trace provenance. The
+Least-Cost Corridor, the Corridor Analysis Data Report -- can trace provenance. The
 two Modify tools carry the source's own record forward with a
 ``post_processing`` step appended, exactly like Fill Corridor Holes: the
 output is the SAME analysis product, just modified.
@@ -168,6 +176,66 @@ def parse_remap_file(path):
                 "ascending order (workshop book p.98), and so does this "
                 "one.".format(os.path.basename(path), rows[i][0], rows[i][1]))
     return rows
+
+
+_TABLE_RANGE_FIELDS = ("fromvalue", "tovalue", "newvalue")
+_TABLE_VALUE_FIELDS = ("originalvalue", "newvalue")
+
+
+def parse_remap_table(path):
+    """Parse a geodatabase remap TABLE into ``[(lo, hi, out)]``.
+
+    Two recognized schemas (written by the Create HSM Remap Table ribbon
+    tool, matched case-insensitively): FromValue/ToValue/NewValue
+    (reclassify-by-range) or OriginalValue/NewValue (reclassify-by-value,
+    each value becoming a (v, v, out) row). Unlike the ASCII format, a
+    table has no reliable row order, so rows are SORTED here rather than
+    required to be ascending.
+    """
+    import arcpy
+
+    have = {f.name.lower(): f.name for f in arcpy.ListFields(path)}
+    rows = []
+    if all(k in have for k in _TABLE_RANGE_FIELDS):
+        fields = [have[k] for k in _TABLE_RANGE_FIELDS]
+        with arcpy.da.SearchCursor(path, fields) as cur:
+            for lo, hi, out in cur:
+                if lo is None or hi is None or out is None:
+                    continue
+                if float(hi) < float(lo):
+                    raise arcpy.ExecuteError(
+                        "The remap table {} has a backwards range ({:g} to "
+                        "{:g}).".format(os.path.basename(path),
+                                        float(lo), float(hi)))
+                rows.append((float(lo), float(hi), float(out)))
+    elif all(k in have for k in _TABLE_VALUE_FIELDS):
+        fields = [have[k] for k in _TABLE_VALUE_FIELDS]
+        with arcpy.da.SearchCursor(path, fields) as cur:
+            for v, out in cur:
+                if v is None or out is None:
+                    continue
+                rows.append((float(v), float(v), float(out)))
+    else:
+        raise arcpy.ExecuteError(
+            "The remap table {} does not have the expected fields: either "
+            "FromValue / ToValue / NewValue (reclassify by range) or "
+            "OriginalValue / NewValue (reclassify by value). Create remap "
+            "tables with the Create HSM Remap Table button on the "
+            "ribbon.".format(os.path.basename(path)))
+    if not rows:
+        raise arcpy.ExecuteError(
+            "The remap table {} contains no complete rows.".format(path))
+    rows.sort(key=lambda r: (r[0], r[1]))
+    return rows
+
+
+def parse_remap_source(path):
+    """Parse a remap source of either kind: an original-format ASCII file
+    on disk, or a geodatabase remap table."""
+    path = str(path)
+    if os.path.isfile(path):
+        return parse_remap_file(path)
+    return parse_remap_table(path)
 
 
 def _apply_remap(a, valid, rows, label, messages, unit=""):
@@ -398,7 +466,7 @@ def run_hsm(factors, method, out_raster, save_reclassified=False,
         raise arcpy.ExecuteError("Supply at least one habitat factor.")
     weights = [float(f[2]) for f in factors]
     _weights_ok(weights)
-    remaps = [parse_remap_file(str(f[1])) for f in factors]
+    remaps = [parse_remap_source(f[1]) for f in factors]
     labels = [os.path.basename(str(f[0])) for f in factors]
     if len(factors) == 1:
         _warn(messages,

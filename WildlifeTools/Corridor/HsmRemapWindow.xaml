@@ -1,0 +1,331 @@
+<controls:ProWindow x:Class="WildlifeTools.Corridor.HsmRemapWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        Title="Create Reclass Tables for the Create Habitat Suitability Model Tool"
+        WindowStartupLocation="CenterOwner"
+        Width="980" Height="720" MinWidth="820" MinHeight="600"
+        ResizeMode="CanResizeWithGrip" ShowInTaskbar="False">
+  <controls:ProWindow.Resources>
+    <!-- Parchment skin (the suite's shared palette; EB Garamond / Cinzel are
+         embedded SIL-OFL fonts). -->
+    <LinearGradientBrush x:Key="FrameBrush" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#6B4A26" Offset="0" />
+      <GradientStop Color="#4E351B" Offset="0.5" />
+      <GradientStop Color="#3A2712" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="BackdropBrush" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#F8F1DE" Offset="0" />
+      <GradientStop Color="#EFE3C4" Offset="0.55" />
+      <GradientStop Color="#E7D7B0" Offset="1" />
+    </LinearGradientBrush>
+    <SolidColorBrush x:Key="PanelBrush" Color="#F9F3E2" />
+    <SolidColorBrush x:Key="PanelEdgeBrush" Color="#2E1F0E" />
+    <SolidColorBrush x:Key="InkBrush" Color="#332612" />
+    <SolidColorBrush x:Key="HintBrush" Color="#8A7550" />
+    <SolidColorBrush x:Key="GridLineBrush" Color="#4A381E" />
+    <SolidColorBrush x:Key="ButtonFaceBrush" Color="#5C3F20" />
+    <SolidColorBrush x:Key="ButtonTextBrush" Color="#F5EBD3" />
+    <SolidColorBrush x:Key="ButtonEdgeBrush" Color="#2E1F0E" />
+    <SolidColorBrush x:Key="ButtonHoverBrush" Color="#7A5730" />
+    <SolidColorBrush x:Key="ButtonPressedBrush" Color="#412C14" />
+    <SolidColorBrush x:Key="AlertBrush" Color="#A82810" />
+    <SolidColorBrush x:Key="CautionBrush" Color="#8A6A10" />
+    <FontFamily x:Key="BodyFontFam">/WildlifeTools;component/Fonts/#EB Garamond, Georgia</FontFamily>
+    <FontFamily x:Key="DisplayFontFam">/WildlifeTools;component/Fonts/#Cinzel, Georgia</FontFamily>
+
+    <Style TargetType="ToolTip">
+      <Setter Property="MaxWidth" Value="420" />
+      <Setter Property="ContentTemplate">
+        <Setter.Value>
+          <DataTemplate>
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="400" />
+          </DataTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="ParchButton" TargetType="Button">
+      <Setter Property="Focusable" Value="False" />
+      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="FontFamily" Value="{StaticResource BodyFontFam}" />
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="Foreground" Value="{StaticResource ButtonTextBrush}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{StaticResource ButtonFaceBrush}"
+                    BorderBrush="{StaticResource ButtonEdgeBrush}"
+                    BorderThickness="1" CornerRadius="4"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background"
+                        Value="{StaticResource ButtonHoverBrush}" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Bd" Property="Background"
+                        Value="{StaticResource ButtonPressedBrush}" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Bd" Property="Opacity" Value="0.45" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- Section header: Cinzel small caps over a thin ink rule. -->
+    <Style x:Key="SectionHeader" TargetType="TextBlock">
+      <Setter Property="FontFamily" Value="{StaticResource DisplayFontFam}" />
+      <Setter Property="FontSize" Value="16" />
+      <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+      <Setter Property="Margin" Value="0,0,0,2" />
+    </Style>
+    <Style x:Key="SectionRule" TargetType="Border">
+      <Setter Property="BorderBrush" Value="{StaticResource GridLineBrush}" />
+      <Setter Property="BorderThickness" Value="0,0,0,1" />
+      <Setter Property="Opacity" Value="0.55" />
+      <Setter Property="Margin" Value="0,0,0,6" />
+    </Style>
+    <Style x:Key="StatLabel" TargetType="TextBlock">
+      <Setter Property="FontFamily" Value="{StaticResource DisplayFontFam}" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{StaticResource HintBrush}" />
+    </Style>
+    <Style x:Key="StatValue" TargetType="TextBlock">
+      <Setter Property="FontFamily" Value="{StaticResource BodyFontFam}" />
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+      <Setter Property="Margin" Value="6,0,0,0" />
+    </Style>
+
+    <Style x:Key="ParchGrid" TargetType="DataGrid">
+      <Setter Property="AutoGenerateColumns" Value="False" />
+      <Setter Property="CanUserAddRows" Value="True" />
+      <Setter Property="CanUserDeleteRows" Value="True" />
+      <Setter Property="CanUserReorderColumns" Value="False" />
+      <Setter Property="CanUserResizeRows" Value="False" />
+      <Setter Property="HeadersVisibility" Value="Column" />
+      <Setter Property="Background" Value="{StaticResource PanelBrush}" />
+      <Setter Property="RowBackground" Value="{StaticResource PanelBrush}" />
+      <Setter Property="AlternatingRowBackground" Value="#F2E9D0" />
+      <Setter Property="GridLinesVisibility" Value="All" />
+      <Setter Property="HorizontalGridLinesBrush" Value="#C9B78E" />
+      <Setter Property="VerticalGridLinesBrush" Value="#C9B78E" />
+      <Setter Property="BorderBrush" Value="{StaticResource GridLineBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="FontFamily" Value="{StaticResource BodyFontFam}" />
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+      <Setter Property="SelectionUnit" Value="FullRow" />
+      <Setter Property="SelectionMode" Value="Single" />
+    </Style>
+  </controls:ProWindow.Resources>
+
+  <Border Background="{StaticResource FrameBrush}" Padding="10">
+    <Border Background="{StaticResource BackdropBrush}"
+            BorderBrush="{StaticResource PanelEdgeBrush}" BorderThickness="1"
+            CornerRadius="6" Padding="14">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />   <!-- raster picker -->
+          <RowDefinition Height="*" />      <!-- histogram + grid -->
+          <RowDefinition Height="Auto" />   <!-- validation notes -->
+          <RowDefinition Height="Auto" />   <!-- output row -->
+        </Grid.RowDefinitions>
+
+        <!-- ================= Source raster ================= -->
+        <Grid Grid.Row="0" Margin="0,0,0,10">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Grid.Column="0" Text="Select Raster"
+                     Style="{StaticResource SectionHeader}" FontSize="20"
+                     VerticalAlignment="Center" Margin="0,0,12,0" />
+          <ComboBox Grid.Column="1" x:Name="cboRaster" Height="30"
+                    VerticalContentAlignment="Center"
+                    FontFamily="{StaticResource BodyFontFam}" FontSize="14"
+                    SelectionChanged="OnRasterChosen"
+                    ToolTip="Single-band raster layers in the active map. Use Browse to pick a raster from disk or a geodatabase instead." />
+          <Button Grid.Column="2" Content="Browse..." Margin="8,0,0,0"
+                  Style="{StaticResource ParchButton}" Click="OnBrowseRaster"
+                  ToolTip="Browse to a single-band raster on disk (GeoTIFF etc.) or inside a geodatabase." />
+        </Grid>
+
+        <!-- ================= Distribution | Reclassification ================= -->
+        <Grid Grid.Row="1">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="5*" MinWidth="300" />
+            <ColumnDefinition Width="12" />
+            <ColumnDefinition Width="6*" MinWidth="330" />
+          </Grid.ColumnDefinitions>
+
+          <!-- left: histogram + stats -->
+          <DockPanel Grid.Column="0">
+            <StackPanel DockPanel.Dock="Top">
+              <TextBlock Text="Distribution" Style="{StaticResource SectionHeader}" />
+              <Border Style="{StaticResource SectionRule}" />
+            </StackPanel>
+            <Border DockPanel.Dock="Bottom" Margin="0,8,0,0"
+                    Background="{StaticResource PanelBrush}"
+                    BorderBrush="{StaticResource PanelEdgeBrush}"
+                    BorderThickness="1" CornerRadius="4" Padding="10,7">
+              <Grid x:Name="pnlStats">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                  <RowDefinition /><RowDefinition /><RowDefinition />
+                  <RowDefinition />
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="MINIMUM" Style="{StaticResource StatLabel}" />
+                <TextBlock Grid.Row="0" Grid.Column="1" x:Name="txtMin" Style="{StaticResource StatValue}" />
+                <TextBlock Grid.Row="0" Grid.Column="2" Text="MAXIMUM" Style="{StaticResource StatLabel}" />
+                <TextBlock Grid.Row="0" Grid.Column="3" x:Name="txtMax" Style="{StaticResource StatValue}" />
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="MEAN" Style="{StaticResource StatLabel}" />
+                <TextBlock Grid.Row="1" Grid.Column="1" x:Name="txtMean" Style="{StaticResource StatValue}" />
+                <TextBlock Grid.Row="1" Grid.Column="2" Text="STD. DEV." Style="{StaticResource StatLabel}" />
+                <TextBlock Grid.Row="1" Grid.Column="3" x:Name="txtSd" Style="{StaticResource StatValue}" />
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="DATA CELLS" Style="{StaticResource StatLabel}" />
+                <TextBlock Grid.Row="2" Grid.Column="1" x:Name="txtCells" Style="{StaticResource StatValue}" />
+                <TextBlock Grid.Row="2" Grid.Column="2" Text="NODATA" Style="{StaticResource StatLabel}" />
+                <TextBlock Grid.Row="2" Grid.Column="3" x:Name="txtNoData" Style="{StaticResource StatValue}" />
+                <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4"
+                           x:Name="txtSampleNote" FontStyle="Italic" FontSize="11"
+                           FontFamily="{StaticResource BodyFontFam}"
+                           Foreground="{StaticResource HintBrush}" />
+              </Grid>
+            </Border>
+            <Border Background="{StaticResource PanelBrush}"
+                    BorderBrush="{StaticResource PanelEdgeBrush}"
+                    BorderThickness="1" CornerRadius="4" Padding="6">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="*" />
+                  <RowDefinition Height="14" />  <!-- suitability preview strip -->
+                  <RowDefinition Height="18" />  <!-- axis labels -->
+                </Grid.RowDefinitions>
+                <Canvas Grid.Row="0" x:Name="cnvHist" ClipToBounds="True"
+                        SizeChanged="OnHistSize" Background="Transparent"
+                        ToolTip="The raster's value distribution: one bar per value for a raster with few distinct values, or a binned histogram with a kernel-smoothed density curve for a continuous raster. Translucent washes show the input ranges your remap rows cover so far; select a row to brighten its wash. Hover a discrete bar for its exact cell count." />
+                <Canvas Grid.Row="1" x:Name="cnvStrip" ClipToBounds="True"
+                        ToolTip="Suitability preview: each covered range tinted by its NEW value, pale (0) to deep green (100)." />
+                <Grid Grid.Row="2" x:Name="pnlAxis" />
+              </Grid>
+            </Border>
+          </DockPanel>
+
+          <!-- right: remap grid -->
+          <DockPanel Grid.Column="2">
+            <StackPanel DockPanel.Dock="Top">
+              <TextBlock Text="Reclassification" Style="{StaticResource SectionHeader}" />
+              <Border Style="{StaticResource SectionRule}" />
+              <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                <RadioButton x:Name="rbRange" Content="Reclassify by Range"
+                             IsChecked="True" Checked="OnModeChanged"
+                             FontFamily="{StaticResource BodyFontFam}" FontSize="14"
+                             Foreground="{StaticResource InkBrush}" Margin="0,0,16,0"
+                             ToolTip="From / To / New Value rows: every cell whose value falls in a From-To range receives that row's new suitability score. The natural mode for continuous rasters (elevation, distance...)." />
+                <RadioButton x:Name="rbValue" Content="Reclassify by Value"
+                             Checked="OnModeChanged"
+                             FontFamily="{StaticResource BodyFontFam}" FontSize="14"
+                             Foreground="{StaticResource InkBrush}"
+                             ToolTip="Original Value / New Value rows: each exact input value receives a new suitability score. The natural mode for categorical rasters (land cover classes...)." />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                <Button Content="Equal Intervals" Style="{StaticResource ParchButton}"
+                        Click="OnEqualIntervals" Margin="0,0,6,0"
+                        ToolTip="Replace the rows with equally wide From-To ranges spanning the raster's minimum to maximum; you fill in the new values. Set the class count in the box." />
+                <TextBox x:Name="txtClasses" Width="34" Text="5" Height="24"
+                         VerticalContentAlignment="Center" TextAlignment="Center"
+                         FontFamily="{StaticResource BodyFontFam}" FontSize="13"
+                         ToolTip="How many equal-interval classes to generate." />
+                <Button x:Name="btnUnique" Content="List Unique Values"
+                        Style="{StaticResource ParchButton}" Margin="10,0,0,0"
+                        Click="OnListUnique" IsEnabled="False"
+                        ToolTip="Switch to Reclassify by Value and list every distinct value found in the raster, one row each; you fill in the new values. Enabled for integer-valued rasters with a modest number of distinct values." />
+                <Button Content="Clear" Style="{StaticResource ParchButton}" Margin="10,0,0,0"
+                        Click="OnClearRows" ToolTip="Remove every remap row." />
+                <Button Content="Load Template" Style="{StaticResource ParchButton}" Margin="10,0,0,0"
+                        Click="OnLoadTemplate"
+                        ToolTip="Load an existing remap table -- an ASCII remap file or a geodatabase remap table, typically one made earlier for a similar dataset -- into the grid as a starting point. Tweak the rows, then save under this raster's own output name." />
+              </StackPanel>
+            </StackPanel>
+            <TextBlock DockPanel.Dock="Bottom" Margin="0,4,0,0" FontSize="11"
+                       FontStyle="Italic" FontFamily="{StaticResource BodyFontFam}"
+                       Foreground="{StaticResource HintBrush}"
+                       Text="A value on a shared boundary goes to the EARLIER row (first match wins). New values are habitat suitability, 0 (non-habitat) to 100 (best)." TextWrapping="Wrap" />
+            <DataGrid x:Name="grdRemap" Style="{StaticResource ParchGrid}"
+                      CellEditEnding="OnCellEdited"
+                      SelectionChanged="OnRowSelected">
+              <DataGrid.Columns>
+                <DataGridTemplateColumn Width="26" IsReadOnly="True">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Border Width="14" Height="14" CornerRadius="2"
+                              BorderBrush="{StaticResource GridLineBrush}"
+                              BorderThickness="1"
+                              Background="{Binding Swatch}" />
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn x:Name="colFrom" Header="From" Width="*"
+                                    Binding="{Binding FromText, UpdateSourceTrigger=LostFocus}" />
+                <DataGridTextColumn x:Name="colTo" Header="To" Width="*"
+                                    Binding="{Binding ToText, UpdateSourceTrigger=LostFocus}" />
+                <DataGridTextColumn x:Name="colNew" Header="New Value (0-100)" Width="*"
+                                    Binding="{Binding NewText, UpdateSourceTrigger=LostFocus}" />
+              </DataGrid.Columns>
+            </DataGrid>
+          </DockPanel>
+        </Grid>
+
+        <!-- ================= live validation ================= -->
+        <StackPanel Grid.Row="2" Margin="0,8,0,0">
+          <TextBlock x:Name="txtCoverage" TextWrapping="Wrap" FontSize="13"
+                     FontFamily="{StaticResource BodyFontFam}"
+                     Foreground="{StaticResource CautionBrush}" />
+          <TextBlock x:Name="txtNewRange" TextWrapping="Wrap" FontSize="13"
+                     FontFamily="{StaticResource BodyFontFam}"
+                     Foreground="{StaticResource AlertBrush}" />
+        </StackPanel>
+
+        <!-- ================= output ================= -->
+        <Grid Grid.Row="3" Margin="0,8,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Grid.Column="0" Text="Output Table"
+                     Style="{StaticResource SectionHeader}" FontSize="18"
+                     VerticalAlignment="Center" Margin="0,0,10,0" />
+          <StackPanel Grid.Column="1">
+            <TextBox x:Name="txtOutput" Height="28" VerticalContentAlignment="Center"
+                     FontFamily="{StaticResource BodyFontFam}" FontSize="13"
+                     TextChanged="OnOutputChanged"
+                     ToolTip="Where the remap table is written. Defaults next to the source raster: a geodatabase raster gets a geodatabase TABLE; a file raster (GeoTIFF...) gets an ASCII .txt remap file -- both kinds are accepted directly by the Create Habitat Suitability Model tool, and a name containing the raster's name is auto-found by that tool's dialog." />
+            <TextBlock x:Name="txtOutputNote" FontSize="11" FontStyle="Italic"
+                       FontFamily="{StaticResource BodyFontFam}"
+                       Foreground="{StaticResource HintBrush}" Margin="2,1,0,0" />
+          </StackPanel>
+          <Button Grid.Column="2" x:Name="btnSave" Content="Save Remap Table"
+                  Style="{StaticResource ParchButton}" Margin="10,0,0,0"
+                  Click="OnSave" IsEnabled="False" />
+          <Button Grid.Column="3" Content="Close" Style="{StaticResource ParchButton}"
+                  Margin="8,0,0,0" Click="OnClose" />
+        </Grid>
+      </Grid>
+    </Border>
+  </Border>
+</controls:ProWindow>

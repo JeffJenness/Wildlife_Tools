@@ -328,7 +328,7 @@ def union_record(sources, mixed_analysis, source_analysis_ids):
     ``mixed_analysis`` is True when more than one DISTINCT analysis_id was
     found among the sources that DID carry a record -- the tool warns on
     this at run time (see ``union_corridors.run_union_corridors``); storing
-    it here lets the Land Facet Data Report re-surface the same warning
+    it here lets the Corridor Analysis Data Report re-surface the same warning
     later from the record alone, without re-reading every source.
     """
     return {

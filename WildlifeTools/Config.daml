@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.60.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.61.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -684,7 +684,7 @@
                 largeImage="Images\FillCorridorHoles_32.png"
                 keytip="FH">
           <tooltip heading="Fill Corridor Holes">
-            Opens the Fill Corridor Holes tool from the Jenness Enterprises toolbox: closes small interior holes in one or more polygon feature classes -- typically a Least-Cost Corridor output, but works on any polygon dataset. Every hole (interior ring) smaller than a size threshold (square meters, kilometers, feet or miles) is filled; holes at or above the threshold are left as real, meaningful gaps such as a lake or a genuinely excluded area. Hole size is measured as true geodesic area, correct on any coordinate system including a geographic one -- Esri's own Eliminate Polygon Part tool was tested and rejected for this purpose because its area threshold is planar only and silently misbehaves on unprojected data. Every attribute field is preserved unchanged; only the geometry is edited. Accepts multiple inputs in one run, each written to an output workspace with a name suffix (default "_holes_removed"). Respects a per-input selection (only the selected features are processed; an input with none uses all of them), and records the selected/total count when one was active. When an input already carries a Land Facet linkage record, the same record is kept on the output with this step noted, so the Land Facet Data Report keeps describing it as the same analysis product. A modernized port of the original CorridorDesigner "Fill holes in corridor" tool. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
+            Opens the Fill Corridor Holes tool from the Jenness Enterprises toolbox: closes small interior holes in one or more polygon feature classes -- typically a Least-Cost Corridor output, but works on any polygon dataset. Every hole (interior ring) smaller than a size threshold (square meters, kilometers, feet or miles) is filled; holes at or above the threshold are left as real, meaningful gaps such as a lake or a genuinely excluded area. Hole size is measured as true geodesic area, correct on any coordinate system including a geographic one -- Esri's own Eliminate Polygon Part tool was tested and rejected for this purpose because its area threshold is planar only and silently misbehaves on unprojected data. Every attribute field is preserved unchanged; only the geometry is edited. Accepts multiple inputs in one run, each written to an output workspace with a name suffix (default "_holes_removed"). Respects a per-input selection (only the selected features are processed; an input with none uses all of them), and records the selected/total count when one was active. When an input already carries a Land Facet linkage record, the same record is kept on the output with this step noted, so the Corridor Analysis Data Report keeps describing it as the same analysis product. A modernized port of the original CorridorDesigner "Fill holes in corridor" tool. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_UnionCorridors"
@@ -695,7 +695,18 @@
                 largeImage="Images\UnionCorridors_32.png"
                 keytip="UC">
           <tooltip heading="Union Corridors">
-            Opens the Union Corridors tool from the Jenness Enterprises toolbox: combines every input polygon feature class into ONE seamless combined shape -- unions them together, then dissolves the result into a single multipart polygon. Per-input attributes are deliberately NOT preserved, matching the original tool: the point is a single combined shape answering "is this ground part of ANY corridor", not which one. SELECT BEFORE YOU RUN -- a corridor feature class typically holds many percentile-width bands as separate features (the Percentile field); to union just the 5% bands across several species, select Percentile = 5 on each input's layer in the map before running this tool. An input with no active selection contributes all of its features. THIS ONLY WORKS FOR INPUTS ALREADY LOADED IN THE MAP -- a dataset added via the GP dialog's Browse button is a bare path with no concept of a selection at all; to use a subset of a feature class, load it into the map and select there first, then pick that layer here instead of browsing to the dataset. Warns when the inputs carry DIFFERENT Land Facet analysis ids -- combining genuinely unrelated analyses (different species, different clustering runs), not just different categories within one. A modernized port of the original CorridorDesigner "Create union of all corridors" tool. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
+            Opens the Union Corridors tool from the Jenness Enterprises toolbox: combines every input polygon feature class into ONE seamless combined shape -- unions them together, then dissolves the result into a single multipart polygon. Per-input attributes are deliberately NOT preserved, matching the original tool: the point is a single combined shape answering "is this ground part of ANY corridor", not which one. SELECT BEFORE YOU RUN -- a corridor feature class typically holds many percentile-width bands as separate features (the Percentile field); to union just the 5% bands across several species, select Percentile = 5 on each input's layer in the map before running this tool. An input with no active selection contributes all of its features. HONORING A SELECTION ONLY WORKS FOR INPUTS ALREADY LOADED IN THE MAP -- the tool itself happily accepts datasets picked via the GP dialog's Browse button (all of their features are used), but a browsed dataset is a bare path with no concept of a selection at all; to use a subset of a feature class, load it into the map and select there first, then pick that layer here instead of browsing to the dataset. Warns when the inputs carry DIFFERENT Land Facet analysis ids -- combining genuinely unrelated analyses (different species, different clustering runs), not just different categories within one. A modernized port of the original CorridorDesigner "Create union of all corridors" tool. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_HsmRemapBuilder"
+                caption="Create HSM Remap Table"
+                className="Corridor.HsmRemapButton"
+                loadOnClick="true"
+                smallImage="Images\HsmRemap_16.png"
+                largeImage="Images\HsmRemap_32.png"
+                keytip="HT">
+          <tooltip heading="Create HSM Remap Table">
+            Opens an interactive remap-table builder for the Create Habitat Suitability Model tool. Pick a single-band raster (a map layer or a raster on disk); the window draws its histogram and statistics, and as you enter remap rows, translucent washes show which value ranges are covered so far, with a preview strip tinting each range by its new 0-100 suitability score. Toggle between Reclassify by Range (From / To / New Value) and Reclassify by Value (Original Value / New Value); helper buttons fill equal intervals or list every unique value. Saves next to the source raster in the format that fits: an ASCII remap file beside a file raster (GeoTIFF etc.), or a geodatabase remap TABLE beside a geodatabase raster -- both accepted directly by the Create Habitat Suitability Model tool, whose dialog auto-fills matching remap sources by name. Warns when the remap does not cover the raster's full value range, or when the new values stray outside (or fail to use) the 0-100 suitability scale.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_HabitatSuitabilityModel"
@@ -706,7 +717,7 @@
                 largeImage="Images\HabitatSuitability_32.png"
                 keytip="HC">
           <tooltip heading="Create Habitat Suitability Model">
-            Opens the Create Habitat Suitability Model tool from the Jenness Enterprises toolbox: builds a habitat suitability model (HSM) on the 0-100 scale (100 = best habitat) from any number of habitat factor rasters -- land cover, elevation, distance to roads... Each factor is reclassified onto 0-100 with a tab-delimited ASCII remap file (the original CorridorDesigner format, so existing remap files drop straight in), then the factors are combined by weighted GEOMETRIC mean (recommended: a zero score in any factor zeroes the cell -- Liebig's Law of the Minimum) or weighted ADDITIVE mean (equivalent to Weighted Overlay), with weights summing to 100. Optionally saves each reclassified factor for reuse in Combine Habitat Factors when experimenting with weights. Original CorridorDesigner tool by Dan Majka; this ArcGIS Pro version by Jeff Jenness and Dan Majka. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
+            Opens the Create Habitat Suitability Model tool from the Jenness Enterprises toolbox: builds a habitat suitability model (HSM) on the 0-100 scale (100 = best habitat) from any number of habitat factor rasters -- land cover, elevation, distance to roads... Each factor is reclassified onto 0-100 with a tab-delimited ASCII remap file (the original CorridorDesigner format, so existing remap files drop straight in), then the factors are combined by weighted GEOMETRIC mean (recommended: a zero score in any factor zeroes the cell -- Liebig's Law of the Minimum) or weighted ADDITIVE mean (equivalent to Weighted Overlay), with weights summing to 100. Optionally saves each reclassified factor for reuse in Combine Habitat Factors when experimenting with weights. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_CombineHabitatFactors"
@@ -717,7 +728,7 @@
                 largeImage="Images\CombineFactors_32.png"
                 keytip="HF">
           <tooltip heading="Combine Habitat Factors">
-            Opens the Combine Habitat Factors tool from the Jenness Enterprises toolbox: combines habitat factor rasters ALREADY scored on the 0-100 suitability scale into one habitat suitability model, by weighted geometric or additive mean with weights summing to 100. Use it to experiment with different weights or combination methods without re-running the reclassification step -- the Create Habitat Suitability Model tool can save its reclassified factors exactly for this. Original CorridorDesigner tool by Dan Majka; this ArcGIS Pro version by Jeff Jenness and Dan Majka. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
+            Opens the Combine Habitat Factors tool from the Jenness Enterprises toolbox: combines habitat factor rasters ALREADY scored on the 0-100 suitability scale into one habitat suitability model, by weighted geometric or additive mean with weights summing to 100. Use it to experiment with different weights or combination methods without re-running the reclassification step -- the Create Habitat Suitability Model tool can save its reclassified factors exactly for this. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_NormalizeExistingHSM"
@@ -728,7 +739,7 @@
                 largeImage="Images\NormalizeHSM_32.png"
                 keytip="HN">
           <tooltip heading="Normalize Existing HSM">
-            Opens the Normalize Existing HSM tool from the Jenness Enterprises toolbox: linearly stretches a habitat suitability model built outside CorridorDesigner (a logistic-regression surface, an expert model on another scale...) onto the 0-100 suitability scale the HSM chain expects. You name the value meaning WORST habitat (becomes 0) and BEST habitat (becomes 100); a model where low values mean good habitat inverts naturally. Values beyond the anchors are clamped to 0-100 by default. Original CorridorDesigner tool by Dan Majka; this ArcGIS Pro version by Jeff Jenness and Dan Majka. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
+            Opens the Normalize Existing HSM tool from the Jenness Enterprises toolbox: linearly stretches a habitat suitability model built outside CorridorDesigner (a logistic-regression surface, an expert model on another scale...) onto the 0-100 suitability scale the HSM chain expects. You name the value meaning WORST habitat (becomes 0) and BEST habitat (becomes 100); a model where low values mean good habitat inverts naturally. Values beyond the anchors are clamped to 0-100 by default. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_ReclassifyFeaturesInHSM"
@@ -739,7 +750,7 @@
                 largeImage="Images\ReclassFeaturesHSM_32.png"
                 keytip="HR">
           <tooltip heading="Reclassify Features in HSM">
-            Opens the Reclassify Features in HSM tool from the Jenness Enterprises toolbox: assigns a fixed suitability score (0-100) to every cell of a habitat suitability model that falls inside your polygon features -- for influences the base habitat factors could not capture: a fenced right-of-way scored 0, a wildlife-friendly easement scored higher, a mapped disturbance footprint. Cells outside the polygons keep their original scores; NoData stays NoData. A polygon layer's active map selection is honored -- only the selected features are used. Original CorridorDesigner tool by Dan Majka; this ArcGIS Pro version by Jeff Jenness and Dan Majka. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
+            Opens the Reclassify Features in HSM tool from the Jenness Enterprises toolbox: assigns a fixed suitability score (0-100) to every cell of a habitat suitability model that falls inside your polygon features -- for influences the base habitat factors could not capture: a fenced right-of-way scored 0, a wildlife-friendly easement scored higher, a mapped disturbance footprint. Cells outside the polygons keep their original scores; NoData stays NoData. A polygon layer's active map selection is honored -- only the selected features are used. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_CriticalHabitatFeature"
@@ -750,17 +761,17 @@
                 largeImage="Images\CriticalFeature_32.png"
                 keytip="HX">
           <tooltip heading="Critical Habitat Feature">
-            Opens the Critical Habitat Feature tool from the Jenness Enterprises toolbox: rescales a habitat suitability model by DISTANCE from a critical habitat feature -- a resource the species must stay near, or a hazard it must avoid. You provide distance bands (in map units) with a percentage for each; every cell's suitability is multiplied by the percentage of the band its distance falls in. The classic example: a riparian species keeps 100% of its score within 30 m of water, 80% from 30-60 m, 60% from 60-100 m, and 0% beyond. The critical feature can be a feature layer (an active selection is honored) or a raster (every data cell is the feature). Original CorridorDesigner tool by Dan Majka; this ArcGIS Pro version by Jeff Jenness and Dan Majka. Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
+            Opens the Critical Habitat Feature tool from the Jenness Enterprises toolbox: rescales a habitat suitability model by DISTANCE from a critical habitat feature -- a resource the species must stay near, or a hazard it must avoid. You provide distance bands (in map units) with a percentage for each; every cell's suitability is multiplied by the percentage of the band its distance falls in. The classic example: a riparian species keeps 100% of its score within 30 m of water, 80% from 30-60 m, 60% from 60-100 m, and 0% beyond. The critical feature can be a feature layer (an active selection is honored) or a raster (every data cell is the feature). Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_LandFacetDescribe"
-                caption="Land Facet Data Report"
+                caption="Corridor Analysis Data Report"
                 className="Corridor.LandFacetDescribeButton"
                 loadOnClick="true"
                 smallImage="Images\LandFacetDescribe_16.png"
                 largeImage="Images\LandFacetDescribe_32.png"
                 keytip="DB">
-          <tooltip heading="Land Facet Data Report">
+          <tooltip heading="Corridor Analysis Data Report">
             Opens a window that reports, in plain language, where a dataset stands in the Land Facet Corridor analysis: which source data led to it, how each step was analyzed (the clustering variables in order, the density neighborhood and its denominator rule, the Mahalanobis sampling inside the Wildland Blocks, the inversion constant), and its position in the overall sequence. The report follows the dataset's recorded sources back to the original clustering run and WARNS when a source has been regenerated since -- a sign the described dataset may be out of date. Datasets not involved in a Land Facet analysis are reported as such (with their Jenness provenance summary quoted when they were made by these tools). Read-only; the report can be copied as text or formatted, or saved to a file for a methods section or a data delivery.<disabledText />
           </tooltip>
         </button>
@@ -1107,8 +1118,9 @@
               smallImage="Images\HsmMenu_16.png"
               largeImage="Images\HsmMenu_32.png">
           <tooltip heading="Habitat Suitability Modeling">
-            The CorridorDesigner habitat-suitability-model (HSM) chain from the Jenness Enterprises toolbox: build a 0-100 habitat suitability surface from weighted factor rasters (Create Habitat Suitability Model, or Combine Habitat Factors for already-scored factors), bring in a model built elsewhere (Normalize Existing HSM), then refine it (Reclassify Features in HSM, Critical Habitat Feature). The finished HSM feeds the corridor tools: invert it with Invert Raster into a cost surface, cut termini with Identify Termini Polygons, and run Least-Cost Corridor. Original CorridorDesigner tools by Dan Majka; ArcGIS Pro versions by Jeff Jenness and Dan Majka. No Spatial Analyst needed.<disabledText />
+            The CorridorDesigner habitat-suitability-model (HSM) chain from the Jenness Enterprises toolbox: build a 0-100 habitat suitability surface from weighted factor rasters (Create Habitat Suitability Model, or Combine Habitat Factors for already-scored factors), bring in a model built elsewhere (Normalize Existing HSM), then refine it (Reclassify Features in HSM, Critical Habitat Feature). The finished HSM feeds the corridor tools: invert it with Invert Raster into a cost surface, cut termini with Identify Termini Polygons, and run Least-Cost Corridor. No Spatial Analyst needed.<disabledText />
           </tooltip>
+          <button refID="WildlifeTools_HsmRemapBuilder" />
           <button refID="WildlifeTools_HabitatSuitabilityModel" />
           <button refID="WildlifeTools_CombineHabitatFactors" />
           <button refID="WildlifeTools_NormalizeExistingHSM" />

@@ -279,6 +279,8 @@
     <Content Include="Images\CriticalFeature_32.png" />
     <Content Include="Images\HsmMenu_16.png" />
     <Content Include="Images\HsmMenu_32.png" />
+    <Content Include="Images\HsmRemap_16.png" />
+    <Content Include="Images\HsmRemap_32.png" />
     <!-- Sudoku skin fonts, embedded as WPF resources so they render on every
          machine with no installation (all SIL Open Font License; the OFL
          texts ship alongside as required for redistribution). -->

@@ -16,7 +16,7 @@ using R = WildlifeTools.Corridor.LandFacetRecordReader;
 namespace WildlifeTools.Corridor
 {
     /// <summary>
-    /// "Land Facet Data Report": pick a dataset (a raster layer in the
+    /// "Corridor Analysis Data Report": pick a dataset (a raster layer in the
     /// map, or browse to one on disk) and get a human-readable report of where
     /// it stands in the Land Facet Corridor analysis -- its sources, how they
     /// were analyzed, staleness warnings when a recorded source has since been
@@ -157,7 +157,7 @@ namespace WildlifeTools.Corridor
             {
                 MessageBox.Show("Choose a raster or polygon layer, or Browse "
                                 + "to a dataset.",
-                                "Land Facet Data Report");
+                                "Corridor Analysis Data Report");
                 return;
             }
             btnDescribe.IsEnabled = false;
@@ -187,7 +187,7 @@ namespace WildlifeTools.Corridor
                 txtStatus.Text = "";
                 MessageBox.Show("Could not describe the dataset:"
                                 + Environment.NewLine + ex.Message,
-                                "Land Facet Data Report");
+                                "Corridor Analysis Data Report");
             }
             finally { btnDescribe.IsEnabled = true; }
         }
@@ -238,6 +238,11 @@ namespace WildlifeTools.Corridor
                     case R.BlockKind.Bullet:
                         doc.Blocks.Add(new Paragraph(new Run("•  " + b.Text))
                         { Margin = new Thickness(16, 0, 0, 1) });
+                        break;
+                    case R.BlockKind.BulletAlert:
+                        doc.Blocks.Add(new Paragraph(new Run("•  " + b.Text))
+                        { Margin = new Thickness(16, 0, 0, 1),
+                          Foreground = warnBrush });
                         break;
                     case R.BlockKind.KeyValue:
                         var kv = new Paragraph { Margin = new Thickness(0, 0, 0, 1) };
@@ -298,6 +303,8 @@ namespace WildlifeTools.Corridor
                     case R.BlockKind.SubHeading: sb.AppendLine(b.Text); break;
                     case R.BlockKind.Body: sb.AppendLine(b.Text); break;
                     case R.BlockKind.Bullet: sb.AppendLine("  * " + b.Text); break;
+                    case R.BlockKind.BulletAlert:
+                        sb.AppendLine("  * " + b.Text); break;
                     case R.BlockKind.KeyValue:
                         sb.AppendLine(b.Text + ": " + b.Value); break;
                     case R.BlockKind.Warning:
@@ -364,7 +371,7 @@ namespace WildlifeTools.Corridor
             {
                 MessageBox.Show("Could not save the report:"
                                 + Environment.NewLine + ex.Message,
-                                "Land Facet Data Report");
+                                "Corridor Analysis Data Report");
             }
         }
 
