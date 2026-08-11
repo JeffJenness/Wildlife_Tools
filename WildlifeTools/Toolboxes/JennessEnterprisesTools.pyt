@@ -9090,11 +9090,36 @@ def _remap_candidates(container):
 
 
 def _raster_container(v):
-    """The workspace holding a raster row value (catalog path's parent)."""
+    """The workspace holding a raster row value (catalog path's parent).
+
+    A value-table cell holding a MAP LAYER arrives as the bare layer NAME,
+    which arcpy.Describe cannot always resolve during validation -- fall
+    back to looking the name up in the ACTIVE map of the open project
+    (works in the Pro dialog; harmlessly absent when run headlessly).
+    Layer names are NOT unique: exact-name matches only, and if several
+    same-named layers point at DIFFERENT data sources the lookup ABSTAINS
+    (returns no container, so nothing is auto-suggested) rather than
+    guessing which duplicate the user meant."""
+    cp = None
     try:
-        cp = getattr(arcpy.Describe(v), "catalogPath", None) or str(v)
+        cp = getattr(arcpy.Describe(v), "catalogPath", None)
     except Exception:
-        cp = str(v)
+        pass
+    if not cp:
+        try:
+            m = arcpy.mp.ArcGISProject("CURRENT").activeMap
+            if m is not None:
+                name = str(v)
+                sources = {lyr.dataSource
+                           for lyr in m.listLayers()
+                           if lyr.name == name
+                           and lyr.supports("DATASOURCE")}
+                if len(sources) == 1:
+                    cp = sources.pop()
+        except Exception:
+            pass
+    if not cp:
+        return None                     # unknown or ambiguous: no container
     return os.path.dirname(cp)
 
 
@@ -9213,7 +9238,7 @@ class HabitatSuitabilityModel(object):
             name="factors", datatype="GPValueTable",
             parameterType="Required", direction="Input")
         factors.columns = [["GPRasterLayer", "Habitat factor raster"],
-                           ["DETable", "Remap file or table"],
+                           ["GPTableView", "Remap file or table"],
                            ["GPDouble", "Weight (sum to 100)"]]
         method = arcpy.Parameter(
             displayName="Method of combining factors", name="method",
@@ -9238,7 +9263,11 @@ class HabitatSuitabilityModel(object):
 
     def updateParameters(self, parameters):
         P = {p.name: p for p in parameters}
-        if P["factors"].valueAsText and not P["factors"].hasBeenValidated:
+        # Unconditional (no hasBeenValidated gate): a value table's
+        # validation cycles differ from a plain parameter's, and the gate
+        # made the auto-fill silently miss (Jeff, 2026-08-10). Only EMPTY
+        # remap cells are ever touched, so re-running is harmless.
+        if P["factors"].valueAsText:
             try:
                 _suggest_remap_files(P["factors"])
             except Exception:
@@ -9265,7 +9294,10 @@ class HabitatSuitabilityModel(object):
             importlib.reload(land_facet_linkage)
             importlib.reload(hsm_tools)
             P = {p.name: p for p in parameters}
-            facs = [(_vt_raster_path(row[0]), str(row[1]), float(row[2]))
+            # both the raster and the remap cells may hold map layer/table
+            # references -- resolve each to a catalog path
+            facs = [(_vt_raster_path(row[0]), _vt_raster_path(row[1]),
+                     float(row[2]))
                     for row in (P["factors"].values or [])]
             hsm_tools.run_hsm(
                 factors=facs,

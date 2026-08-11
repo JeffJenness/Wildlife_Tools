@@ -1163,7 +1163,9 @@ namespace WildlifeTools.Corridor
             }
             _session[_rasterPath ?? ""] =
                 (range, sorted.Select(r => (r.lo, r.hi, r.nv)).ToList());
-            txtSampleNote.Text = "Saved: " + outPath;
+            string mapNote = await AddTableToMapAsync(outPath);
+            txtSampleNote.Text = "Saved: " + outPath
+                + (mapNote == null ? "" : "  " + mapNote);
             MessageBox.Show(this,
                 "Remap table saved.\n\n" + outPath + "\n\nThe Create Habitat "
                 + "Suitability Model tool accepts it directly — and because "
@@ -1252,6 +1254,32 @@ namespace WildlifeTools.Corridor
                     using var _ = table.CreateRow(buf);
                 }
             });
+        }
+
+        /// <summary>Add the saved remap table to the active map as a
+        /// standalone table (skipped when it is already there, or when no
+        /// map is open). Returns a short status note, or null.</summary>
+        private static async System.Threading.Tasks.Task<string>
+            AddTableToMapAsync(string outPath)
+        {
+            try
+            {
+                return await QueuedTask.Run(() =>
+                {
+                    var map = MapView.Active?.Map;
+                    if (map == null) return null;
+                    string name = BaseName(outPath);
+                    if (map.GetStandaloneTablesAsFlattenedList().Any(
+                            t => string.Equals(t.Name, name,
+                                StringComparison.OrdinalIgnoreCase)))
+                        return "Already in the map.";
+                    StandaloneTableFactory.Instance.CreateStandaloneTable(
+                        new StandaloneTableCreationParams(new Uri(outPath)),
+                        map);
+                    return "Added to the map.";
+                });
+            }
+            catch { return null; }
         }
 
         private void OnOutputChanged(object sender,

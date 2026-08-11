@@ -317,7 +317,8 @@
                      ToolTip="Where the remap table is written. Defaults next to the source raster: a geodatabase raster gets a geodatabase TABLE; a file raster (GeoTIFF...) gets an ASCII .txt remap file -- both kinds are accepted directly by the Create Habitat Suitability Model tool, and a name containing the raster's name is auto-found by that tool's dialog." />
             <TextBlock x:Name="txtOutputNote" FontSize="11" FontStyle="Italic"
                        FontFamily="{StaticResource BodyFontFam}"
-                       Foreground="{StaticResource HintBrush}" Margin="2,1,0,0" />
+                       Foreground="{StaticResource HintBrush}" Margin="2,1,0,0"
+                       TextWrapping="Wrap" />
           </StackPanel>
           <Button Grid.Column="2" x:Name="btnSave" Content="Save Remap Table"
                   Style="{StaticResource ParchButton}" Margin="10,0,0,0"
