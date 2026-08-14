@@ -460,11 +460,15 @@ def _weights_ok(weights):
 # HSM 1 -- reclassify + combine
 # ---------------------------------------------------------------------------
 def run_hsm(factors, method, out_raster, save_reclassified=False,
-            messages=None):
+            messages=None, saved_paths=None):
     """Build an HSM from raw factor rasters.
 
     ``factors``: ``[(raster, remap_file, weight)]`` -- any count >= 1;
     integer-ish weights summing to 100. Returns the written output path.
+    ``saved_paths`` (optional list) collects the ``<base>_r`` reclassified
+    factor rasters written when ``save_reclassified`` is on, so the dialog
+    can hand them to a derived output parameter (Pro then adds them to the
+    map alongside the model itself).
     """
     import arcpy
 
@@ -511,7 +515,7 @@ def run_hsm(factors, method, out_raster, save_reclassified=False,
              "are normalized to sum to 1 (w/100).".format(
                  len(factors), "" if len(factors) == 1 else "s", method))
 
-        saved = []
+        saved = [] if saved_paths is None else saved_paths
         acc, valid_all = _combine_core(
             gdal, opened, weights, labels, method, gt, proj, w, h, messages,
             remaps=remaps, save_dir=save_dir, saved_paths=saved,
@@ -871,11 +875,17 @@ def run_critical_feature(in_hsm, in_critical, bands, out_raster,
                          messages=None):
     """Scale the HSM by distance-band percentages from ``in_critical``.
 
-    ``bands``: ``[(from, to, percent)]`` in the raster's map units, ascending;
-    each cell's HSM value is multiplied by percent/100 for the band its
-    distance to the nearest critical-feature cell falls in. Distances beyond
-    the last band leave the HSM unchanged, with a warning (see module notes:
-    the original silently multiplied by raw distance there).
+    ``bands``: ``[(from, to, percent)]`` in METERS, ascending; each cell's
+    HSM value is multiplied by percent/100 for the band its distance to the
+    nearest critical-feature cell falls in. Distances are computed in meters
+    regardless of the raster's coordinate system: projected linear units are
+    converted via metersPerUnit, and a geographic raster uses its true
+    spheroidal cell dimensions at the middle row (the distance transform
+    needs one constant cell size per axis, so east-west size is the middle
+    row's -- fine for typical study areas, warned about when the raster
+    spans enough latitude to matter). Distances beyond the last band leave
+    the HSM unchanged, with a warning (see module notes: the original
+    silently multiplied by raw distance there).
     """
     import arcpy
     from scipy import ndimage
@@ -929,11 +939,49 @@ def run_critical_feature(in_hsm, in_critical, bands, out_raster,
 
         hsm_desc = arcpy.Describe(str(in_hsm))
         sr = hsm_desc.spatialReference if proj else None
-        if sr is not None and getattr(sr, "type", "") == "Geographic":
+        # Distances (and the user's bands) are METERS. The EDT below takes
+        # one constant cell size per axis, so convert the grid's cell size
+        # to meters first.
+        cellw, cellh = abs(gt[1]), abs(gt[5])
+        sr_type = getattr(sr, "type", "") if sr is not None else ""
+        if sr_type == "Geographic":
+            a_ax = float(getattr(sr, "semiMajorAxis", 0) or 6378137.0)
+            b_ax = float(getattr(sr, "semiMinorAxis", 0)
+                         or 6356752.31424518)
+            d = _hs._geographic_row_distances(gt, h, a_ax, b_ax)
+            mid = h // 2
+            cellw_m = float(d["h"][mid])
+            cellh_m = float((d["vA"][mid] + d["vB"][mid]) / 2.0)
+            _say(messages,
+                 "Geographic HSM: distances are measured in meters using "
+                 "the spheroidal cell size at the raster's middle row "
+                 "({:.2f} x {:.2f} m).".format(cellw_m, cellh_m))
+            w_all = np.asarray(d["h"], dtype=np.float64)
+            spread = (float(w_all.max() - w_all.min()) / cellw_m
+                      if cellw_m > 0 else 0.0)
+            if spread > 0.05:
+                _warn(messages,
+                      "East-west cell size varies {:.0f}% between the "
+                      "raster's north and south edges, but distances use "
+                      "the middle row's size everywhere -- band edges near "
+                      "the top and bottom are off by up to about half "
+                      "that. For a raster spanning this much latitude, "
+                      "consider projected data.".format(spread * 100.0))
+        elif sr_type == "Projected":
+            mpu = float(getattr(sr, "metersPerUnit", 1.0) or 1.0)
+            cellw_m, cellh_m = cellw * mpu, cellh * mpu
+            if abs(mpu - 1.0) > 1e-9:
+                _say(messages,
+                     "Distance bands are in meters; the raster's linear "
+                     "unit is {} ({:g} m), converted "
+                     "automatically.".format(
+                         getattr(sr, "linearUnitName", "unknown"), mpu))
+        else:
+            cellw_m, cellh_m = cellw, cellh
             _warn(messages,
-                  "The HSM is in a geographic coordinate system, so "
-                  "distances -- and your distance bands -- are in DECIMAL "
-                  "DEGREES. Strongly consider projected data.")
+                  "The HSM has no usable coordinate system, so cell sizes "
+                  "cannot be converted -- band distances are compared in "
+                  "raw map units, ASSUMED to be meters.")
 
         # The critical feature: a raster (data cells are the feature) or a
         # feature layer (rasterized; selections honored).
@@ -991,7 +1039,7 @@ def run_critical_feature(in_hsm, in_critical, bands, out_raster,
         _mh.phase_advance()
 
         dist = ndimage.distance_transform_edt(
-            ~target, sampling=(abs(gt[5]), abs(gt[1])))
+            ~target, sampling=(cellh_m, cellw_m))
         del target
         _mh.phase_advance()
 
@@ -1040,12 +1088,12 @@ def run_critical_feature(in_hsm, in_critical, bands, out_raster,
         del a, pct
         _mh.phase_advance()
         band_txt = "; ".join(
-            "{:g}-{:g}: {:g}%".format(lo, hi, pc) for lo, hi, pc in bands)
+            "{:g}-{:g} m: {:g}%".format(lo, hi, pc) for lo, hi, pc in bands)
         _deliver(gdal, out, valid, gt, proj, w, h, out_raster, scratch,
                  messages,
                  summary=(
                      "HSM scaled by distance from the critical feature {} "
-                     "(bands, map units: {}){}.").format(
+                     "(bands, meters: {}){}.").format(
                      str(in_critical), band_txt,
                      "; " + sel_note if sel_note else ""),
                  description=(

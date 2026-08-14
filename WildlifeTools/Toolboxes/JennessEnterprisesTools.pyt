@@ -9222,7 +9222,16 @@ class HabitatSuitabilityModel(object):
             name="save_reclassified", datatype="GPBoolean",
             parameterType="Optional", direction="Input")
         save_reclass.value = False
-        return [factors, method, out_raster, save_reclass]
+        # Derived (never shown in the dialog): the <base>_r rasters written
+        # when the save option is on. Handing them to a derived output is
+        # what makes Pro add each one to the map, the same way the model
+        # itself is added (Jeff, 2026-08-14); scripts get them on the
+        # Result object.
+        saved_out = arcpy.Parameter(
+            displayName="Saved reclassified factors", name="saved_factors",
+            datatype="DERasterDataset", parameterType="Derived",
+            direction="Output", multiValue=True)
+        return [factors, method, out_raster, save_reclass, saved_out]
 
     def isLicensed(self):
         return True
@@ -9270,14 +9279,27 @@ class HabitatSuitabilityModel(object):
             facs = [(_vt_raster_path(row[0]), _vt_raster_path(row[1]),
                      float(row[2]))
                     for row in (P["factors"].values or [])]
+            saved = []
             hsm_tools.run_hsm(
                 factors=facs,
                 method=P["method"].valueAsText,
                 out_raster=P["out_raster"].valueAsText,
                 save_reclassified=bool(P["save_reclassified"].value),
-                messages=messages)
+                messages=messages, saved_paths=saved)
             _writeback_resolved_raster(P, "out_raster")
             _apply_hsm_symbology(P, messages)
+            if saved:
+                # Derived multivalue output -> Pro adds each saved factor
+                # to the map; they are 0-100 scores, so the HSM symbology
+                # fits them too (best-effort: silently skipped if Pro
+                # declines it on a multivalue parameter).
+                P["saved_factors"].value = saved
+                lyrx = _hsm_lyrx()
+                if lyrx:
+                    try:
+                        P["saved_factors"].symbology = lyrx
+                    except Exception:
+                        pass
         except arcpy.ExecuteError:
             raise
         except Exception:
@@ -9583,7 +9605,9 @@ class CriticalHabitatFeature(object):
             "Rescales a habitat suitability model by DISTANCE from a "
             "critical habitat feature -- a resource the species must stay "
             "near (or a hazard it must stay away from). You provide "
-            "distance bands (in the raster's map units) with a percentage "
+            "distance bands in METERS (converted to the raster's "
+            "coordinate system automatically, including true spheroidal "
+            "cell sizes for geographic rasters) with a percentage "
             "for each; every cell's suitability is multiplied by the "
             "percentage of the band its distance to the nearest "
             "critical-feature cell falls in. The workshop book's example: "
@@ -9617,8 +9641,8 @@ class CriticalHabitatFeature(object):
             displayName="Distance bands (from, to, percent of score kept)",
             name="bands", datatype="GPValueTable",
             parameterType="Required", direction="Input")
-        bands.columns = [["GPDouble", "From distance (map units)"],
-                         ["GPDouble", "To distance (map units)"],
+        bands.columns = [["GPDouble", "From distance (meters)"],
+                         ["GPDouble", "To distance (meters)"],
                          ["GPDouble", "Percent of score kept (0-100)"]]
         out_raster = arcpy.Parameter(
             displayName="Output modified habitat suitability model",
@@ -9650,6 +9674,7 @@ class CriticalHabitatFeature(object):
         P = {p.name: p for p in parameters}
         rows = P["bands"].values or []
         prev = None
+        overlaps = []
         for row in rows:
             lo, hi, pc = row[0], row[1], row[2]
             if lo is None or hi is None or pc is None:
@@ -9668,7 +9693,21 @@ class CriticalHabitatFeature(object):
                 P["bands"].setErrorMessage(
                     "The distance bands must be in ascending order.")
                 return
-            prev = (lo, hi)
+            # A genuine range overlap (a shared endpoint is the normal
+            # touching-bands case, not an overlap): allowed, first band
+            # wins -- but say so, or the trimming is invisible.
+            if prev is not None and lo < prev[1]:
+                overlaps.append((prev, (lo, hi, pc)))
+            prev = (lo, hi, pc)
+        if overlaps:
+            P["bands"].setWarningMessage(
+                "Overlapping distance bands -- cells in a shared range "
+                "take the EARLIER band's percentage: " + " ".join(
+                    "{:g}-{:g} m overlaps {:g}-{:g} m, so {:g}-{:g} m "
+                    "keeps {:g}% and the later band effectively starts "
+                    "at {:g} m.".format(
+                        b[0], b[1], a[0], a[1], b[0], a[1], a[2], a[1])
+                    for a, b in overlaps))
         return
 
     def execute(self, parameters, messages):

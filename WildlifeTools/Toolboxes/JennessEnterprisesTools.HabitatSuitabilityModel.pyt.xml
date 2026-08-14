@@ -26,7 +26,7 @@ WEIGHTS MUST SUM TO 100. Each factor's weight expresses its relative importance 
 
 THE FIRST FACTOR DEFINES THE OUTPUT GRID. The output raster takes its cell size, extent, and coordinate system from the FIRST factor in the list; any other factor on a different grid is resampled onto it (nearest neighbour) with a message saying so. Put your finest, most trustworthy layer -- typically land cover -- first. The originals delegated this silently to the Spatial Analyst environment; this version tells you.
 
-SAVE THE RECLASSIFIED FACTORS TO EXPERIMENT FASTER. With the save option checked, each factor's reclassified 0-100 raster is also written next to the output (named with an _r suffix) and listed in the run messages. Feed those into the Combine Habitat Factors tool to try different weights or switch between geometric and additive combining without re-running the reclassification -- the intended workflow for tuning a model.
+SAVE THE RECLASSIFIED FACTORS TO EXPERIMENT FASTER. With the save option checked, each factor's reclassified 0-100 raster is also written next to the output (named with an _r suffix), added to the map alongside the model, and listed in the run messages. Feed those into the Combine Habitat Factors tool to try different weights or switch between geometric and additive combining without re-running the reclassification -- the intended workflow for tuning a model.
 
 UNLIMITED FACTORS. The original dialog had six fixed factor slots; this version accepts any number of rows. A single factor is allowed (the "model" is then just that factor's reclassified scores, and the tool says so). Cells that are NoData in ANY factor are NoData in the output.
 
