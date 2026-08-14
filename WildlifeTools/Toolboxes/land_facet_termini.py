@@ -483,6 +483,7 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
             # region statistics toward -9999.
             with np.errstate(invalid="ignore"):
                 valid &= (a != float(_tt.NODATA_OUT))
+            valid = _mh.mask_band_valid(band, valid)
             if scale:
                 over = valid & (a > 1.0 / scale)
                 n_over = int(over.sum())

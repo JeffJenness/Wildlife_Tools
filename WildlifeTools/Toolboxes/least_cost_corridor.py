@@ -596,6 +596,7 @@ def run_least_cost_corridor(in_termini, cost_raster=None, cost_workspace=None,
             proj = src.GetProjection()
             cost = band.ReadAsArray(0, 0, w, h).astype(np.float64)
             nod = band.GetNoDataValue()
+            vmask = _mh.band_validity_mask(band)   # capture while src is open
         finally:
             src = None
             if in_copy:
@@ -609,6 +610,8 @@ def run_least_cost_corridor(in_termini, cost_raster=None, cost_workspace=None,
         if nod is not None:
             with np.errstate(invalid="ignore"):
                 valid &= (cost != float(nod))
+        if vmask is not None:
+            valid &= vmask
         n_neg = int((valid & (cost < 0)).sum())
         if n_neg:
             _warn(messages,

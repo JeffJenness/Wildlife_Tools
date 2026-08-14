@@ -163,6 +163,7 @@ def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
         in_nodata = band.GetNoDataValue()
         sr = arcpy.Describe(in_raster).spatialReference
         a = band.ReadAsArray(0, 0, width_px, height_px)
+        vmask = _mh.band_validity_mask(band)   # capture while src is open
     finally:
         src = None
         if in_copy:
@@ -179,6 +180,8 @@ def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
     if in_nodata is not None:
         with np.errstate(invalid="ignore"):
             valid &= (a != in_nodata)
+    if vmask is not None:
+        valid &= vmask
     shape = a.shape
 
     # ---- classes -------------------------------------------------------------

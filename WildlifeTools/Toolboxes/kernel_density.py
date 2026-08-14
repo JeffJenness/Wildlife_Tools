@@ -148,6 +148,7 @@ def _read_positive(src):
     valid = np.isfinite(arr) & (arr > 0.0)
     if nodata is not None:
         valid &= (arr != nodata)
+    valid = mh.mask_band_valid(band, valid)
     return arr, valid
 
 

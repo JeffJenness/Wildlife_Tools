@@ -260,6 +260,7 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
         gt = src.GetGeoTransform()
         z = band.ReadAsArray(0, 0, W, H).astype(np.float64)
         nod = band.GetNoDataValue()
+        vmask = _mh.band_validity_mask(band)   # capture while src is open
     finally:
         src = None
         if in_copy:
@@ -272,6 +273,8 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
     if nod is not None:
         with np.errstate(invalid="ignore"):
             valid &= (z != nod)
+    if vmask is not None:
+        valid &= vmask
     if not valid.any():
         raise arcpy.ExecuteError("The DEM has no valid (non-NoData) cells.")
 

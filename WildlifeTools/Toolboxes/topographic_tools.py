@@ -41,6 +41,14 @@ import hillshade as _hs
 NODATA_OUT = -9999.0
 _STRIP_ROWS = 1024
 
+
+def mask_band_valid(gdal, band, valid, xoff=0, yoff=0):
+    """Delegate to :func:`mahalanobis.mask_band_valid` (the canonical home
+    of the mask-band validity rule); kept here because callers historically
+    reach shared raster helpers through ``_tt``. ``gdal`` is accepted for
+    signature compatibility and unused -- the canonical helper imports it."""
+    return _mh.mask_band_valid(band, valid, xoff, yoff)
+
 AREA_UNITS = ["Sq. Meters", "Sq. Feet", "Hectares", "Acres",
               "Sq. Kilometers", "Sq. Miles"]
 _AREA_MULT = {
@@ -366,6 +374,7 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
         valid = np.isfinite(pad)
         if in_nodata is not None:
             valid &= (pad != in_nodata)
+        valid = _mh.mask_band_valid(band, valid, 0, top)
         pad = np.where(valid, pad * elev_mpu, 0.0)
 
         out_arrs = {k: np.full((rows, width), NODATA_OUT, dtype=np.float32)
@@ -600,6 +609,7 @@ def _detrended_dem(in_raster, radius, radius_units, messages):
         valid = np.isfinite(z)
         if in_nodata is not None:
             valid &= (z != in_nodata)
+        valid = _mh.mask_band_valid(band, valid)
         rx_rows, ry, note = _radius_row_cells(
             gt, height, sr, radius, radius_units)
         smoothed = _hs._blur_grid(z, valid, rx_rows, ry, "Average")
@@ -824,6 +834,7 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
     valid = np.isfinite(z)
     if in_nodata is not None:
         valid &= (z != in_nodata)
+    valid = _mh.mask_band_valid(band, valid)
     z = np.where(valid, z * zscale, 0.0)
     src = None
     if in_copy:
@@ -1013,6 +1024,7 @@ def run_acr(in_raster, out_raster, elev_units="Meters", corner_method=None,
     valid = np.isfinite(z)
     if in_nodata is not None:
         valid &= (z != in_nodata)
+    valid = _mh.mask_band_valid(band, valid)
     zwork = np.where(valid, z * elev_mpu, 0.0)      # meters, for area and slope
     src = None
     if in_copy:
@@ -1281,6 +1293,7 @@ def run_tri(in_raster, out_raster, method=None, radius=1.5,
     valid = np.isfinite(z)
     if in_nodata is not None:
         valid &= (z != in_nodata)
+    valid = _mh.mask_band_valid(band, valid)
     # Elevation-unit methods keep the DEM's native z-units; the Slope method
     # needs meters so its rise/run is dimensionless.
     zwork = np.where(valid, z * elev_mpu if is_slope else z, np.nan)
@@ -1712,6 +1725,7 @@ def run_fractal_dimension(in_raster, out_raster, method=None, window_size=25,
     valid = np.isfinite(z)
     if in_nodata is not None:
         valid &= (z != in_nodata)
+    valid = _mh.mask_band_valid(band, valid)
     # Fill NoData with the valid mean so the vectorized math never sees NaN;
     # any window touching NoData is masked out of the result below, so the
     # fill value never reaches the output.
@@ -2064,6 +2078,14 @@ def _twi_read_aligned(path, width, height, scratch, messages, what):
         band = src.GetRasterBand(1)
         arr = band.ReadAsArray(0, 0, width, height).astype(np.float64)
         nod = band.GetNoDataValue()
+        # Contract is (arr, nod): bake mask-band-only NoData (gdb GRID
+        # phantom-fill trap) into the array as the nod value so callers'
+        # value screens keep working unchanged.
+        vmask = _mh.band_validity_mask(band)
+        if vmask is not None:
+            if nod is None:
+                nod = NODATA_OUT
+            arr[~vmask] = nod
     finally:
         src = None
         if copy:
@@ -2136,6 +2158,7 @@ def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
     valid = np.isfinite(zraw)
     if in_nodata is not None:
         valid &= (zraw != in_nodata)
+    valid = _mh.mask_band_valid(band, valid)
     src = None
     if in_copy:
         try:
@@ -2699,6 +2722,7 @@ def _slope_zonal_points(in_zone, zone_field, band, gt, W, H, nodata, rsr,
     valid = np.isfinite(arr)
     if nodata is not None:
         valid &= (arr != nodata)
+    valid = _mh.mask_band_valid(band, valid, c0, r0)
     if lim is not None:
         valid &= (np.abs(arr) <= lim)
     sval = np.where(valid, arr, 0.0)

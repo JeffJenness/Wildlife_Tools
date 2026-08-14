@@ -462,6 +462,9 @@ def load_dem(dem_path, window=None):
             "({})".format(e))
     if nodata is not None:
         arr = np.where(arr == nodata, np.nan, arr)
+    wv = _mh.mask_band_valid(band, np.ones(arr.shape, bool), xoff, yoff)
+    if not wv.all():
+        arr[~wv] = np.nan       # mask-band-only NoData (gdb GRID fill trap)
     ds = None
     if tmp:                                    # scratch export no longer needed
         try:

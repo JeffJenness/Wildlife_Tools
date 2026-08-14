@@ -167,6 +167,7 @@ def run_density(in_raster, out_raster, facet_values=None,
         in_nodata = band.GetNoDataValue()
         sr = arcpy.Describe(in_raster).spatialReference
         a = band.ReadAsArray(0, 0, width_px, height_px)
+        vmask = _mh.band_validity_mask(band)   # capture while src is open
     finally:
         src = None
         if in_copy:
@@ -187,6 +188,8 @@ def run_density(in_raster, out_raster, facet_values=None,
     # honour it even when the raster never declared it as its NoData value.
     with np.errstate(invalid="ignore"):
         valid &= (a != _tt.NODATA_OUT)
+    if vmask is not None:
+        valid &= vmask
     shape = a.shape
 
     # ---- which facets get bands ---------------------------------------------

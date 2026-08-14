@@ -163,6 +163,7 @@ def masked_facet_raster(facet_path, blocks, scratch, messages):
         gt, proj = ds.GetGeoTransform(), ds.GetProjection()
         arr = band.ReadAsArray()
         nod = band.GetNoDataValue()
+        vmask = _mh.band_validity_mask(band)   # capture while ds is open
     finally:
         ds = None
 
@@ -204,6 +205,8 @@ def masked_facet_raster(facet_path, blocks, scratch, messages):
     NOD = -9999.0
     out = arr.astype(np.float32)
     bad = ~np.isfinite(out)
+    if vmask is not None:
+        bad |= ~vmask
     if nod is not None:
         with np.errstate(invalid="ignore"):
             bad |= (out == np.float32(nod))
@@ -406,6 +409,7 @@ def run_facet_mahalanobis(in_raster, blocks, variables, out_workspace,
             b = ds.GetRasterBand(1)
             a = b.ReadAsArray()
             nod = b.GetNoDataValue()
+            vmask = _mh.band_validity_mask(b)   # capture while ds is open
         finally:
             ds = None
         a = np.asarray(a, dtype=np.float64)
@@ -413,6 +417,8 @@ def run_facet_mahalanobis(in_raster, blocks, variables, out_workspace,
         if nod is not None:
             with np.errstate(invalid="ignore"):
                 keep &= (a != nod)
+        if vmask is not None:
+            keep &= vmask
         for v in np.unique(a[keep]):
             entries.append({"facet_id": int(v) if float(v).is_integer() else float(v),
                             "category_label": None, "cluster": None,

@@ -662,6 +662,7 @@ def run_classification(family, in_raster, out_raster, system, sources,
     proj = src.GetProjection()
     arr0 = band.ReadAsArray(0, 0, width, height).astype(np.float64)
     nod0 = band.GetNoDataValue()
+    vmask0 = _mh.band_validity_mask(band)   # capture while src is open
     sr = arcpy.Describe(in_raster).spatialReference
     band = None
     src = None
@@ -673,6 +674,8 @@ def run_classification(family, in_raster, out_raster, system, sources,
     v0 = np.isfinite(arr0)
     if nod0 is not None:
         v0 &= (arr0 != nod0)
+    if vmask0 is not None:
+        v0 &= vmask0
     # One read per unique raster: on-the-fly, every role's spec points at the
     # same DEM (read it once, not once per role -- for Landform that is 3 reads
     # saved, and for a non-GDAL-readable format each open is a whole-raster
@@ -694,6 +697,7 @@ def run_classification(family, in_raster, out_raster, system, sources,
             b = s2.GetRasterBand(1)
             arr = b.ReadAsArray(0, 0, width, height).astype(np.float64)
             nod = b.GetNoDataValue()
+            vm = _mh.band_validity_mask(b)   # capture while s2 is open
         finally:
             s2 = None
             if c2:
@@ -704,6 +708,8 @@ def run_classification(family, in_raster, out_raster, system, sources,
         v = np.isfinite(arr)
         if nod is not None:
             v &= (arr != nod)
+        if vm is not None:
+            v &= vm
         _read_cache[key] = (arr, v)
         return arr, v
 
@@ -954,6 +960,7 @@ def run_tpi(in_raster, out_raw=None, out_dev=None, out_pctl=None,
     valid = np.isfinite(z)
     if in_nodata is not None:
         valid &= (z != in_nodata)
+    valid = _mh.mask_band_valid(band, valid)
     src = None
     if in_copy:
         try:

@@ -99,14 +99,19 @@ def _facet_of(rec, band_no):
     return None
 
 
-def _invert_values(a, nod, scale, c, label, messages):
+def _invert_values(a, nod, scale, c, label, messages, vmask=None):
     """The shared core: mask, unscale, add the constant, take the reciprocal.
 
     Returns ``(out, valid)`` -- a float32 grid with NODATA_OUT where invalid,
     and the validity mask -- after reporting zero/negative diagnostics.
+    ``vmask`` is the band's per-pixel validity (mahalanobis.
+    band_validity_mask) for sources whose NoData lives only in the mask
+    band (gdb GRID phantom-fill trap).
     """
     a = np.asarray(a, dtype=np.float32)
     valid = np.isfinite(a)
+    if vmask is not None:
+        valid &= vmask
     if nod is not None:
         with np.errstate(invalid="ignore"):
             valid &= (a != np.float32(nod))
@@ -297,7 +302,8 @@ def run_invert(in_raster, out_raster=None, out_workspace=None,
             _mh.phase_advance()
             _say(messages, "Inverting {}: out = 1 / (x{}).".format(
                 label, " + {:g}".format(c) if c else ""))
-            out, valid = _invert_values(a, nod, scale, c, label, messages)
+            out, valid = _invert_values(a, nod, scale, c, label, messages,
+                                        vmask=_mh.band_validity_mask(band))
             del a
             _mh.phase_advance()
             _deliver(gdal, out, valid, gt, proj, width_px, height_px,
@@ -364,7 +370,8 @@ def run_invert(in_raster, out_raster=None, out_workspace=None,
             band = src.GetRasterBand(b)
             a = band.ReadAsArray(0, 0, width_px, height_px)
             nod = band.GetNoDataValue()
-            out, valid = _invert_values(a, nod, scale, c, _label(b), messages)
+            out, valid = _invert_values(a, nod, scale, c, _label(b), messages,
+                                        vmask=_mh.band_validity_mask(band))
             del a
             name = _name(b)
             if name.lower() in used:

@@ -202,7 +202,7 @@
           "roundingValue" : 10,
           "useSeparator" : true
         },
-        "heading" : "Value",
+        "heading" : "Jenks Natural Breaks, 5 categories",
         "alwaysUpdateClassLabels" : true
       }
     }

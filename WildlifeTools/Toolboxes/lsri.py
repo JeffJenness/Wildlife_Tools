@@ -648,6 +648,7 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
     valid = np.isfinite(arr)
     if in_nodata is not None:
         valid &= (arr != in_nodata)
+    valid = _mh.mask_band_valid(band, valid)
     scaled = np.where(valid, arr * z_factor, NODATA_OUT)
     del arr   # only 'scaled' and the boolean 'valid' mask are needed now
     src = None

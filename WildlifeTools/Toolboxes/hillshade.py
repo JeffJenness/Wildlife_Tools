@@ -627,6 +627,7 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
         valid = np.isfinite(z)
         if in_nodata is not None:
             valid &= (z != in_nodata)
+        valid = _mh.mask_band_valid(band, valid)
         _mh.phase_advance("Blurring the DEM...")
         _msg(messages, "Blurring the DEM (circular mean of the elevations)...")
         zb = _blur_grid(z, valid, rx_rows, ry, kernel)
@@ -932,6 +933,9 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
         invalid = ~np.isfinite(z_full)
         if in_nodata is not None:
             invalid |= (z_full == in_nodata)
+        vm = _mh.band_validity_mask(band)
+        if vm is not None:
+            invalid |= ~vm
         z_full[invalid] = np.nan
         z_full *= zscale
         geo_note = (" (mean-cell-size approximation on this geographic DEM)"
@@ -1014,6 +1018,7 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
         valid = np.isfinite(pad)
         if in_nodata is not None:
             valid &= (pad != in_nodata)
+        valid = _mh.mask_band_valid(band, valid, 0, top)
         pad = np.where(valid, pad * zscale, 0.0)
 
         out = np.full((rows, width), NODATA_OUT, dtype=np.int16)

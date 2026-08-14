@@ -9041,16 +9041,56 @@ class InvertRaster(object):
 # CorridorDesigner HSM-building chain (hsm_tools) -- original tools by Dan
 # Majka (primary author); ArcGIS Pro versions by Jeff Jenness and Dan Majka.
 # ---------------------------------------------------------------------------
+def _vt_cell_text(v):
+    """Human-readable text for a value-table cell.
+
+    A cell picked from the dialog's DROPDOWN arrives as an arcpy wrapper
+    object (MappingLayerObject / MappingTableObject) whose str() is a
+    bare repr like '<MappingTableObject object at 0x...>' -- useless for
+    name matching and ugly in messages (Jeff's Run-blocking error,
+    2026-08-14). Prefer the object's own name-ish attributes, then
+    Describe, then str()."""
+    if v is None:
+        return ""
+    s = str(v)
+    if not (s.startswith("<") and "object at 0x" in s):
+        return s
+    for attr in ("name", "longName", "dataSource", "value"):
+        try:
+            n = getattr(v, attr, None)
+        except Exception:
+            n = None
+        if n:
+            return str(n)
+    try:
+        d = arcpy.Describe(v)
+        n = getattr(d, "catalogPath", None) or getattr(d, "name", None)
+        if n:
+            return str(n)
+    except Exception:
+        pass
+    return s
+
+
 def _vt_raster_path(v):
-    """A usable catalog path for one raster cell of a value table (may be a
-    Layer object, a CIMPATH string, or a plain path)."""
+    """A usable catalog path for one raster/table cell of a value table
+    (may be a Layer/Table object, a CIMPATH string, or a plain path).
+    Describe first, then the object's own path-ish attributes, then the
+    display text as a last resort."""
     try:
         cp = getattr(arcpy.Describe(v), "catalogPath", None)
         if cp:
             return cp
     except Exception:
         pass
-    return str(v)
+    for attr in ("dataSource", "catalogPath"):
+        try:
+            p = getattr(v, attr, None)
+            if p:
+                return str(p)
+        except Exception:
+            pass
+    return _vt_cell_text(v) or str(v)
 
 
 def _hsm_lyrx():
@@ -9073,104 +9113,30 @@ def _apply_hsm_symbology(P, messages, name="out_raster"):
             "Could not set output symbology: {}".format(e))
 
 
-def _remap_candidates(container):
-    """Remap-source names inside ``container``: .txt files in a folder,
-    tables in a geodatabase. Returns [] when the container is unusable."""
-    try:
-        if mahalanobis.is_gdb_workspace(container):
-            names = []
-            for _root, _dirs, tables in arcpy.da.Walk(
-                    container, datatype="Table"):
-                names.extend(tables)
-            return names
-        return [f for f in os.listdir(container)
-                if f.lower().endswith(".txt")]
-    except Exception:
-        return []
+def _clear_factor_named_output(factors_param, out_param):
+    """Undo Pro's auto-generated output name on the HSM build tools.
 
-
-def _raster_container(v):
-    """The workspace holding a raster row value (catalog path's parent).
-
-    A value-table cell holding a MAP LAYER arrives as the bare layer NAME,
-    which arcpy.Describe cannot always resolve during validation -- fall
-    back to looking the name up in the ACTIVE map of the open project
-    (works in the Pro dialog; harmlessly absent when run headlessly).
-    Layer names are NOT unique: exact-name matches only, and if several
-    same-named layers point at DIFFERENT data sources the lookup ABSTAINS
-    (returns no container, so nothing is auto-suggested) rather than
-    guessing which duplicate the user meant."""
-    cp = None
-    try:
-        cp = getattr(arcpy.Describe(v), "catalogPath", None)
-    except Exception:
-        pass
-    if not cp:
-        try:
-            m = arcpy.mp.ArcGISProject("CURRENT").activeMap
-            if m is not None:
-                name = str(v)
-                sources = {lyr.dataSource
-                           for lyr in m.listLayers()
-                           if lyr.name == name
-                           and lyr.supports("DATASOURCE")}
-                if len(sources) == 1:
-                    cp = sources.pop()
-        except Exception:
-            pass
-    if not cp:
-        return None                     # unknown or ambiguous: no container
-    return os.path.dirname(cp)
-
-
-def _suggest_remap_files(factors_param):
-    """Fill empty remap cells from rasters' names (suggest-once).
-
-    Pro's GP Browse dialog offers no way for a toolbox to set its starting
-    folder, so picking many remap sources means re-navigating every time.
-    This softens that: an empty remap cell is filled when the row's raster
-    base name matches exactly one candidate -- a .txt file when looking in
-    a folder, a TABLE when looking in a geodatabase (a gdb cannot hold
-    loose text files; the Create HSM Remap Table tool writes whichever
-    kind fits) -- searching the folder/gdb of the last remap source named
-    in the table first, then the raster's OWN workspace. Name matching is
-    substring either way (the CorridorDesigner <species>_<factor>.txt
-    convention). Wrong guesses can simply be overwritten; only EMPTY
-    cells are ever touched.
-    """
+    When the first input of a GP tool changes, Pro's dialog fills an empty
+    required output with ``<first input name>_<tool name>`` in the current
+    workspace. For Create HSM / Combine Habitat Factors the first input is
+    a habitat FACTOR (elevation, land cover...), never the species being
+    modeled, so that guess is always wrong -- the user should name the
+    model deliberately (Jeff, 2026-08-14). On the validation cycle where
+    the factors just changed, an output whose base name starts with the
+    first factor's base name is treated as that auto-guess and cleared.
+    A user-typed name survives: it persists across factor changes, and
+    matches only if deliberately named after the first factor."""
+    if factors_param.hasBeenValidated or not out_param.valueAsText:
+        return
     rows = factors_param.values or []
-    named = None
-    for row in rows:
-        rf = row[1]
-        if rf not in (None, ""):
-            d = os.path.dirname(str(rf))
-            if d:
-                named = d           # last named container wins
-    cand_cache = {}
-
-    def candidates(container):
-        if not container:
-            return []
-        if container not in cand_cache:
-            cand_cache[container] = _remap_candidates(container)
-        return cand_cache[container]
-
-    changed = False
-    for row in rows:
-        if row[0] in (None, "") or row[1] not in (None, ""):
-            continue
-        base = os.path.splitext(
-            os.path.basename(str(row[0])))[0].lower()
-        for container in (named, _raster_container(row[0])):
-            hits = [f for f in candidates(container)
-                    if base in os.path.splitext(f)[0].lower()
-                    or os.path.splitext(f)[0].lower() in base]
-            if len(hits) == 1:
-                row[1] = os.path.join(container, hits[0])
-                changed = True
-                break
-    if changed:
-        factors_param.values = rows
+    if not rows or rows[0][0] in (None, ""):
+        return
+    base = os.path.splitext(
+        os.path.basename(_vt_cell_text(rows[0][0])))[0].lower()
+    out_base = os.path.splitext(
+        os.path.basename(out_param.valueAsText))[0].lower()
+    if base and out_base.startswith(base):
+        out_param.value = None
 
 
 def _hsm_weights_message(factors_param, weight_col):
@@ -9263,15 +9229,11 @@ class HabitatSuitabilityModel(object):
 
     def updateParameters(self, parameters):
         P = {p.name: p for p in parameters}
-        # Unconditional (no hasBeenValidated gate): a value table's
-        # validation cycles differ from a plain parameter's, and the gate
-        # made the auto-fill silently miss (Jeff, 2026-08-10). Only EMPTY
-        # remap cells are ever touched, so re-running is harmless.
-        if P["factors"].valueAsText:
-            try:
-                _suggest_remap_files(P["factors"])
-            except Exception:
-                pass
+        # NO remap auto-suggestion, by design (Jeff, 2026-08-14): one
+        # habitat raster legitimately spawns several species-specific
+        # remap tables (bear_elev, cougar_elev...), so exact-name matching
+        # guesses wrong in the very workflows the tool exists for.
+        _clear_factor_named_output(P["factors"], P["out_raster"])
         return
 
     def updateMessages(self, parameters):
@@ -9281,10 +9243,19 @@ class HabitatSuitabilityModel(object):
             rf = row[1]
             if rf in (None, ""):
                 continue
-            rfs = str(rf)
+            # A dropdown-picked cell is a wrapper OBJECT: test it as-is
+            # first (str() would be a repr and always "not exist" --
+            # Jeff's Run-blocking false error, 2026-08-14).
+            try:
+                if arcpy.Exists(rf):
+                    continue
+            except Exception:
+                pass
+            rfs = _vt_raster_path(rf)
             if not os.path.isfile(rfs) and not arcpy.Exists(rfs):
                 P["factors"].setErrorMessage(
-                    "The remap file/table {} does not exist.".format(rfs))
+                    "The remap file/table {} does not exist.".format(
+                        _vt_cell_text(rf)))
                 break
         return
 
@@ -9363,6 +9334,8 @@ class CombineHabitatFactors(object):
         return True
 
     def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        _clear_factor_named_output(P["factors"], P["out_raster"])
         return
 
     def updateMessages(self, parameters):

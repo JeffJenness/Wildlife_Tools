@@ -512,6 +512,7 @@ def run_aspect_focal(in_raster, out_raster, statistic,
         # float32 throughout: aspect values (0-360) are exact in float32, and
         # halving every whole-grid array matters on large regional rasters.
         a = band.ReadAsArray(0, 0, width_px, height_px).astype(np.float32)
+        vmask = _mh.band_validity_mask(band)   # capture while src is open
     finally:
         src = None
         if in_copy:
@@ -523,6 +524,8 @@ def run_aspect_focal(in_raster, out_raster, statistic,
     valid = np.isfinite(a)
     if in_nodata is not None:
         valid &= (a != in_nodata)
+    if vmask is not None:
+        valid &= vmask
 
     # Source-type detection + user guidance.
     kind, why = _detect_source_kind(in_raster, a, in_nodata)
@@ -909,6 +912,9 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
                                 "raster's extent.")
         x0w = gt[0] + c0w * csx                 # window origin
         y0w = gt[3] - r0w * csy
+        wmask = (_mh.mask_band_valid(band, np.ones(arr.shape, bool),
+                                     c0w, r0w)
+                 if arr.size else None)         # capture while src is open
     finally:
         src = None
         if in_copy:
@@ -920,6 +926,8 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
     aw = np.isfinite(arr)
     if nodata is not None:
         aw &= (arr != nodata)
+    if wmask is not None:
+        aw &= wmask
     # Sanity check: an aspect raster holds -1 (flat) and 0-360 only.
     n_bad = int(np.count_nonzero(aw & ((arr < -1.001) | (arr > 360.001))))
     if n_bad:
@@ -1135,6 +1143,7 @@ def run_aspect_transform(in_raster, out_workspace, transformations,
         proj = src.GetProjection()
         in_nodata = band.GetNoDataValue()
         a = band.ReadAsArray(0, 0, width, height).astype(np.float32)
+        vmask = _mh.band_validity_mask(band)   # capture while src is open
     finally:
         src = None
         if in_copy:
@@ -1146,6 +1155,8 @@ def run_aspect_transform(in_raster, out_workspace, transformations,
     valid = np.isfinite(a)
     if in_nodata is not None:
         valid &= (a != in_nodata)
+    if vmask is not None:
+        valid &= vmask
     kind, why = _detect_source_kind(in_raster, a, in_nodata)
     if kind == "dinf" and not is_math:
         _warn(messages, "This looks like a D-infinity flow-direction raster "
@@ -1806,6 +1817,16 @@ def run_aspect_zonal(in_zone_data, zone_field, in_raster, out_table,
     return out_table
 
 
+def _nan_mask_invalid(band, arr, xoff, yoff):
+    """NaN out cells the band's validity mask marks invalid (the gdb-GRID
+    mask-band-only NoData trap) in a float window read at (xoff, yoff) --
+    downstream np.isfinite screens then treat them as NoData."""
+    v = _mh.mask_band_valid(band, np.ones(arr.shape, bool), xoff, yoff)
+    if not v.all():
+        arr[~v] = np.nan
+    return arr
+
+
 def _run_zonal_raster(in_zone, band, gt, W, H, nodata, rsr, acc, zone_order,
                       feed, messages):
     """Integer-raster zones: every aspect cell is assigned the zone value at
@@ -1870,6 +1891,12 @@ def _run_zonal_raster(in_zone, band, gt, W, H, nodata, rsr, acc, zone_order,
             inzone = rok[:, None] & cok[None, :]
             if znodata is not None:
                 inzone &= (zvals != znodata)
+            # Integer zone grids from a gdb can carry mask-band-only NoData
+            # (phantom fill would otherwise become a spurious zone value).
+            zvalid = _mh.mask_band_valid(
+                zband, np.ones(zarr.shape, bool), zc0, zr0)
+            if not zvalid.all():
+                inzone &= zvalid[zri[:, None], zci[None, :]]
             if not inzone.any():
                 done += 1
                 _mh.phase_step(done, nblocks)
@@ -1877,6 +1904,7 @@ def _run_zonal_raster(in_zone, band, gt, W, H, nodata, rsr, acc, zone_order,
             afinite = np.isfinite(arr)
             if nodata is not None:
                 afinite &= (arr != nodata)
+            afinite = _mh.mask_band_valid(band, afinite, c0, rs)
             for zv in np.unique(zvals[inzone]):
                 key = int(zv)
                 sel = inzone & (zvals == zv)
@@ -1954,6 +1982,7 @@ def _run_zonal_points(in_zone, zone_field, band, gt, W, H, nodata, rsr,
     valid = np.isfinite(arr)
     if nodata is not None:
         valid &= (arr != nodata)
+    valid = _mh.mask_band_valid(band, valid, c0, r0)
     flatm = valid & (np.abs(arr + 1.0) < 1e-9)
     badm = valid & ~flatm & ((arr < 0.0) | (arr > 360.0 + 1e-9))
     dirm = valid & ~flatm & ~badm
@@ -2129,6 +2158,7 @@ def _run_zonal_shapes(in_zone, zone_field, shape_type, band, gt, W, H,
                     continue
                 arr = band.ReadAsArray(c0, rs, c1 - c0,
                                        mask.shape[0]).astype(np.float64)
+                arr = _nan_mask_invalid(band, arr, c0, rs)
                 eat(arr[mask])
         else:
             cells = set()
@@ -2145,6 +2175,7 @@ def _run_zonal_shapes(in_zone, zone_field, shape_type, band, gt, W, H,
                     cA, cB = int(cols[sel].min()), int(cols[sel].max()) + 1
                     arr = band.ReadAsArray(cA, rs, cB - cA,
                                            re_ - rs).astype(np.float64)
+                    arr = _nan_mask_invalid(band, arr, cA, rs)
                     eat(arr[rows[sel] - rs, cols[sel] - cA])
         _mh.phase_step(zi + 1, nz)
 

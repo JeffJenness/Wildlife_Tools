@@ -259,7 +259,16 @@ namespace WildlifeTools.Corridor
             // position -- the fixed step-by-step map doesn't apply; skip it
             // and let DescribeUnion's own "Sources used" section stand in.
             string kind = S(rec.Value, "record") ?? "";
-            if (kind != "union")
+            if (kind == "hsm")
+            {
+                // A species HSM has its own build/modify/invert sequence --
+                // the land facet map would highlight nothing for it.
+                blocks.Add(new Block(BlockKind.Heading,
+                    "Where this dataset sits in the analysis"));
+                AddHsmChainMap(blocks, rec.Value);
+                blocks.Add(new Block(BlockKind.Separator, ""));
+            }
+            else if (kind != "union")
             {
                 blocks.Add(new Block(BlockKind.Heading,
                     "Where this dataset sits in the analysis"));
@@ -385,6 +394,38 @@ namespace WildlifeTools.Corridor
                     text));
         }
 
+        /// <summary>
+        /// The "you are here" map for a habitat-suitability-model dataset.
+        /// A species HSM is the alternative to the land facet steps 1-3, with
+        /// its own build/modify sequence before the shared invert/termini/
+        /// corridor steps -- the facet map would highlight nothing for it.
+        /// Step 2 lights up as well when the record carries post_processing
+        /// steps, because the Modify HSM tools append those rather than
+        /// minting a new record kind.
+        /// </summary>
+        private static void AddHsmChainMap(List<Block> blocks, JsonElement rec)
+        {
+            bool modified = Arr(rec, "post_processing").Any();
+            blocks.Add(new Block(BlockKind.ChainStepCurrent,
+                "1.  Build the habitat suitability model — score habitat "
+                + "factors 0–100 and combine them, or rescale an existing "
+                + "model onto the 0–100 scale"));
+            blocks.Add(new Block(
+                modified ? BlockKind.ChainStepCurrent : BlockKind.ChainStep,
+                "2.  Modify the model (optional) — Reclassify Features in "
+                + "HSM, Critical Habitat Feature"));
+            blocks.Add(new Block(BlockKind.ChainStep,
+                "3.  Invert Raster — the high-is-good model into a "
+                + "least-cost surface"));
+            blocks.Add(new Block(BlockKind.ChainStep,
+                "4.  Identify Termini Polygons — the corridor endpoints "
+                + "inside the Wildland Blocks (cut from the HSM itself, "
+                + "not the inverted surface)"));
+            blocks.Add(new Block(BlockKind.ChainStep,
+                "5.  Least-Cost Corridor — the corridor polygons between "
+                + "each pair of Wildland Blocks"));
+        }
+
         // ---- the chain ------------------------------------------------------
         private sealed class Node
         {
@@ -398,7 +439,7 @@ namespace WildlifeTools.Corridor
         private static int KindRank(string kind) => kind switch
         {
             "facets" => 0, "density" => 1,
-            "mahalanobis" => 2, "diversity" => 2,
+            "mahalanobis" => 2, "diversity" => 2, "hsm" => 2,
             "inverted" => 3, "termini" => 4, "corridor" => 5,
             "union" => 6,
             _ => 7,
@@ -465,6 +506,13 @@ namespace WildlifeTools.Corridor
             if (kind == "diversity")
                 yield return (S(rec, "source_raster"),
                               "the categorical raster this was computed from");
+            // Only the normalized/external HSM shapes carry source_raster;
+            // build-from-factors records store their inputs in "factors",
+            // which are habitat rasters listed (with weights) in the HSM
+            // section itself, not walked as a linear ancestor chain.
+            if (kind == "hsm")
+                yield return (S(rec, "source_raster"),
+                              "the raster this habitat model came from");
             if (kind == "termini")
                 yield return (S(rec, "source_raster"),
                               "the analysis surface the termini were cut from");
@@ -497,6 +545,7 @@ namespace WildlifeTools.Corridor
                 case "termini": DescribeTermini(blocks, node, fetchXml); break;
                 case "corridor": DescribeCorridor(blocks, node, fetchXml); break;
                 case "union": DescribeUnion(blocks, node, fetchXml); break;
+                case "hsm": DescribeHsm(blocks, node, fetchXml); break;
                 default:
                     blocks.Add(new Block(BlockKind.Heading,
                         (node.IsTarget ? "This dataset" : node.Path)
@@ -1124,6 +1173,144 @@ namespace WildlifeTools.Corridor
                             "All {0:0} features were used (no selection "
                             + "was active).", nTotal.Value)));
             }
+        }
+
+        /// <summary>
+        /// The habitat-suitability-model kind, written by the CorridorDesigner
+        /// HSM chain (hsm_tools.py). Four shapes share the one kind, told
+        /// apart by "method": "geometric"/"additive" from the Habitat
+        /// Suitability Model and Combine Habitat Factors tools (with a
+        /// "factors" list of {path, weight[, remap_file]}), "normalized" from
+        /// Normalize Existing HSM (anchors in "params"), and "external" for a
+        /// record-less raster adopted into the chain when a Modify HSM tool
+        /// first touched it. The Modify tools themselves only append
+        /// post_processing steps, rendered generically by
+        /// AddPostProcessingSteps after this section.
+        /// </summary>
+        private static void DescribeHsm(List<Block> blocks, Node node,
+                                        Func<string, string> fetchXml)
+        {
+            var rec = node.Record;
+            string tool = S(rec, "tool");
+            string method = S(rec, "method");
+
+            string title = "Habitat Suitability Model";
+            if (method == "external") title += " (externally built)";
+            else if (!string.IsNullOrEmpty(tool)
+                     && tool != "Habitat Suitability Model")
+                title += " — " + tool;
+            blocks.Add(new Block(HeadKind(node), Header(node, title)));
+            AddOrigin(blocks, node);
+
+            var factors = Arr(rec, "factors").ToList();
+            if (method == "geometric" || method == "additive")
+            {
+                bool preScored = tool == "Combine Habitat Factors";
+                blocks.Add(new Block(BlockKind.Body,
+                    "A habitat suitability surface on the CorridorDesigner "
+                    + "0–100 scale (100 = best habitat), built by combining "
+                    + (preScored
+                        ? "habitat factor rasters already scored on 0–100"
+                        : "habitat factor rasters, each first scored onto "
+                          + "0–100 with its remap table")
+                    + " as a weighted " + method + " mean"
+                    + (method == "geometric"
+                        ? " — each factor's score raised to the power "
+                          + "weight/100 and multiplied together, so a score "
+                          + "of 0 in ANY factor makes the cell 0 overall: "
+                          + "ground unsuitable in one factor is unsuitable, "
+                          + "period."
+                        : " — each factor's score times weight/100, "
+                          + "summed.")));
+            }
+            else if (method == "normalized")
+            {
+                var p = O(rec, "params");
+                double? worst = p.HasValue ? D(p.Value, "worst") : null;
+                double? best = p.HasValue ? D(p.Value, "best") : null;
+                bool? clamp = p.HasValue ? B(p.Value, "clamp") : null;
+                blocks.Add(new Block(BlockKind.Body,
+                    "A habitat suitability model built outside the HSM "
+                    + "tools, linearly stretched onto the CorridorDesigner "
+                    + "0–100 scale (100 = best habitat) so it can feed the "
+                    + "Modify HSM and corridor tools"
+                    + (worst.HasValue && best.HasValue
+                        ? string.Format(CultureInfo.InvariantCulture,
+                            ": the source value {0:0.####} was anchored to "
+                            + "0 (worst habitat) and {1:0.####} to 100 "
+                            + "(best).", worst.Value, best.Value)
+                        : ".")));
+                if (worst.HasValue && best.HasValue && worst.Value > best.Value)
+                    blocks.Add(new Block(BlockKind.Body,
+                        "The anchors are reversed (worst > best), so the "
+                        + "model's sense was inverted: LOW source values "
+                        + "became high suitability."));
+                if (clamp == true)
+                    blocks.Add(new Block(BlockKind.Body,
+                        "Source values beyond the anchors were clamped to "
+                        + "0–100."));
+                else if (clamp == false)
+                    blocks.Add(new Block(BlockKind.Warning,
+                        "Source values beyond the anchors were NOT clamped "
+                        + "— this surface can hold values outside 0–100, "
+                        + "which the downstream HSM tools do not expect."));
+            }
+            else if (method == "external")
+            {
+                blocks.Add(new Block(BlockKind.Body,
+                    "This raster was not built by the HSM tools and carried "
+                    + "no analysis record when "
+                    + (string.IsNullOrEmpty(tool) ? "a Modify HSM tool" : tool)
+                    + " modified it, so it was adopted into the chain as an "
+                    + "externally built habitat suitability model, assumed "
+                    + "to already be on the 0–100 (100 = best) scale."));
+            }
+            else
+            {
+                blocks.Add(new Block(BlockKind.Body,
+                    "A habitat suitability surface on the CorridorDesigner "
+                    + "0–100 scale (100 = best habitat)."));
+            }
+
+            if (factors.Count > 0)
+            {
+                blocks.Add(new Block(BlockKind.SubHeading,
+                    "Habitat factors and weights:"));
+                foreach (var f in factors)
+                {
+                    string fPath = S(f, "path") ?? "(unnamed factor)";
+                    double? w = D(f, "weight");
+                    string remap = S(f, "remap_file");
+                    blocks.Add(new Block(BlockKind.Bullet, fPath
+                        + (w.HasValue
+                            ? "  — weight " + w.Value.ToString("0.##",
+                                CultureInfo.InvariantCulture) + "%" : "")
+                        + (string.IsNullOrEmpty(remap)
+                            ? "" : ", scored with " + remap)));
+                }
+                if (factors.Count > 1)
+                    blocks.Add(new Block(BlockKind.Note,
+                        "The first factor defined the output grid; the "
+                        + "others were resampled to it where their grids "
+                        + "differed."));
+            }
+
+            // The standing cost-surface guidance: an HSM is high-is-good,
+            // so the route to the corridor tools runs through Invert Raster,
+            // exactly like a density or diversity surface.
+            blocks.Add(new Block(BlockKind.Body,
+                "An HSM is high-is-good, NOT a cost surface: run it through "
+                + "Invert Raster before Least-Cost Corridor, and cut the "
+                + "corridor termini (Identify Termini Polygons) from the "
+                + "HSM itself, not from the inverted surface."));
+
+            string src = S(rec, "source_raster");
+            if (!string.IsNullOrEmpty(src))
+                AddSourceCheck(blocks,
+                    method == "normalized" ? "Normalized from"
+                                           : "Original raster",
+                    src, S(rec, "source_analysis_id"), Created(rec),
+                    fetchXml);
         }
 
         // ---- staleness ------------------------------------------------------

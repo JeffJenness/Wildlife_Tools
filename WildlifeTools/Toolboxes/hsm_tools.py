@@ -291,6 +291,7 @@ def _read_on_grid(gdal, src, gt, proj, w, h, label, messages):
         band = src.GetRasterBand(1)
         a = band.ReadAsArray(0, 0, w, h)
         nod = band.GetNoDataValue()
+        mask_band = band        # honor the source's per-pixel validity mask
     else:
         _say(messages,
              "{} is on a different grid than the first factor and is being "
@@ -312,6 +313,9 @@ def _read_on_grid(gdal, src, gt, proj, w, h, label, messages):
         band = warped.GetRasterBand(1)
         a = band.ReadAsArray(0, 0, w, h)
         nod = band.GetNoDataValue()
+        # Warp already wrote dstNodata into source-masked cells, so the
+        # nod screen below covers them; the MEM band has no mask to read.
+        mask_band = None
         warped = None
     a = np.asarray(a, dtype=np.float64)
     valid = np.isfinite(a)
@@ -320,6 +324,8 @@ def _read_on_grid(gdal, src, gt, proj, w, h, label, messages):
             valid &= (a != np.float64(nod))
     with np.errstate(invalid="ignore"):
         valid &= (a != np.float64(_tt.NODATA_OUT))
+    if mask_band is not None:
+        valid = _tt.mask_band_valid(gdal, mask_band, valid)
     return a, valid
 
 
@@ -801,6 +807,7 @@ def run_reclassify_features(in_hsm, in_features, new_score, out_raster,
                 valid &= (a != np.float32(nod))
         with np.errstate(invalid="ignore"):
             valid &= (a != np.float32(_tt.NODATA_OUT))
+        valid = _tt.mask_band_valid(gdal, band, valid)
         _mh.phase_advance()
 
         sel_note = _selection_note(in_features, messages)
@@ -917,6 +924,7 @@ def run_critical_feature(in_hsm, in_critical, bands, out_raster,
                 valid &= (a != np.float32(nod))
         with np.errstate(invalid="ignore"):
             valid &= (a != np.float32(_tt.NODATA_OUT))
+        valid = _tt.mask_band_valid(gdal, band, valid)
         _mh.phase_advance()
 
         hsm_desc = arcpy.Describe(str(in_hsm))
@@ -1107,6 +1115,7 @@ def run_normalize(in_raster, worst, best, out_raster, clamp=True,
                 valid &= (a != np.float64(nod))
         with np.errstate(invalid="ignore"):
             valid &= (a != np.float64(_tt.NODATA_OUT))
+        valid = _tt.mask_band_valid(gdal, band, valid)
         _mh.phase_advance()
 
         stretched = (a - worst) / (best - worst) * 100.0

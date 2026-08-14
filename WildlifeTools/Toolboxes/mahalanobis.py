@@ -98,6 +98,58 @@ def _gdal():
     return gdal
 
 
+# ---------------------------------------------------------------------------
+# Per-pixel validity: GetNoDataValue() alone is NOT enough
+# ---------------------------------------------------------------------------
+# A raster -- notably a GRID inside a file geodatabase, opened via
+# OpenFileGDB -- may declare NO NoData value yet still carry masked cells,
+# which ReadAsArray returns as phantom FILL VALUES (0 / -128 / -32768 by
+# dtype) indistinguishable from real data. GDAL exposes the truth as the
+# band's MASK BAND. Standing rule (2026-08-14, verified on the Black_Bear
+# tutorial gdb): every band read screened with GetNoDataValue must also
+# honor the mask band, via one of the two helpers below.
+
+def band_validity_mask(band):
+    """The band's per-pixel validity as a bool array, or None when nothing
+    needs masking. Call while the source dataset is still OPEN -- the
+    returned array stays usable after the dataset is released, so this is
+    the helper for read sites that build their ``valid`` array after a
+    ``finally: src = None`` block. None means: no real mask (GMF_ALL_VALID),
+    an unreadable mask, or a mask with every pixel valid."""
+    try:
+        gdal = _gdal()
+        if band.GetMaskFlags() & gdal.GMF_ALL_VALID:
+            return None
+        m = band.GetMaskBand().ReadAsArray()
+        if m is None:
+            return None
+        m = np.asarray(m) != 0
+        return None if m.all() else m
+    except Exception:
+        return None
+
+
+def mask_band_valid(band, valid, xoff=0, yoff=0):
+    """AND the band's per-pixel validity mask into ``valid`` (bool array),
+    in place; returns ``valid``. The mask is read over the window matching
+    ``valid``'s shape at ``(xoff, yoff)``, so strip readers can pass their
+    window origin. The band must still be open. See band_validity_mask for
+    the trap this guards against."""
+    try:
+        gdal = _gdal()
+        if band.GetMaskFlags() & gdal.GMF_ALL_VALID:
+            return valid
+        m = band.GetMaskBand().ReadAsArray(
+            int(xoff), int(yoff), valid.shape[1], valid.shape[0])
+        if m is not None:
+            m = np.asarray(m)
+            if m.shape == valid.shape:
+                valid &= (m != 0)
+    except Exception:
+        pass
+    return valid
+
+
 def _set_label(text):
     """Update the geoprocessing progressor label (no-op outside a GP run)."""
     try:
@@ -2335,6 +2387,7 @@ def run_chi_square_transform(in_raster, df, out_raster, messages=None):
         valid = np.isfinite(block)
         if in_nodata is not None:
             valid &= (block != in_nodata)
+        valid = mask_band_valid(band, valid, 0, yoff)
         if valid.any():
             d2 = np.maximum(block[valid], 0.0)
             out[valid] = chi2.sf(d2, df).astype(np.float32)
