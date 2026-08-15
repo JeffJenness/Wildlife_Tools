@@ -212,8 +212,14 @@ def _deliver_output(out_scratch, out_raster, out_stats, messages,
     prev_pyramid = arcpy.env.pyramid
     arcpy.env.pyramid = "NONE"
     try:
+        # Grid-native contract: the delivered raster IS the analysis grid.
+        # Without this, the Output Coordinate System / Extent / Snap Raster /
+        # Cell Size / Mask environments would make CopyRaster re-project,
+        # crop, or resample the finished raster while its stamped statistics
+        # still describe the analysis grid (see mahalanobis.neutral_grid_env).
         try:
-            arcpy.management.CopyRaster(out_scratch, out_raster)
+            with _mh.neutral_grid_env():
+                arcpy.management.CopyRaster(out_scratch, out_raster)
         except Exception as e:
             ext = os.path.splitext(str(out_raster))[1]
             if ext and ext.lower() not in (".tif", ".tiff", ".img"):

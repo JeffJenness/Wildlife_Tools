@@ -99,6 +99,52 @@ def _gdal():
 
 
 # ---------------------------------------------------------------------------
+# Geoprocessing environments: the grid-native contract
+# ---------------------------------------------------------------------------
+# The suite's raster analyses are GRID-NATIVE: every computation (window
+# sizes, distances, remaps, areas) runs on the input raster's own grid, and
+# the output is that grid. But the arcpy tools used to SHUTTLE data --
+# CopyRaster delivering a finished raster, CopyRaster/CopyFeatures making
+# scratch copies -- silently honor the Output Coordinate System / Extent /
+# Snap Raster / Cell Size / Mask environments, which would re-project, crop,
+# or resample a dataset MID-PIPELINE: an input copy no longer matching the
+# grid the analysis assumes, or a delivered output whose cells and stamped
+# statistics no longer describe the analysis (verified live 2026-08-15:
+# with outputCoordinateSystem set, CopyRaster projected a finished HSM
+# while CreateFeatureclass ignored the same env -- half-honored at best).
+# Standing decision (Jeff, 2026-08-15): NEUTRALIZE these environments
+# around every shuttle step, and say so in the tools' help; users project
+# the finished product deliberately if they want another CS. (Find Raster
+# Extreme Values' Output Coordinates support is deliberate and implemented
+# in the tool itself, not via env leakage -- unaffected.)
+_GRID_ENVS = ("outputCoordinateSystem", "extent", "snapRaster",
+              "cellSize", "mask")
+
+
+class neutral_grid_env(object):
+    """Context manager: temporarily clear the environments that would
+    re-project, crop, or resample a dataset in a copy/delivery step."""
+
+    def __enter__(self):
+        self._saved = []
+        for name in _GRID_ENVS:
+            try:
+                self._saved.append((name, getattr(arcpy.env, name)))
+                setattr(arcpy.env, name, None)
+            except Exception:
+                pass
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        for name, val in self._saved:
+            try:
+                setattr(arcpy.env, name, val)
+            except Exception:
+                pass
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Per-pixel validity: GetNoDataValue() alone is NOT enough
 # ---------------------------------------------------------------------------
 # A raster -- notably a GRID inside a file geodatabase, opened via
@@ -719,7 +765,8 @@ def _gdal_source_path(raster, scratch):
                 ds = None
                 return sub, None
     tif = arcpy.CreateUniqueName("mahal_src.tif", scratch)
-    arcpy.management.CopyRaster(raster, tif)
+    with neutral_grid_env():        # the copy must match the source grid
+        arcpy.management.CopyRaster(raster, tif)
     return tif, tif
 
 

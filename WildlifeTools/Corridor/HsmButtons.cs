@@ -85,4 +85,24 @@ namespace WildlifeTools.Corridor
         protected override string ToolName => "CriticalHabitatFeature";
         protected override string DisplayName => "Critical Habitat Feature";
     }
+
+    /// <summary>The finished model's payoff dataset: patches of contiguous
+    /// suitable habitat classified by whether each is large enough to
+    /// support breeding or a population (the CorridorDesigner Patch
+    /// Configuration port).</summary>
+    internal class HabitatPatchesButton : HsmToolButtonBase
+    {
+        protected override string ToolName => "HabitatPatches";
+        protected override string DisplayName => "Create Habitat Patches";
+    }
+
+    /// <summary>Data preparation: batch-clip rasters and feature classes to
+    /// the analysis area, with optional reprojection and per-datum
+    /// geographic transformations (the CorridorDesigner ClipAnalysisLayers
+    /// port; the base class is just the shared open-a-.pyt-tool button).</summary>
+    internal class ClipDataToAnalysisAreaButton : HsmToolButtonBase
+    {
+        protected override string ToolName => "ClipDataToAnalysisArea";
+        protected override string DisplayName => "Clip Data to Analysis Area";
+    }
 }

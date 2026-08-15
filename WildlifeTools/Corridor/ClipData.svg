@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Clip Data to Analysis Area: a raster sheet and a feature polygon,
+       faded where they spill outside the bold analysis-area boundary and
+       vivid where they are kept inside it. -->
+  <g opacity="0.30">
+    <rect x="1" y="1" width="14" height="14" fill="#9DBFE8" stroke="#5C82AC" stroke-width="1"/>
+    <path d="M 1 8 h 14 M 8 1 v 14" stroke="#5C82AC" stroke-width="0.7" fill="none"/>
+    <path d="M 18 20 L 24 16 L 31 19 L 30 27 L 21 29 Z"
+          fill="#F0B25E" stroke="#B05E10" stroke-width="1"/>
+  </g>
+  <rect x="6.5" y="6.5" width="19" height="19" rx="3"
+        fill="#FFFFFF" stroke="#4E7A3A" stroke-width="2.2"/>
+  <g>
+    <rect x="8" y="8" width="9" height="9" fill="#9DBFE8" stroke="#5C82AC" stroke-width="1"/>
+    <path d="M 8 12.5 h 9 M 12.5 8 v 9" stroke="#5C82AC" stroke-width="0.8" fill="none"/>
+    <path d="M 18 19.5 L 22 16.5 L 24.4 19.5 L 23.6 23.4 L 19.4 24 Z"
+          fill="#E8912E" stroke="#B05E10" stroke-width="1"/>
+  </g>
+</svg>

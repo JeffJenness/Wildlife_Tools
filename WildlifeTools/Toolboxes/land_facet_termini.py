@@ -128,7 +128,11 @@ def _prepare_blocks(blocks, rast_sr, scratch, messages):
     import arcpy
 
     shp = arcpy.CreateUniqueName("termini_blocks.shp", scratch)
-    arcpy.management.CopyFeatures(blocks, shp)
+    # Neutralized copies: an Output Coordinate System environment would
+    # project scratch features off the raster's grid (see
+    # mahalanobis.neutral_grid_env).
+    with _mh.neutral_grid_env():
+        arcpy.management.CopyFeatures(blocks, shp)
     cleanup = [shp]
 
     geoms = []
@@ -148,7 +152,8 @@ def _prepare_blocks(blocks, rast_sr, scratch, messages):
     if not same_sr:
         geoms = [g.projectAs(rast_sr) for g in geoms]
         shp2 = arcpy.CreateUniqueName("termini_blocks_prj.shp", scratch)
-        arcpy.management.CopyFeatures(geoms, shp2)
+        with _mh.neutral_grid_env():
+            arcpy.management.CopyFeatures(geoms, shp2)
         cleanup.append(shp2)
         _say(messages, "Projected {} Wildland Block feature{} to the "
                        "raster's coordinate system.".format(

@@ -63,6 +63,7 @@ import least_cost_corridor  # noqa: E402
 import fill_corridor_holes  # noqa: E402
 import union_corridors  # noqa: E402
 import hsm_tools       # noqa: E402
+import clip_tools      # noqa: E402
 import raster_extremes  # noqa: E402
 import tool_metadata  # noqa: E402
 import error_report   # noqa: E402
@@ -323,7 +324,8 @@ class Toolbox(object):
                       LeastCostCorridor, FillCorridorHoles, UnionCorridors,
                       HabitatSuitabilityModel, CombineHabitatFactors,
                       NormalizeExistingHSM, ReclassifyFeaturesInHSM,
-                      CriticalHabitatFeature,
+                      CriticalHabitatFeature, HabitatPatches,
+                      ClipDataToAnalysisArea,
                       FindRasterExtremeValues]
 
 
@@ -9736,6 +9738,329 @@ class CriticalHabitatFeature(object):
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
             _apply_hsm_symbology(P, messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class HabitatPatches(object):
+    """Patch configuration dataset from an HSM. See
+    ``hsm_tools.run_patch_map``."""
+
+    def __init__(self):
+        self.label = "Create Habitat Patches"
+        self.description = (
+            "Turns a habitat suitability model into habitat PATCH polygons "
+            "classified by whether each is large enough to matter. "
+            "The HSM is averaged over a circular moving window (so small "
+            "inclusions and gaps do not fragment the patches), cells whose "
+            "average meets your quality threshold become suitable habitat, "
+            "touching suitable cells (edges or corners) are grouped into "
+            "patches, and each patch is classified by its GEODESIC area in "
+            "hectares: below the minimum breeding size = 'Too small', at "
+            "least breeding size = 'Breeding patch' (supports at least one "
+            "breeding event), at least population size = 'Population "
+            "patch'. Output is one polygon per patch with the class, name "
+            "and area, symbolized by class. A modernized port of the "
+            "CorridorDesigner Patch Configuration tool by Dan Majka; this "
+            "ArcGIS Pro version by Jeff Jenness and Dan Majka. Needs no "
+            "Spatial Analyst.")
+        self.category = "Corridor Designer Tools\\Corridor Designer"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_hsm = arcpy.Parameter(
+            displayName="Input habitat suitability model",
+            name="in_hsm",
+            datatype=["GPRasterLayer", "DERasterDataset", "DERasterBand"],
+            parameterType="Required", direction="Input")
+        radius = arcpy.Parameter(
+            displayName="Moving-window radius (for averaging the HSM)",
+            name="radius", datatype="GPDouble",
+            parameterType="Required", direction="Input")
+        radius_units = arcpy.Parameter(
+            displayName="Radius units", name="radius_units",
+            datatype="GPString", parameterType="Required",
+            direction="Input")
+        radius_units.filter.type = "ValueList"
+        radius_units.filter.list = hillshade.RADIUS_UNITS
+        radius_units.value = "Meters"
+        threshold = arcpy.Parameter(
+            displayName="Habitat quality threshold (0-100)",
+            name="threshold", datatype="GPDouble",
+            parameterType="Required", direction="Input")
+        breeding = arcpy.Parameter(
+            displayName="Minimum breeding patch size (hectares)",
+            name="breeding_ha", datatype="GPDouble",
+            parameterType="Required", direction="Input")
+        population = arcpy.Parameter(
+            displayName="Minimum population patch size (hectares)",
+            name="population_ha", datatype="GPDouble",
+            parameterType="Required", direction="Input")
+        out_fc = arcpy.Parameter(
+            displayName="Output habitat patches",
+            name="out_fc", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        return [in_hsm, radius, radius_units, threshold, breeding,
+                population, out_fc]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inr, outf = P["in_hsm"], P["out_fc"]
+        if inr.valueAsText and not inr.hasBeenValidated:
+            if not outf.altered or outf.valueAsText == self._auto_out:
+                try:
+                    base = _legalize("Patches_" + os.path.splitext(
+                        os.path.basename(inr.valueAsText))[0])
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inr.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outf.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        if P["radius"].value is not None and P["radius"].value <= 0:
+            P["radius"].setErrorMessage(
+                "The moving-window radius must be positive.")
+        t = P["threshold"].value
+        if t is not None and not (0 <= t <= 100):
+            P["threshold"].setErrorMessage(
+                "The threshold must be between 0 and 100 (the HSM "
+                "suitability scale).")
+        b = P["breeding_ha"].value
+        p = P["population_ha"].value
+        if b is not None and b <= 0:
+            P["breeding_ha"].setErrorMessage(
+                "The minimum breeding patch size must be positive.")
+        if b is not None and p is not None and p < b:
+            P["population_ha"].setErrorMessage(
+                "The minimum population patch size cannot be smaller than "
+                "the minimum breeding patch size ({:g} ha).".format(b))
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(land_facet_linkage)
+            importlib.reload(hsm_tools)
+            P = {p.name: p for p in parameters}
+            in_path = (_resolve_raster_path(P["in_hsm"])
+                       or P["in_hsm"].valueAsText)
+            lyrx = hsm_tools.run_patch_map(
+                in_hsm=in_path,
+                out_fc=P["out_fc"].valueAsText,
+                radius=P["radius"].value,
+                radius_units=P["radius_units"].valueAsText,
+                threshold=P["threshold"].value,
+                breeding_ha=P["breeding_ha"].value,
+                population_ha=P["population_ha"].value,
+                messages=messages)
+            if lyrx:
+                try:
+                    P["out_fc"].symbology = lyrx
+                except Exception:
+                    pass
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class ClipDataToAnalysisArea(object):
+    """Batch-clip rasters and feature classes to the analysis area. See
+    ``clip_tools.run_clip_data``."""
+
+    def __init__(self):
+        self.label = "Clip Data to Analysis Area"
+        self.description = (
+            "Clips any mix of RASTERS and FEATURE CLASSES to an analysis "
+            "area polygon in one run -- drag layers in from the map, or "
+            "browse and multi-select datasets from disk. The output format "
+            "follows the workspace you pick: a FOLDER gets shapefiles and "
+            "GeoTIFFs, a GEODATABASE gets native feature classes and "
+            "rasters. Optionally projects every output to a chosen "
+            "coordinate system; when datums differ, the dialog suggests "
+            "geographic transformations the same way the Project tool "
+            "does, and accepts several at once because different inputs "
+            "may need different datum paths (WGS 1984 sources and NAD "
+            "1927 sources both headed to NAD 1983, say) -- each dataset "
+            "uses the chosen transformation that fits its own datum. Map "
+            "layer selections are honored: only the selected features are "
+            "clipped, and a selection on the analysis area layer limits "
+            "the clip boundary. Optionally adds the clipped layers to the "
+            "map, each symbolized like its source layer when the input "
+            "came from the map. Each dataset is clipped independently -- "
+            "one failure warns and the batch continues. A modernized port "
+            "of the CorridorDesigner Clip Analysis Layers tool by Dan "
+            "Majka; this ArcGIS Pro version by Jeff Jenness and Dan "
+            "Majka. Needs no Spatial Analyst.")
+        self.category = "Corridor Designer Tools\\Corridor Designer"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        datasets = arcpy.Parameter(
+            displayName="Datasets to clip (rasters and feature classes)",
+            name="datasets",
+            datatype=["GPRasterLayer", "GPFeatureLayer", "DERasterDataset",
+                      "DEFeatureClass"],
+            parameterType="Required", direction="Input", multiValue=True)
+        area = arcpy.Parameter(
+            displayName="Analysis area (polygon features)",
+            name="area",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        try:
+            area.filter.list = ["Polygon"]
+        except Exception:
+            pass
+        workspace = arcpy.Parameter(
+            displayName="Output workspace (folder = shapefiles + "
+                        "GeoTIFFs; geodatabase = native datasets)",
+            name="workspace", datatype="DEWorkspace",
+            parameterType="Required", direction="Input")
+        try:
+            # Suggest the project's default geodatabase; freely editable.
+            if arcpy.env.workspace:
+                workspace.value = arcpy.env.workspace
+        except Exception:
+            pass
+        prefix = arcpy.Parameter(
+            displayName="Output name prefix (optional)",
+            name="prefix", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        suffix = arcpy.Parameter(
+            displayName="Output name suffix (optional)",
+            name="suffix", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        # Default to _clip so outputs never shadow same-named originals in
+        # the destination workspace (clearable if unwanted).
+        suffix.value = "_clip"
+        out_cs = arcpy.Parameter(
+            displayName="Output coordinate system (optional)",
+            name="out_cs", datatype="GPCoordinateSystem",
+            parameterType="Optional", direction="Input")
+        transformations = arcpy.Parameter(
+            displayName="Geographic transformations (one per source "
+                        "datum; suggested automatically)",
+            name="transformations", datatype="GPString",
+            parameterType="Optional", direction="Input", multiValue=True)
+        transformations.filter.type = "ValueList"
+        transformations.filter.list = []
+        add_to_map = arcpy.Parameter(
+            displayName="Add clipped layer(s) to map",
+            name="add_to_map", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        add_to_map.value = True
+        return [datasets, area, workspace, prefix, suffix, out_cs,
+                transformations, add_to_map]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        ds_p, cs_p, tr_p = (P["datasets"], P["out_cs"],
+                            P["transformations"])
+        if not cs_p.valueAsText or not ds_p.valueAsText:
+            return
+        # Recompute candidates only when the coordinate system or the
+        # dataset list just changed (hasBeenValidated is False exactly on
+        # that cycle); ListTransformations per datum is not free.
+        if cs_p.hasBeenValidated and ds_p.hasBeenValidated:
+            return
+        try:
+            target = arcpy.SpatialReference()
+            target.loadFromString(cs_p.valueAsText)
+        except Exception:
+            return
+        suggestions, options, seen = [], [], set()
+        for v in (ds_p.values or []):
+            try:
+                # MultiValue values are GP wrappers Describe sometimes
+                # rejects; their text (layer name / path) usually resolves
+                # -- without this, that dataset's datum silently got no
+                # suggestion (Jeff's first Pro run).
+                try:
+                    d = arcpy.Describe(v)
+                except Exception:
+                    d = arcpy.Describe(str(v))
+                sr = d.spatialReference
+                if sr is None or getattr(sr, "name", "Unknown") == "Unknown":
+                    continue
+                datum = sr.GCS.datumName
+                if datum == target.GCS.datumName or datum in seen:
+                    continue
+                seen.add(datum)
+                cands = arcpy.ListTransformations(
+                    sr, target, getattr(d, "extent", None)) or []
+                if cands:
+                    # Esri returns them best-first for this extent: the
+                    # first is the auto-suggestion for this datum pair.
+                    suggestions.append(cands[0])
+                for c in cands:
+                    if c not in options:
+                        options.append(c)
+            except Exception:
+                pass
+        try:
+            tr_p.filter.type = "ValueList"
+            tr_p.filter.list = options
+        except Exception:
+            pass
+        # Fill (or refresh) the suggestions when the target CS just
+        # changed, or when the parameter is still empty -- a hand-edited
+        # list survives dataset additions.
+        if suggestions and (not cs_p.hasBeenValidated
+                            or not tr_p.valueAsText):
+            try:
+                tr_p.values = suggestions
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(clip_tools)
+            P = {p.name: p for p in parameters}
+            out_cs = None
+            if P["out_cs"].valueAsText:
+                out_cs = arcpy.SpatialReference()
+                out_cs.loadFromString(P["out_cs"].valueAsText)
+            trans = [str(t) for t in (P["transformations"].values or [])
+                     if t not in (None, "")]
+            fcs, ras, details = clip_tools.run_clip_data(
+                datasets=list(P["datasets"].values or []),
+                area=P["area"].value or P["area"].valueAsText,
+                workspace=P["workspace"].valueAsText,
+                out_cs=out_cs,
+                transformations=trans,
+                prefix=(P["prefix"].valueAsText or ""),
+                suffix=(P["suffix"].valueAsText or ""),
+                messages=messages)
+            # Map-adding is explicit (not derived-output auto-add) so the
+            # checkbox genuinely controls it AND each output whose input
+            # was a MAP LAYER can inherit that layer's symbology.
+            if bool(P["add_to_map"].value):
+                clip_tools.add_outputs_to_map(details, messages)
         except arcpy.ExecuteError:
             raise
         except Exception:

@@ -268,8 +268,11 @@ namespace WildlifeTools.Corridor
                 AddHsmChainMap(blocks, rec.Value);
                 blocks.Add(new Block(BlockKind.Separator, ""));
             }
-            else if (kind != "union")
+            else if (kind != "union" && kind != "patch_map")
             {
+                // A union fans in from parallel sources and a patch map is
+                // a terminal habitat product -- neither sits on the linear
+                // step maps, so neither gets one.
                 blocks.Add(new Block(BlockKind.Heading,
                     "Where this dataset sits in the analysis"));
                 AddChainMap(blocks, kind);
@@ -440,7 +443,8 @@ namespace WildlifeTools.Corridor
         {
             "facets" => 0, "density" => 1,
             "mahalanobis" => 2, "diversity" => 2, "hsm" => 2,
-            "inverted" => 3, "termini" => 4, "corridor" => 5,
+            "inverted" => 3, "patch_map" => 3,
+            "termini" => 4, "corridor" => 5,
             "union" => 6,
             _ => 7,
         };
@@ -513,6 +517,9 @@ namespace WildlifeTools.Corridor
             if (kind == "hsm")
                 yield return (S(rec, "source_raster"),
                               "the raster this habitat model came from");
+            if (kind == "patch_map")
+                yield return (S(rec, "source_raster"),
+                              "the habitat model the patches were cut from");
             if (kind == "termini")
                 yield return (S(rec, "source_raster"),
                               "the analysis surface the termini were cut from");
@@ -546,6 +553,7 @@ namespace WildlifeTools.Corridor
                 case "corridor": DescribeCorridor(blocks, node, fetchXml); break;
                 case "union": DescribeUnion(blocks, node, fetchXml); break;
                 case "hsm": DescribeHsm(blocks, node, fetchXml); break;
+                case "patch_map": DescribePatchMap(blocks, node, fetchXml); break;
                 default:
                     blocks.Add(new Block(BlockKind.Heading,
                         (node.IsTarget ? "This dataset" : node.Path)
@@ -1311,6 +1319,81 @@ namespace WildlifeTools.Corridor
                                            : "Original raster",
                     src, S(rec, "source_analysis_id"), Created(rec),
                     fetchXml);
+        }
+
+        /// <summary>
+        /// The patch_map kind, written by Create Habitat Patches
+        /// (the CorridorDesigner PatchConfiguration port): the HSM averaged
+        /// over a moving window, thresholded, grouped into 8-connected
+        /// patches, each classified by geodesic area as too-small /
+        /// breeding / population. "params" carries window/threshold/hectare
+        /// settings; "classes" is a 3-entry per-class summary.
+        /// </summary>
+        private static void DescribePatchMap(List<Block> blocks, Node node,
+                                             Func<string, string> fetchXml)
+        {
+            var rec = node.Record;
+            blocks.Add(new Block(HeadKind(node),
+                Header(node, "Habitat Patches")));
+            AddOrigin(blocks, node);
+
+            var p = O(rec, "params");
+            string window = p.HasValue ? S(p.Value, "window") : null;
+            double? thr = p.HasValue ? D(p.Value, "threshold") : null;
+            double? bHa = p.HasValue ? D(p.Value, "breeding_ha") : null;
+            double? pHa = p.HasValue ? D(p.Value, "population_ha") : null;
+            blocks.Add(new Block(BlockKind.Body,
+                "Polygons of contiguous suitable habitat, classified by "
+                + "whether each patch is large enough to support breeding "
+                + "or a population: the habitat model was averaged over a "
+                + "circular moving window"
+                + (window == null ? "" : " of " + window)
+                + (thr.HasValue
+                    ? string.Format(CultureInfo.InvariantCulture,
+                        ", cells averaging at least {0:0.##} became "
+                        + "suitable habitat", thr.Value)
+                    : "")
+                + ", touching cells (edges or corners) were grouped into "
+                + "patches, and each patch was classified by its geodesic "
+                + "area"
+                + (bHa.HasValue && pHa.HasValue
+                    ? string.Format(CultureInfo.InvariantCulture,
+                        " (breeding patch ≥ {0:0.##} ha, population "
+                        + "patch ≥ {1:0.##} ha).", bHa.Value, pHa.Value)
+                    : ".")));
+
+            var classes = Arr(rec, "classes").ToList();
+            if (classes.Count > 0)
+            {
+                blocks.Add(new Block(BlockKind.SubHeading,
+                    "Patches by class:"));
+                foreach (var c in classes)
+                {
+                    string nm = S(c, "name") ?? "(unnamed class)";
+                    double? n = D(c, "n_patches");
+                    double? ha = D(c, "area_ha");
+                    bool emptyPop = nm == "Population patch"
+                        && n.HasValue && n.Value == 0;
+                    blocks.Add(new Block(
+                        emptyPop ? BlockKind.BulletAlert : BlockKind.Bullet,
+                        string.Format(CultureInfo.InvariantCulture,
+                            "{0} — {1} patch{2}{3}", nm,
+                            n.HasValue ? n.Value.ToString("#,##0") : "?",
+                            n.HasValue && n.Value == 1 ? "" : "es",
+                            ha.HasValue
+                                ? ", " + ha.Value.ToString("#,##0.#")
+                                  + " ha total" : "")));
+                    if (emptyPop)
+                        blocks.Add(new Block(BlockKind.Warning,
+                            "NO patch reaches the population size — under "
+                            + "these settings the landscape holds no patch "
+                            + "large enough for a population."));
+                }
+            }
+
+            AddSourceCheck(blocks, "Built from",
+                S(rec, "source_raster"), S(rec, "source_analysis_id"),
+                Created(rec), fetchXml);
         }
 
         // ---- staleness ------------------------------------------------------

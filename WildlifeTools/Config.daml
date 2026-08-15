@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.61.3" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.63.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -96,10 +96,9 @@
           <menu refID="WildlifeTools_LandFacetCorridorMenu" size="large" />
           <button refID="WildlifeTools_DiversityIndices" size="large" />
           <button refID="WildlifeTools_InvertRaster" size="large" />
-          <button refID="WildlifeTools_IdentifyTermini" size="large" />
-          <button refID="WildlifeTools_LeastCostCorridor" size="large" />
-          <button refID="WildlifeTools_FillCorridorHoles" size="large" />
-          <button refID="WildlifeTools_UnionCorridors" size="large" />
+          <menu refID="WildlifeTools_CorridorBuildMenu" size="large" />
+          <button refID="WildlifeTools_ClipData" size="large" />
+          <button refID="WildlifeTools_LandFacetDescribe" size="large" />
         </subgroup>
         <subgroup id="WildlifeTools_SubDirectional" size="LargeThenMediumWhenMedium">
 
@@ -764,6 +763,28 @@
             Opens the Critical Habitat Feature tool from the Jenness Enterprises toolbox: rescales a habitat suitability model by DISTANCE from a critical habitat feature -- a resource the species must stay near, or a hazard it must avoid. You provide distance bands (in map units) with a percentage for each; every cell's suitability is multiplied by the percentage of the band its distance falls in. The classic example: a riparian species keeps 100% of its score within 30 m of water, 80% from 30-60 m, 60% from 60-100 m, and 0% beyond. The critical feature can be a feature layer (an active selection is honored) or a raster (every data cell is the feature). Needs no Spatial Analyst. Also available in the Corridor Designer Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
+        <button id="WildlifeTools_HabitatPatches"
+                caption="Create Habitat Patches"
+                className="Corridor.HabitatPatchesButton"
+                loadOnClick="true"
+                smallImage="Images\HabitatPatches_16.png"
+                largeImage="Images\HabitatPatches_32.png"
+                keytip="HP">
+          <tooltip heading="Create Habitat Patches">
+            Turn a habitat suitability model into habitat patch polygons classified by size: the HSM is averaged over a moving window, cells at or above your quality threshold are grouped into patches (touching edges or corners), and each patch is classified by geodesic area as too small, a breeding patch, or a population patch. One polygon per patch with class and hectares. A port of the CorridorDesigner Patch Configuration tool. No Spatial Analyst needed.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_ClipData"
+                caption="Clip Data to Analysis Area"
+                className="Corridor.ClipDataToAnalysisAreaButton"
+                loadOnClick="true"
+                smallImage="Images\ClipData_16.png"
+                largeImage="Images\ClipData_32.png"
+                keytip="CA">
+          <tooltip heading="Clip Data to Analysis Area">
+            Clip any mix of rasters and feature classes to an analysis area polygon in one run: drag layers in from the map or multi-select datasets from disk. A folder output produces shapefiles and GeoTIFFs; a geodatabase produces native feature classes and rasters. Optionally project everything to one coordinate system, with geographic transformations suggested automatically and chosen per source datum. A port of the CorridorDesigner Clip Analysis Layers tool. No Spatial Analyst needed.<disabledText />
+          </tooltip>
+        </button>
         <button id="WildlifeTools_LandFacetDescribe"
                 caption="Corridor Analysis Data Report"
                 className="Corridor.LandFacetDescribeButton"
@@ -1105,12 +1126,24 @@
               smallImage="Images\LandFacet_16.png"
               largeImage="Images\LandFacet_32.png">
           <tooltip heading="Land Facet Corridor Modeling">
-            The Land Facet Corridor Designer chain from the Jenness Enterprises toolbox: cluster the landscape into land facets, measure each facet's neighborhood density, build per-facet Mahalanobis cost surfaces, and describe any dataset's place in the analysis. A modernized, all-in-Pro replacement for the Land Facet Corridor Designer's export-to-R workflow, built for climate-resilience corridors that do not depend on any particular future vegetation type. Diversity Indices, Invert Raster, Identify Termini Polygons and Least-Cost Corridor are kept out of this menu, as standalone buttons, because they are useful well beyond Land Facet analyses -- Identify Termini Polygons in particular is shared equally by traditional Corridor Designer (species habitat-suitability) and Land Facet workflows.<disabledText />
+            The Land Facet Corridor Designer chain from the Jenness Enterprises toolbox: cluster the landscape into land facets, measure each facet's neighborhood density, and build per-facet Mahalanobis cost surfaces. A modernized, all-in-Pro replacement for the Land Facet Corridor Designer's export-to-R workflow, built for climate-resilience corridors that do not depend on any particular future vegetation type. Diversity Indices, Invert Raster, and the corridor-building tools (the Build and modify Corridors menu) are kept out of this menu because they are useful well beyond Land Facet analyses -- the corridor builders are shared by traditional Corridor Designer (species habitat-suitability) and Land Facet workflows alike.<disabledText />
           </tooltip>
           <button refID="WildlifeTools_LandFacet" />
           <button refID="WildlifeTools_LandFacetDensity" />
           <button refID="WildlifeTools_LandFacetMahalanobis" />
-          <button refID="WildlifeTools_LandFacetDescribe" />
+        </menu>
+        <menu id="WildlifeTools_CorridorBuildMenu"
+              caption="Build and modify Corridors"
+              keytip="BC"
+              smallImage="Images\CorridorBuildMenu_16.png"
+              largeImage="Images\CorridorBuildMenu_32.png">
+          <tooltip heading="Build and modify Corridors">
+            The corridor-building tools from the Jenness Enterprises toolbox, shared by traditional Corridor Designer (species habitat-suitability) and Land Facet workflows: cut the corridor endpoints from a quality surface with Identify Termini Polygons, connect them across a cost surface with Least-Cost Corridor, then clean up the result -- close small gaps with Fill Corridor Holes and combine corridors into a single footprint with Union Corridors. No Spatial Analyst needed.<disabledText />
+          </tooltip>
+          <button refID="WildlifeTools_IdentifyTermini" />
+          <button refID="WildlifeTools_LeastCostCorridor" />
+          <button refID="WildlifeTools_FillCorridorHoles" />
+          <button refID="WildlifeTools_UnionCorridors" />
         </menu>
         <menu id="WildlifeTools_HsmMenu"
               caption="Habitat Suitability Modeling"
@@ -1126,6 +1159,7 @@
           <button refID="WildlifeTools_NormalizeExistingHSM" />
           <button refID="WildlifeTools_ReclassifyFeaturesInHSM" />
           <button refID="WildlifeTools_CriticalHabitatFeature" />
+          <button refID="WildlifeTools_HabitatPatches" />
         </menu>
       </menus>
 

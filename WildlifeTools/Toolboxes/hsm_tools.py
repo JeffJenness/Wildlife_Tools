@@ -4,7 +4,7 @@
 Modernized ports of the five HSM tools from the original CorridorDesigner
 Python toolbox (Dan Majka, dan@corridordesign.org, 2006-2007 -- the primary
 author of the original tools; these ArcGIS Pro versions are by Jeff Jenness
-and Dan Majka equally):
+and Dan Majka):
 
 * ``run_hsm``          -- HSM 1: reclassify factor rasters to a 0-100
   suitability scale via ASCII remap files, then combine by weighted geometric
@@ -90,6 +90,18 @@ import land_facet_mahalanobis as _lfm
 GEOMETRIC = "Geometric Mean"
 ADDITIVE = "Additive Mean"
 
+# Patch classes (Create Habitat Patches), by GEODESIC area against the
+# user's two hectare thresholds. Class 1 is suitable ground whose patch is
+# too small to support breeding; 2 supports at least one breeding event;
+# 3 supports a population (the workshop book's patch/core distinction).
+PATCH_CLASS_NAMES = {1: "Too small", 2: "Breeding patch",
+                     3: "Population patch"}
+_PATCH_COLORS = {                    # Class_Name -> (fill RGB, stroke RGB)
+    "Too small": ((250, 232, 170), (150, 139, 102)),
+    "Breeding patch": ((171, 211, 120), (103, 127, 72)),
+    "Population patch": ((56, 128, 62), (34, 77, 37)),
+}
+
 _CD_CITATION = (
     "CorridorDesigner: Majka, D., J. Jenness, and P. Beier. 2007. "
     "http://corridordesign.org. Original CorridorDesigner HSM tools by Dan "
@@ -116,9 +128,9 @@ def _warn(messages, text):
 def parse_remap_file(path):
     """Parse an original-format ASCII remap file into ``[(lo, hi, out)]``.
 
-    Single-value lines become ``(v, v, out)``. Raises ``ValueError`` with a
-    user-ready message on a malformed line or on values out of ascending
-    order (the workshop book's documented requirement, p.98).
+    Single-value lines become ``(v, v, out)``. Raises ``arcpy.ExecuteError``
+    with a user-ready message on a malformed line or on values out of
+    ascending order (the workshop book's documented requirement, p.98).
     """
     import arcpy
 
@@ -246,11 +258,27 @@ def _apply_remap(a, valid, rows, label, messages, unit=""):
     """
     scores = np.zeros(a.shape, dtype=np.float32)
     unassigned = valid.copy()
-    for lo, hi, out in rows:
+    if len(rows) > 1 and all(lo == hi for lo, hi, _out in rows):
+        # Value-only remaps (the remap builder's List Unique Values can
+        # emit thousands of rows): one vectorized sorted lookup instead of
+        # one full-grid pass per row. Rows are ascending by construction
+        # (ASCII files are validated ascending; tables are sorted), and
+        # searchsorted's 'left' side lands on the FIRST occurrence of a
+        # duplicated value, preserving the documented first-match rule.
+        vals = np.asarray([r[0] for r in rows], dtype=np.float64)
+        outs = np.asarray([r[2] for r in rows], dtype=np.float32)
+        idx = np.searchsorted(vals, a.ravel()).reshape(a.shape)
+        np.clip(idx, 0, len(vals) - 1, out=idx)
         with np.errstate(invalid="ignore"):
-            m = unassigned & (a >= lo) & (a <= hi)
-        scores[m] = np.float32(out)
-        unassigned &= ~m
+            hit = unassigned & (vals[idx] == a)
+        scores[hit] = outs[idx[hit]]
+        unassigned &= ~hit
+    else:
+        for lo, hi, out in rows:
+            with np.errstate(invalid="ignore"):
+                m = unassigned & (a >= lo) & (a <= hi)
+            scores[m] = np.float32(out)
+            unassigned &= ~m
     n_miss = int(unassigned.sum())
     if n_miss:
         _warn(messages,
@@ -719,7 +747,11 @@ def _rasterize_mask(gdal, geoms, rast_sr, gt, proj, w, h, scratch,
         geoms = [g.projectAs(rast_sr) for g in geoms]
 
     shp = arcpy.CreateUniqueName("hsm_feat.shp", scratch)
-    arcpy.management.CopyFeatures(geoms, shp)
+    # The scratch features must stay in the RASTER's coordinate system --
+    # an Output Coordinate System environment would make CopyFeatures
+    # project them, and the rasterized mask would land in the wrong place.
+    with _mh.neutral_grid_env():
+        arcpy.management.CopyFeatures(geoms, shp)
     drv = gdal.GetDriverByName("MEM")
     mds = drv.Create("", w, h, 1, gdal.GDT_Byte)
     mds.SetGeoTransform(gt)
@@ -787,6 +819,12 @@ def run_reclassify_features(in_hsm, in_features, new_score, out_raster,
     import arcpy
 
     new_score = float(new_score)
+    if not 0 <= new_score <= 100:
+        # The dialog blocks this; scripted callers get a warning (the tool
+        # still runs -- matching the combine tools' out-of-range policy).
+        _warn(messages,
+              "The new score {:g} lies outside the 0-100 suitability scale "
+              "-- downstream HSM tools expect 0-100.".format(new_score))
     out_raster = _mh.resolve_raster_output(out_raster, messages)
     scratch = arcpy.env.scratchFolder
     gdal = _mh._gdal()
@@ -1197,14 +1235,373 @@ def run_normalize(in_raster, worst, best, out_raster, clamp=True,
                      "and corridor tools. A modernized port of the "
                      "CorridorDesigner Normalize Existing HSM tool."))
         del out, valid
+        # A fresh analysis id (Normalize CREATES a model), but record the
+        # source's own id when it has one, so the Data Report's
+        # regenerated-source staleness check can work.
+        src_rec = _lnk.read(str(in_raster), None)
         _lnk.write(out_raster, _lnk.hsm_record(
             analysis_id=_lnk.new_analysis_id(),
             tool="Normalize Existing HSM", method="normalized",
             source_raster=str(in_raster),
+            source_analysis_id=(src_rec or {}).get("analysis_id"),
             params={"worst": worst, "best": best, "clamp": bool(clamp)}),
             messages)
         _mh.end_phases()
         return out_raster
+    finally:
+        src = None
+        if in_copy:
+            try:
+                arcpy.management.Delete(in_copy)
+            except Exception:                                    # noqa: BLE001
+                pass
+
+
+def _patch_map_lyrx(out_fc, messages):
+    """A .lyrx beside ``out_fc`` symbolizing the patches by Unique Values on
+    Class_Name (fixed three-class palette; matched to Jeff's reference
+    Patches_Black_Bear_HSI_v5.lyrx, 2026-08-15: fills only -- stroke width
+    0 -- and the smallest class LABELED "Smaller than Breeding Patch" in
+    the legend while its Class_Name VALUE stays "Too small"), built the
+    same way the termini tool builds its layer file: save a real layer
+    file from the output and replace its renderer. Returns the .lyrx
+    path, or None on any failure."""
+    import json
+    import arcpy
+
+    try:
+        ws = os.path.dirname(str(out_fc))
+        name = os.path.splitext(os.path.basename(str(out_fc)))[0]
+        lyr_dir = os.path.dirname(ws) if _mh.is_gdb_workspace(ws) else ws
+        out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
+
+        legend_labels = {1: "Smaller than Breeding Patch",
+                         2: PATCH_CLASS_NAMES[2], 3: PATCH_CLASS_NAMES[3]}
+        classes = []
+        for cls in (3, 2, 1):                    # best habitat first
+            value = PATCH_CLASS_NAMES[cls]
+            (fr, fg, fb), (sr_, sg, sb) = _PATCH_COLORS[value]
+            classes.append({
+                "type": "CIMUniqueValueClass", "label": legend_labels[cls],
+                "patch": "Default",
+                "visible": True,
+                "values": [{"type": "CIMUniqueValue",
+                            "fieldValues": [value]}],
+                "symbol": {
+                    "type": "CIMSymbolReference",
+                    "symbol": {
+                        "type": "CIMPolygonSymbol",
+                        "symbolLayers": [
+                            {"type": "CIMSolidStroke", "enable": True,
+                             "capStyle": "Round", "joinStyle": "Round",
+                             "lineStyle3D": "Strip", "miterLimit": 4,
+                             "width": 0, "height3D": 1,
+                             "anchor3D": "Center",
+                             "color": {"type": "CIMRGBColor",
+                                       "values": [sr_, sg, sb, 100]}},
+                            {"type": "CIMSolidFill", "enable": True,
+                             "color": {"type": "CIMRGBColor",
+                                       "values": [fr, fg, fb, 100]}},
+                        ],
+                        "angleAlignment": "Map"}}})
+        renderer = {"type": "CIMUniqueValueRenderer",
+                    "sampleSize": 10000,
+                    "defaultSymbolPatch": "Default",
+                    "fields": ["Class_Name"],
+                    "groups": [{"type": "CIMUniqueValueGroup",
+                                "heading": "Patch class",
+                                "classes": classes}],
+                    "isDefaultSymbolVisible": True,
+                    "polygonSymbolColorTarget": "Fill"}
+
+        tmp = "jenness_patchmap_tmp_layer"
+        try:
+            arcpy.management.Delete(tmp)
+        except Exception:                                        # noqa: BLE001
+            pass
+        arcpy.management.MakeFeatureLayer(out_fc, tmp)
+        try:
+            arcpy.management.SaveToLayerFile(tmp, out_lyrx, "ABSOLUTE")
+        finally:
+            try:
+                arcpy.management.Delete(tmp)
+            except Exception:                                    # noqa: BLE001
+                pass
+
+        with open(out_lyrx, "r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+        layer = doc["layerDefinitions"][0]
+        layer["renderer"] = renderer
+        layer["name"] = name
+        if "featureTable" in layer:
+            layer["featureTable"]["displayField"] = "Class_Name"
+        with open(out_lyrx, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, indent=2)
+        return out_lyrx
+    except Exception as e:                                       # noqa: BLE001
+        _warn(messages, "Could not create the symbology layer file: "
+                        "{}".format(e))
+        return None
+
+
+def run_patch_map(in_hsm, out_fc, radius, radius_units, threshold,
+                  breeding_ha, population_ha, messages=None):
+    """Create the habitat patches of ``in_hsm``.
+
+    The CorridorDesigner PatchConfiguration port: the HSM is averaged over
+    a circular moving window (mean of the data cells, the original's Focal
+    Statistics MEAN with DATA), cells whose average meets ``threshold``
+    become suitable habitat, suitable cells are grouped into patches
+    (edge- OR corner-touching cells connect, the original's RegionGroup
+    EIGHT), and each patch is classified by its GEODESIC area in hectares:
+    below ``breeding_ha`` -> class 1 "Too small", at least ``breeding_ha``
+    but below ``population_ha`` -> class 2 "Breeding patch", at least
+    ``population_ha`` -> class 3 "Population patch". (The original counted
+    planar pixels and assumed a meters projection; geodesic areas hold on
+    any coordinate system, including geographic.) Writes one polygon per
+    patch with PatchID/Class/Class_Name/Area_Ha and returns the symbology
+    .lyrx path (or None).
+
+    ``radius``/``radius_units``: circular window radius; units from
+    hillshade.RADIUS_UNITS ("Cells" or linear units; a geographic HSM
+    sizes the window per row on the spheroid). The original species files
+    used e.g. 'Circle 200 Map' or a 3x3 rectangle (~ radius 1 cell).
+    """
+    import arcpy
+    from osgeo import ogr
+    from scipy import ndimage
+    import land_facet_termini as _lft
+    import tool_metadata as _tm
+
+    radius = float(radius)
+    threshold = float(threshold)
+    breeding_ha = float(breeding_ha)
+    population_ha = float(population_ha)
+    if radius <= 0:
+        raise arcpy.ExecuteError("The moving-window radius must be positive.")
+    if radius_units not in _hs.RADIUS_UNITS:
+        raise arcpy.ExecuteError(
+            "Unknown radius unit: {}.".format(radius_units))
+    if not 0 <= threshold <= 100:
+        raise arcpy.ExecuteError(
+            "The habitat quality threshold must be between 0 and 100 "
+            "(the HSM suitability scale).")
+    if breeding_ha <= 0:
+        raise arcpy.ExecuteError(
+            "The minimum breeding patch size must be positive.")
+    if population_ha < breeding_ha:
+        raise arcpy.ExecuteError(
+            "The minimum population patch size ({:g} ha) cannot be smaller "
+            "than the minimum breeding patch size ({:g} ha).".format(
+                population_ha, breeding_ha))
+
+    out_fc = str(out_fc).rstrip("\\/")
+    # Folder outputs need a real format: extensionless becomes a shapefile
+    # explicitly, so every later arcpy call resolves the same dataset (the
+    # suite's standing folder-output rule).
+    if (not _mh.in_gdb_container(out_fc)
+            and not os.path.splitext(out_fc)[1]):
+        out_fc += ".shp"
+    scratch = arcpy.env.scratchFolder
+    gdal = _mh._gdal()
+
+    src, in_copy = _hs._open_source(str(in_hsm), scratch, messages)
+    try:
+        w, h = src.RasterXSize, src.RasterYSize
+        if w < 1 or h < 1:
+            raise arcpy.ExecuteError("The input HSM raster is empty.")
+        gt = src.GetGeoTransform()
+        proj = src.GetProjection()
+        _mh.begin_phases([("Reading the input HSM...", 2),
+                          ("Averaging over the moving window...", 3),
+                          ("Grouping suitable habitat into patches...", 2),
+                          ("Classifying and writing the patches...", 2)])
+        band = src.GetRasterBand(1)
+        a = np.asarray(band.ReadAsArray(0, 0, w, h), dtype=np.float64)
+        nod = band.GetNoDataValue()
+        valid = np.isfinite(a)
+        if nod is not None:
+            with np.errstate(invalid="ignore"):
+                valid &= (a != np.float64(nod))
+        with np.errstate(invalid="ignore"):
+            valid &= (a != np.float64(_tt.NODATA_OUT))
+        valid = _tt.mask_band_valid(gdal, band, valid)
+        rast_sr = arcpy.Describe(str(in_hsm)).spatialReference
+        _mh.phase_advance()
+
+        rx_rows, ry, note = _tt._radius_row_cells(
+            gt, h, rast_sr, radius, radius_units)
+        _say(messages,
+             "Averaging the HSM over a circular window of {} (mean of the "
+             "data cells, the original tool's Focal Statistics MEAN with "
+             "DATA).".format(note))
+        avg = _hs._blur_grid(a, valid, rx_rows, ry, "Average")
+        del a
+        _mh.phase_advance()
+
+        with np.errstate(invalid="ignore"):
+            suitable = valid & np.isfinite(avg) & (avg >= threshold)
+        del avg
+        n_suit = int(suitable.sum())
+        if not n_suit:
+            raise arcpy.ExecuteError(
+                "No cells have an averaged suitability at or above {:g} -- "
+                "there is no suitable habitat to group into patches. Lower "
+                "the threshold or check the input model.".format(threshold))
+        _say(messages,
+             "{:,} of {:,} data cells ({:.1f}%) average at or above the "
+             "quality threshold of {:g}.".format(
+                 n_suit, int(valid.sum()),
+                 100.0 * n_suit / max(1, int(valid.sum())), threshold))
+
+        labels, n_patches = ndimage.label(suitable, structure=np.ones(
+            (3, 3), dtype=bool))
+        del suitable
+        labels = labels.astype(np.int32, copy=False)
+
+        geom, _geo = _tt._surface_row_geometry(gt, h, rast_sr)
+        row_area = np.asarray(geom["pix_m2"], dtype=np.float64)
+        areas_m2 = np.bincount(
+            labels.ravel(),
+            weights=np.broadcast_to(row_area[:, None], (h, w)).ravel(),
+            minlength=n_patches + 1)
+        area_ha = areas_m2 / 10000.0
+        cls = np.ones(n_patches + 1, dtype=np.int32)
+        cls[area_ha >= breeding_ha] = 2
+        cls[area_ha >= population_ha] = 3
+        cls[0] = 0
+        _mh.phase_advance()
+
+        for c in (3, 2, 1):
+            sel = (cls[1:] == c)
+            _say(messages, "{}: {:,} patch{} totaling {:,.1f} ha.".format(
+                PATCH_CLASS_NAMES[c], int(sel.sum()),
+                "" if int(sel.sum()) == 1 else "es",
+                float(area_ha[1:][sel].sum())))
+        if not (cls[1:] == 3).any():
+            _warn(messages,
+                  "NO patch reaches the population size of {:g} ha -- the "
+                  "landscape holds no patch large enough for a population "
+                  "under these settings.".format(population_ha))
+
+        geoms = _lft._polygons_from_labels(gdal, ogr, labels, gt, proj,
+                                           rast_sr)
+        del labels
+        if len(geoms) != n_patches:
+            _warn(messages,
+                  "{:,} patches were labeled but {:,} polygons came back "
+                  "from polygonization -- the output may be missing "
+                  "patches.".format(n_patches, len(geoms)))
+
+        out_ws, out_name = os.path.split(out_fc)
+        arcpy.management.CreateFeatureclass(out_ws, out_name, "POLYGON",
+                                            spatial_reference=rast_sr)
+        for nm, tp, ln in [("PatchID", "LONG", None),
+                           ("Class", "SHORT", None),
+                           ("Class_Name", "TEXT", 24),
+                           ("Area_Ha", "DOUBLE", None)]:
+            if ln:
+                arcpy.management.AddField(out_fc, nm, tp, field_length=ln)
+            else:
+                arcpy.management.AddField(out_fc, nm, tp)
+
+        order = sorted(geoms.keys(),
+                       key=lambda l: (-int(cls[l]), -float(area_ha[l])))
+        with arcpy.da.InsertCursor(
+                out_fc, ["SHAPE@", "PatchID", "Class", "Class_Name",
+                         "Area_Ha"]) as cur:
+            for i, lbl in enumerate(order, start=1):
+                c = int(cls[lbl])
+                cur.insertRow([geoms[lbl], i, c, PATCH_CLASS_NAMES[c],
+                               float(area_ha[lbl])])
+                if i % 200 == 0:
+                    _mh.phase_step(i, len(order))
+        _say(messages, "{:,} patch polygon{} written.".format(
+            len(order), "" if len(order) == 1 else "s"))
+
+        try:
+            _tm.set_entity_and_fields(
+                out_fc,
+                entity=("One polygon per habitat patch: 8-connected groups "
+                        "of cells whose window-averaged habitat "
+                        "suitability meets the quality threshold, "
+                        "classified by geodesic area."),
+                fields=[
+                    {"name": "PatchID", "description":
+                        "Sequential patch number (largest class, then "
+                        "largest area, first)."},
+                    {"name": "Class", "description":
+                        "Patch size class: 1 = too small to support "
+                        "breeding, 2 = breeding patch, 3 = population "
+                        "patch.",
+                     "coded": [(1, "Too small (below the minimum breeding "
+                                   "patch size)"),
+                               (2, "Breeding patch (supports at least one "
+                                   "breeding event)"),
+                               (3, "Population patch (supports a "
+                                   "population)")]},
+                    {"name": "Class_Name", "description":
+                        "The size class as text (Too small / Breeding "
+                        "patch / Population patch)."},
+                    {"name": "Area_Ha", "description":
+                        "The patch's area in hectares (geodesic, summed "
+                        "from true per-row cell areas -- the value the "
+                        "classification used)."},
+                ],
+                messages=messages)
+            from arcpy import metadata as md
+            m = md.Metadata(out_fc)
+            m.title = os.path.basename(out_fc)
+            m.tags = ("habitat patch, patch configuration, breeding patch, "
+                      "population patch, habitat suitability, HSM, "
+                      "CorridorDesigner, Jenness Enterprises")
+            m.summary = (
+                "Created by Create Habitat Patches from {src}: suitability "
+                "averaged over a circular window of {note}, cells averaging "
+                ">= {thr:g} grouped into 8-connected patches, classified by "
+                "geodesic area (breeding >= {b:g} ha, population >= "
+                "{p:g} ha).").format(
+                    src=str(in_hsm), note=note, thr=threshold,
+                    b=breeding_ha, p=population_ha)
+            m.description = (
+                "Habitat patches: polygons of contiguous suitable "
+                "habitat, classified by whether each patch is large enough "
+                "to support breeding or a population. The habitat "
+                "suitability model is averaged over a moving window so "
+                "small inclusions and gaps do not fragment the patches, "
+                "thresholded, grouped (edge- or corner-touching cells "
+                "connect), and classified by geodesic area in hectares. A "
+                "modernized port of the CorridorDesigner Patch "
+                "Configuration tool. " + _CD_CITATION)
+            m.credits = ("Tool by Jeff Jenness and Dan Majka. Method: "
+                         + _CD_CITATION)
+            m.save()
+        except Exception as e:                                   # noqa: BLE001
+            _warn(messages, "Could not write output metadata: {}".format(e))
+
+        chain_rec = _lnk.read(str(in_hsm), None)
+        analysis_id = ((chain_rec or {}).get("analysis_id")
+                       or _lnk.new_analysis_id())
+        classes_meta = []
+        for c in (1, 2, 3):
+            sel = (cls[1:] == c)
+            classes_meta.append({
+                "class": c, "name": PATCH_CLASS_NAMES[c],
+                "n_patches": int(sel.sum()),
+                "area_ha": round(float(area_ha[1:][sel].sum()), 2)})
+        _lnk.write(out_fc, _lnk.patch_map_record(
+            analysis_id=analysis_id,
+            source_raster=str(in_hsm),
+            source_analysis_id=(chain_rec or {}).get("analysis_id"),
+            params={"radius": radius, "radius_units": radius_units,
+                    "window": note, "threshold": threshold,
+                    "breeding_ha": breeding_ha,
+                    "population_ha": population_ha},
+            classes=classes_meta), messages)
+
+        out_lyrx = _patch_map_lyrx(out_fc, messages)
+        _mh.end_phases()
+        return out_lyrx
     finally:
         src = None
         if in_copy:

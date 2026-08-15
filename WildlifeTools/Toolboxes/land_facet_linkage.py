@@ -51,6 +51,7 @@ TERMINI = "termini"     # written by the Identify Termini Polygons tool
 CORRIDOR = "corridor"   # written by the Least-Cost Corridor tool
 UNION = "union"         # written by the Union Corridors tool
 HSM = "hsm"             # written by the CorridorDesigner HSM chain tools
+PATCH_MAP = "patch_map"  # written by the Create Habitat Patches tool
 
 # Marker prefix so the blob is recognizable (and so a human reading the
 # Supplemental Information field can see what it is) and separable from any
@@ -371,6 +372,35 @@ def hsm_record(analysis_id, tool, method, factors=None, source_raster=None,
         "source_analysis_id": source_analysis_id,
         "factors": list(factors or []),
         "params": params or {},
+    }
+
+
+def patch_map_record(analysis_id, source_raster, source_analysis_id=None,
+                     params=None, classes=None):
+    """Build the record stamped on a Create Habitat Patches output.
+
+    Written by the Create Habitat Patches tool (``hsm_tools.
+    run_patch_map``), the CorridorDesigner PatchConfiguration port: the
+    HSM is averaged over a moving window, thresholded into suitable
+    habitat, grouped into 8-connected patches, and each patch classified
+    by GEODESIC area as too-small / breeding / population. ``params``
+    carries the window radius+units, quality threshold, and the two
+    hectare thresholds; ``classes`` is a small list of per-class
+    summaries ``{"class", "name", "n_patches", "area_ha"}``. When the
+    source HSM carried a record its analysis id chains through, so the
+    patch map joins the model's own history; a record-less source gets a
+    fresh id.
+    """
+    return {
+        "schema": SCHEMA,
+        "record": PATCH_MAP,
+        "analysis_id": analysis_id,
+        "created": _utc_now(),
+        "tool": "Create Habitat Patches",
+        "source_raster": str(source_raster),
+        "source_analysis_id": source_analysis_id,
+        "params": params or {},
+        "classes": list(classes or []),
     }
 
 

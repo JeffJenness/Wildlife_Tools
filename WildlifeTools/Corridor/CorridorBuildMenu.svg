@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Build and modify Corridors menu: two Wildland Blocks joined by a
+       solid corridor band (the built corridor, no longer the dashed
+       corridor-to-be of the Termini icon). -->
+  <path d="M 24 8 C 20 12, 17 14, 15.5 15.5 C 13.5 17.5, 10 20, 8 24"
+        fill="none" stroke="#E8912E" stroke-width="7"
+        stroke-linecap="round" opacity="0.85"/>
+  <rect x="1.2" y="1.2" width="13" height="13" rx="2.6"
+        fill="#EAF3E4" stroke="#4E7A3A" stroke-width="1.8"/>
+  <rect x="17.8" y="17.8" width="13" height="13" rx="2.6"
+        fill="#EAF3E4" stroke="#4E7A3A" stroke-width="1.8"/>
+  <path d="M 4.2 9.4 L 5.4 5.4 L 9.0 3.8 L 11.8 6.0 L 11.0 9.8 L 7.2 11.6 Z"
+        fill="#E8912E" stroke="#B05E10" stroke-width="1"/>
+  <path d="M 20.6 26.2 L 21.8 22.0 L 25.6 20.6 L 28.2 23.2 L 27.4 27.0 L 23.4 28.4 Z"
+        fill="#E8912E" stroke="#B05E10" stroke-width="1"/>
+</svg>

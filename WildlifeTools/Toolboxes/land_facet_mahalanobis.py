@@ -168,9 +168,12 @@ def masked_facet_raster(facet_path, blocks, scratch, messages):
         ds = None
 
     # Copy the blocks to a scratch shapefile so any selection the user has made
-    # is honoured and GDAL gets a source it can always open.
+    # is honoured and GDAL gets a source it can always open. Neutralized: an
+    # Output Coordinate System environment would project the scratch blocks
+    # off the facet raster's grid (see mahalanobis.neutral_grid_env).
     shp = arcpy.CreateUniqueName("lf_blocks.shp", scratch)
-    arcpy.management.CopyFeatures(blocks, shp)
+    with _mh.neutral_grid_env():
+        arcpy.management.CopyFeatures(blocks, shp)
 
     mask_path = arcpy.CreateUniqueName("lf_blockmask.tif", scratch)
     drv = gdal.GetDriverByName("GTiff")

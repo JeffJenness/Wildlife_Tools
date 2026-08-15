@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Create Habitat Patches: three habitat patches classified by size:
+       a large dark-green population patch, a medium green breeding patch,
+       and a small pale too-small patch (the tool's own class palette). -->
+  <path d="M 3 12 C 2 8, 5 3.5, 10 3 C 15 2.5, 19 5, 19.5 9
+           C 20 12.5, 17.5 16, 13.5 17.5 C 9 19, 4 16.5, 3 12 Z"
+        fill="#38803E" stroke="#224D25" stroke-width="1.6"/>
+  <path d="M 21 20 C 20.5 17, 23 14.5, 26 14.5 C 29 14.5, 30.8 17, 30.4 19.8
+           C 30 22.6, 27.4 24.6, 24.6 24.2 C 22.6 23.9, 21.3 22.2, 21 20 Z"
+        fill="#ABD378" stroke="#677F48" stroke-width="1.5"/>
+  <path d="M 8.5 24.5 C 8.2 22.8, 9.6 21.4, 11.3 21.5 C 13 21.6, 14.2 23,
+           13.9 24.7 C 13.6 26.3, 12 27.4, 10.5 27
+           C 9.4 26.7, 8.7 25.7, 8.5 24.5 Z"
+        fill="#FAE8AA" stroke="#968B66" stroke-width="1.4"/>
+</svg>
