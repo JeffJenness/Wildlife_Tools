@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Ancillary Corridor Tools menu: a field toolbox in the suite's
+       palette (green box, orange latch and handle), for the supporting
+       utilities around the corridor chain. -->
+  <path d="M 11 8 L 11 5.5 C 11 4.2 12 3.2 13.3 3.2 L 18.7 3.2
+           C 20 3.2 21 4.2 21 5.5 L 21 8"
+        fill="none" stroke="#B05E10" stroke-width="2.2"
+        stroke-linecap="round"/>
+  <rect x="2.5" y="8" width="27" height="20" rx="3"
+        fill="#EAF3E4" stroke="#4E7A3A" stroke-width="2"/>
+  <rect x="2.5" y="8" width="27" height="7.5" rx="3"
+        fill="#CBE3BC" stroke="#4E7A3A" stroke-width="2"/>
+  <rect x="13" y="13" width="6" height="6" rx="1.2"
+        fill="#E8912E" stroke="#B05E10" stroke-width="1.4"/>
+  <path d="M 7 22 h 6 M 19 22 h 6" stroke="#4E7A3A"
+        stroke-width="1.8" stroke-linecap="round"/>
+</svg>

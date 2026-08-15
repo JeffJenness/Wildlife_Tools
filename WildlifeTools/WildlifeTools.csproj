@@ -287,6 +287,8 @@
     <Content Include="Images\CorridorBuildMenu_32.png" />
     <Content Include="Images\ClipData_16.png" />
     <Content Include="Images\ClipData_32.png" />
+    <Content Include="Images\AncillaryCorridorMenu_16.png" />
+    <Content Include="Images\AncillaryCorridorMenu_32.png" />
     <!-- Sudoku skin fonts, embedded as WPF resources so they render on every
          machine with no installation (all SIL Open Font License; the OFL
          texts ship alongside as required for redistribution). -->

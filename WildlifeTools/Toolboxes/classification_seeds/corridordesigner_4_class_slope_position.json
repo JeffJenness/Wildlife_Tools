@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "name": "Corridor Designer 4-Class Topographic Position",
+  "family": "slope_position",
+  "builtin": true,
+  "slopeUnits": "Degrees",
+  "description": "The CorridorDesigner corridor-analysis topographic position classification (CD toolbox tutorial p.13, the Arizona Missing Linkages defaults): RAW TPI computed against a 200 m circular neighborhood mean, with cells at least 12 elevation units BELOW the neighborhood mean classed Canyon bottom (1) and at least 12 units ABOVE it Ridgetop (4); everything between splits at a 6-degree slope into Flat-gentle slope (2) and Steep slope (3). Create the TPI raster first with the Simple TPI tool (raw values, 200 m circular radius) on a METERS elevation model -- the +/- 12 thresholds are meters of elevation difference, so adjust them if your DEM uses other units.",
+  "source": "Majka, D., J. Jenness, and P. Beier. 2007. CorridorDesigner: ArcGIS tools for designing and evaluating corridors. http://corridordesign.org (toolbox tutorial p.13; original Create Topographic Position Raster tool by Dan Majka).",
+  "inputs": [
+    {
+      "role": "tpi",
+      "kind": "tpi",
+      "label": "TPI"
+    },
+    {
+      "role": "slope",
+      "kind": "slope",
+      "label": "Slope (degrees)"
+    }
+  ],
+  "classes": [
+    {
+      "value": 1,
+      "name": "Canyon bottom",
+      "color": [
+        43,
+        131,
+        186
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": "<=",
+              "value": -12
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 2,
+      "name": "Flat-gentle slope",
+      "color": [
+        171,
+        221,
+        164
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -12
+            },
+            {
+              "join": "and",
+              "op": "<",
+              "value": 12
+            }
+          ]
+        },
+        {
+          "input": "slope",
+          "units": "degrees",
+          "conditions": [
+            {
+              "op": "<=",
+              "value": 6
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 3,
+      "name": "Steep slope",
+      "color": [
+        253,
+        174,
+        97
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -12
+            },
+            {
+              "join": "and",
+              "op": "<",
+              "value": 12
+            }
+          ]
+        },
+        {
+          "input": "slope",
+          "units": "degrees",
+          "conditions": [
+            {
+              "op": ">",
+              "value": 6
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 4,
+      "name": "Ridgetop",
+      "color": [
+        215,
+        25,
+        28
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": ">=",
+              "value": 12
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.63.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.63.2" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -94,10 +94,8 @@
 
           <menu refID="WildlifeTools_HsmMenu" size="large" />
           <menu refID="WildlifeTools_LandFacetCorridorMenu" size="large" />
-          <button refID="WildlifeTools_DiversityIndices" size="large" />
-          <button refID="WildlifeTools_InvertRaster" size="large" />
           <menu refID="WildlifeTools_CorridorBuildMenu" size="large" />
-          <button refID="WildlifeTools_ClipData" size="large" />
+          <menu refID="WildlifeTools_AncillaryCorridorMenu" size="large" />
           <button refID="WildlifeTools_LandFacetDescribe" size="large" />
         </subgroup>
         <subgroup id="WildlifeTools_SubDirectional" size="LargeThenMediumWhenMedium">
@@ -1126,7 +1124,7 @@
               smallImage="Images\LandFacet_16.png"
               largeImage="Images\LandFacet_32.png">
           <tooltip heading="Land Facet Corridor Modeling">
-            The Land Facet Corridor Designer chain from the Jenness Enterprises toolbox: cluster the landscape into land facets, measure each facet's neighborhood density, and build per-facet Mahalanobis cost surfaces. A modernized, all-in-Pro replacement for the Land Facet Corridor Designer's export-to-R workflow, built for climate-resilience corridors that do not depend on any particular future vegetation type. Diversity Indices, Invert Raster, and the corridor-building tools (the Build and modify Corridors menu) are kept out of this menu because they are useful well beyond Land Facet analyses -- the corridor builders are shared by traditional Corridor Designer (species habitat-suitability) and Land Facet workflows alike.<disabledText />
+            The Land Facet Corridor Designer chain from the Jenness Enterprises toolbox: cluster the landscape into land facets, measure each facet's neighborhood density, and build per-facet Mahalanobis cost surfaces. A modernized, all-in-Pro replacement for the Land Facet Corridor Designer's export-to-R workflow, built for climate-resilience corridors that do not depend on any particular future vegetation type. Diversity Indices and Invert Raster (in the Ancillary Corridor Tools menu) and the corridor builders (in the Build and modify Corridors menu) are kept out of this menu because they are useful well beyond Land Facet analyses -- they are shared by traditional Corridor Designer (species habitat-suitability) and Land Facet workflows alike.<disabledText />
           </tooltip>
           <button refID="WildlifeTools_LandFacet" />
           <button refID="WildlifeTools_LandFacetDensity" />
@@ -1144,6 +1142,18 @@
           <button refID="WildlifeTools_LeastCostCorridor" />
           <button refID="WildlifeTools_FillCorridorHoles" />
           <button refID="WildlifeTools_UnionCorridors" />
+        </menu>
+        <menu id="WildlifeTools_AncillaryCorridorMenu"
+              caption="Ancillary Corridor Tools"
+              keytip="AC"
+              smallImage="Images\AncillaryCorridorMenu_16.png"
+              largeImage="Images\AncillaryCorridorMenu_32.png">
+          <tooltip heading="Ancillary Corridor Tools">
+            Supporting utilities around the corridor chain from the Jenness Enterprises toolbox: measure neighborhood diversity of a categorical raster (Diversity Indices), turn a high-is-good quality surface into a least-cost surface (Invert Raster), and batch-clip rasters and feature classes to the analysis area with optional reprojection (Clip Data to Analysis Area). No Spatial Analyst needed.<disabledText />
+          </tooltip>
+          <button refID="WildlifeTools_DiversityIndices" />
+          <button refID="WildlifeTools_InvertRaster" />
+          <button refID="WildlifeTools_ClipData" />
         </menu>
         <menu id="WildlifeTools_HsmMenu"
               caption="Habitat Suitability Modeling"
