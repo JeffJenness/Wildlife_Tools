@@ -58,13 +58,18 @@ namespace WildlifeTools.Corridor
             if (map != null)
             {
                 // Rasters carry most of the chain's records; polygon feature
-                // layers are listed too for the Identify Termini Polygons
-                // output.
+                // layers are listed for the Identify Termini Polygons /
+                // corridor outputs, and polyline layers for the Patch
+                // Analysis connector output (its record was unreachable
+                // from this dropdown until 2026-08-16).
                 foreach (var l in map.GetLayersAsFlattenedList())
                 {
                     bool eligible = l is BasicRasterLayer
-                        || (l is FeatureLayer fl && fl.ShapeType
-                            == ArcGIS.Core.CIM.esriGeometryType.esriGeometryPolygon);
+                        || (l is FeatureLayer fl
+                            && (fl.ShapeType
+                                == ArcGIS.Core.CIM.esriGeometryType.esriGeometryPolygon
+                                || fl.ShapeType
+                                == ArcGIS.Core.CIM.esriGeometryType.esriGeometryPolyline));
                     if (!eligible) continue;
                     var item = new LayerItem { Name = l.Name, Layer = l };
                     items.Add(item);
@@ -75,7 +80,7 @@ namespace WildlifeTools.Corridor
             // Zero-click common case: default to the layer selected in Contents.
             cboLayer.SelectedItem = select ?? items.FirstOrDefault();
             txtStatus.Text = items.Count == 0
-                ? "No raster or polygon layers in the active map — use Browse."
+                ? "No raster or feature layers in the active map — use Browse."
                 : "";
         }
 

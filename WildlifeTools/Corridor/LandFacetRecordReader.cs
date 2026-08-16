@@ -268,11 +268,12 @@ namespace WildlifeTools.Corridor
                 AddHsmChainMap(blocks, rec.Value);
                 blocks.Add(new Block(BlockKind.Separator, ""));
             }
-            else if (kind != "union" && kind != "patch_map")
+            else if (kind != "union" && kind != "patch_map"
+                     && kind != "patch_analysis")
             {
-                // A union fans in from parallel sources and a patch map is
-                // a terminal habitat product -- neither sits on the linear
-                // step maps, so neither gets one.
+                // A union fans in from parallel sources, and a patch map or
+                // patch analysis is a terminal evaluation product -- none of
+                // them sits on the linear step maps, so none gets one.
                 blocks.Add(new Block(BlockKind.Heading,
                     "Where this dataset sits in the analysis"));
                 AddChainMap(blocks, kind);
@@ -445,8 +446,8 @@ namespace WildlifeTools.Corridor
             "mahalanobis" => 2, "diversity" => 2, "hsm" => 2,
             "inverted" => 3, "patch_map" => 3,
             "termini" => 4, "corridor" => 5,
-            "union" => 6,
-            _ => 7,
+            "union" => 6, "patch_analysis" => 7,
+            _ => 8,
         };
 
         /// <summary>
@@ -535,6 +536,23 @@ namespace WildlifeTools.Corridor
                                   "the cost surface this corridor was built "
                                   + "from");
             }
+            if (kind == "patch_analysis")
+            {
+                // These sources are OBJECTS carrying selection info, with
+                // the path nested inside.
+                var cor = O(rec, "source_corridor");
+                if (cor.HasValue)
+                    yield return (S(cor.Value, "path"),
+                                  "the corridor the routes run through");
+                var ter = O(rec, "source_termini");
+                if (ter.HasValue)
+                    yield return (S(ter.Value, "path"),
+                                  "the termini the routes connect");
+                var pat = O(rec, "source_patches");
+                if (pat.HasValue)
+                    yield return (S(pat.Value, "path"),
+                                  "the stepping-stone patches");
+            }
         }
 
         // ---- per-kind narratives -------------------------------------------
@@ -554,6 +572,7 @@ namespace WildlifeTools.Corridor
                 case "union": DescribeUnion(blocks, node, fetchXml); break;
                 case "hsm": DescribeHsm(blocks, node, fetchXml); break;
                 case "patch_map": DescribePatchMap(blocks, node, fetchXml); break;
+                case "patch_analysis": DescribePatchAnalysis(blocks, node, fetchXml); break;
                 default:
                     blocks.Add(new Block(BlockKind.Heading,
                         (node.IsTarget ? "This dataset" : node.Path)
@@ -847,11 +866,17 @@ namespace WildlifeTools.Corridor
             double? c = D(rec, "constant");
             string lab = FacetLabel(O(rec, "facet"));
             double? band = D(rec, "band");
+            bool linear = S(rec, "formula") == "100 - x";
             blocks.Add(new Block(BlockKind.Body,
-                "Each cell is the reciprocal 1/(x + c)"
-                + (c.HasValue
-                    ? " with c = " + c.Value.ToString("0.###",
-                        CultureInfo.InvariantCulture) : "")
+                (linear
+                    ? "Each cell is the linear complement 100 - x (perfect "
+                      + "habitat's cost of 0 bumped to 1) — the ArcMap "
+                      + "CorridorDesigner CorridorModel suitability-to-cost "
+                      + "rule"
+                    : "Each cell is the reciprocal 1/(x + c)"
+                      + (c.HasValue
+                          ? " with c = " + c.Value.ToString("0.###",
+                              CultureInfo.InvariantCulture) : ""))
                 + ", turning a surface where high values are good into a "
                 + "least-cost surface where that good ground is cheap to "
                 + "cross."));
@@ -1394,6 +1419,111 @@ namespace WildlifeTools.Corridor
             AddSourceCheck(blocks, "Built from",
                 S(rec, "source_raster"), S(rec, "source_analysis_id"),
                 Created(rec), fetchXml);
+        }
+
+        private static void DescribePatchAnalysis(List<Block> blocks, Node node,
+                                                  Func<string, string> fetchXml)
+        {
+            var rec = node.Record;
+            blocks.Add(new Block(HeadKind(node),
+                Header(node, "Patch Analysis — stepping-stone routes")));
+            AddOrigin(blocks, node);
+
+            var p = O(rec, "params");
+            double? nTerm = p.HasValue ? D(p.Value, "n_termini") : null;
+            var pat = O(rec, "source_patches");
+            string where = pat.HasValue ? S(pat.Value, "where") : null;
+            double? nPieces = pat.HasValue ? D(pat.Value, "n_pieces") : null;
+            blocks.Add(new Block(BlockKind.Body,
+                "The route through the corridor that minimizes the "
+                + "patch-to-patch gaps an animal must cross, for every pair "
+                + "of termini"
+                + (nTerm.HasValue
+                    ? string.Format(CultureInfo.InvariantCulture,
+                        " ({0:0} termini analyzed)", nTerm.Value) : "")
+                + ". Distances are exact shortest paths inside the corridor "
+                + "polygon (visibility graph), in geodesic meters; each "
+                + "route is the minimax path through a minimum spanning "
+                + "tree, so its CRITICAL GAP — the longest single crossing "
+                + "— is the smallest any route through these patches could "
+                + "achieve."
+                + (nPieces.HasValue
+                    ? string.Format(CultureInfo.InvariantCulture,
+                        " {0:#,##0} stepping-stone piece{1} lay inside the "
+                        + "corridor", nPieces.Value,
+                        nPieces.Value == 1 ? "" : "s")
+                      + (string.IsNullOrEmpty(where)
+                          ? "." : " (patches restricted to: " + where + ").")
+                    : (pat.HasValue ? "" : " No patch layer was used — the "
+                       + "routes are plain shortest within-corridor "
+                       + "connections."))));
+
+            var pairs = Arr(rec, "pairs").ToList();
+            if (pairs.Count > 0)
+            {
+                blocks.Add(new Block(BlockKind.SubHeading,
+                    "Routes between termini:"));
+                foreach (var pr in pairs)
+                {
+                    string from = S(pr, "from") ?? "?";
+                    string to = S(pr, "to") ?? "?";
+                    bool reachable = pr.TryGetProperty("reachable", out var rv)
+                        && rv.ValueKind == JsonValueKind.True;
+                    if (!reachable)
+                    {
+                        string note = S(pr, "note");
+                        blocks.Add(new Block(BlockKind.BulletAlert,
+                            from + " — " + to + ":  NOT CONNECTED"
+                            + (string.IsNullOrEmpty(note)
+                                ? " by this corridor" : " (" + note + ")")));
+                        continue;
+                    }
+                    double? gap = D(pr, "critical_gap_m");
+                    double? nSeg = D(pr, "n_segments");
+                    double? nStones = D(pr, "n_stones");
+                    blocks.Add(new Block(BlockKind.Bullet,
+                        string.Format(CultureInfo.InvariantCulture,
+                            "{0} — {1}:  critical gap {2} m ({3:0} "
+                            + "crossing{4}, {5:0} stepping stone{6})",
+                            from, to,
+                            gap.HasValue ? gap.Value.ToString("#,##0.#",
+                                CultureInfo.InvariantCulture) : "?",
+                            nSeg ?? 0, (nSeg ?? 0) == 1 ? "" : "s",
+                            nStones ?? 0, (nStones ?? 0) == 1 ? "" : "s")));
+                    var segLens = Arr(pr, "segment_lengths_m")
+                        .Where(v => v.ValueKind == JsonValueKind.Number)
+                        .Select(v => v.GetDouble())
+                        .OrderByDescending(v => v).ToList();
+                    if (segLens.Count > 0)
+                        blocks.Add(new Block(BlockKind.Note,
+                            "Segment lengths, decreasing (m): "
+                            + string.Join(", ", segLens.Take(25).Select(
+                                v => v.ToString("#,##0.#",
+                                    CultureInfo.InvariantCulture)))
+                            + (segLens.Count > 25 ? " ..." : "")));
+                }
+            }
+
+            var stones = Arr(rec, "stones_used")
+                .Where(s => s.ValueKind == JsonValueKind.String)
+                .Select(s => s.GetString()).ToList();
+            if (stones.Count > 0)
+                blocks.Add(new Block(BlockKind.KeyValue, "Stepping stones used",
+                    string.Join(", ", stones)));
+
+            var cor = O(rec, "source_corridor");
+            if (cor.HasValue)
+                AddSourceCheck(blocks, "Corridor",
+                    S(cor.Value, "path"), S(rec, "source_analysis_id"),
+                    Created(rec), fetchXml);
+            var ter = O(rec, "source_termini");
+            if (ter.HasValue)
+                AddSourceCheck(blocks, "Termini",
+                    S(ter.Value, "path"), S(rec, "source_analysis_id"),
+                    Created(rec), fetchXml);
+            if (pat.HasValue && !string.IsNullOrWhiteSpace(S(pat.Value, "path")))
+                AddSourceCheck(blocks, "Patches",
+                    S(pat.Value, "path"), null, Created(rec), fetchXml);
         }
 
         // ---- staleness ------------------------------------------------------

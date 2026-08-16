@@ -52,6 +52,7 @@ CORRIDOR = "corridor"   # written by the Least-Cost Corridor tool
 UNION = "union"         # written by the Union Corridors tool
 HSM = "hsm"             # written by the CorridorDesigner HSM chain tools
 PATCH_MAP = "patch_map"  # written by the Create Habitat Patches tool
+PATCH_ANALYSIS = "patch_analysis"  # written by the Patch Analysis tool
 
 # Marker prefix so the blob is recognizable (and so a human reading the
 # Supplemental Information field can see what it is) and separable from any
@@ -404,13 +405,52 @@ def patch_map_record(analysis_id, source_raster, source_analysis_id=None,
     }
 
 
+def patch_analysis_record(analysis_id, source_corridor, source_termini,
+                          source_patches=None, params=None, pairs=None,
+                          stones_used=None, source_analysis_id=None):
+    """Build the record stamped on a Patch Analysis connector output.
+
+    Written by the Patch Analysis tool (``patch_analysis.
+    run_patch_analysis``), the CorridorDesigner Evaluation Tools port: the
+    minimax stepping-stone route through a corridor, for every pair of
+    termini, via a visibility-graph distance matrix and a Kruskal spanning
+    forest. ``source_corridor`` / ``source_termini`` / ``source_patches``
+    are dicts carrying at least ``path`` plus selection info (and, for
+    patches, the SQL filter and piece counts); ``pairs`` is one entry per
+    termini pair: ``{"from", "to", "reachable", "n_segments",
+    "critical_gap_m", "segment_lengths_m", "n_stones"}`` (unreachable
+    pairs carry just the first three and an optional ``note``);
+    ``stones_used`` lists the stepping-stone patch labels on at least one
+    route. The analysis id chains from the termini record when present
+    (falling back to the corridor's), so the analysis joins the corridor's
+    own history.
+    """
+    return {
+        "schema": SCHEMA,
+        "record": PATCH_ANALYSIS,
+        "analysis_id": analysis_id,
+        "created": _utc_now(),
+        "tool": "Patch Analysis",
+        "source_corridor": source_corridor or {},
+        "source_termini": source_termini or {},
+        "source_patches": source_patches,
+        "source_analysis_id": source_analysis_id,
+        "params": params or {},
+        "pairs": list(pairs or []),
+        "stones_used": list(stones_used or []),
+    }
+
+
 def inverted_record(analysis_id, source_raster, constant, scale_applied,
-                    source_analysis_id=None, facet=None, band=None):
+                    source_analysis_id=None, facet=None, band=None,
+                    formula=None):
     """Build the record stamped on an Invert Raster output.
 
     Records where the surface stands in the Land Facet chain: what it was
     inverted from (and, for a density band, WHICH facet's band), with what
-    constant, and whether the stored x10000 scaling was undone first. When the
+    formula and constant, and whether the stored x10000 scaling was undone
+    first. ``formula`` defaults to the reciprocal "1/(x + c)"; the linear
+    method passes "100 - x" (and a None constant). When the
     source carried a record, the analysis id chains through; a source without
     one (e.g. a Diversity Indices raster) gets a fresh id so later steps can
     still group the products of one analysis.
@@ -425,7 +465,7 @@ def inverted_record(analysis_id, source_raster, constant, scale_applied,
         "source_analysis_id": source_analysis_id,
         "facet": facet or None,
         "band": band,
-        "formula": "1/(x + c)",
+        "formula": formula or "1/(x + c)",
         "constant": constant,
         "scale_applied": scale_applied,
     }

@@ -105,4 +105,10 @@ namespace WildlifeTools.Corridor
         protected override string ToolName => "ClipDataToAnalysisArea";
         protected override string DisplayName => "Clip Data to Analysis Area";
     }
+
+    internal class PatchAnalysisButton : HsmToolButtonBase
+    {
+        protected override string ToolName => "PatchAnalysis";
+        protected override string DisplayName => "Patch Analysis";
+    }
 }

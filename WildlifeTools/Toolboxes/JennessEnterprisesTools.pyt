@@ -64,6 +64,7 @@ import fill_corridor_holes  # noqa: E402
 import union_corridors  # noqa: E402
 import hsm_tools       # noqa: E402
 import clip_tools      # noqa: E402
+import patch_analysis  # noqa: E402
 import raster_extremes  # noqa: E402
 import tool_metadata  # noqa: E402
 import error_report   # noqa: E402
@@ -325,7 +326,7 @@ class Toolbox(object):
                       HabitatSuitabilityModel, CombineHabitatFactors,
                       NormalizeExistingHSM, ReclassifyFeaturesInHSM,
                       CriticalHabitatFeature, HabitatPatches,
-                      ClipDataToAnalysisArea,
+                      ClipDataToAnalysisArea, PatchAnalysis,
                       FindRasterExtremeValues]
 
 
@@ -8143,7 +8144,7 @@ class IdentifyTerminiPolygons(object):
 
     def getParameterInfo(self):
         in_raster = arcpy.Parameter(
-            displayName="Analysis surface (density or diversity raster)",
+            displayName="Analysis surface (density, diversity or HSI raster)",
             name="in_raster",
             datatype=["GPRasterLayer", "DERasterDataset", "DERasterBand"],
             parameterType="Required", direction="Input")
@@ -8424,6 +8425,14 @@ class LeastCostCorridor(object):
     def updateParameters(self, parameters):
         P = {p.name: p for p in parameters}
         term, outr = P["in_termini"], P["out_fc"]
+
+        # One cost source or the other, never both: picking a single cost
+        # raster grays out the workspace box (and empties it, so a stale
+        # value can't linger in a control the user can no longer reach).
+        cw = P["cost_workspace"]
+        cw.enabled = not P["cost_raster"].valueAsText
+        if not cw.enabled and cw.valueAsText:
+            cw.value = None
 
         if term.valueAsText and not term.hasBeenValidated:
             have = self._termini_field_names(term)
@@ -8741,6 +8750,185 @@ class UnionCorridors(object):
                 "The tool stopped because of an unexpected error; see the report above.")
 
 
+class PatchAnalysis(object):
+    """Patch Analysis -- the minimax stepping-stone route through a
+    corridor: the path between every pair of termini that minimizes the
+    LONGEST single gap of unsuitable habitat the species must cross,
+    using patches of good habitat as stepping stones. A modernized port of
+    the CorridorDesigner Evaluation Tools' Patch Analysis. See
+    ``patch_analysis``."""
+
+    def __init__(self):
+        self.label = "Patch Analysis"
+        self.description = (
+            "Finds the route through a corridor polygon that minimizes "
+            "the patch-to-patch gaps an animal must cross moving between "
+            "termini, and reports the critical (longest) gap for every "
+            "pair of termini -- the largest expanse of unsuitable habitat "
+            "the species must cross in one push. Patches of good habitat "
+            "(optional) serve as stepping stones. Distances are EXACT "
+            "shortest paths inside the corridor polygon, computed with a "
+            "visibility graph -- no Spatial Analyst, no raster "
+            "approximation, no 45-degree bias -- and reported as geodesic "
+            "meters. The route is the minimax path through a minimum "
+            "spanning tree (a variation on Kruskal's algorithm, as in the "
+            "original tool), which holds for every termini pair "
+            "simultaneously: any number of termini are analyzed in one "
+            "run. Outputs a polyline feature class of the gap crossings "
+            "(named endpoints, lengths, ranks) stamped with the full "
+            "analysis record for the Corridor Analysis Data Report.")
+        self.category = "Corridor Designer Tools\\Corridor Designer"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        corridor = arcpy.Parameter(
+            displayName="Corridor polygon",
+            name="corridor", datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        termini = arcpy.Parameter(
+            displayName="Termini polygons (wildland blocks / corridor "
+                        "endpoints)",
+            name="termini", datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        name_field = arcpy.Parameter(
+            displayName="Terminus name field (features sharing a value "
+                        "are ONE terminus)",
+            name="name_field", datatype="Field",
+            parameterType="Optional", direction="Input")
+        name_field.parameterDependencies = ["termini"]
+        name_field.filter.list = ["Text", "Short", "Long"]
+        patches = arcpy.Parameter(
+            displayName="Habitat patch polygons (stepping stones)",
+            name="patches", datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Optional", direction="Input")
+        patch_where = arcpy.Parameter(
+            displayName="Patch selection expression (e.g. only "
+                        "population-sized patches)",
+            name="patch_where", datatype="GPSQLExpression",
+            parameterType="Optional", direction="Input")
+        patch_where.parameterDependencies = ["patches"]
+        out_fc = arcpy.Parameter(
+            displayName="Output connector feature class",
+            name="out_fc", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        simplify = arcpy.Parameter(
+            displayName="Corridor boundary simplification tolerance, "
+                        "meters (blank = automatic; 0 = none)",
+            name="simplify_tolerance", datatype="GPDouble",
+            parameterType="Optional", direction="Input",
+            category="Advanced")
+        return [corridor, termini, name_field, patches, patch_where,
+                out_fc, simplify]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        term, cor, outr = P["termini"], P["corridor"], P["out_fc"]
+        # Suggest the grouping field once per termini pick (hasBeenValidated
+        # gating -- a cleared field stays cleared). For an Identify Termini
+        # output the right field is Block (each Wildland Block is one
+        # terminus); Category there names the ANALYSIS SURFACE and is the
+        # same value on every row (found from Jeff's real run, 2026-08-15).
+        if term.valueAsText and not term.hasBeenValidated:
+            if not P["name_field"].altered:
+                try:
+                    have = {f.name for f in arcpy.ListFields(
+                        term.value or term.valueAsText)}
+                    if {"Category", "CategoryID", "Block"} <= have:
+                        P["name_field"].value = "Block"
+                except Exception:
+                    pass
+        if cor.valueAsText and not cor.hasBeenValidated:
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = os.path.splitext(os.path.basename(
+                        str(cor.valueAsText)))[0]
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(cor.value or cor.valueAsText)
+                        .catalogPath)
+                    sug = _unique_name(
+                        _legalize("PatchRoutes_" + base), ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+
+        for name in ("corridor", "termini", "patches"):
+            p = P[name]
+            if not p.valueAsText:
+                continue
+            try:
+                shp = arcpy.Describe(p.value or p.valueAsText).shapeType
+            except Exception:
+                continue
+            if shp and shp.lower() != "polygon":
+                p.setErrorMessage(
+                    "A polygon feature class or layer is required "
+                    "(this is a {} dataset).".format(shp))
+
+        def _gcs_name(param):
+            try:
+                sr = arcpy.Describe(param.value or param.valueAsText) \
+                    .spatialReference
+                return sr.GCS.name if sr and sr.name else None
+            except Exception:
+                return None
+
+        cor_gcs = _gcs_name(P["corridor"]) if P["corridor"].valueAsText \
+            else None
+        if cor_gcs:
+            for name in ("termini", "patches"):
+                if not P[name].valueAsText:
+                    continue
+                other = _gcs_name(P[name])
+                if other and other != cor_gcs:
+                    P[name].setWarningMessage(
+                        "This layer's geographic coordinate system ({}) "
+                        "differs from the corridor's ({}). It will be "
+                        "projected WITHOUT a datum transformation, which "
+                        "can shift features by tens of meters. For full "
+                        "control, project it to the corridor's coordinate "
+                        "system first (e.g. with the Project tool or Clip "
+                        "Data to Analysis Area).".format(other, cor_gcs))
+        tol = P["simplify_tolerance"]
+        if tol.value is not None and tol.value < 0:
+            tol.setErrorMessage("The simplification tolerance cannot be "
+                                "negative.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(land_facet_linkage)
+            importlib.reload(patch_analysis)
+            P = {p.name: p for p in parameters}
+            tol = P["simplify_tolerance"].value
+            patch_analysis.run_patch_analysis(
+                corridor=P["corridor"].value or P["corridor"].valueAsText,
+                termini=P["termini"].value or P["termini"].valueAsText,
+                out_fc=P["out_fc"].valueAsText,
+                name_field=P["name_field"].valueAsText or None,
+                patches=(P["patches"].value or P["patches"].valueAsText
+                         or None),
+                patch_where=P["patch_where"].valueAsText or None,
+                simplify_tolerance=(None if tol is None else float(tol)),
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
 class FindRasterExtremeValues(object):
     """Find Raster Extreme Values -- peaks and low points of a DEM as a point
     feature class, with topographic prominence / depression depth and an
@@ -8888,7 +9076,11 @@ class InvertRaster(object):
             "to 0-1 proportions first so the constant keeps its intended "
             "meaning. The small constant c (default 0.1, strongly recommended "
             "by the Land Facet manual) prevents zero cells from dividing to "
-            "NoData. Every output carries a record of its place in the Land "
+            "NoData. An alternative LINEAR method (100 - x) reproduces the "
+            "ArcMap CorridorDesigner CorridorModel tool's internal "
+            "suitability-to-cost conversion for 0-100 habitat suitability "
+            "models, with a cost of exactly 0 bumped to 1 as that tool did. "
+            "Every output carries a record of its place in the Land "
             "Facet chain. A modernized port of the Land Facet Corridor "
             "Designer's Invert Raster tool.")
         self.category = "Corridor Designer Tools\\Land Facet Corridor Designer"
@@ -8914,6 +9106,12 @@ class InvertRaster(object):
             name="out_prefix",
             datatype="GPString", parameterType="Optional", direction="Input")
         out_prefix.value = "Inv"
+        method = arcpy.Parameter(
+            displayName="Inversion method", name="method",
+            datatype="GPString", parameterType="Required", direction="Input")
+        method.filter.type = "ValueList"
+        method.filter.list = [self._RECIP_LABEL, self._LINEAR_LABEL]
+        method.value = self._RECIP_LABEL
         add_constant = arcpy.Parameter(
             displayName="Constant added before inverting (blank = none)",
             name="add_constant",
@@ -8923,7 +9121,14 @@ class InvertRaster(object):
             displayName="Facets / bands to invert (default: all)",
             name="facets", datatype="GPString", parameterType="Optional",
             direction="Input", multiValue=True)
-        return [in_raster, out_raster, out_ws, out_prefix, add_constant, facets]
+        return [in_raster, out_raster, out_ws, out_prefix, method,
+                add_constant, facets]
+
+    _RECIP_LABEL = "Reciprocal: 1 / (x + c)"
+    _LINEAR_LABEL = "Linear: 100 - x (ArcMap CorridorModel, for 0-100 HSMs)"
+
+    def _is_linear(self, P):
+        return str(P["method"].valueAsText or "").startswith("Linear")
 
     def isLicensed(self):
         return True
@@ -8945,6 +9150,10 @@ class InvertRaster(object):
         P["out_workspace"].enabled = multi
         P["out_prefix"].enabled = multi
         P["facets"].enabled = multi
+        # The constant belongs to the reciprocal only; the linear method
+        # (100 - x) ignores it. Input param, so disabling without emptying
+        # is safe -- the value comes back if the user switches back.
+        P["add_constant"].enabled = not self._is_linear(P)
         # A DISABLED output parameter still holding a value gets its dataset
         # PRE-DELETED by the GP framework on Run -- empty it unconditionally
         # (see pyt-dialog gotcha: the vanishing-raster bug).
@@ -8995,15 +9204,16 @@ class InvertRaster(object):
                 P["out_raster"].setErrorMessage(
                     "The input is single band, so the output raster name is "
                     "required.")
-        c = P["add_constant"].value
-        if c is not None and c < 0:
-            P["add_constant"].setErrorMessage(
-                "The constant must be zero or positive.")
-        if c is None or c == 0:
-            P["add_constant"].setWarningMessage(
-                "Without a constant, any cell whose value is exactly zero "
-                "becomes NoData in the output (division by zero). The Land "
-                "Facet manual strongly recommends 0.1.")
+        if not self._is_linear(P):
+            c = P["add_constant"].value
+            if c is not None and c < 0:
+                P["add_constant"].setErrorMessage(
+                    "The constant must be zero or positive.")
+            if c is None or c == 0:
+                P["add_constant"].setWarningMessage(
+                    "Without a constant, any cell whose value is exactly "
+                    "zero becomes NoData in the output (division by zero). "
+                    "The Land Facet manual strongly recommends 0.1.")
         return
 
     def execute(self, parameters, messages):
@@ -9027,6 +9237,8 @@ class InvertRaster(object):
                 out_prefix=P["out_prefix"].valueAsText or "Inv",
                 add_constant=P["add_constant"].value,
                 facet_values=facet_values,
+                method=(invert_raster.METHOD_LINEAR if self._is_linear(P)
+                        else invert_raster.METHOD_RECIPROCAL),
                 messages=messages)
             if P["out_raster"].valueAsText:
                 _writeback_resolved_raster(P, "out_raster")

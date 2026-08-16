@@ -16,6 +16,18 @@ exactly zero becomes NoData, as in the original. The manual aimed this tool at
 the Shannon's Index raster; inverting Land Facet Density for direct least-cost
 use is this suite's extension, and the tool handles either.
 
+A SECOND METHOD, ``100 - x`` (METHOD_LINEAR, added 2026-08-15 at Jeff's
+request), reproduces the ArcMap CorridorDesigner CorridorModel tool's
+internal suitability-to-cost conversion for 0-100 habitat suitability
+models -- cost = 100 - HSM, with a resulting cost of exactly 0 bumped to 1
+so perfect habitat is never free to cross, exactly as that tool's
+``Minus_sa``/``Con_sa`` pair behaved. The two methods encode different
+assumptions: the reciprocal punishes poor habitat far more steeply than the
+linear complement, so corridors from a reciprocal cost surface hug good
+habitat more tightly. Use linear when ArcMap-comparable corridors are
+wanted from an HSM; the reciprocal remains the default and the right choice
+for density, diversity, and other proportion/index surfaces.
+
 THE DIALOG FOLLOWS THE INPUT'S SHAPE (Jeff, 2026-08-07, final form). A
 single-band input (a diversity raster, or one band of a density raster given
 as ``dens.tif\\Band_3``) asks for a plain output raster path, like the
@@ -55,6 +67,16 @@ import land_facet_linkage as _lnk
 import land_facet_mahalanobis as _lfm
 
 DEFAULT_CONSTANT = 0.1
+
+# Inversion methods. RECIPROCAL is the Land Facet original (manual p.12,
+# 1/(H' + 0.1)); LINEAR is the CorridorDesigner CorridorModel's internal
+# cost conversion (cost = 100 - HSM, zero cost bumped to 1), offered so
+# corridors can be built ArcMap-comparable from a 0-100 suitability model.
+# The two encode different assumptions: the reciprocal punishes poor
+# habitat far more steeply than the linear complement.
+METHOD_RECIPROCAL = "reciprocal"
+METHOD_LINEAR = "linear"
+FORMULA_LINEAR = "100 - x"
 
 _CD_CITATION = (
     "CorridorDesigner: Majka, D., J. Jenness, and P. Beier. 2007. "
@@ -99,8 +121,13 @@ def _facet_of(rec, band_no):
     return None
 
 
-def _invert_values(a, nod, scale, c, label, messages, vmask=None):
-    """The shared core: mask, unscale, add the constant, take the reciprocal.
+def _invert_values(a, nod, scale, c, label, messages, vmask=None,
+                   method=METHOD_RECIPROCAL):
+    """The shared core: mask, unscale, then invert by ``method`` --
+    reciprocal ``1/(x + c)`` (the Land Facet original) or linear
+    ``100 - x`` (the ArcMap CorridorModel conversion; the constant is not
+    used, and a resulting cost of exactly 0 is bumped to 1 as that tool
+    did, so perfect habitat still carries a small positive cost).
 
     Returns ``(out, valid)`` -- a float32 grid with NODATA_OUT where invalid,
     and the validity mask -- after reporting zero/negative diagnostics.
@@ -133,6 +160,35 @@ def _invert_values(a, nod, scale, c, label, messages, vmask=None):
         del over
         a *= np.float32(scale)
 
+    if method == METHOD_LINEAR:
+        out = np.full(a.shape, np.float32(_tt.NODATA_OUT))
+        res = np.float32(100.0) - a[valid]
+        n_neg = int((res < 0).sum())
+        n_zero = int((res == np.float32(0.0)).sum())
+        res[res == np.float32(0.0)] = np.float32(1.0)
+        out[valid] = res
+        if valid.any() and float(a[valid].max()) <= 1.5:
+            _warn(messages,
+                  "The valid values of {} never exceed 1.5 -- this does not "
+                  "look like a 0-100 suitability model, so 100 - x will "
+                  "produce a nearly flat cost surface (~99-100 everywhere). "
+                  "The linear method is meant for 0-100 habitat suitability "
+                  "models; use the reciprocal for proportion or index "
+                  "surfaces.".format(label))
+        if n_zero:
+            _say(messages,
+                 "{:,} cells of {} scored a perfect 100, giving cost 0; "
+                 "they were set to cost 1 (as the original ArcMap "
+                 "CorridorModel did) so travel is never free.".format(
+                     n_zero, label))
+        if n_neg:
+            _warn(messages,
+                  "{:,} cells of {} exceed 100, so their linear costs are "
+                  "NEGATIVE. Least-cost tools reject negative costs; the "
+                  "linear method expects a 0-100 suitability model.".format(
+                      n_neg, label))
+        return out, valid
+
     if c:
         a += np.float32(c)
     zero = valid & (a == np.float32(0.0))
@@ -158,8 +214,16 @@ def _invert_values(a, nod, scale, c, label, messages, vmask=None):
     return out, valid
 
 
+def _formula_text(method, c):
+    """The human-readable formula for messages and metadata."""
+    if method == METHOD_LINEAR:
+        return FORMULA_LINEAR
+    return "1 / (x{})".format(" + {:g}".format(c) if c else "")
+
+
 def _deliver(gdal, out, valid, gt, proj, width_px, height_px, out_path,
-             in_raster, label, c, scale, scratch, messages):
+             in_raster, label, c, scale, scratch, messages,
+             method=METHOD_RECIPROCAL):
     """Write ``out`` to a scratch GeoTIFF with self-computed statistics and
     deliver it (CopyRaster, Esri metadata, symmetry with every other tool)."""
     import arcpy
@@ -183,26 +247,38 @@ def _deliver(gdal, out, valid, gt, proj, width_px, height_px, out_path,
     ds_out = None
 
     unscale_note = (
-        " Stored values were converted to 0-1 proportions (x {:g}) before the "
-        "constant was added.".format(scale) if scale else "")
-    _tt._deliver_output(
-        tmp, out_path, out_stats, messages,
-        title=os.path.basename(str(out_path)),
-        summary=(
-            "Created by Invert Raster from {src} ({lab}): each cell is "
-            "1 / (x{c}), turning a surface where high values are good into a "
-            "least-cost surface where they are cheap to cross.{un}").format(
-                src=str(in_raster), lab=label,
-                c=" + {:g}".format(c) if c else "", un=unscale_note),
-        description=(
+        " Stored values were converted to 0-1 proportions (x {:g}) "
+        "first.".format(scale) if scale else "")
+    if method == METHOD_LINEAR:
+        desc_core = (
+            "Numerically inverted raster -- the linear complement 100 - x of "
+            "a 0-100 habitat suitability model, so that good habitat carries "
+            "LOW cost and the raster can be used directly as the resistance "
+            "surface in least-cost corridor modelling. A cost of exactly 0 "
+            "(perfect habitat) is set to 1, exactly as the original ArcMap "
+            "CorridorDesigner CorridorModel tool converted suitability to "
+            "cost internally.")
+    else:
+        desc_core = (
             "Numerically inverted raster -- the reciprocal 1/(x + c) of a "
             "surface in which high values mean good habitat (for example a "
             "land facet density band or a diversity index), so that good "
             "ground carries LOW cost and can be used directly as the "
             "resistance surface in least-cost corridor modelling. The small "
-            "constant prevents division by zero. A modernized port of the "
+            "constant prevents division by zero.")
+    _tt._deliver_output(
+        tmp, out_path, out_stats, messages,
+        title=os.path.basename(str(out_path)),
+        summary=(
+            "Created by Invert Raster from {src} ({lab}): each cell is "
+            "{f}, turning a surface where high values are good into a "
+            "least-cost surface where they are cheap to cross.{un}").format(
+                src=str(in_raster), lab=label,
+                f=_formula_text(method, c), un=unscale_note),
+        description=(
+            "{core} A modernized port of the "
             "Land Facet Corridor Designer's Invert Raster tool. {cite}").format(
-                cite=_CD_CITATION),
+                core=desc_core, cite=_CD_CITATION),
         tags=("invert, reciprocal, cost surface, resistance, least-cost, "
               "corridor, connectivity, Corridor Designer, Land Facet, "
               "Jenness Enterprises"),
@@ -211,9 +287,14 @@ def _deliver(gdal, out, valid, gt, proj, width_px, height_px, out_path,
 
 def run_invert(in_raster, out_raster=None, out_workspace=None,
                out_prefix="Inv", add_constant=DEFAULT_CONSTANT,
-               facet_values=None, messages=None):
-    """Invert ``in_raster``: 1/(x + c) per cell. Returns the written paths.
+               facet_values=None, method=METHOD_RECIPROCAL, messages=None):
+    """Invert ``in_raster`` per cell. Returns the written paths.
 
+    ``method`` is METHOD_RECIPROCAL (``1/(x + c)``, the Land Facet
+    original and the default) or METHOD_LINEAR (``100 - x``, the ArcMap
+    CorridorDesigner CorridorModel's internal suitability-to-cost
+    conversion, for 0-100 habitat suitability models; the constant is
+    ignored and a cost of exactly 0 is bumped to 1 as that tool did).
     A single-band input needs ``out_raster``; a multi-band input needs
     ``out_workspace`` (+ ``out_prefix``) and fans out to one single-band
     raster per band. ``add_constant`` of None means no constant (the
@@ -223,7 +304,11 @@ def run_invert(in_raster, out_raster=None, out_workspace=None,
     """
     import arcpy
 
-    c = float(add_constant) if add_constant is not None else 0.0
+    method = str(method or METHOD_RECIPROCAL).strip().lower()
+    method = METHOD_LINEAR if method.startswith("lin") else METHOD_RECIPROCAL
+    linear = method == METHOD_LINEAR
+    c = 0.0 if linear else (
+        float(add_constant) if add_constant is not None else 0.0)
     scratch = arcpy.env.scratchFolder
     gdal = _mh._gdal()
 
@@ -275,10 +360,16 @@ def run_invert(in_raster, out_raster=None, out_workspace=None,
         if scale:
             _say(messages,
                  "The input carries a Land Facet Density record: stored values "
-                 "(scaled by {:,.0f}) are converted back to 0-1 proportions "
-                 "before the constant is added, so the cost curve matches the "
-                 "original 1/(x + c) on true proportions.".format(1.0 / scale))
-        if not c:
+                 "(scaled by {:,.0f}) are converted back to 0-1 "
+                 "proportions first.".format(1.0 / scale))
+        if linear and scale:
+            _warn(messages,
+                  "The linear method (100 - x) is meant for 0-100 habitat "
+                  "suitability models, but this input is a density raster "
+                  "of 0-1 proportions -- the result will be a nearly flat "
+                  "cost surface (~99-100 everywhere). Use the reciprocal "
+                  "method for density and diversity surfaces.")
+        if not linear and not c:
             _warn(messages,
                   "No constant is being added before inverting, so any cell "
                   "whose value is exactly zero becomes NoData in the output. "
@@ -300,20 +391,23 @@ def run_invert(in_raster, out_raster=None, out_workspace=None,
             a = band.ReadAsArray(0, 0, width_px, height_px)
             nod = band.GetNoDataValue()
             _mh.phase_advance()
-            _say(messages, "Inverting {}: out = 1 / (x{}).".format(
-                label, " + {:g}".format(c) if c else ""))
+            _say(messages, "Inverting {}: out = {}.".format(
+                label, _formula_text(method, c)))
             out, valid = _invert_values(a, nod, scale, c, label, messages,
-                                        vmask=_mh.band_validity_mask(band))
+                                        vmask=_mh.band_validity_mask(band),
+                                        method=method)
             del a
             _mh.phase_advance()
             _deliver(gdal, out, valid, gt, proj, width_px, height_px,
-                     out_raster, in_raster, label, c, scale, scratch, messages)
+                     out_raster, in_raster, label, c, scale, scratch, messages,
+                     method=method)
             del out, valid
             _lnk.write(out_raster, _lnk.inverted_record(
                 analysis_id=analysis_id, source_raster=in_raster,
-                constant=c, scale_applied=bool(scale),
+                constant=(None if linear else c), scale_applied=bool(scale),
                 source_analysis_id=src_analysis,
-                facet=finfo, band=band_no), messages)
+                facet=finfo, band=band_no,
+                formula=(FORMULA_LINEAR if linear else None)), messages)
             _mh.end_phases()
             return [out_raster]
 
@@ -355,9 +449,9 @@ def run_invert(in_raster, out_raster=None, out_workspace=None,
                                       _lfm.safe_name(_lnk.facet_label(finfo)))
             return "{}_{}_Band_{}".format(out_prefix, base, b)
 
-        _say(messages, "Inverting {} band{}: out = 1 / (x{}).".format(
+        _say(messages, "Inverting {} band{}: out = {}.".format(
             len(band_nos), "" if len(band_nos) == 1 else "s",
-            " + {:g}".format(c) if c else ""))
+            _formula_text(method, c)))
         _mh.begin_phases(
             [("Reading the input raster...", 1)]
             + [("Inverting {} of {}: {}".format(i, len(band_nos), _label(b)), 4)
@@ -371,7 +465,8 @@ def run_invert(in_raster, out_raster=None, out_workspace=None,
             a = band.ReadAsArray(0, 0, width_px, height_px)
             nod = band.GetNoDataValue()
             out, valid = _invert_values(a, nod, scale, c, _label(b), messages,
-                                        vmask=_mh.band_validity_mask(band))
+                                        vmask=_mh.band_validity_mask(band),
+                                        method=method)
             del a
             name = _name(b)
             if name.lower() in used:
@@ -383,13 +478,14 @@ def run_invert(in_raster, out_raster=None, out_workspace=None,
                 os.path.join(out_workspace, name), messages)
             _deliver(gdal, out, valid, gt, proj, width_px, height_px,
                      out_path, in_raster, _label(b), c, scale, scratch,
-                     messages)
+                     messages, method=method)
             del out, valid
             _lnk.write(out_path, _lnk.inverted_record(
                 analysis_id=analysis_id, source_raster=in_raster,
-                constant=c, scale_applied=bool(scale),
+                constant=(None if linear else c), scale_applied=bool(scale),
                 source_analysis_id=src_analysis,
-                facet=_facet_of(rec, b), band=b), messages)
+                facet=_facet_of(rec, b), band=b,
+                formula=(FORMULA_LINEAR if linear else None)), messages)
             written.append(out_path)
             _say(messages, "Wrote {}".format(out_path))
 

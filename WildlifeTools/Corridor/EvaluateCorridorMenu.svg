@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Evaluate Corridors menu: the built corridor band (same motif as the
+       Build menu) under a magnifying glass -- inspecting how well the
+       corridor serves the species. -->
+  <path d="M 24 8 C 20 12, 17 14, 15.5 15.5 C 13.5 17.5, 10 20, 8 24"
+        fill="none" stroke="#E8912E" stroke-width="7"
+        stroke-linecap="round" opacity="0.85"/>
+  <rect x="1.2" y="1.2" width="11" height="11" rx="2.4"
+        fill="#EAF3E4" stroke="#4E7A3A" stroke-width="1.8"/>
+  <rect x="19.8" y="19.8" width="11" height="11" rx="2.4"
+        fill="#EAF3E4" stroke="#4E7A3A" stroke-width="1.8"/>
+  <circle cx="19" cy="12" r="7.2" fill="#FFFFFF" fill-opacity="0.55"
+          stroke="#2F5D8A" stroke-width="2.4"/>
+  <path d="M 13.9 17.1 L 8.4 22.6" stroke="#2F5D8A" stroke-width="3.6"
+        stroke-linecap="round"/>
+  <path d="M 15.6 12 L 18 14.4 L 22.6 9.6" fill="none" stroke="#4E7A3A"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
