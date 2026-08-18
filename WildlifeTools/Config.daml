@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.64.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.65.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -795,6 +795,17 @@
             Find the route through a corridor that minimizes the patch-to-patch gaps an animal must cross between termini, using patches of good habitat as stepping stones, and report each termini pair's critical gap -- the largest expanse of unsuitable habitat crossed in one push. Exact vector shortest paths inside the corridor polygon (no raster approximation), any number of termini, geodesic lengths. A modernized port of the CorridorDesigner Evaluation Tools' Patch Analysis. No Spatial Analyst needed.<disabledText />
           </tooltip>
         </button>
+        <button id="WildlifeTools_Bottleneck"
+                caption="Bottleneck Analysis"
+                className="Corridor.BottleneckButton"
+                loadOnClick="true"
+                smallImage="Images\Bottleneck_16.png"
+                largeImage="Images\Bottleneck_32.png"
+                keytip="BA">
+          <tooltip heading="Bottleneck Analysis">
+            Find the route through a corridor between two wildland blocks with the WIDEST bottleneck -- the maximin route on the corridor's medial axis, chosen over every strand at once -- and graph the corridor width along it. Adjust the width threshold live (type, click the graph, or drag the line) with below-threshold stretches red on both the graph and the map; save the route, station points, and segments. Blocks come from map layers or feature classes on disk, narrowed to a single polygon by map selection or SQL. A modernized port of the CorridorDesigner Evaluation Tools' Bottleneck Analysis. No Spatial Analyst needed.<disabledText />
+          </tooltip>
+        </button>
         <button id="WildlifeTools_LandFacetDescribe"
                 caption="Corridor Analysis Data Report"
                 className="Corridor.LandFacetDescribeButton"
@@ -1173,9 +1184,10 @@
               smallImage="Images\EvaluateCorridorMenu_16.png"
               largeImage="Images\EvaluateCorridorMenu_32.png">
           <tooltip heading="Evaluate Corridors">
-            How well does a finished corridor serve the species? Tools from the CorridorDesigner Evaluation toolset, modernized: Patch Analysis maps the stepping-stone route between termini that minimizes the longest gap of unsuitable habitat the animal must cross. Bottleneck analysis and corridor statistics will join this menu. No Spatial Analyst needed.<disabledText />
+            How well does a finished corridor serve the species? Tools from the CorridorDesigner Evaluation toolset, modernized: Patch Analysis maps the stepping-stone route between termini that minimizes the longest gap of unsuitable habitat the animal must cross; Bottleneck Analysis finds the route with the widest bottleneck and graphs the corridor width along it, with an interactive threshold linked to the map. Corridor statistics tools will join this menu. No Spatial Analyst needed.<disabledText />
           </tooltip>
           <button refID="WildlifeTools_PatchAnalysis" />
+          <button refID="WildlifeTools_Bottleneck" />
         </menu>
         <menu id="WildlifeTools_HsmMenu"
               caption="Habitat Suitability Modeling"

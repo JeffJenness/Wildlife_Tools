@@ -53,6 +53,7 @@ UNION = "union"         # written by the Union Corridors tool
 HSM = "hsm"             # written by the CorridorDesigner HSM chain tools
 PATCH_MAP = "patch_map"  # written by the Create Habitat Patches tool
 PATCH_ANALYSIS = "patch_analysis"  # written by the Patch Analysis tool
+BOTTLENECK = "bottleneck"          # written by the Bottleneck Analysis tool
 
 # Marker prefix so the blob is recognizable (and so a human reading the
 # Supplemental Information field can see what it is) and separable from any
@@ -438,6 +439,35 @@ def patch_analysis_record(analysis_id, source_corridor, source_termini,
         "params": params or {},
         "pairs": list(pairs or []),
         "stones_used": list(stones_used or []),
+    }
+
+
+def bottleneck_record(analysis_id, source_corridor, block_a, block_b,
+                      params=None, stats=None, source_analysis_id=None):
+    """Build the record stamped on a Bottleneck Analysis output.
+
+    Written by the Bottleneck Analysis tool (``bottleneck_analysis.
+    run_bottleneck``): the maximin (widest-bottleneck) route between two
+    wildland blocks through a corridor, found on the corridor's medial
+    axis. ``block_a`` / ``block_b`` are display labels; ``params``
+    carries the boundary sampling step, simplification tolerance,
+    station count, working SR, and threshold; ``stats`` the width
+    profile summary (bottleneck/min/max/mean/median/SD widths, route
+    length, and per-threshold breakdown when one was set). The analysis
+    id chains from the corridor's record when present.
+    """
+    return {
+        "schema": SCHEMA,
+        "record": BOTTLENECK,
+        "analysis_id": analysis_id,
+        "created": _utc_now(),
+        "tool": "Bottleneck Analysis",
+        "source_corridor": str(source_corridor),
+        "block_a": block_a,
+        "block_b": block_b,
+        "source_analysis_id": source_analysis_id,
+        "params": params or {},
+        "stats": stats or {},
     }
 
 

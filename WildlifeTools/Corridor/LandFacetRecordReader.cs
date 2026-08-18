@@ -269,7 +269,7 @@ namespace WildlifeTools.Corridor
                 blocks.Add(new Block(BlockKind.Separator, ""));
             }
             else if (kind != "union" && kind != "patch_map"
-                     && kind != "patch_analysis")
+                     && kind != "patch_analysis" && kind != "bottleneck")
             {
                 // A union fans in from parallel sources, and a patch map or
                 // patch analysis is a terminal evaluation product -- none of
@@ -446,7 +446,7 @@ namespace WildlifeTools.Corridor
             "mahalanobis" => 2, "diversity" => 2, "hsm" => 2,
             "inverted" => 3, "patch_map" => 3,
             "termini" => 4, "corridor" => 5,
-            "union" => 6, "patch_analysis" => 7,
+            "union" => 6, "patch_analysis" => 7, "bottleneck" => 7,
             _ => 8,
         };
 
@@ -536,6 +536,9 @@ namespace WildlifeTools.Corridor
                                   "the cost surface this corridor was built "
                                   + "from");
             }
+            if (kind == "bottleneck")
+                yield return (S(rec, "source_corridor"),
+                              "the corridor the route runs through");
             if (kind == "patch_analysis")
             {
                 // These sources are OBJECTS carrying selection info, with
@@ -573,6 +576,7 @@ namespace WildlifeTools.Corridor
                 case "hsm": DescribeHsm(blocks, node, fetchXml); break;
                 case "patch_map": DescribePatchMap(blocks, node, fetchXml); break;
                 case "patch_analysis": DescribePatchAnalysis(blocks, node, fetchXml); break;
+                case "bottleneck": DescribeBottleneck(blocks, node, fetchXml); break;
                 default:
                     blocks.Add(new Block(BlockKind.Heading,
                         (node.IsTarget ? "This dataset" : node.Path)
@@ -1524,6 +1528,79 @@ namespace WildlifeTools.Corridor
             if (pat.HasValue && !string.IsNullOrWhiteSpace(S(pat.Value, "path")))
                 AddSourceCheck(blocks, "Patches",
                     S(pat.Value, "path"), null, Created(rec), fetchXml);
+        }
+
+        private static void DescribeBottleneck(List<Block> blocks, Node node,
+                                               Func<string, string> fetchXml)
+        {
+            var rec = node.Record;
+            blocks.Add(new Block(HeadKind(node),
+                Header(node, "Bottleneck Analysis — widest route")));
+            AddOrigin(blocks, node);
+
+            string ba = S(rec, "block_a") ?? "Block A";
+            string bb = S(rec, "block_b") ?? "Block B";
+            var st = O(rec, "stats");
+            double? btl = st.HasValue ? D(st.Value, "min_width_m") : null;
+            double? len = st.HasValue ? D(st.Value, "route_length_m") : null;
+            double? mean = st.HasValue ? D(st.Value, "mean_width_m") : null;
+            double? station = st.HasValue
+                ? D(st.Value, "min_width_station_m") : null;
+            blocks.Add(new Block(BlockKind.Body,
+                "The route between " + ba + " and " + bb + " that "
+                + "maximizes the minimum corridor width — the widest "
+                + "bottleneck available, chosen over every corridor strand "
+                + "at once on the corridor's medial axis (a Voronoi "
+                + "construction), with widths measured exactly in vector."));
+            if (btl.HasValue)
+                blocks.Add(new Block(BlockKind.KeyValue,
+                    "Bottleneck (narrowest point)",
+                    string.Format(CultureInfo.InvariantCulture,
+                        "{0:#,##0.#} m{1}", btl.Value,
+                        station.HasValue
+                            ? string.Format(CultureInfo.InvariantCulture,
+                                ", {0:#,##0} m along the route",
+                                station.Value)
+                            : "")));
+            if (len.HasValue)
+                blocks.Add(new Block(BlockKind.KeyValue, "Route length",
+                    string.Format(CultureInfo.InvariantCulture,
+                        "{0:#,##0.#} m", len.Value)));
+            if (mean.HasValue)
+                blocks.Add(new Block(BlockKind.KeyValue, "Mean width",
+                    string.Format(CultureInfo.InvariantCulture,
+                        "{0:#,##0.#} m", mean.Value)));
+            if (st.HasValue)
+            {
+                var thr = O(st.Value, "threshold");
+                if (thr.HasValue)
+                {
+                    double? t = D(thr.Value, "threshold_m");
+                    double? pct = D(thr.Value, "pct_below");
+                    double? blw = D(thr.Value, "length_below_m");
+                    double? nseg = D(thr.Value, "n_below_segments");
+                    blocks.Add(new Block(BlockKind.Bullet,
+                        string.Format(CultureInfo.InvariantCulture,
+                            "Threshold {0:#,##0.#} m: {1:0.#}% of the route "
+                            + "is narrower ({2:#,##0.#} m in {3:0} "
+                            + "stretch{4})",
+                            t ?? 0, pct ?? 0, blw ?? 0, nseg ?? 0,
+                            (nseg ?? 0) == 1 ? "" : "es")));
+                    var lens = Arr(thr.Value, "below_segment_lengths_m")
+                        .Where(v => v.ValueKind == JsonValueKind.Number)
+                        .Select(v => v.GetDouble()).ToList();
+                    if (lens.Count > 0)
+                        blocks.Add(new Block(BlockKind.Note,
+                            "Below-threshold stretches, longest first (m): "
+                            + string.Join(", ", lens.Take(15).Select(
+                                v => v.ToString("#,##0.#",
+                                    CultureInfo.InvariantCulture)))
+                            + (lens.Count > 15 ? " ..." : "")));
+                }
+            }
+            AddSourceCheck(blocks, "Corridor",
+                S(rec, "source_corridor"), S(rec, "source_analysis_id"),
+                Created(rec), fetchXml);
         }
 
         // ---- staleness ------------------------------------------------------

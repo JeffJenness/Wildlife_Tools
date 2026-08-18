@@ -701,6 +701,49 @@ def _outer_rings_only(geom, sr):
     return arcpy.Polygon(parts, sr)
 
 
+def ensure_simple(poly, sr):
+    """``(possibly repaired polygon, is_valid)`` via OGR MakeValid.
+
+    Raster-traced polygons are routinely OGC-invalid (rings passing twice
+    through cell-corner touch vertices), and Douglas-Peucker on thin
+    shapes can make a ring's sides cross -- either silently corrupts the
+    parity-based numpy geometry here. Module-level (2026-08-17) so the
+    Bottleneck Analysis engine shares it."""
+    import arcpy
+
+    try:
+        from osgeo import ogr
+        og = ogr.CreateGeometryFromWkt(poly.WKT)
+        if og is None:
+            return poly, False
+        if og.IsValid():
+            return poly, True
+        fixed = og.MakeValid()
+        if fixed is None or fixed.IsEmpty():
+            return poly, False
+        if ogr.GT_Flatten(fixed.GetGeometryType()) not in (
+                ogr.wkbPolygon, ogr.wkbMultiPolygon):
+            # MakeValid can hand back a collection with line slivers;
+            # keep only the polygonal members
+            keep = [fixed.GetGeometryRef(i).Clone()
+                    for i in range(fixed.GetGeometryCount())
+                    if ogr.GT_Flatten(
+                        fixed.GetGeometryRef(i).GetGeometryType())
+                    in (ogr.wkbPolygon, ogr.wkbMultiPolygon)]
+            if not keep:
+                return poly, False
+            merged = keep[0]
+            for k in keep[1:]:
+                merged = merged.Union(k)
+            fixed = merged
+        cand = arcpy.FromWKT(fixed.ExportToWkt(), sr)
+        if cand is not None and cand.area > 0:
+            return cand, True
+    except Exception:                                            # noqa: BLE001
+        pass
+    return poly, False
+
+
 def _geodesic_m(coords, working_sr):
     """Geodesic length in meters of the working-SR polyline ``coords``."""
     import arcpy
@@ -849,38 +892,7 @@ def run_patch_analysis(corridor, termini, out_fc, name_field=None,
         cor_w = _densify(cor_w, step)
 
     def _ensure_simple(poly):
-        """(possibly repaired polygon, is_valid) via OGR MakeValid."""
-        try:
-            from osgeo import ogr
-            og = ogr.CreateGeometryFromWkt(poly.WKT)
-            if og is None:
-                return poly, False
-            if og.IsValid():
-                return poly, True
-            fixed = og.MakeValid()
-            if fixed is None or fixed.IsEmpty():
-                return poly, False
-            if ogr.GT_Flatten(fixed.GetGeometryType()) not in (
-                    ogr.wkbPolygon, ogr.wkbMultiPolygon):
-                # MakeValid can hand back a collection with line slivers;
-                # keep only the polygonal members
-                keep = [fixed.GetGeometryRef(i).Clone()
-                        for i in range(fixed.GetGeometryCount())
-                        if ogr.GT_Flatten(
-                            fixed.GetGeometryRef(i).GetGeometryType())
-                        in (ogr.wkbPolygon, ogr.wkbMultiPolygon)]
-                if not keep:
-                    return poly, False
-                merged = keep[0]
-                for k in keep[1:]:
-                    merged = merged.Union(k)
-                fixed = merged
-            cand = arcpy.FromWKT(fixed.ExportToWkt(), working_sr)
-            if cand is not None and cand.area > 0:
-                return cand, True
-        except Exception:                                        # noqa: BLE001
-            pass
-        return poly, False
+        return ensure_simple(poly, working_sr)
 
     cor_w, ok = _ensure_simple(cor_w)
     if not ok:

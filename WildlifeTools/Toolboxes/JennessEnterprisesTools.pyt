@@ -65,6 +65,7 @@ import union_corridors  # noqa: E402
 import hsm_tools       # noqa: E402
 import clip_tools      # noqa: E402
 import patch_analysis  # noqa: E402
+import bottleneck_analysis  # noqa: E402
 import raster_extremes  # noqa: E402
 import tool_metadata  # noqa: E402
 import error_report   # noqa: E402
@@ -327,6 +328,7 @@ class Toolbox(object):
                       NormalizeExistingHSM, ReclassifyFeaturesInHSM,
                       CriticalHabitatFeature, HabitatPatches,
                       ClipDataToAnalysisArea, PatchAnalysis,
+                      BottleneckAnalysis,
                       FindRasterExtremeValues]
 
 
@@ -8919,6 +8921,240 @@ class PatchAnalysis(object):
                          or None),
                 patch_where=P["patch_where"].valueAsText or None,
                 simplify_tolerance=(None if tol is None else float(tol)),
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class BottleneckAnalysis(object):
+    """Bottleneck Analysis -- the widest route through a corridor between
+    two wildland blocks (maximin on the corridor's medial axis) and the
+    width profile along it. The scripting/batch surface of the
+    interactive Bottleneck Analysis window. See ``bottleneck_analysis``."""
+
+    def __init__(self):
+        self.label = "Bottleneck Analysis"
+        self.description = (
+            "Finds the route through a corridor polygon between two "
+            "wildland blocks that MAXIMIZES THE MINIMUM corridor width "
+            "encountered -- the route with the widest bottleneck, chosen "
+            "over every strand and branch of the corridor at once -- and "
+            "measures the corridor width at ~1000 stations along it. "
+            "Computed exactly in vector on the corridor's medial axis "
+            "(a Voronoi construction), with no Spatial Analyst and no "
+            "raster approximation; widths and lengths are meters. "
+            "An optional width threshold classifies the route into "
+            "above/below stretches, reported with lengths sorted "
+            "decreasing. Outputs: the route polyline, optional station "
+            "points (with widths), and optional above/below-threshold "
+            "segments, each stamped with the analysis record. The "
+            "interactive Bottleneck Analysis window (Evaluate Corridors "
+            "menu) offers the same analysis with a live width graph and "
+            "adjustable threshold; THIS tool is the scripting and batch "
+            "surface -- iterate it in ModelBuilder to reproduce the "
+            "original's Batch Bottleneck runs. A modernized port of the "
+            "CorridorDesigner Evaluation Tools' Bottleneck Analysis.")
+        self.category = "Corridor Designer Tools\\Corridor Designer"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        corridor = arcpy.Parameter(
+            displayName="Corridor polygon",
+            name="corridor", datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        corridor_exp = arcpy.Parameter(
+            displayName="Corridor selection expression (when the layer "
+                        "holds several corridors)",
+            name="corridor_expression", datatype="GPSQLExpression",
+            parameterType="Optional", direction="Input")
+        corridor_exp.parameterDependencies = ["corridor"]
+        block_a = arcpy.Parameter(
+            displayName="Wildland Block A",
+            name="block_a", datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        block_a_exp = arcpy.Parameter(
+            displayName="Block A selection expression (when the layer "
+                        "holds several blocks)",
+            name="block_a_expression", datatype="GPSQLExpression",
+            parameterType="Optional", direction="Input")
+        block_a_exp.parameterDependencies = ["block_a"]
+        block_b = arcpy.Parameter(
+            displayName="Wildland Block B",
+            name="block_b", datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        block_b_exp = arcpy.Parameter(
+            displayName="Block B selection expression (when the layer "
+                        "holds several blocks)",
+            name="block_b_expression", datatype="GPSQLExpression",
+            parameterType="Optional", direction="Input")
+        block_b_exp.parameterDependencies = ["block_b"]
+        threshold = arcpy.Parameter(
+            displayName="Width threshold, meters (optional; classifies "
+                        "the route into above/below stretches)",
+            name="threshold", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        out_route = arcpy.Parameter(
+            displayName="Output route feature class",
+            name="out_route", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        out_points = arcpy.Parameter(
+            displayName="Output station points (with widths)",
+            name="out_points", datatype="DEFeatureClass",
+            parameterType="Optional", direction="Output")
+        out_segments = arcpy.Parameter(
+            displayName="Output above/below-threshold segments",
+            name="out_segments", datatype="DEFeatureClass",
+            parameterType="Optional", direction="Output")
+        n_stations = arcpy.Parameter(
+            displayName="Number of width stations along the route",
+            name="n_stations", datatype="GPLong",
+            parameterType="Optional", direction="Input",
+            category="Advanced")
+        n_stations.value = bottleneck_analysis.DEFAULT_STATIONS
+        boundary_step = arcpy.Parameter(
+            displayName="Boundary sampling spacing, meters (blank = "
+                        "automatic)",
+            name="boundary_step", datatype="GPDouble",
+            parameterType="Optional", direction="Input",
+            category="Advanced")
+        simplify = arcpy.Parameter(
+            displayName="Boundary simplification tolerance, meters "
+                        "(blank = automatic; 0 = none)",
+            name="simplify_tolerance", datatype="GPDouble",
+            parameterType="Optional", direction="Input",
+            category="Advanced")
+        profile_json = arcpy.Parameter(
+            displayName="Profile JSON path (used by the Bottleneck "
+                        "Analysis window; leave blank)",
+            name="profile_json", datatype="GPString",
+            parameterType="Optional", direction="Input",
+            category="Advanced")
+        return [corridor, corridor_exp, block_a, block_a_exp, block_b,
+                block_b_exp, threshold, out_route, out_points, out_segments,
+                n_stations, boundary_step, simplify, profile_json]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        cor, outr = P["corridor"], P["out_route"]
+        # Same-layer convenience: picking one blocks layer for BOTH slots
+        # with a recognizable 2-value Block field fills the expressions.
+        ba, bb = P["block_a"], P["block_b"]
+        if (ba.valueAsText and bb.valueAsText
+                and ba.valueAsText == bb.valueAsText
+                and not ba.hasBeenValidated
+                and not P["block_a_expression"].altered
+                and not P["block_b_expression"].altered):
+            try:
+                src = ba.value or ba.valueAsText
+                have = {f.name for f in arcpy.ListFields(src)}
+                field = next((f for f in ("Block", "Category")
+                              if f in have), None)
+                if field:
+                    vals = sorted({r[0] for r in
+                                   arcpy.da.SearchCursor(src, [field])
+                                   if r[0] is not None})
+                    if len(vals) == 2:
+                        def _lit(v):
+                            return ("'{}'".format(v)
+                                    if isinstance(v, str) else str(v))
+                        P["block_a_expression"].value = "{} = {}".format(
+                            field, _lit(vals[0]))
+                        P["block_b_expression"].value = "{} = {}".format(
+                            field, _lit(vals[1]))
+            except Exception:
+                pass
+        if cor.valueAsText and not cor.hasBeenValidated:
+            if not outr.altered or outr.valueAsText == self._auto_out:
+                try:
+                    base = os.path.splitext(os.path.basename(
+                        str(cor.valueAsText)))[0]
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(cor.value or cor.valueAsText)
+                        .catalogPath)
+                    sug = _unique_name(
+                        _legalize("Bottleneck_" + base), ws)
+                    outr.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        for name in ("corridor", "block_a", "block_b"):
+            p = P[name]
+            if not p.valueAsText:
+                continue
+            try:
+                shp = arcpy.Describe(p.value or p.valueAsText).shapeType
+            except Exception:
+                continue
+            if shp and shp.lower() != "polygon":
+                p.setErrorMessage(
+                    "A polygon feature class or layer is required "
+                    "(this is a {} dataset).".format(shp))
+        t = P["threshold"]
+        if t.value is not None and t.value <= 0:
+            t.setErrorMessage("The width threshold must be greater than "
+                              "zero (meters).")
+        if (P["out_segments"].valueAsText and t.value is None):
+            P["out_segments"].setWarningMessage(
+                "Segments are the above/below-threshold stretches -- "
+                "without a threshold this output is skipped.")
+        return
+
+    @staticmethod
+    def _label_for(layer_text, expression):
+        base = os.path.splitext(os.path.basename(str(layer_text)))[0]
+        if expression:
+            text = str(expression).replace("=", " ").replace("'", "")
+            text = " ".join(text.split())
+            return text if len(text) <= 40 else base
+        return base
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(land_facet_linkage)
+            importlib.reload(patch_analysis)
+            importlib.reload(bottleneck_analysis)
+            P = {p.name: p for p in parameters}
+            thr = P["threshold"].value
+            bottleneck_analysis.run_bottleneck(
+                corridor=P["corridor"].value or P["corridor"].valueAsText,
+                block_a=P["block_a"].value or P["block_a"].valueAsText,
+                block_b=P["block_b"].value or P["block_b"].valueAsText,
+                corridor_where=P["corridor_expression"].valueAsText or None,
+                block_a_where=P["block_a_expression"].valueAsText or None,
+                block_b_where=P["block_b_expression"].valueAsText or None,
+                block_a_label=self._label_for(
+                    P["block_a"].valueAsText,
+                    P["block_a_expression"].valueAsText),
+                block_b_label=self._label_for(
+                    P["block_b"].valueAsText,
+                    P["block_b_expression"].valueAsText),
+                out_route=P["out_route"].valueAsText,
+                out_points=P["out_points"].valueAsText or None,
+                out_segments=P["out_segments"].valueAsText or None,
+                threshold=(float(thr) if thr is not None else None),
+                n_stations=int(P["n_stations"].value or
+                               bottleneck_analysis.DEFAULT_STATIONS),
+                boundary_step=(float(P["boundary_step"].value)
+                               if P["boundary_step"].value is not None
+                               else None),
+                simplify_tolerance=(float(P["simplify_tolerance"].value)
+                                    if P["simplify_tolerance"].value
+                                    is not None else None),
+                profile_json=P["profile_json"].valueAsText or None,
                 messages=messages)
         except arcpy.ExecuteError:
             raise
