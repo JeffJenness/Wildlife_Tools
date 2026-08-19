@@ -686,11 +686,9 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
                   ("Area_SqM", "DOUBLE", None), ("Cells", "LONG", None),
                   ("PctOfMax", "DOUBLE", None), ("MeanValue", "DOUBLE", None),
                   ("MaxValue", "DOUBLE", None), ("Threshold", "DOUBLE", None)]
-        for nm, tp, ln in fields:
-            if ln:
-                arcpy.management.AddField(out_fc, nm, tp, field_length=ln)
-            else:
-                arcpy.management.AddField(out_fc, nm, tp)
+        # one AddFields call, not one AddField per field (standing rule)
+        arcpy.management.AddFields(out_fc, [
+            [nm, tp, "", ln or "", "", ""] for nm, tp, ln in fields])
 
         with arcpy.da.InsertCursor(
                 out_fc, ["SHAPE@", "Category", "CategoryID", "Block",

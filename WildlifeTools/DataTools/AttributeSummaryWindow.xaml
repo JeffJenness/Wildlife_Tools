@@ -205,6 +205,12 @@
                     FontFamily="{StaticResource BodyFontFam}" FontSize="14"
                     Foreground="{StaticResource InkBrush}"
                     ToolTip="Sort the classes by value (combined mode sorts by the first analyzed field, then the second, ...). Unchecked: classes appear in the order they were first encountered." />
+                <CheckBox x:Name="chkGeometry" Margin="0,4,0,0" IsChecked="True"
+                    Content="Include geometry totals (length / area / cells)"
+                    FontFamily="{StaticResource BodyFontFam}" FontSize="14"
+                    Foreground="{StaticResource InkBrush}"
+                    Checked="OnOptionChanged" Unchecked="OnOptionChanged"
+                    ToolTip="Also total each class's geodesic length (polylines), area (polygons), or cell count (rasters with an attribute table), enabling the Geom tokens, the header total, and extra columns in the copied table. The class's share of total LENGTH or AREA is the per-unit-landscape proportion -- the ecologically meaningful one when features differ in size: a class covering one huge polygon and a class covering fifty slivers can have identical record counts and wildly different footprints on the ground. Points and standalone tables have no geometry to total." />
 
                 <TextBlock Text="Format Text" Style="{StaticResource HeadLabel}"
                     ToolTip="The template for each report line. Tokens in {braces} are replaced per class; everything else is literal text. Click the buttons below to insert tokens at the cursor." />
@@ -253,6 +259,18 @@
                   <Button Content="Commas" Margin="2" Click="OnToken" Tag="{}{commas}"
                       Style="{StaticResource ParchButton}"
                       ToolTip="Insert the {commas} flag -- all numbers in the line get thousands separators (the token itself does not print)." />
+                  <Button Content="Geom Length" Margin="2" Click="OnToken" Tag="{}{GeomLength_km}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert {GeomLength_km} -- the class's total geodesic polyline length in kilometers ({GeomLength_m} for meters). Needs 'Include geometry totals'; renders empty for non-polyline sources." />
+                  <Button Content="Geom Area" Margin="2" Click="OnToken" Tag="{}{GeomArea_ha}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert {GeomArea_ha} -- the class's total geodesic area in hectares ({GeomArea_m2} / {GeomArea_km2} for square meters / kilometers). Works for polygons, and for rasters with an attribute table via cells x cell area. Needs 'Include geometry totals'." />
+                  <Button Content="Cells" Margin="2" Click="OnToken" Tag="{}{Cells}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert {Cells} -- the class's total cell count from a raster's attribute table (the Count column). Needs 'Include geometry totals'." />
+                  <Button Content="Geom Prop" Margin="2" Click="OnToken" Tag="{}{GeomProp2}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert {GeomProp2} -- the class's share of the TOTAL length / area / cells as a percentage with 2 decimals ({GeomProp0}, {GeomProp3}, ... for other precisions). This is the per-unit-LANDSCAPE proportion -- the ecologically meaningful one when features differ in size -- where {Prop2} is the per-record proportion. Needs 'Include geometry totals'." />
                   <Button Content="Simple List" Margin="2" Click="OnResetFormat"
                       Style="{StaticResource ParchButton}"
                       ToolTip="Reset the format to the default simple list." />

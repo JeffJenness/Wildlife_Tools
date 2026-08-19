@@ -354,11 +354,9 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
               ("SrcPath", "TEXT", 254), ("Elevation", "DOUBLE", None),
               ("Prominence", "DOUBLE", None), ("EdgeOfData", "SHORT", None),
               ("X", "DOUBLE", None), ("Y", "DOUBLE", None)]
-    for nm, tp, ln in fields:
-        if ln:
-            arcpy.management.AddField(out_fc, nm, tp, field_length=ln)
-        else:
-            arcpy.management.AddField(out_fc, nm, tp)
+    # one AddFields call, not one AddField per field (standing rule)
+    arcpy.management.AddFields(out_fc, [
+        [nm, tp, "", ln or "", "", ""] for nm, tp, ln in fields])
 
     n_edge = 0
     with arcpy.da.InsertCursor(

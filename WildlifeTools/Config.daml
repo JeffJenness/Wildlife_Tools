@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.65.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.66.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -806,6 +806,17 @@
             Find the route through a corridor between two wildland blocks with the WIDEST bottleneck -- the maximin route on the corridor's medial axis, chosen over every strand at once -- and graph the corridor width along it. Adjust the width threshold live (type, click the graph, or drag the line) with below-threshold stretches red on both the graph and the map; save the route, station points, and segments. Blocks come from map layers or feature classes on disk, narrowed to a single polygon by map selection or SQL. A modernized port of the CorridorDesigner Evaluation Tools' Bottleneck Analysis. No Spatial Analyst needed.<disabledText />
           </tooltip>
         </button>
+        <button id="WildlifeTools_WeightedSummaryStatistics"
+                caption="Weighted Summary Statistics"
+                className="Corridor.WeightedSummaryStatisticsButton"
+                loadOnClick="true"
+                smallImage="Images\WeightedStats_16.png"
+                largeImage="Images\WeightedStats_32.png"
+                keytip="WS">
+          <tooltip heading="Weighted Summary Statistics">
+            Summarize numeric fields of polylines or polygons two ways, side by side: ordinary record statistics AND geometry-weighted statistics, where every record is weighted by its geodesic length or area. For per-unit-landscape attributes (habitat suitability, canopy cover, resistance) the weighted mean is the value of an average hectare -- the statistic an animal actually experiences -- and it does not change however the landscape is subdivided into polygons. Optional case field for per-class rows; map selections honored. A port of the Summary Statistics tool from the CorridorDesigner Evaluation Tools. No Spatial Analyst needed.<disabledText />
+          </tooltip>
+        </button>
         <button id="WildlifeTools_LandFacetDescribe"
                 caption="Corridor Analysis Data Report"
                 className="Corridor.LandFacetDescribeButton"
@@ -1188,6 +1199,7 @@
           </tooltip>
           <button refID="WildlifeTools_PatchAnalysis" />
           <button refID="WildlifeTools_Bottleneck" />
+          <button refID="WildlifeTools_WeightedSummaryStatistics" />
         </menu>
         <menu id="WildlifeTools_HsmMenu"
               caption="Habitat Suitability Modeling"

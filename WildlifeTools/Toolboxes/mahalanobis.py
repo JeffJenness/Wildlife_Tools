@@ -1743,18 +1743,22 @@ def _matrix_to_table(matrix, out_table, variables, is_vector, source_extra, mess
     if arcpy.Exists(out_table):
         arcpy.management.Delete(out_table)
     arcpy.management.CreateTable(out_ws, out_name)
-    arcpy.management.AddField(out_table, "Variable", "TEXT", field_length=128)
     k = len(variables)
+    # one AddFields call, not one AddField per field (standing rule)
     if is_vector:
-        arcpy.management.AddField(out_table, "Mean", "DOUBLE")
+        arcpy.management.AddFields(out_table, [
+            ["Variable", "TEXT", "", 128, "", ""],
+            ["Mean", "DOUBLE", "", "", "", ""]])
         cols = ["Variable", "Mean"]
         with arcpy.da.InsertCursor(out_table, cols) as ins:
             for i, v in enumerate(variables):
                 ins.insertRow([v["name"], float(matrix[i])])
     else:
         value_cols = ["Col{}".format(i) for i in range(k)]
-        for c in value_cols:
-            arcpy.management.AddField(out_table, c, "DOUBLE")
+        arcpy.management.AddFields(
+            out_table,
+            [["Variable", "TEXT", "", 128, "", ""]]
+            + [[c, "DOUBLE", "", "", "", ""] for c in value_cols])
         with arcpy.da.InsertCursor(out_table, ["Variable"] + value_cols) as ins:
             for i, v in enumerate(variables):
                 ins.insertRow([v["name"]] + [float(x) for x in matrix[i]])
@@ -2180,8 +2184,10 @@ def run_mahalanobis_points(target_points, var_rows, sample_method, stats_source,
     fields = []  # list of (out_type, field name), in canonical order
     for t in selected:
         f = _unique_field(out_points, POINT_FIELD[t])
-        arcpy.management.AddField(out_points, f, "DOUBLE")
         fields.append((t, f))
+    # one AddFields call, not one AddField per field (standing rule)
+    arcpy.management.AddFields(out_points, [
+        [f, "DOUBLE", "", "", "", ""] for _t, f in fields])
 
     df = k
     if OUT_PVALUE in selected:

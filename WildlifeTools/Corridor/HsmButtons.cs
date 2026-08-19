@@ -111,4 +111,14 @@ namespace WildlifeTools.Corridor
         protected override string ToolName => "PatchAnalysis";
         protected override string DisplayName => "Patch Analysis";
     }
+
+    /// <summary>Evaluate Corridors 3: record + length/area-weighted
+    /// statistics of numeric fields -- the per-unit-landscape description
+    /// of an attribute (the CorridorDesigner Summary Statistics
+    /// weighted-family port).</summary>
+    internal class WeightedSummaryStatisticsButton : HsmToolButtonBase
+    {
+        protected override string ToolName => "WeightedSummaryStatistics";
+        protected override string DisplayName => "Weighted Summary Statistics";
+    }
 }

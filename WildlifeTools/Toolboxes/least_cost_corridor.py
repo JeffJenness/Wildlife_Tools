@@ -410,11 +410,9 @@ def _create_corridor_fc(out_ws, out_name, sr):
               ("Block_A", "LONG", None), ("Block_B", "LONG", None),
               ("Percentile", "DOUBLE", None), ("CorridorID", "LONG", None),
               ("Area_SqM", "DOUBLE", None), ("Cells", "LONG", None)]
-    for nm, tp, ln in fields:
-        if ln:
-            arcpy.management.AddField(out_fc, nm, tp, field_length=ln)
-        else:
-            arcpy.management.AddField(out_fc, nm, tp)
+    # one AddFields call, not one AddField per field (standing rule)
+    arcpy.management.AddFields(out_fc, [
+        [nm, tp, "", ln or "", "", ""] for nm, tp, ln in fields])
     return out_fc
 
 

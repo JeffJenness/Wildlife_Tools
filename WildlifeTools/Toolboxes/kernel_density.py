@@ -340,10 +340,11 @@ def _add_level_fields(fc):
              ("CumProportion", "DOUBLE", None, "Cumulative proportion (raster value)"),
              ("Label", "TEXT", 5, None),
              ("Primary", "TEXT", 5, None)]
-    for name, ftype, length, alias in specs:
-        if name not in existing:
-            arcpy.management.AddField(fc, name, ftype, field_length=length,
-                                      field_alias=alias)
+    # one AddFields call, not one AddField per field (standing rule)
+    todo = [[name, ftype, alias or "", length or "", "", ""]
+            for name, ftype, length, alias in specs if name not in existing]
+    if todo:
+        arcpy.management.AddFields(fc, todo)
 
 
 def _match_index(levels, value):

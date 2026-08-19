@@ -1496,14 +1496,13 @@ def run_patch_map(in_hsm, out_fc, radius, radius_units, threshold,
         out_ws, out_name = os.path.split(out_fc)
         arcpy.management.CreateFeatureclass(out_ws, out_name, "POLYGON",
                                             spatial_reference=rast_sr)
-        for nm, tp, ln in [("PatchID", "LONG", None),
-                           ("Class", "SHORT", None),
-                           ("Class_Name", "TEXT", 24),
-                           ("Area_Ha", "DOUBLE", None)]:
-            if ln:
-                arcpy.management.AddField(out_fc, nm, tp, field_length=ln)
-            else:
-                arcpy.management.AddField(out_fc, nm, tp)
+        # one AddFields call, not one AddField per field (standing rule)
+        arcpy.management.AddFields(out_fc, [
+            [nm, tp, "", ln or "", "", ""]
+            for nm, tp, ln in [("PatchID", "LONG", None),
+                               ("Class", "SHORT", None),
+                               ("Class_Name", "TEXT", 24),
+                               ("Area_Ha", "DOUBLE", None)]])
 
         order = sorted(geoms.keys(),
                        key=lambda l: (-int(cls[l]), -float(area_ha[l])))

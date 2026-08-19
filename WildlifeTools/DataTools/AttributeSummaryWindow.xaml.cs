@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using ArcGIS.Core.CIM;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
 using ArcGIS.Desktop.Mapping;
 using WildlifeTools.PolarPlots;
@@ -34,6 +35,7 @@ namespace WildlifeTools.DataTools
                 ? AttributeSummary.DefaultFormat : s.FormatText;
             chkCombine.IsChecked = s.Combine;
             chkSort.IsChecked = s.Sort;
+            chkGeometry.IsChecked = s.IncludeGeometry;
             rbSelected.IsChecked = s.SelectedOnly;
             rbAll.IsChecked = !s.SelectedOnly;
             Loaded += async (_, __) => await LoadSourcesAsync();
@@ -205,6 +207,26 @@ namespace WildlifeTools.DataTools
         private void OnOptionChanged(object sender, RoutedEventArgs e) =>
             UpdateSample();
 
+        /// <summary>The weight kind the CURRENT source would produce -- so
+        /// the sample line previews the geometry tokens realistically.</summary>
+        private AttributeSummary.WeightKind SampleKind()
+        {
+            if (chkGeometry?.IsChecked != true)
+                return AttributeSummary.WeightKind.None;
+            var src = cboSource?.SelectedItem as PolarPlotData.Source;
+            if (src == null) return AttributeSummary.WeightKind.AreaM2;
+            if (src.IsRaster) return AttributeSummary.WeightKind.Cells;
+            switch (src.FeatureLayer?.ShapeType)
+            {
+                case esriGeometryType.esriGeometryPolyline:
+                    return AttributeSummary.WeightKind.LengthM;
+                case esriGeometryType.esriGeometryPolygon:
+                    return AttributeSummary.WeightKind.AreaM2;
+                default:
+                    return AttributeSummary.WeightKind.None;
+            }
+        }
+
         private void UpdateSample()
         {
             if (txtSample == null) return;
@@ -218,7 +240,9 @@ namespace WildlifeTools.DataTools
             try
             {
                 txtSample.Text = AttributeSummary.Render(
-                    txtFormat.Text, vals, 3, 1234, 25230);
+                    txtFormat.Text, vals, 3, 1234, 25230,
+                    weight: 456789.5, totalWeight: 3456789.5,
+                    kind: SampleKind(), cellAreaM2: 900.0);
             }
             catch (Exception ex) { txtSample.Text = "(format error: " + ex.Message + ")"; }
         }
@@ -290,6 +314,7 @@ namespace WildlifeTools.DataTools
             bool combine = chkCombine.IsChecked == true;
             bool sort = chkSort.IsChecked == true;
             bool selOnly = rbSelected.IsChecked == true;
+            bool geometry = chkGeometry.IsChecked == true;
             string format = txtFormat.Text;
             var fields = _analysis.ToList();
 
@@ -298,7 +323,8 @@ namespace WildlifeTools.DataTools
             try
             {
                 var result = await QueuedTask.Run(() =>
-                    AttributeSummary.Gather(src, fields, selOnly, combine, sort));
+                    AttributeSummary.Gather(src, fields, selOnly, combine,
+                                            sort, geometry));
                 SetStatus(result.TotalCount.ToString("N0") +
                     " record(s) analyzed; " +
                     result.Sections.Sum(s2 => s2.Classes.Count).ToString("N0") +
@@ -311,6 +337,7 @@ namespace WildlifeTools.DataTools
                     Combine = combine,
                     Sort = sort,
                     SelectedOnly = selOnly,
+                    IncludeGeometry = geometry,
                 });
             }
             catch (Exception ex)

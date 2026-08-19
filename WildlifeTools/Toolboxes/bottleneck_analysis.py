@@ -674,9 +674,12 @@ def run_bottleneck(corridor, block_a, block_b,
     written = {}
     if out_route:
         out_route = _fc(out_route, "POLYLINE")
-        arcpy.management.AddField(out_route, "Length_m", "DOUBLE")
-        arcpy.management.AddField(out_route, "MinW_m", "DOUBLE")
-        arcpy.management.AddField(out_route, "MeanW_m", "DOUBLE")
+        # one AddFields call, not one AddField per field: each AddField is
+        # a full GP launch against the workspace catalog (standing rule)
+        arcpy.management.AddFields(out_route, [
+            ["Length_m", "DOUBLE", "", "", "", ""],
+            ["MinW_m", "DOUBLE", "", "", "", ""],
+            ["MeanW_m", "DOUBLE", "", "", "", ""]])
         with arcpy.da.InsertCursor(
                 out_route,
                 ["SHAPE@", "Length_m", "MinW_m", "MeanW_m"]) as cur:
@@ -702,9 +705,10 @@ def run_bottleneck(corridor, block_a, block_b,
         written["route"] = out_route
     if out_points:
         out_points = _fc(out_points, "POINT")
-        arcpy.management.AddField(out_points, "Station_m", "DOUBLE")
-        arcpy.management.AddField(out_points, "Width_m", "DOUBLE")
-        arcpy.management.AddField(out_points, "Below", "SHORT")
+        arcpy.management.AddFields(out_points, [
+            ["Station_m", "DOUBLE", "", "", "", ""],
+            ["Width_m", "DOUBLE", "", "", "", ""],
+            ["Below", "SHORT", "", "", "", ""]])
         with arcpy.da.InsertCursor(
                 out_points,
                 ["SHAPE@", "Station_m", "Width_m", "Below"]) as cur:
@@ -725,9 +729,9 @@ def run_bottleneck(corridor, block_a, block_b,
                             "above/below-threshold pieces).")
         else:
             out_segments = _fc(out_segments, "POLYLINE")
-            arcpy.management.AddField(out_segments, "Class", "TEXT",
-                                      field_length=16)
-            arcpy.management.AddField(out_segments, "Length_m", "DOUBLE")
+            arcpy.management.AddFields(out_segments, [
+                ["Class", "TEXT", "", 16, "", ""],
+                ["Length_m", "DOUBLE", "", "", "", ""]])
             pieces = split_at_threshold(stations_g, widths, pts, threshold)
             with arcpy.da.InsertCursor(
                     out_segments,

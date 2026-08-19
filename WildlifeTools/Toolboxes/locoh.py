@@ -251,8 +251,10 @@ def _create_polygon_fc(out_path, sr, field_defs):
     out_ws, out_name = os.path.split(out_path)
     arcpy.management.CreateFeatureclass(out_ws, out_name, "POLYGON", spatial_reference=sr)
     shp = _is_shapefile(out_path)
-    for gdb_name, ftype, shp_name in field_defs:
-        arcpy.management.AddField(out_path, shp_name if shp else gdb_name, ftype)
+    # one AddFields call, not one AddField per field (standing rule)
+    arcpy.management.AddFields(out_path, [
+        [shp_name if shp else gdb_name, ftype, "", "", "", ""]
+        for gdb_name, ftype, shp_name in field_defs])
     if shp:
         # Shapefiles are created with a default "Id" field; drop it now that our own
         # fields exist (a shapefile must always retain at least one attribute field).

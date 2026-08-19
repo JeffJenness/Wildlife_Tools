@@ -270,8 +270,9 @@ def run_shadow_polygons(in_features, out_fc, num_rings=10, size_value=0.25,
         arcpy.management.Delete(out_fc)
     arcpy.management.CreateFeatureclass(out_ws, out_name, "POLYGON",
                                         spatial_reference=sr)
-    arcpy.management.AddField(out_fc, "Buffer_Size", "DOUBLE")
-    arcpy.management.AddField(out_fc, "Transparency", "DOUBLE")
+    arcpy.management.AddFields(out_fc, [
+        ["Buffer_Size", "DOUBLE", "", "", "", ""],
+        ["Transparency", "DOUBLE", "", "", "", ""]])
     with arcpy.da.InsertCursor(out_fc, ["SHAPE@", "Buffer_Size", "Transparency"]) as cur:
         for geom, dist, transp in rows:
             cur.insertRow((geom, dist, transp))

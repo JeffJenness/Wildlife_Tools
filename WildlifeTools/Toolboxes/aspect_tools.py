@@ -2213,26 +2213,20 @@ def _write_zonal_table(out_table, in_zone_data, zone_field, zone_is_raster,
     while zf_name.lower() in taken:
         k += 1
         zf_name = "{}_{}".format(base_zf, k)
-    if zf_len:
-        arcpy.management.AddField(out_table, zf_name, zf_type,
-                                  field_length=zf_len, field_alias=zone_field)
-    else:
-        arcpy.management.AddField(out_table, zf_name, zf_type,
-                                  field_alias=zone_field
-                                  if not zone_is_raster else "Zone Value")
-
-    arcpy.management.AddField(out_table, "COUNT", "LONG",
-                              field_alias="Count of Directional Cells")
-    arcpy.management.AddField(out_table, "FLAT_COUNT", "LONG",
-                              field_alias="Flat Cells (aspect = -1)")
-    arcpy.management.AddField(out_table, "FLAT_PCT", "DOUBLE",
-                              field_alias="Flat Cells (%)")
+    # one AddFields call for the whole schema (standing rule: a per-field
+    # AddField loop is a full GP launch per field)
+    fdesc = [[zf_name, zf_type,
+              zone_field if not zone_is_raster else "Zone Value",
+              zf_len or "", "", ""],
+             ["COUNT", "LONG", "Count of Directional Cells", "", "", ""],
+             ["FLAT_COUNT", "LONG", "Flat Cells (aspect = -1)", "", "", ""],
+             ["FLAT_PCT", "DOUBLE", "Flat Cells (%)", "", "", ""]]
     stat_fields = []
     for k in keys:
         for fname, alias, ftype in _ZFIELDS[k]:
-            arcpy.management.AddField(out_table, fname, ftype,
-                                      field_alias=alias)
+            fdesc.append([fname, ftype, alias, "", "", ""])
             stat_fields.append(fname)
+    arcpy.management.AddFields(out_table, fdesc)
 
     # Numeric zone keys sort ascending; anything else keeps first-seen order.
     try:

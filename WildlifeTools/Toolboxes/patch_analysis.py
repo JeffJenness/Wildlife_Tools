@@ -1339,16 +1339,14 @@ def run_patch_analysis(corridor, termini, out_fc, name_field=None,
         ws, out_name, "POLYLINE", spatial_reference=sr_out)
     field_len = {"From_Name": 128, "To_Name": 128,
                  "Used_By": 254, "Crit_For": 254}
-    arcpy.management.AddField(out_fc, "From_Name", "TEXT",
-                              field_length=field_len["From_Name"])
-    arcpy.management.AddField(out_fc, "To_Name", "TEXT",
-                              field_length=field_len["To_Name"])
-    arcpy.management.AddField(out_fc, "Length_m", "DOUBLE")
-    arcpy.management.AddField(out_fc, "Rank", "LONG")
-    arcpy.management.AddField(out_fc, "Used_By", "TEXT",
-                              field_length=field_len["Used_By"])
-    arcpy.management.AddField(out_fc, "Crit_For", "TEXT",
-                              field_length=field_len["Crit_For"])
+    # one AddFields call, not one AddField per field (standing rule)
+    arcpy.management.AddFields(out_fc, [
+        ["From_Name", "TEXT", "", field_len["From_Name"], "", ""],
+        ["To_Name", "TEXT", "", field_len["To_Name"], "", ""],
+        ["Length_m", "DOUBLE", "", "", "", ""],
+        ["Rank", "LONG", "", "", "", ""],
+        ["Used_By", "TEXT", "", field_len["Used_By"], "", ""],
+        ["Crit_For", "TEXT", "", field_len["Crit_For"], "", ""]])
 
     def _clip_text(text, name):
         text = "; ".join(sorted(set(text)))

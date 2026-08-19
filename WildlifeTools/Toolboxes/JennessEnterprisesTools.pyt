@@ -66,6 +66,7 @@ import hsm_tools       # noqa: E402
 import clip_tools      # noqa: E402
 import patch_analysis  # noqa: E402
 import bottleneck_analysis  # noqa: E402
+import weighted_stats  # noqa: E402
 import raster_extremes  # noqa: E402
 import tool_metadata  # noqa: E402
 import error_report   # noqa: E402
@@ -328,7 +329,7 @@ class Toolbox(object):
                       NormalizeExistingHSM, ReclassifyFeaturesInHSM,
                       CriticalHabitatFeature, HabitatPatches,
                       ClipDataToAnalysisArea, PatchAnalysis,
-                      BottleneckAnalysis,
+                      BottleneckAnalysis, WeightedSummaryStatistics,
                       FindRasterExtremeValues]
 
 
@@ -9155,6 +9156,128 @@ class BottleneckAnalysis(object):
                                     if P["simplify_tolerance"].value
                                     is not None else None),
                 profile_json=P["profile_json"].valueAsText or None,
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class WeightedSummaryStatistics(object):
+    """Weighted Summary Statistics -- record statistics AND
+    length-/area-weighted statistics of numeric fields on polyline or
+    polygon features, the per-unit-landscape description of an attribute.
+    Port of the CorridorDesigner Evaluation Tools' Summary Statistics
+    weighted family (Mean_WBL / Mean_WBA). See ``weighted_stats``."""
+
+    def __init__(self):
+        self.label = "Weighted Summary Statistics"
+        self.description = (
+            "Summarizes numeric attribute fields of a POLYLINE or POLYGON "
+            "feature class two ways, side by side: ordinary record "
+            "statistics (each record one equal vote: count, min, max, "
+            "range, sum, mean, standard deviation, variance, median) and "
+            "GEOMETRY-WEIGHTED statistics, where each record is weighted "
+            "by its geodesic length (polylines) or area (polygons): "
+            "weighted mean, standard deviation, variance and median. For "
+            "attributes that describe a per-unit-landscape property -- "
+            "habitat suitability, canopy cover, resistance, road effects "
+            "-- the weighted statistics are the ecologically correct "
+            "description: they report the value of an average unit of "
+            "land (or kilometer of line), not an average mapping unit, "
+            "and they do not change when the same landscape is subdivided "
+            "into different polygons. An optional case field groups the "
+            "rows (one set of statistics per class). A map layer's "
+            "selection is honored. A port of the CorridorDesigner "
+            "Evaluation Tools' Summary Statistics weighted-statistics "
+            "family (Mean_WBL / Mean_WBA). No Spatial Analyst needed.")
+        self.category = "Corridor Designer Tools\\Corridor Designer"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_features = arcpy.Parameter(
+            displayName="Input polyline or polygon features",
+            name="in_features",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        fields = arcpy.Parameter(
+            displayName="Numeric field(s) to summarize", name="fields",
+            datatype="Field", parameterType="Required", direction="Input",
+            multiValue=True)
+        fields.parameterDependencies = [in_features.name]
+        fields.filter.list = ["Short", "Long", "BigInteger", "Float",
+                              "Double"]
+        case_field = arcpy.Parameter(
+            displayName="Case field (optional -- one row of statistics "
+                        "per class)", name="case_field",
+            datatype="Field", parameterType="Optional", direction="Input")
+        case_field.parameterDependencies = [in_features.name]
+        case_field.filter.list = ["Short", "Long", "BigInteger", "Text",
+                                  "Date"]
+        out_table = arcpy.Parameter(
+            displayName="Output table", name="out_table",
+            datatype="DETable", parameterType="Required",
+            direction="Output")
+        return [in_features, fields, case_field, out_table]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inf, outt = P["in_features"], P["out_table"]
+        if inf.valueAsText:
+            if not outt.altered or outt.valueAsText == self._auto_out:
+                try:
+                    base = _legalize(os.path.splitext(os.path.basename(
+                        inf.valueAsText))[0] + "_WeightedStats")
+                    ws = arcpy.env.workspace or os.path.dirname(
+                        arcpy.Describe(inf.valueAsText).catalogPath)
+                    sug = _unique_name(base, ws)
+                    outt.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        inf = P["in_features"]
+        if inf.valueAsText:
+            try:
+                shp = str(getattr(arcpy.Describe(inf.value
+                                                 or inf.valueAsText),
+                                  "shapeType", ""))
+            except Exception:
+                shp = ""
+            if shp and shp not in ("Polyline", "Polygon"):
+                inf.setErrorMessage(
+                    "A POLYLINE or POLYGON feature class is required -- "
+                    "the weighted statistics weight each record by its "
+                    "length or area, which a {} feature does not have. "
+                    "For plain record statistics on any table, use "
+                    "Esri's Summary Statistics tool.".format(shp))
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(mahalanobis)
+            importlib.reload(weighted_stats)
+            P = {p.name: p for p in parameters}
+            raw = P["fields"].valueAsText or ""
+            field_list = [f.strip("' ") for f in raw.split(";")
+                          if f.strip("' ")]
+            weighted_stats.run_weighted_stats(
+                in_features=P["in_features"].value
+                or P["in_features"].valueAsText,
+                fields=field_list,
+                out_table=P["out_table"].valueAsText,
+                case_field=P["case_field"].valueAsText or None,
                 messages=messages)
         except arcpy.ExecuteError:
             raise

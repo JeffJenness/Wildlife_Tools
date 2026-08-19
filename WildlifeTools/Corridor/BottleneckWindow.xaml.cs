@@ -1415,20 +1415,16 @@ namespace WildlifeTools.Corridor
                         "", _routePts[0].SpatialReference));
                 if (r1.IsFailed) throw new InvalidOperationException(
                     string.Join("; ", r1.ErrorMessages.Select(m => m.Text)));
-                await RunGpQuiet("management.AddField",
-                    Geoprocessing.MakeValueArray(target, "Class", "TEXT", "",
-                        "", 32));
-                await RunGpQuiet("management.AddField",
-                    Geoprocessing.MakeValueArray(target, "Length_m", "DOUBLE"));
-                // Jeff: nearest/farthest the corridor EDGE gets along each
-                // segment -- half the min/max corridor width over its
-                // stations (width = 2 x the distance to the nearest edge)
-                await RunGpQuiet("management.AddField",
-                    Geoprocessing.MakeValueArray(target, "Min_Distance",
-                        "DOUBLE"));
-                await RunGpQuiet("management.AddField",
-                    Geoprocessing.MakeValueArray(target, "Max_Distance",
-                        "DOUBLE"));
+                // one AddFields call, not one AddField per field (each is a
+                // full GP launch -- the standing schema-building rule).
+                // Min/Max_Distance (Jeff): nearest/farthest the corridor
+                // EDGE gets along each segment -- half the min/max corridor
+                // width over its stations (width = 2 x the edge distance)
+                await RunGpQuiet("management.AddFields",
+                    Geoprocessing.MakeValueArray(target,
+                        "Class TEXT # 32 # #;Length_m DOUBLE # # # #;"
+                        + "Min_Distance DOUBLE # # # #;"
+                        + "Max_Distance DOUBLE # # # #"));
                 await QueuedTask.Run(() =>
                 {
                     using (var gdb = OpenDatastore(target))

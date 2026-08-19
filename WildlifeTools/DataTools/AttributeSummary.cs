@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using ArcGIS.Core.Data;
 using ArcGIS.Core.Data.Raster;
+using ArcGIS.Core.Geometry;
 using ArcGIS.Desktop.Mapping;
 
 namespace WildlifeTools.DataTools
@@ -28,6 +29,13 @@ namespace WildlifeTools.DataTools
     ///   {tab} {vbcrlf}  literal tab / newline
     ///   {Length}        combined length of the inserted value strings
     ///   {commas}        flag: thousands separators in numbers (removed)
+    /// Geometry tokens (2026-08-19, the Corridor Summarize port): the
+    /// class's TOTAL geodesic geometry -- {GeomLength_m} / {GeomLength_km}
+    /// (polylines), {GeomArea_m2} / {GeomArea_ha} / {GeomArea_km2}
+    /// (polygons; VAT rasters via cells x cell area), {Cells} (VAT
+    /// rasters), and {GeomPropN}, the class's share of the total length /
+    /// area / cells -- the per-unit-LANDSCAPE proportion, where {PropN}
+    /// is the per-record one. Inapplicable tokens render as empty text.
     /// All token matching is case-insensitive, like the original.
     /// </summary>
     internal static class AttributeSummary
@@ -35,15 +43,29 @@ namespace WildlifeTools.DataTools
         public const string DefaultFormat =
             "  {increment}] {val1} (n = {Count}; {Prop2} of {total_count}){commas}";
 
+        /// <summary>What a class's geometry weight means for this source.</summary>
+        public enum WeightKind
+        {
+            None,       // table / points: no geometry to total
+            LengthM,    // polylines: geodesic meters
+            AreaM2,     // polygons: geodesic square meters
+            Cells,      // VAT raster: cell counts (x CellAreaM2 for area)
+        }
+
         // ---- format rendering ----------------------------------------------
         public static string Render(string format, IReadOnlyList<string> values,
-                                    long increment, long count, long totalCount)
+                                    long increment, long count, long totalCount,
+                                    double weight = 0, double totalWeight = 0,
+                                    WeightKind kind = WeightKind.None,
+                                    double cellAreaM2 = 0)
         {
             string fmt = format ?? DefaultFormat;
             bool commas = ContainsCI(fmt, "{commas}");
             if (commas) fmt = ReplaceCI(fmt, "{commas}", "");
             string num(long v) => v.ToString(commas ? "#,##0" : "0",
                                              CultureInfo.InvariantCulture);
+            string dnum(double v) => v.ToString(commas ? "#,##0.###" : "0.###",
+                                                CultureInfo.InvariantCulture);
 
             long length = 0;
             for (int i = 0; i < values.Count; i++)
@@ -56,6 +78,36 @@ namespace WildlifeTools.DataTools
             fmt = ReplaceCI(fmt, "{tab}", "\t");
             fmt = ReplaceCI(fmt, "{Length}", num(length));
             fmt = ReplaceCI(fmt, "{Count}", num(count));
+
+            // ---- geometry tokens: total geodesic size of the class ----------
+            double lenM = kind == WeightKind.LengthM ? weight : double.NaN;
+            double areaM2 = kind == WeightKind.AreaM2 ? weight
+                : (kind == WeightKind.Cells && cellAreaM2 > 0
+                   ? weight * cellAreaM2 : double.NaN);
+            string opt(double v) => double.IsNaN(v) ? "" : dnum(v);
+            fmt = ReplaceCI(fmt, "{GeomLength_km}", opt(lenM / 1000.0));
+            fmt = ReplaceCI(fmt, "{GeomLength_m}", opt(lenM));
+            fmt = ReplaceCI(fmt, "{GeomArea_km2}", opt(areaM2 / 1e6));
+            fmt = ReplaceCI(fmt, "{GeomArea_ha}", opt(areaM2 / 1e4));
+            fmt = ReplaceCI(fmt, "{GeomArea_m2}", opt(areaM2));
+            fmt = ReplaceCI(fmt, "{Cells}",
+                kind == WeightKind.Cells ? num((long)Math.Round(weight)) : "");
+            var gm = System.Text.RegularExpressions.Regex.Match(fmt,
+                @"\{GeomProp(\d+)\}",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            while (gm.Success)
+            {
+                int dec = Math.Min(int.Parse(gm.Groups[1].Value), 10);
+                string rep = "";
+                if (kind != WeightKind.None && totalWeight > 0)
+                    rep = (weight / totalWeight)
+                        .ToString("P" + dec, CultureInfo.InvariantCulture)
+                        .Replace(" %", "%");
+                fmt = fmt.Remove(gm.Index, gm.Length).Insert(gm.Index, rep);
+                gm = System.Text.RegularExpressions.Regex.Match(fmt,
+                    @"\{GeomProp(\d+)\}",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            }
             fmt = ReplaceCI(fmt, "{increment_alpha_lc}", AlphaBullet(increment, false));
             fmt = ReplaceCI(fmt, "{increment_alpha_uc}", AlphaBullet(increment, true));
             fmt = ReplaceCI(fmt, "{increment_roman_lc}", Roman(increment).ToLowerInvariant());
@@ -126,12 +178,14 @@ namespace WildlifeTools.DataTools
             public string[] Values;                // display strings
             public IComparable[] SortKeys;         // typed, for ordering
             public long Count;
+            public double Weight;                  // total geodesic size / cells
         }
 
         public sealed class Section
         {
             public string Title = "";              // e.g. Attribute Field [A]
             public long NullCount;                 // separate mode only
+            public double NullWeight;              // their geometry total
             public List<ValueClass> Classes = new List<ValueClass>();
         }
 
@@ -141,6 +195,9 @@ namespace WildlifeTools.DataTools
             public long TotalCount;
             public bool SelectedOnly;
             public bool Combined;
+            public WeightKind Kind = WeightKind.None;
+            public double TotalWeight;             // all records, nulls included
+            public double CellAreaM2;              // VAT rasters; 0 = unknown
             public List<string> FieldNames = new List<string>();
             public List<Section> Sections = new List<Section>();
         }
@@ -180,10 +237,14 @@ namespace WildlifeTools.DataTools
 
         /// <summary>Reads the table and builds the per-class counts. MUST run
         /// on the MCT (QueuedTask). ``fields`` is in ANALYSIS ORDER; it drives
-        /// both the {valN} tokens and the sort precedence.</summary>
+        /// both the {valN} tokens and the sort precedence.
+        /// ``includeGeometry``: also total each class's geodesic length
+        /// (polylines) or area (polygons), or its cell count (VAT rasters) --
+        /// the per-unit-landscape numbers behind the {Geom*}/{Cells} tokens
+        /// and the extra table columns.</summary>
         public static SummaryResult Gather(PolarPlots.PolarPlotData.Source src,
             IReadOnlyList<string> fields, bool selectedOnly, bool combine,
-            bool sort)
+            bool sort, bool includeGeometry = false)
         {
             var res = new SummaryResult
             {
@@ -204,10 +265,35 @@ namespace WildlifeTools.DataTools
                         "This raster has no attribute table (build one with "
                         + "Build Raster Attribute Table, or use an integer "
                         + "raster).");
+                if (includeGeometry)
+                {
+                    res.Kind = WeightKind.Cells;
+                    try
+                    {
+                        var size = raster.GetMeanCellSize();
+                        var rsr = raster.GetSpatialReference();
+                        if (rsr != null && !rsr.IsGeographic)
+                        {
+                            double f = (rsr.Unit as LinearUnit)
+                                ?.ConversionFactor ?? 1.0;   // meters per unit
+                            res.CellAreaM2 = Math.Abs(
+                                size.Item1 * size.Item2) * f * f;
+                        }
+                    }
+                    catch { }
+                }
             }
             else
             {
                 table = PolarPlots.PolarPlotData.GetTable(src);
+                if (includeGeometry && table is FeatureClass fcls)
+                {
+                    var st = fcls.GetDefinition().GetShapeType();
+                    if (st == GeometryType.Polyline)
+                        res.Kind = WeightKind.LengthM;
+                    else if (st == GeometryType.Polygon)
+                        res.Kind = WeightKind.AreaM2;
+                }
             }
             if (table == null)
                 throw new InvalidOperationException("The dataset's table could not be opened.");
@@ -224,6 +310,55 @@ namespace WildlifeTools.DataTools
                         throw new InvalidOperationException(
                             "Field not found: " + fields[i]);
                     ftype[i] = def.GetFields()[idx[i]].FieldType;
+                }
+
+                // VAT rasters weight by the Count column (cells per class)
+                int cellCountIdx = -1;
+                if (res.Kind == WeightKind.Cells)
+                {
+                    cellCountIdx = def.GetFields().ToList().FindIndex(f =>
+                        string.Equals(f.Name, "Count",
+                            StringComparison.OrdinalIgnoreCase));
+                    if (cellCountIdx < 0) res.Kind = WeightKind.None;
+                }
+
+                // the geodesic size of one row's shape (0 when absent)
+                double RowWeight(Row row)
+                {
+                    if (res.Kind == WeightKind.Cells)
+                    {
+                        try
+                        {
+                            object c = row[cellCountIdx];
+                            return c == null || c is DBNull ? 0.0
+                                : Convert.ToDouble(c,
+                                    CultureInfo.InvariantCulture);
+                        }
+                        catch { return 0.0; }
+                    }
+                    if (res.Kind == WeightKind.None) return 0.0;
+                    Geometry g = null;
+                    try { g = (row as Feature)?.GetShape(); } catch { }
+                    if (g == null || g.IsEmpty) return 0.0;
+                    try
+                    {
+                        return res.Kind == WeightKind.LengthM
+                            ? Math.Abs(GeometryEngine.Instance
+                                .GeodesicLength(g))
+                            : Math.Abs(GeometryEngine.Instance
+                                .GeodesicArea(g));
+                    }
+                    catch
+                    {
+                        // unknown coordinate system: planar map units
+                        try
+                        {
+                            return res.Kind == WeightKind.LengthM
+                                ? Math.Abs((g as Polyline)?.Length ?? 0.0)
+                                : Math.Abs((g as Polygon)?.Area ?? 0.0);
+                        }
+                        catch { return 0.0; }
+                    }
                 }
 
                 var qf = new QueryFilter();
@@ -251,6 +386,8 @@ namespace WildlifeTools.DataTools
                             using (var row = cur.Current)
                             {
                                 res.TotalCount++;
+                                double wrow = RowWeight(row);
+                                res.TotalWeight += wrow;
                                 var disp = new string[fields.Count];
                                 var keys = new IComparable[fields.Count];
                                 var keySb = new StringBuilder();
@@ -269,6 +406,7 @@ namespace WildlifeTools.DataTools
                                     classes[key] = vc;
                                 }
                                 vc.Count++;
+                                vc.Weight += wrow;
                             }
                         }
                     }
@@ -293,10 +431,13 @@ namespace WildlifeTools.DataTools
                                 using (var row = cur.Current)
                                 {
                                     total++;
+                                    double wrow = RowWeight(row);
+                                    if (fi == 0) res.TotalWeight += wrow;
                                     object v = row[idx[fi]];
                                     if (v == null || v is DBNull)
                                     {
                                         section.NullCount++;
+                                        section.NullWeight += wrow;
                                         continue;
                                     }
                                     string d = Display(v);
@@ -310,6 +451,7 @@ namespace WildlifeTools.DataTools
                                         classes[d] = vc;
                                     }
                                     vc.Count++;
+                                    vc.Weight += wrow;
                                 }
                             }
                         }
@@ -385,6 +527,45 @@ namespace WildlifeTools.DataTools
         }
 
         // ---- report assembly ------------------------------------------------
+        /// <summary>"Length = 12.3 km" / "Area = 45.6 ha" / "Cells = 789
+        /// (7.9 ha)" -- the human phrase for a geometry weight (empty when
+        /// there is none).</summary>
+        public static string WeightText(WeightKind kind, double w,
+                                        double cellAreaM2, bool commas)
+        {
+            string dn(double v) => v.ToString(commas ? "#,##0.###" : "0.###",
+                                              CultureInfo.InvariantCulture);
+            switch (kind)
+            {
+                case WeightKind.LengthM:
+                    return w >= 10000
+                        ? "Length = " + dn(w / 1000.0) + " km"
+                        : "Length = " + dn(w) + " m";
+                case WeightKind.AreaM2:
+                    return "Area = " + dn(w / 1e4) + " ha";
+                case WeightKind.Cells:
+                    string s = "Cells = " + ((long)Math.Round(w)).ToString(
+                        commas ? "#,##0" : "0", CultureInfo.InvariantCulture);
+                    if (cellAreaM2 > 0)
+                        s += " (" + dn(w * cellAreaM2 / 1e4) + " ha)";
+                    return s;
+                default:
+                    return "";
+            }
+        }
+
+        /// <summary>The dataset-total phrase for the report header
+        /// ("Total length: ...", "Total area: ..."), empty when no
+        /// geometry was gathered.</summary>
+        public static string TotalWeightText(SummaryResult r, bool commas)
+        {
+            if (r.Kind == WeightKind.None) return "";
+            string body = WeightText(r.Kind, r.TotalWeight, r.CellAreaM2,
+                                     commas);
+            return "Total " + char.ToLowerInvariant(body[0]) + body.Substring(1)
+                .Replace(" = ", ": ");
+        }
+
         /// <summary>Plain-text report; the FlowDocument version is built by
         /// the report window from the same pieces.</summary>
         public static string BuildPlainReport(SummaryResult r, string format)
@@ -397,6 +578,8 @@ namespace WildlifeTools.DataTools
             sb.AppendLine("Dataset: " + r.DatasetName +
                           (r.SelectedOnly ? "  (selected records only)" : ""));
             sb.AppendLine("Records analyzed: " + num(r.TotalCount));
+            if (r.Kind != WeightKind.None)
+                sb.AppendLine(TotalWeightText(r, commas));
             sb.AppendLine(new string('-', 55));
             foreach (var sec in r.Sections)
             {
@@ -406,27 +589,79 @@ namespace WildlifeTools.DataTools
                 if (sec.NullCount > 0)
                 {
                     inc++;
-                    double p = r.TotalCount > 0
-                        ? (double)sec.NullCount / r.TotalCount : 0;
-                    sb.AppendLine("  " + inc + "] Null Values:  Count = " +
-                        num(sec.NullCount) + ", Proportion = " +
-                        p.ToString("P3", CultureInfo.InvariantCulture)
-                         .Replace(" %", "%"));
+                    sb.AppendLine(NullLine(r, sec, inc, commas));
                 }
                 foreach (var vc in sec.Classes)
                 {
                     inc++;
                     sb.AppendLine(Render(format, vc.Values, inc, vc.Count,
-                                         r.TotalCount));
+                                         r.TotalCount, vc.Weight,
+                                         r.TotalWeight, r.Kind,
+                                         r.CellAreaM2));
                 }
             }
             return sb.ToString();
         }
 
+        /// <summary>The "Null Values" report line, geometry-aware.</summary>
+        public static string NullLine(SummaryResult r, Section sec, long inc,
+                                      bool commas)
+        {
+            string num(long v) => v.ToString(commas ? "#,##0" : "0",
+                                             CultureInfo.InvariantCulture);
+            double p = r.TotalCount > 0
+                ? (double)sec.NullCount / r.TotalCount : 0;
+            string line = "  " + inc + "] Null Values:  Count = " +
+                num(sec.NullCount) + ", Proportion = " +
+                p.ToString("P3", CultureInfo.InvariantCulture)
+                 .Replace(" %", "%");
+            if (r.Kind != WeightKind.None && sec.NullWeight > 0)
+                line += ", " + WeightText(r.Kind, sec.NullWeight,
+                                          r.CellAreaM2, commas);
+            return line;
+        }
+
         /// <summary>Tab-separated table (headers + one row per class) for a
-        /// clean paste into Excel, independent of the format template.</summary>
+        /// clean paste into Excel, independent of the format template. The
+        /// geometry columns appear when geometry was gathered.</summary>
         public static string BuildTsv(SummaryResult r)
         {
+            string geomHead;
+            switch (r.Kind)
+            {
+                case WeightKind.LengthM:
+                    geomHead = "\tLength_m\tProp_of_Length"; break;
+                case WeightKind.AreaM2:
+                    geomHead = "\tArea_m2\tArea_ha\tProp_of_Area"; break;
+                case WeightKind.Cells:
+                    geomHead = r.CellAreaM2 > 0
+                        ? "\tCells\tArea_m2\tArea_ha\tProp_of_Cells"
+                        : "\tCells\tProp_of_Cells";
+                    break;
+                default:
+                    geomHead = ""; break;
+            }
+            string GeomCols(double w)
+            {
+                if (r.Kind == WeightKind.None) return "";
+                string prop = (r.TotalWeight > 0 ? w / r.TotalWeight : 0)
+                    .ToString("0.00000", CultureInfo.InvariantCulture);
+                string d(double v) =>
+                    v.ToString("0.###", CultureInfo.InvariantCulture);
+                switch (r.Kind)
+                {
+                    case WeightKind.LengthM:
+                        return "\t" + d(w) + "\t" + prop;
+                    case WeightKind.AreaM2:
+                        return "\t" + d(w) + "\t" + d(w / 1e4) + "\t" + prop;
+                    default:
+                        long cells = (long)Math.Round(w);
+                        return r.CellAreaM2 > 0
+                            ? "\t" + cells + "\t" + d(w * r.CellAreaM2) +
+                              "\t" + d(w * r.CellAreaM2 / 1e4) + "\t" + prop
+                            : "\t" + cells + "\t" + prop;
+                }
+            }
             var sb = new StringBuilder();
             foreach (var sec in r.Sections)
             {
@@ -434,15 +669,16 @@ namespace WildlifeTools.DataTools
                 sb.AppendLine(sec.Title);
                 if (r.Combined)
                     sb.AppendLine(string.Join("\t", r.FieldNames) +
-                                  "\tCount\tProportion");
+                                  "\tCount\tProportion" + geomHead);
                 else
-                    sb.AppendLine("Value\tCount\tProportion");
+                    sb.AppendLine("Value\tCount\tProportion" + geomHead);
                 if (sec.NullCount > 0)
                 {
                     double p0 = r.TotalCount > 0
                         ? (double)sec.NullCount / r.TotalCount : 0;
                     sb.AppendLine(NullMarker + "\t" + sec.NullCount + "\t" +
-                        p0.ToString("0.00000", CultureInfo.InvariantCulture));
+                        p0.ToString("0.00000", CultureInfo.InvariantCulture) +
+                        GeomCols(sec.NullWeight));
                 }
                 foreach (var vc in sec.Classes)
                 {
@@ -450,7 +686,8 @@ namespace WildlifeTools.DataTools
                         ? (double)vc.Count / r.TotalCount : 0;
                     sb.AppendLine(string.Join("\t", vc.Values) + "\t" +
                         vc.Count + "\t" +
-                        p.ToString("0.00000", CultureInfo.InvariantCulture));
+                        p.ToString("0.00000", CultureInfo.InvariantCulture) +
+                        GeomCols(vc.Weight));
                 }
             }
             return sb.ToString();
@@ -506,6 +743,7 @@ namespace WildlifeTools.DataTools
             public bool Combine { get; set; }
             public bool Sort { get; set; } = true;
             public bool SelectedOnly { get; set; }
+            public bool IncludeGeometry { get; set; } = true;
         }
 
         public static Settings LoadSettings()

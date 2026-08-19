@@ -61,6 +61,16 @@ namespace WildlifeTools.DataTools
             head.Inlines.Add(new LineBreak());
             head.Inlines.Add(new Bold(new Run("Records analyzed:  ")));
             head.Inlines.Add(new Run(num(r.TotalCount)));
+            string totalW = AttributeSummary.TotalWeightText(r, commas);
+            if (totalW.Length > 0)
+            {
+                int colon = totalW.IndexOf(':');
+                head.Inlines.Add(new LineBreak());
+                head.Inlines.Add(new Bold(new Run(
+                    totalW.Substring(0, colon + 1) + "  ")));
+                head.Inlines.Add(new Run(
+                    totalW.Substring(colon + 1).TrimStart()));
+            }
             doc.Blocks.Add(head);
 
             foreach (var sec in r.Sections)
@@ -80,17 +90,14 @@ namespace WildlifeTools.DataTools
                 if (sec.NullCount > 0)
                 {
                     inc++;
-                    double p = r.TotalCount > 0
-                        ? (double)sec.NullCount / r.TotalCount : 0;
-                    AddLine("  " + inc + "] Null Values:  Count = " +
-                        num(sec.NullCount) + ", Proportion = " +
-                        p.ToString("P3", CI).Replace(" %", "%"));
+                    AddLine(AttributeSummary.NullLine(r, sec, inc, commas));
                 }
                 foreach (var vc in sec.Classes)
                 {
                     inc++;
                     AddLine(AttributeSummary.Render(format, vc.Values, inc,
-                        vc.Count, r.TotalCount));
+                        vc.Count, r.TotalCount, vc.Weight, r.TotalWeight,
+                        r.Kind, r.CellAreaM2));
                 }
                 doc.Blocks.Add(body);
             }
@@ -152,6 +159,14 @@ namespace WildlifeTools.DataTools
             sb.AppendLine();
             sb.Append("<BOL>Records analyzed:</BOL>  ")
               .AppendLine(num(r.TotalCount));
+            string totalW = AttributeSummary.TotalWeightText(r, commas);
+            if (totalW.Length > 0)
+            {
+                int colon = totalW.IndexOf(':');
+                sb.Append("<BOL>").Append(esc(totalW.Substring(0, colon + 1)))
+                  .Append("</BOL>  ")
+                  .AppendLine(esc(totalW.Substring(colon + 1).TrimStart()));
+            }
             foreach (var sec in r.Sections)
             {
                 sb.AppendLine();
@@ -160,17 +175,15 @@ namespace WildlifeTools.DataTools
                 if (sec.NullCount > 0)
                 {
                     inc++;
-                    double p = r.TotalCount > 0
-                        ? (double)sec.NullCount / r.TotalCount : 0;
-                    sb.AppendLine(esc("  " + inc + "] Null Values:  Count = " +
-                        num(sec.NullCount) + ", Proportion = " +
-                        p.ToString("P3", CI).Replace(" %", "%")));
+                    sb.AppendLine(esc(AttributeSummary.NullLine(
+                        r, sec, inc, commas)));
                 }
                 foreach (var vc in sec.Classes)
                 {
                     inc++;
                     sb.AppendLine(esc(AttributeSummary.Render(_format, vc.Values,
-                        inc, vc.Count, r.TotalCount)));
+                        inc, vc.Count, r.TotalCount, vc.Weight, r.TotalWeight,
+                        r.Kind, r.CellAreaM2)));
                 }
             }
             return sb.ToString();

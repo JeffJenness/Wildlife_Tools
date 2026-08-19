@@ -2808,17 +2808,14 @@ def _write_slope_zonal_table(out_table, in_zone_data, zone_field,
     while zf_name.lower() in taken:
         k2 += 1
         zf_name = "{}_{}".format(base_zf, k2)
-    if zf_len:
-        arcpy.management.AddField(out_table, zf_name, zf_type,
-                                  field_length=zf_len, field_alias=zone_field)
-    else:
-        arcpy.management.AddField(out_table, zf_name, zf_type,
-                                  field_alias=zone_field
-                                  if not zone_is_raster else "Zone Value")
-    arcpy.management.AddField(out_table, "COUNT", "LONG",
-                              field_alias="Count of Cells Used")
-    arcpy.management.AddField(out_table, "NEG_COUNT", "LONG",
-                              field_alias="Values Negative in the Source")
+    # one AddFields call for the whole schema (standing rule: a per-field
+    # AddField loop is a full GP launch per field)
+    fdesc = [[zf_name, zf_type,
+              zone_field if not zone_is_raster else "Zone Value",
+              zf_len or "", "", ""],
+             ["COUNT", "LONG", "Count of Cells Used", "", "", ""],
+             ["NEG_COUNT", "LONG", "Values Negative in the Source",
+              "", "", ""]]
 
     fields_for = {
         "MEAN":   [("MEAN", "Mean Slope ({})".format(uw))],
@@ -2837,9 +2834,9 @@ def _write_slope_zonal_table(out_table, in_zone_data, zone_field,
     stat_fields = []
     for k in keys:
         for fname, alias in fields_for[k]:
-            arcpy.management.AddField(out_table, fname, "DOUBLE",
-                                      field_alias=alias)
+            fdesc.append([fname, "DOUBLE", alias, "", "", ""])
             stat_fields.append(fname)
+    arcpy.management.AddFields(out_table, fdesc)
 
     try:
         ordered = sorted(zone_order)
