@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.68.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.69.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -839,6 +839,17 @@
             Build a cross-tabulation (contingency) table -- a two-dimensional histogram showing how much of the landscape falls in each joint range of two variables. Sources: two numeric fields of one table or feature class (weighted equally, by an attribute, or by geodesic feature size); two polygon layers (intersection regions, area-weighted); two rasters (paired cell values); or a polygon layer against a raster, sampled per cell or per polygon with a zonal statistic. Optionally restrict everything to an analysis polygon -- features are clipped before their size is measured. Edit class names and ranges live, show counts / sizes (hectares, acres, ...) or percentages, flip rows and columns; copy the table, its image, or the full report, export the table to a geodatabase / dBASE / CSV, and place it on a layout as editable graphics. A modernized port of the CorridorDesigner Evaluation Tools' Cross-Tab Statistics. No Spatial Analyst needed.<disabledText />
           </tooltip>
         </button>
+        <button id="WildlifeTools_CumulativeSurface"
+                caption="Cumulative Surface"
+                className="Corridor.CumulativeSurfaceButton"
+                loadOnClick="true"
+                smallImage="Images\CumulativeSurface_16.png"
+                largeImage="Images\CumulativeSurface_32.png"
+                keytip="CU">
+          <tooltip heading="Cumulative Surface">
+            How many layers occur on each cell? Combine any mix of polygon layers and rasters -- patch maps, corridors, whole-species footprints, dragged into the dialog together -- into one integer raster whose cell value counts the layers present there: an estimate of the relative importance (or number of species served) of preserving that ground. Each layer counts at most once per cell; a raster counts where its value is neither NoData nor 0, so a corridor raster's background never counts. Optionally honor each layer's selection, label the legend ("3 Species"), and exclude cells where no layer occurs. Symbolized with the color-blind-friendly viridis ramp: dark violet (fewest) through teal to bright yellow (most). A modernized port of the CorridorDesigner Evaluation Tools' Cumulative Surface Tool. No Spatial Analyst needed.<disabledText />
+          </tooltip>
+        </button>
         <button id="WildlifeTools_LandFacetDescribe"
                 caption="Corridor Analysis Data Report"
                 className="Corridor.LandFacetDescribeButton"
@@ -1205,12 +1216,13 @@
               smallImage="Images\AncillaryCorridorMenu_16.png"
               largeImage="Images\AncillaryCorridorMenu_32.png">
           <tooltip heading="Ancillary Corridor Tools">
-            Supporting utilities around the corridor chain from the Jenness Enterprises toolbox: measure neighborhood diversity of a categorical raster (Diversity Indices), turn a high-is-good quality surface into a least-cost surface (Invert Raster), and batch-clip rasters and feature classes to the analysis area with optional reprojection (Clip Data to Analysis Area). No Spatial Analyst needed.<disabledText />
+            Supporting utilities around the corridor chain from the Jenness Enterprises toolbox: measure neighborhood diversity of a categorical raster (Diversity Indices), turn a high-is-good quality surface into a least-cost surface (Invert Raster), batch-clip rasters and feature classes to the analysis area with optional reprojection (Clip Data to Analysis Area), cross-tabulate two variables over the landscape (Cross-Tab Statistics), and count how many corridors or patch maps overlap each cell (Cumulative Surface). No Spatial Analyst needed.<disabledText />
           </tooltip>
           <button refID="WildlifeTools_DiversityIndices" />
           <button refID="WildlifeTools_InvertRaster" />
           <button refID="WildlifeTools_ClipData" />
           <button refID="WildlifeTools_Crosstab" />
+          <button refID="WildlifeTools_CumulativeSurface" />
         </menu>
         <menu id="WildlifeTools_EvaluateCorridorMenu"
               caption="Evaluate Corridors"

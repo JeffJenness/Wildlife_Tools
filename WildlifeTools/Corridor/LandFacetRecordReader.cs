@@ -269,7 +269,8 @@ namespace WildlifeTools.Corridor
                 blocks.Add(new Block(BlockKind.Separator, ""));
             }
             else if (kind != "union" && kind != "patch_map"
-                     && kind != "patch_analysis" && kind != "bottleneck")
+                     && kind != "patch_analysis" && kind != "bottleneck"
+                     && kind != "cumulative")
             {
                 // A union fans in from parallel sources, and a patch map or
                 // patch analysis is a terminal evaluation product -- none of
@@ -292,8 +293,10 @@ namespace WildlifeTools.Corridor
             // CollectChain deliberately never walks them as a single ancestor
             // chain. Instead each record-carrying source gets its full
             // analysis history appended here, exactly as that source's own
-            // report would read (Jeff, 2026-08-10).
-            if (kind == "union")
+            // report would read (Jeff, 2026-08-10). A cumulative surface
+            // fans in the same way (one corridor/patch map per species), so
+            // it shares this treatment.
+            if (kind == "union" || kind == "cumulative")
             {
                 int si = 0;
                 foreach (var s in Arr(rec.Value, "sources"))
@@ -447,6 +450,7 @@ namespace WildlifeTools.Corridor
             "inverted" => 3, "patch_map" => 3,
             "termini" => 4, "corridor" => 5,
             "union" => 6, "patch_analysis" => 7, "bottleneck" => 7,
+            "cumulative" => 7,
             _ => 8,
         };
 
@@ -577,6 +581,7 @@ namespace WildlifeTools.Corridor
                 case "patch_map": DescribePatchMap(blocks, node, fetchXml); break;
                 case "patch_analysis": DescribePatchAnalysis(blocks, node, fetchXml); break;
                 case "bottleneck": DescribeBottleneck(blocks, node, fetchXml); break;
+                case "cumulative": DescribeCumulative(blocks, node, fetchXml); break;
                 default:
                     blocks.Add(new Block(BlockKind.Heading,
                         (node.IsTarget ? "This dataset" : node.Path)
@@ -1209,6 +1214,89 @@ namespace WildlifeTools.Corridor
                         : string.Format(CultureInfo.InvariantCulture,
                             "All {0:0} features were used (no selection "
                             + "was active).", nTotal.Value)));
+            }
+        }
+
+        /// <summary>
+        /// The cumulative-surface kind, written by the Cumulative Surface
+        /// tool (cumulative_surface.py): an integer raster counting how many
+        /// input polygon layers or rasters occur on each cell. Like a union
+        /// it fans IN from multiple, normally unrelated sources, so it gets
+        /// the same appended per-source background chains and no linear
+        /// chain map.
+        /// </summary>
+        private static void DescribeCumulative(List<Block> blocks, Node node,
+                                               Func<string, string> fetchXml)
+        {
+            var rec = node.Record;
+            var sources = Arr(rec, "sources").ToList();
+            blocks.Add(new Block(HeadKind(node),
+                Header(node, "Cumulative surface of " + sources.Count
+                    + " layer" + (sources.Count == 1 ? "" : "s"))));
+            AddOrigin(blocks, node);
+
+            blocks.Add(new Block(BlockKind.Body,
+                "A raster whose cell value counts how many of the input "
+                + "layers occur on that cell -- an estimate of the relative "
+                + "importance (or number of species served) of preserving "
+                + "that ground. Each LAYER counts at most once per cell: a "
+                + "polygon layer where any of its (selected) polygons "
+                + "covers the cell center, a raster where its value is "
+                + "neither NoData nor 0. A modernized port of the "
+                + "CorridorDesigner Evaluation Tools' Cumulative Surface "
+                + "Tool."));
+
+            var pars = O(rec, "params");
+            if (pars.HasValue)
+            {
+                string lbl = S(pars.Value, "legend_label");
+                if (!string.IsNullOrEmpty(lbl))
+                    blocks.Add(new Block(BlockKind.KeyValue, "Legend label",
+                        "\"" + lbl + "\" (classes read \"3 " + lbl
+                        + "\" and so on)"));
+                if (B(pars.Value, "zero_to_nodata") == true)
+                    blocks.Add(new Block(BlockKind.Note,
+                        "Cells where NO layer occurs were written as "
+                        + "NoData rather than 0."));
+                double? cs = D(pars.Value, "cell_size");
+                if (cs.HasValue)
+                    blocks.Add(new Block(BlockKind.KeyValue, "Cell size",
+                        cs.Value.ToString("0.######",
+                            CultureInfo.InvariantCulture)));
+            }
+
+            if (B(rec, "mixed_analysis") == true)
+                blocks.Add(new Block(BlockKind.Note,
+                    "The sources carried DIFFERENT analysis ids -- this "
+                    + "surface combines separate analyses (one corridor or "
+                    + "patch map per species), which is the tool's normal "
+                    + "use."));
+
+            blocks.Add(new Block(BlockKind.SubHeading, "Layers combined:"));
+            int i = 1;
+            foreach (var s in sources)
+            {
+                string path = S(s, "path");
+                AddSourceCheck(blocks, "Layer " + i++, path,
+                    S(s, "analysis_id"), Created(rec), fetchXml);
+
+                string type = S(s, "type");
+                string kind2 = S(s, "record_kind");
+                blocks.Add(new Block(BlockKind.Note,
+                    (type == "raster" ? "Raster input" : "Polygon input")
+                    + (kind2 == null ? "; no linkage record."
+                                     : "; record kind: " + kind2 + ".")));
+
+                double? nTotal = D(s, "n_total");
+                double? nSel = D(s, "n_selected");
+                bool selected = B(s, "selected") == true;
+                if (nTotal.HasValue)
+                    blocks.Add(new Block(BlockKind.Note, selected && nSel.HasValue
+                        ? string.Format(CultureInfo.InvariantCulture,
+                            "{0:0} of {1:0} polygons were selected and used.",
+                            nSel.Value, nTotal.Value)
+                        : string.Format(CultureInfo.InvariantCulture,
+                            "All {0:0} polygons were used.", nTotal.Value)));
             }
         }
 

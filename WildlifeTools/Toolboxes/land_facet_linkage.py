@@ -54,6 +54,7 @@ HSM = "hsm"             # written by the CorridorDesigner HSM chain tools
 PATCH_MAP = "patch_map"  # written by the Create Habitat Patches tool
 PATCH_ANALYSIS = "patch_analysis"  # written by the Patch Analysis tool
 BOTTLENECK = "bottleneck"          # written by the Bottleneck Analysis tool
+CUMULATIVE = "cumulative"          # written by the Cumulative Surface tool
 
 # Marker prefix so the blob is recognizable (and so a human reading the
 # Supplemental Information field can see what it is) and separable from any
@@ -343,6 +344,37 @@ def union_record(sources, mixed_analysis, source_analysis_ids):
         "sources": list(sources or []),
         "mixed_analysis": bool(mixed_analysis),
         "source_analysis_ids": list(source_analysis_ids or []),
+    }
+
+
+def cumulative_record(sources, mixed_analysis, source_analysis_ids,
+                      params=None):
+    """Build the record stamped on a Cumulative Surface output raster.
+
+    Like a union, a cumulative surface fans IN from MULTIPLE sources --
+    normally deliberately unrelated ones (one corridor or patch map per
+    species) -- so it gets a fresh ``analysis_id`` and carries a full
+    ``sources`` list: one entry per input actually used, ``{"path", "type"
+    ('raster'|'polygons'), "record_kind", "analysis_id"}`` plus, for
+    polygon inputs, ``{"n_total", "n_selected", "selected"}`` (from
+    ``mahalanobis.selection_info``; ``selected`` True when that layer's
+    active selection was honored). An input with no linkage record of its
+    own gets ``record_kind`` / ``analysis_id`` None -- listed, not an
+    error. ``mixed_analysis`` mirrors ``union_record``'s flag, but here
+    mixing analyses is the tool's normal use, so the report notes rather
+    than warns. ``params`` carries zero_to_nodata, legend_label,
+    use_selected, cell_size and the grid summary.
+    """
+    return {
+        "schema": SCHEMA,
+        "record": CUMULATIVE,
+        "analysis_id": new_analysis_id(),
+        "created": _utc_now(),
+        "tool": "Cumulative Surface",
+        "sources": list(sources or []),
+        "mixed_analysis": bool(mixed_analysis),
+        "source_analysis_ids": list(source_analysis_ids or []),
+        "params": params or {},
     }
 
 

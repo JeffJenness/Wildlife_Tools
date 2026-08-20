@@ -66,6 +66,7 @@ import hsm_tools       # noqa: E402
 import clip_tools      # noqa: E402
 import patch_analysis  # noqa: E402
 import bottleneck_analysis  # noqa: E402
+import cumulative_surface  # noqa: E402
 import weighted_stats  # noqa: E402
 import raster_extremes  # noqa: E402
 import tool_metadata  # noqa: E402
@@ -330,7 +331,7 @@ class Toolbox(object):
                       CriticalHabitatFeature, HabitatPatches,
                       ClipDataToAnalysisArea, PatchAnalysis,
                       BottleneckAnalysis, WeightedSummaryStatistics,
-                      FindRasterExtremeValues]
+                      CumulativeSurface, FindRasterExtremeValues]
 
 
 class LoCoHStandard(object):
@@ -10632,6 +10633,153 @@ class ClipDataToAnalysisArea(object):
             # was a MAP LAYER can inherit that layer's symbology.
             if bool(P["add_to_map"].value):
                 clip_tools.add_outputs_to_map(details, messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class CumulativeSurface(object):
+    """Cumulative Surface -- an integer raster counting how many input
+    polygon layers or rasters occur on each cell. Port of the
+    CorridorDesigner Evaluation Tools' Cumulative Surface Tool. See
+    ``cumulative_surface.run_cumulative_surface``."""
+
+    def __init__(self):
+        self.label = "Cumulative Surface"
+        self.description = (
+            "Combines any mix of POLYGON layers and RASTERS into one "
+            "integer raster whose cell value counts how many of those "
+            "layers occur on that cell -- a way of estimating the relative "
+            "importance (or the number of species served) of preserving "
+            "that ground. Drag several layers in from the map at once, or "
+            "browse and multi-select datasets from disk. Each LAYER counts "
+            "at most once per cell no matter how many of its polygons "
+            "overlap there; a raster counts where its value is neither "
+            "NoData nor 0 (a corridor raster's background never counts). "
+            "All raster inputs must share one coordinate system; polygon "
+            "layers may be in any known coordinate system and are "
+            "projected on the fly. The output uses the smallest input "
+            "raster's cell size (or 1/1000 of the extent when all inputs "
+            "are polygons), the union of every input's extent, and comes "
+            "symbolized with the color-blind-friendly viridis ramp -- "
+            "dark violet (fewest layers) through teal to bright yellow "
+            "(most), 0 in white -- optionally 0 becomes NoData. A "
+            "modernized port of the CorridorDesigner Evaluation Tools' "
+            "Cumulative Surface Tool. Needs no Spatial Analyst.")
+        self.category = "Corridor Designer Tools\\Corridor Designer"
+        self.canRunInBackground = False
+        self._ds_check = None
+
+    def getParameterInfo(self):
+        datasets = arcpy.Parameter(
+            displayName="Layers to combine (polygon layers and rasters)",
+            name="datasets",
+            datatype=["GPFeatureLayer", "GPRasterLayer", "DEFeatureClass",
+                      "DERasterDataset"],
+            parameterType="Required", direction="Input", multiValue=True)
+        # No geometry filter is POSSIBLE here: a composite datatype rejects
+        # filter.list outright (pyt gotcha, confirmed on this 4-type combo
+        # 2026-08-20), so a polyline cannot be stopped at drag-in time.
+        # updateMessages posts the blocking red-X error instead.
+        out_raster = arcpy.Parameter(
+            displayName="Output cumulative surface raster",
+            name="out_raster", datatype="DERasterDataset",
+            parameterType="Required", direction="Output")
+        use_selected = arcpy.Parameter(
+            displayName="Use only selected polygons (a layer with no "
+                        "selection uses all its polygons)",
+            name="use_selected", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        use_selected.value = False
+        legend_label = arcpy.Parameter(
+            displayName="Legend label (optional -- e.g. Species, for a "
+                        "legend reading \"3 Species\")",
+            name="legend_label", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        zero_to_nodata = arcpy.Parameter(
+            displayName="Exclude areas where no layers occur (0 becomes "
+                        "NoData)",
+            name="zero_to_nodata", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        zero_to_nodata.value = False
+        cell_size = arcpy.Parameter(
+            displayName="Cell size (optional -- default: the smallest "
+                        "input raster's, or 1/1000 of the extent)",
+            name="cell_size", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        return [datasets, out_raster, use_selected, legend_label,
+                zero_to_nodata, cell_size]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        # Flag non-polygon feature inputs so Run stays blocked. This must
+        # run EVERY cycle: messages are cleared each validation pass, so an
+        # error posted only on the cycle where the list changed (an earlier
+        # hasBeenValidated gate) silently vanished as soon as any OTHER
+        # parameter changed -- and the tool ran with a polyline aboard
+        # (Jeff's Roads layer, 2026-08-20). The Describe sweep is cached by
+        # the parameter's text; instance state is not guaranteed to
+        # persist, but a lost cache only means one recomputation.
+        ds_p = P["datasets"]
+        if ds_p.valueAsText:
+            txt = ds_p.valueAsText
+            cache = getattr(self, "_ds_check", None)
+            if not cache or cache[0] != txt:
+                bad = []
+                for v in (ds_p.values or []):
+                    try:
+                        try:
+                            d = arcpy.Describe(v)
+                        except Exception:
+                            d = arcpy.Describe(str(v))
+                        shp = getattr(d, "shapeType", None)
+                        if shp is not None and shp != "Polygon":
+                            bad.append("{} ({})".format(
+                                getattr(d, "name", str(v)), shp))
+                    except Exception:
+                        pass
+                cache = (txt, bad)
+                self._ds_check = cache
+            if cache[1]:
+                ds_p.setErrorMessage(
+                    "Only POLYGON feature classes and rasters can be "
+                    "combined; remove: {}.".format("; ".join(cache[1])))
+        cs = P["cell_size"].value
+        if cs is not None and cs <= 0:
+            P["cell_size"].setErrorMessage(
+                "The cell size must be positive (or left blank for the "
+                "automatic rule).")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(cumulative_surface)
+            P = {p.name: p for p in parameters}
+            out_path, lyrx = cumulative_surface.run_cumulative_surface(
+                datasets=list(P["datasets"].values or []),
+                out_raster=P["out_raster"].valueAsText,
+                use_selected=bool(P["use_selected"].value),
+                legend_label=P["legend_label"].valueAsText or "",
+                zero_to_nodata=bool(P["zero_to_nodata"].value),
+                cell_size=P["cell_size"].value,
+                messages=messages)
+            if lyrx:
+                try:
+                    P["out_raster"].symbology = lyrx
+                except Exception as e:
+                    messages.addWarningMessage(
+                        "Could not set output symbology: {}".format(e))
         except arcpy.ExecuteError:
             raise
         except Exception:

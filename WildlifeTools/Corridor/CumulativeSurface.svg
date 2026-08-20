@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Cumulative Surface: a map whose nested classes count how many layers
+       occur on each cell, shaded with the tool's own color-blind-friendly
+       viridis legend: dark violet (fewest) through teal to bright yellow
+       (most). -->
+  <rect x="1.5" y="1.5" width="29" height="29" rx="1.5"
+        fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.8"/>
+  <g transform="rotate(-18 16 16)">
+    <ellipse cx="15.6" cy="16.4" rx="11.2" ry="8.6"
+             fill="#440154" stroke="#2A0134" stroke-width="0.9"/>
+    <ellipse cx="16.2" cy="15.9" rx="7.6" ry="5.7"
+             fill="#21918C" stroke="#14615D" stroke-width="0.9"/>
+    <ellipse cx="16.9" cy="15.3" rx="4.2" ry="3.0"
+             fill="#FDE725" stroke="#B8A81C" stroke-width="0.9"/>
+  </g>
+</svg>
