@@ -299,6 +299,8 @@
     <Content Include="Images\WeightedStats_32.png" />
     <Content Include="Images\Histogram_16.png" />
     <Content Include="Images\Histogram_32.png" />
+    <Content Include="Images\Crosstab_16.png" />
+    <Content Include="Images\Crosstab_32.png" />
     <!-- embedded copy of the Jenness logo: window icons load it by pack
          URI, immune to Assembly.Location quirks in the add-in context -->
     <Resource Include="Corridor\JennessLogoRes.png" />

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Cross-Tabulation: a contingency table with shaded header row and
+       column and a hot diagonal of joint-distribution cells. -->
+  <rect x="1.5" y="3.5" width="29" height="25" rx="1.5"
+        fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.8"/>
+  <rect x="1.5" y="3.5" width="29" height="6" fill="#D8D8D8"
+        stroke="#4A4A4A" stroke-width="1.2"/>
+  <rect x="1.5" y="3.5" width="8" height="25" fill="#D8D8D8"
+        stroke="#4A4A4A" stroke-width="1.2"/>
+  <g stroke="#8A8A8A" stroke-width="0.9">
+    <line x1="9.5" y1="3.5" x2="9.5" y2="28.5"/>
+    <line x1="16.5" y1="3.5" x2="16.5" y2="28.5"/>
+    <line x1="23.5" y1="3.5" x2="23.5" y2="28.5"/>
+    <line x1="1.5" y1="9.5" x2="30.5" y2="9.5"/>
+    <line x1="1.5" y1="15.8" x2="30.5" y2="15.8"/>
+    <line x1="1.5" y1="22.1" x2="30.5" y2="22.1"/>
+  </g>
+  <rect x="10.3" y="10.3" width="5.4" height="4.7" fill="#0072B2" opacity="0.9"/>
+  <rect x="17.3" y="10.3" width="5.4" height="4.7" fill="#0072B2" opacity="0.45"/>
+  <rect x="10.3" y="16.6" width="5.4" height="4.7" fill="#0072B2" opacity="0.45"/>
+  <rect x="17.3" y="16.6" width="5.4" height="4.7" fill="#E69F00" opacity="0.95"/>
+  <rect x="24.3" y="16.6" width="5.4" height="4.7" fill="#E69F00" opacity="0.5"/>
+  <rect x="17.3" y="22.9" width="5.4" height="4.7" fill="#E69F00" opacity="0.5"/>
+  <rect x="24.3" y="22.9" width="5.4" height="4.7" fill="#B03A2E" opacity="0.9"/>
+</svg>

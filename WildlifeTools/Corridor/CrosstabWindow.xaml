@@ -1,0 +1,166 @@
+<controls:ProWindow x:Class="WildlifeTools.Corridor.CrosstabWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        Title="Cross-Tabulation Table"
+        Height="620" Width="1040" MinHeight="480" MinWidth="820"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <controls:ProWindow.Resources>
+        <Style TargetType="ToolTip">
+            <Setter Property="MaxWidth" Value="420"/>
+            <Setter Property="ContentTemplate">
+                <Setter.Value>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextWrapping="Wrap"
+                                   MaxWidth="400"/>
+                    </DataTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </controls:ProWindow.Resources>
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- ============ toolbar ============ -->
+        <Grid Grid.Row="0" Margin="0,0,0,8">
+            <StackPanel Orientation="Horizontal">
+                <Button x:Name="btnNew" Content="New Analysis..." Padding="10,3"
+                        Click="OnNewAnalysis"
+                        ToolTip="Choose the input data and analysis options, then compute a fresh cross-tabulation."/>
+                <Border Width="1" Background="#66000000" Margin="12,2,12,2"/>
+                <Button x:Name="btnCopyTable" Content="Copy Table" Padding="10,3"
+                        IsEnabled="False" Click="OnCopyTable"
+                        ToolTip="Copy the table as tab-separated text -- pastes into Excel or Word as a clean grid."/>
+                <Button x:Name="btnCopyImage" Content="Copy Image"
+                        Margin="8,0,0,0" Padding="10,3" IsEnabled="False"
+                        Click="OnCopyImage"
+                        ToolTip="Copy an image of the table (including the variable names) to the clipboard."/>
+                <Button x:Name="btnFullReport" Content="Full Report"
+                        Margin="8,0,0,0" Padding="10,3" IsEnabled="False"
+                        Click="OnFullReport"
+                        ToolTip="Copy the full report: data sources and options, the table as counts/sizes AND as percents, and every class definition."/>
+                <Button x:Name="btnExport" Content="Export Table..."
+                        Margin="8,0,0,0" Padding="10,3" IsEnabled="False"
+                        Click="OnExport"
+                        ToolTip="Write the table (one row per cell, values and percents) to a geodatabase, dBASE or CSV table and add it to the map."/>
+                <Button x:Name="btnSaveImage" Content="Save Image..."
+                        Margin="8,0,0,0" Padding="10,3" IsEnabled="False"
+                        Click="OnSaveImage"
+                        ToolTip="Save the table as a PNG image (300 dpi) or a scalable SVG file."/>
+                <Button x:Name="btnLayout" Content="Add to Layout"
+                        Margin="8,0,0,0" Padding="10,3" IsEnabled="False"
+                        Click="OnAddToLayout"
+                        ToolTip="Place the table on the active layout (or map) as native, individually editable graphic elements."/>
+            </StackPanel>
+            <Button Content="Close" HorizontalAlignment="Right" Padding="14,3"
+                    Click="OnClose"/>
+        </Grid>
+
+        <!-- ============ table + options ============ -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="300"/>
+            </Grid.ColumnDefinitions>
+            <Border Grid.Column="0" BorderBrush="#66000000" BorderThickness="1"
+                    Background="White" Padding="6">
+                <Grid>
+                    <Image x:Name="imgTable" Stretch="Uniform"
+                           StretchDirection="DownOnly"
+                           RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <TextBlock x:Name="txtHint" HorizontalAlignment="Center"
+                               VerticalAlignment="Center" Opacity="0.55"
+                               FontSize="14" TextAlignment="Center"
+                               Text="Click New Analysis... to choose data and&#10;build a cross-tabulation table."/>
+                </Grid>
+            </Border>
+
+            <ScrollViewer Grid.Column="1" Margin="8,0,0,0"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <GroupBox Header="Variables" Padding="6,4">
+                        <StackPanel>
+                            <TextBlock Text="Columns (Variable #1):"/>
+                            <TextBox x:Name="txtVar1" Margin="0,2,0,6"
+                                     TextChanged="OnOptionText"/>
+                            <TextBlock Text="Rows (Variable #2):"/>
+                            <TextBox x:Name="txtVar2" Margin="0,2,0,4"
+                                     TextChanged="OnOptionText"/>
+                            <CheckBox x:Name="chkFlip"
+                                      Content="Flip rows and columns"
+                                      Margin="0,4,0,0"
+                                      Checked="OnOption" Unchecked="OnOption"/>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="Classes" Padding="6,4" Margin="0,6,0,0">
+                        <StackPanel>
+                            <Button x:Name="btnEditH"
+                                    Content="Edit Column Classes..."
+                                    Padding="8,3" Margin="0,2,0,4"
+                                    IsEnabled="False" Click="OnEditH"
+                                    ToolTip="Edit the number, names and ranges of the column (Variable #1) classes, or autofill equal intervals."/>
+                            <Button x:Name="btnEditV"
+                                    Content="Edit Row Classes..."
+                                    Padding="8,3" Margin="0,0,0,2"
+                                    IsEnabled="False" Click="OnEditV"/>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="Cell values" Padding="6,4" Margin="0,6,0,0">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <RadioButton x:Name="rbCounts"
+                                             Content="Counts / sizes"
+                                             GroupName="CV" IsChecked="True"
+                                             Margin="0,0,12,0"
+                                             Checked="OnOption"/>
+                                <RadioButton x:Name="rbPercent"
+                                             Content="Percent" GroupName="CV"
+                                             Checked="OnOption"
+                                             ToolTip="Cells show each combination's proportion of the total (they sum to 1)."/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal"
+                                        Margin="0,6,0,0">
+                                <TextBlock Text="Units:"
+                                           VerticalAlignment="Center"/>
+                                <ComboBox x:Name="cboUnit" Width="150"
+                                          Margin="6,0,0,0"
+                                          SelectionChanged="OnOptionSel"
+                                          ToolTip="The unit of the counts/sizes cells. Area units appear when the observations are weighted by area or raster cells of known size."/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal"
+                                        Margin="0,6,0,0">
+                                <TextBlock Text="Decimal places:"
+                                           VerticalAlignment="Center"/>
+                                <TextBox x:Name="txtDecimals" Width="44"
+                                         Margin="6,0,0,0" Text="3"
+                                         TextChanged="OnOptionText"/>
+                                <Button Content="Fonts..." Padding="8,1"
+                                        Margin="12,0,0,0" Click="OnFonts"
+                                        ToolTip="Choose separate fonts for the variable names, the header row/column, and the numbers."/>
+                            </StackPanel>
+                        </StackPanel>
+                    </GroupBox>
+
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- ============ status ============ -->
+        <Grid Grid.Row="2" Margin="0,6,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" x:Name="txtStatus" Opacity="0.75"
+                       TextWrapping="Wrap"/>
+            <ProgressBar Grid.Column="1" x:Name="prgRead" Width="160"
+                         Height="14" Visibility="Collapsed"/>
+        </Grid>
+    </Grid>
+</controls:ProWindow>

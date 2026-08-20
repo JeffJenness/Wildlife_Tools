@@ -550,20 +550,24 @@ namespace WildlifeTools.Corridor
                 {
                     const double scale = 300.0 / 96.0;   // 300 dpi
                     var dg = PolarPlotWpf.Render(_model);
+                    // pixel dimensions FIRST; the white background must
+                    // cover the whole (ceiled) bitmap or the last row and
+                    // column of pixels stay transparent
+                    int pxW = (int)Math.Ceiling(
+                        _model.HalfWidthIn * 2 * 96 * scale);
+                    int pxH = (int)Math.Ceiling(
+                        _model.HalfHeightIn * 2 * 96 * scale);
                     var dv = new DrawingVisual();
                     using (var dc = dv.RenderOpen())
                     {
-                        dc.DrawRectangle(Brushes.White, null, new Rect(0, 0,
-                            _model.HalfWidthIn * 2 * 96 * scale,
-                            _model.HalfHeightIn * 2 * 96 * scale));
+                        dc.DrawRectangle(Brushes.White, null,
+                            new Rect(0, 0, pxW, pxH));
                         dc.PushTransform(new ScaleTransform(scale, scale));
                         dc.DrawDrawing(dg);
                         dc.Pop();
                     }
-                    var rtb = new RenderTargetBitmap(
-                        (int)Math.Ceiling(_model.HalfWidthIn * 2 * 96 * scale),
-                        (int)Math.Ceiling(_model.HalfHeightIn * 2 * 96 * scale),
-                        96, 96, PixelFormats.Pbgra32);
+                    var rtb = new RenderTargetBitmap(pxW, pxH, 96, 96,
+                        PixelFormats.Pbgra32);
                     rtb.Render(dv);
                     var enc = new PngBitmapEncoder();
                     enc.Frames.Add(BitmapFrame.Create(rtb));
@@ -775,7 +779,8 @@ namespace WildlifeTools.Corridor
 
     internal static class ExportTablesPrompt
     {
-        public static ExportTablesChoice Show(Window owner)
+        public static ExportTablesChoice Show(Window owner,
+            string defaultBase = "Histogram", string blurb = null)
         {
             ExportTablesChoice result = null;
             string ws = null;
@@ -801,9 +806,9 @@ namespace WildlifeTools.Corridor
             var panel = new StackPanel { Margin = new Thickness(12) };
             panel.Children.Add(new TextBlock
             {
-                Text = "Two tables are written: <base name>_stats (one row "
-                       + "per dataset) and <base name>_bins (one row per "
-                       + "dataset and bin).",
+                Text = blurb ?? "Two tables are written: <base name>_stats "
+                       + "(one row per dataset) and <base name>_bins (one "
+                       + "row per dataset and bin).",
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 0, 0, 8),
             });
@@ -876,7 +881,7 @@ namespace WildlifeTools.Corridor
 
             panel.Children.Add(new TextBlock { Text = "Base name:" });
             var txtBase = new TextBox
-            { Text = "Histogram", Margin = new Thickness(0, 2, 0, 8) };
+            { Text = defaultBase, Margin = new Thickness(0, 2, 0, 8) };
             panel.Children.Add(txtBase);
 
             var buttons = new StackPanel
@@ -973,12 +978,20 @@ namespace WildlifeTools.Corridor
         }
     }
 
-    /// <summary>Font settings dialog: four independent styles (Title, Axis
-    /// Labels, Legend Text, Axis Numbers), each with family, size, bold and
-    /// italic. Returns true when applied.</summary>
+    /// <summary>Font settings dialog: any number of independent styles,
+    /// each with family, size, bold and italic. Returns true when applied
+    /// (the FontSpec objects are edited in place on OK).</summary>
     internal static class FontsPrompt
     {
-        public static bool Show(Window owner, HistogramOptions o)
+        public static bool Show(Window owner, HistogramOptions o) =>
+            Show(owner,
+                 ("Title:", o.TitleFont),
+                 ("Axis labels:", o.LabelFont),
+                 ("Legend text:", o.LegendFont),
+                 ("Axis numbers:", o.TickFont));
+
+        public static bool Show(Window owner,
+                                params (string label, FontSpec spec)[] items)
         {
             bool applied = false;
             var win = new Window
@@ -998,7 +1011,7 @@ namespace WildlifeTools.Corridor
                     Width = wcol > 0 ? new GridLength(wcol)
                                      : GridLength.Auto,
                 });
-            for (int i = 0; i < 6; i++)
+            for (int i = 0; i < items.Length + 2; i++)
                 grid.RowDefinitions.Add(new RowDefinition
                 { Height = GridLength.Auto });
 
@@ -1021,13 +1034,6 @@ namespace WildlifeTools.Corridor
                 .Select(f => f.Source).OrderBy(x => x).ToList();
             var rows = new List<(FontSpec spec, ComboBox fam, TextBox size,
                                  CheckBox bold, CheckBox ital)>();
-            var items = new (string label, FontSpec spec)[]
-            {
-                ("Title:", o.TitleFont),
-                ("Axis labels:", o.LabelFont),
-                ("Legend text:", o.LegendFont),
-                ("Axis numbers:", o.TickFont),
-            };
             for (int i = 0; i < items.Length; i++)
             {
                 int row = i + 1;
@@ -1095,7 +1101,7 @@ namespace WildlifeTools.Corridor
             cancel.Click += (_, __) => win.Close();
             panel.Children.Add(ok);
             panel.Children.Add(cancel);
-            Grid.SetRow(panel, 5);
+            Grid.SetRow(panel, items.Length + 1);
             Grid.SetColumnSpan(panel, 5);
             grid.Children.Add(panel);
             win.Content = grid;

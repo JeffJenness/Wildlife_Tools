@@ -1,0 +1,102 @@
+<controls:ProWindow x:Class="WildlifeTools.Corridor.CrosstabInputWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        Title="Cross-Tab Statistics: Input Data"
+        Width="480" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <controls:ProWindow.Resources>
+        <Style TargetType="ToolTip">
+            <Setter Property="MaxWidth" Value="420"/>
+            <Setter Property="ContentTemplate">
+                <Setter.Value>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextWrapping="Wrap"
+                                   MaxWidth="400"/>
+                    </DataTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </controls:ProWindow.Resources>
+    <StackPanel Margin="12">
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+            <RadioButton x:Name="rbSingle" Content="Single data source"
+                         IsChecked="True" GroupName="Mode" Margin="0,0,16,0"
+                         Checked="OnModeChanged"
+                         ToolTip="Both variables come from two numeric fields of ONE table or feature class; each record is one observation."/>
+            <RadioButton x:Name="rbTwo" Content="Two data sources"
+                         GroupName="Mode" Checked="OnModeChanged"
+                         ToolTip="The variables come from TWO overlapping datasets (polygon layers and/or rasters); observations come from their spatial intersection and are always weighted by size."/>
+        </StackPanel>
+
+        <!-- ============ single source ============ -->
+        <StackPanel x:Name="pnlSingle">
+            <TextBlock Text="Feature layer or table:"/>
+            <ComboBox x:Name="cboSource" Margin="0,2,0,6"
+                      SelectionChanged="OnSourceChanged"/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Margin="0,0,4,0">
+                    <TextBlock Text="Variable #1 field (columns):"/>
+                    <ComboBox x:Name="cboField1" Margin="0,2,0,6"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Margin="4,0,0,0">
+                    <TextBlock Text="Variable #2 field (rows):"/>
+                    <ComboBox x:Name="cboField2" Margin="0,2,0,6"/>
+                </StackPanel>
+            </Grid>
+            <TextBlock Text="Weighting:"/>
+            <StackPanel Orientation="Horizontal" Margin="0,2,0,2">
+                <RadioButton x:Name="rbWeightSize"
+                             Content="By feature size" GroupName="W"
+                             IsChecked="True" Margin="0,0,12,0"
+                             ToolTip="Polygons count by geodesic area, polylines by geodesic length, multipoints by point count. A 100-hectare polygon counts twice as much as a 50-hectare one."/>
+                <RadioButton x:Name="rbWeightNone"
+                             Content="Each record equally" GroupName="W"
+                             Margin="0,0,12,0"/>
+                <RadioButton x:Name="rbWeightField" Content="By field:"
+                             GroupName="W" Checked="OnWeightChanged"
+                             Unchecked="OnWeightChanged"
+                             ToolTip="Each record counts as the value of a third numeric attribute field."/>
+            </StackPanel>
+            <ComboBox x:Name="cboWeightField" Margin="0,2,0,6"
+                      IsEnabled="False"/>
+            <CheckBox x:Name="chkSelected" Content="Selected records only"
+                      Margin="0,0,0,6"
+                      ToolTip="Uses only the layer's current selection; with nothing selected, all records are used."/>
+        </StackPanel>
+
+        <!-- ============ two sources ============ -->
+        <StackPanel x:Name="pnlTwo" Visibility="Collapsed">
+            <TextBlock Text="Variable #1 layer (columns):"/>
+            <ComboBox x:Name="cboSourceA" Margin="0,2,0,4"
+                      SelectionChanged="OnTwoSourceChanged"
+                      ToolTip="A polygon layer or a raster."/>
+            <ComboBox x:Name="cboFieldA" Margin="0,0,0,6"
+                      ToolTip="The polygon attribute field for Variable #1 (rasters use their cell values)."/>
+            <TextBlock Text="Variable #2 layer (rows):"/>
+            <ComboBox x:Name="cboSourceB" Margin="0,2,0,4"
+                      SelectionChanged="OnTwoSourceChanged"/>
+            <ComboBox x:Name="cboFieldB" Margin="0,0,0,6"/>
+            <StackPanel x:Name="pnlStat">
+                <TextBlock Text="Raster variable statistic:"/>
+                <ComboBox x:Name="cboStat" Margin="0,2,0,6"
+                          ToolTip="Cell Values samples one observation per raster cell (the polygon attribute is read at each cell). The Polygon statistics sample one observation per polygon, summarizing all raster cells inside it."/>
+            </StackPanel>
+        </StackPanel>
+
+        <!-- ============ AOI ============ -->
+        <TextBlock Text="Restrict analysis to polygon:"/>
+        <ComboBox x:Name="cboAoi" Margin="0,2,0,10"
+                  ToolTip="Optional: only the data inside this polygon layer is analyzed (its selection is honored; multiple polygons are unioned). Features are clipped BEFORE their size is measured, so a parcel half inside the polygon contributes half its area."/>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="OK" Width="82" Padding="0,3" Click="OnOk"/>
+            <Button Content="Cancel" Width="82" Padding="0,3"
+                    Margin="8,0,0,0" Click="OnCancel"/>
+        </StackPanel>
+    </StackPanel>
+</controls:ProWindow>

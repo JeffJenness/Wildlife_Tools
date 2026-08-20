@@ -69,7 +69,7 @@
             <TextBlock Grid.Column="0" Text="Clip to polygon:" Margin="0,0,8,0"
                        VerticalAlignment="Center"/>
             <ComboBox Grid.Column="1" x:Name="cboClip"
-                      ToolTip="Optional: analyze only the data inside this polygon layer (its selection is honored; multiple polygons are unioned). Rasters are masked cell-by-cell; features are geometrically intersected so only the inside portion's size counts. This replaces the original tool's requirement to pre-clip every dataset."/>
+                      ToolTip="Optional: analyze only the data inside this polygon layer (its selection is honored; multiple polygons are unioned). Rasters are masked cell-by-cell; features are geometrically intersected so only the inside portion's size counts. No pre-clipping of the datasets is needed."/>
         </Grid>
 
         <StackPanel Grid.Row="6">
@@ -78,7 +78,7 @@
                     <TextBlock Text="Read:" VerticalAlignment="Center"
                                Margin="0,0,8,0"/>
                     <ComboBox x:Name="cboStride" Width="220"
-                              ToolTip="Full read is exact and is the default -- unlike the original's 250,000-cell sample, the whole raster is streamed. Sampling remains for truly enormous rasters."/>
+                              ToolTip="Full read is exact and is the default: the whole raster is streamed. Sampling remains as an option for truly enormous rasters."/>
                 </StackPanel>
             </Expander>
             <Grid Margin="0,10,0,0">
