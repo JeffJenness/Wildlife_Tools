@@ -328,7 +328,12 @@ def _rasterize_source_mask(geoms, rast_sr, gdal, ogr, gt, proj, w, h, scratch):
         geoms = [g.projectAs(rast_sr) for g in geoms]
 
     shp = arcpy.CreateUniqueName("lcc_src.shp", scratch)
-    arcpy.management.CopyFeatures(geoms, shp)
+    # The scratch features must stay in the RASTER's coordinate system --
+    # an Output Coordinate System environment would make CopyFeatures
+    # project them (and an Extent environment crop them), and the
+    # rasterized source mask would land on the wrong cells.
+    with _mh.neutral_grid_env():
+        arcpy.management.CopyFeatures(geoms, shp)
     drv = gdal.GetDriverByName("MEM")
     mds = drv.Create("", w, h, 1, gdal.GDT_Byte)
     mds.SetGeoTransform(gt)
@@ -459,21 +464,28 @@ def run_least_cost_corridor(in_termini, cost_raster=None, cost_workspace=None,
     scratch = arcpy.env.scratchFolder
     gdal = _mh._gdal()
 
-    # Resolve to a real catalog path BEFORE anything gets stamped into a
-    # linkage record. A map-layer parameter's value (the common case when
-    # the termini output is already loaded) stringifies to just its LAYER
-    # NAME, not a path -- fine for arcpy's own calls below (which resolve a
-    # layer against the map automatically), but useless as "source_termini"
-    # for a report run in a different session: the reader could not find
-    # the source at all, so the chain walk stopped at this dataset instead
-    # of continuing back through Termini/Density/Clustering (found from
-    # Jeff's real report, 2026-08-09).
+    # Resolve a real catalog path for the LINKAGE RECORD only. A map-layer
+    # parameter's value stringifies to just its LAYER NAME -- fine for
+    # arcpy's own calls (which resolve a layer against the map), but
+    # useless as "source_termini" for a report run in a different session
+    # (found from Jeff's real report, 2026-08-09). The CURSOR keeps the
+    # ORIGINAL value: resolving it to the path first silently discarded an
+    # active selection on the termini layer -- a catalog path has no
+    # concept of selected features (same bug class fixed in Fill Corridor
+    # Holes, 2026-08-09; found here 2026-08-20).
+    termini_path = in_termini
     try:
-        in_termini = arcpy.Describe(in_termini).catalogPath
+        termini_path = arcpy.Describe(in_termini).catalogPath
     except Exception:                                            # noqa: BLE001
         pass
+    n_total, n_selected, has_sel = _mh.selection_info(in_termini,
+                                                      termini_path)
+    if has_sel:
+        _say(messages, "The termini layer has an active selection: "
+                       "{} of {} features are used.".format(n_selected,
+                                                            n_total))
 
-    trec = _lnk.read(in_termini, _lnk.TERMINI)
+    trec = _lnk.read(termini_path, _lnk.TERMINI)
     groups = _read_termini(in_termini)
     if facet_values:
         want = set()
@@ -482,7 +494,17 @@ def run_least_cost_corridor(in_termini, cost_raster=None, cost_workspace=None,
                 want.add(int(v))
             except (TypeError, ValueError):
                 pass
-        groups = {k: v for k, v in groups.items() if k in want}
+        matched = {k: v for k, v in groups.items() if k in want}
+        missing = want - set(matched)
+        if missing:
+            _warn(messages,
+                  "Requested facet value{} {} do{} not occur in the "
+                  "termini feature class and {} skipped.".format(
+                      "" if len(missing) == 1 else "s",
+                      ", ".join(str(m) for m in sorted(missing, key=str)),
+                      "es" if len(missing) == 1 else "",
+                      "was" if len(missing) == 1 else "were"))
+        groups = matched
         if not groups:
             raise arcpy.ExecuteError(
                 "None of the requested facet values occur in the termini "
@@ -682,7 +704,7 @@ def run_least_cost_corridor(in_termini, cost_raster=None, cost_workspace=None,
                                      out_raster, cpath, pair_label, geodesic,
                                      scratch, messages)
             _lnk.write(out_raster, _lnk.corridor_record(
-                analysis_id=analysis_id, source_termini=in_termini,
+                analysis_id=analysis_id, source_termini=termini_path,
                 source_cost_raster=cpath,
                 category={"category_id": fid, "label": label},
                 block_a=b1, block_b=b2, percentiles=percentiles,
@@ -756,7 +778,7 @@ def run_least_cost_corridor(in_termini, cost_raster=None, cost_workspace=None,
             "Created by Least-Cost Corridor from {term}: {n} corridor "
             "raster{ns} across {pc} percentile threshold{ps} each "
             "({pctlist}).").format(
-                term=str(in_termini), n=n_rasters[0],
+                term=str(termini_path), n=n_rasters[0],
                 ns="" if n_rasters[0] == 1 else "s",
                 pc=len(percentiles), ps="" if len(percentiles) == 1 else "s",
                 pctlist=", ".join("{:g}%".format(p) for p in percentiles))
@@ -774,7 +796,7 @@ def run_least_cost_corridor(in_termini, cost_raster=None, cost_workspace=None,
         _warn(messages, "Could not write output metadata: {}".format(e))
 
     _lnk.write(out_fc, _lnk.corridor_summary_record(
-        analysis_id=analysis_id, source_termini=in_termini,
+        analysis_id=analysis_id, source_termini=termini_path,
         corridors=corridors_meta, percentiles=percentiles,
         source_analysis_id=src_analysis), messages)
 

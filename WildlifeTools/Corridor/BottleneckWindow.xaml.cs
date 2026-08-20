@@ -316,9 +316,18 @@ namespace WildlifeTools.Corridor
                         {
                             try
                             {
-                                using (var cur = t.Search(
-                                    new QueryFilter { WhereClause = where },
-                                    true))
+                                // OID-only subfields: the recycling cursor
+                                // otherwise materializes every row WITH its
+                                // polygon geometry just to be counted --
+                                // a visible stall per selection change on
+                                // large layers.
+                                var qf = new QueryFilter
+                                {
+                                    WhereClause = where,
+                                    SubFields = t.GetDefinition()
+                                        .GetObjectIDField(),
+                                };
+                                using (var cur = t.Search(qf, true))
                                     while (cur.MoveNext())
                                         using (cur.Current) sel++;
                             }
@@ -469,17 +478,63 @@ namespace WildlifeTools.Corridor
         private void OnSqlB(object sender, RoutedEventArgs e) =>
             OpenSql(_slots[2]);
 
-        private void OpenSql(Slot slot)
+        private async void OpenSql(Slot slot)
         {
             var src = slot.Source.SelectedItem as SourceChoice;
             if (src == null) return;
-            var win = new BottleneckQueryWindow(src.Layer, slot.Where,
-                src.Name)
-            { Owner = this };
-            if (win.ShowDialog() != true) return;
-            string expr = win.Expression;
-            slot.Where = string.IsNullOrWhiteSpace(expr) ? null : expr;
-            _ = UpdateSlotStatus(slot);
+
+            // Esri's interactive Query Builder control binds only to a MAP
+            // MEMBER, so disk sources used to get a plain SQL text box
+            // (Jeff, 2026-08-20). Stand up a TEMPORARY invisible layer on
+            // the active map for the dialog's lifetime instead -- the
+            // builder then offers the same fields/unique values as for a
+            // map layer -- and remove it in the finally, even on failure.
+            // Only when no map is open (or the layer cannot be created)
+            // does the text-box fallback remain.
+            MapMember member = src.Layer;
+            FeatureLayer temp = null;
+            var map = MapView.Active?.Map;
+            if (member == null && !string.IsNullOrEmpty(src.Path)
+                && map != null)
+            {
+                try
+                {
+                    temp = await QueuedTask.Run(() =>
+                    {
+                        var p = new LayerCreationParams(new Uri(src.Path))
+                        {
+                            IsVisible = false,
+                            Name = src.Name + " (temporary - SQL builder)",
+                        };
+                        return LayerFactory.Instance
+                            .CreateLayer<FeatureLayer>(p, map);
+                    });
+                    member = temp;
+                }
+                catch { temp = null; }   // fall back to the text box
+            }
+            try
+            {
+                if (_closedDown) return;
+                var win = new BottleneckQueryWindow(member, slot.Where,
+                    src.Name)
+                { Owner = this };
+                if (win.ShowDialog() == true)
+                {
+                    string expr = win.Expression;
+                    slot.Where = string.IsNullOrWhiteSpace(expr)
+                        ? null : expr;
+                    _ = UpdateSlotStatus(slot);
+                }
+            }
+            finally
+            {
+                if (temp != null)
+                    await QueuedTask.Run(() =>
+                    {
+                        try { map.RemoveLayer(temp); } catch { }
+                    });
+            }
         }
 
         // =====================================================================
@@ -525,13 +580,14 @@ namespace WildlifeTools.Corridor
                 // quick-look outputs live in the MEMORY workspace -- no
                 // stray shapefiles in the Windows profile, gone when Pro
                 // closes; Save... writes them wherever the user chooses.
-                // Remove the PREVIOUS run's layers first so reruns don't
-                // pile up in the Contents pane (Jeff hit three
-                // Bottleneck_Points layers).
-                await RemovePreviousRunLayers();
+                // New names stay LOCAL until the run succeeds: overwriting
+                // the fields (and removing the previous layers) up front
+                // meant a FAILED rerun left the old graph showing with
+                // Save buttons pointing at never-created datasets, and the
+                // previous quick-look layers already gone.
                 string stampName = DateTime.Now.ToString("HHmmss");
-                _routeFc = @"memory\Bottleneck_Route_" + stampName;
-                _pointsFc = @"memory\Bottleneck_Points_" + stampName;
+                string routeFc = @"memory\Bottleneck_Route_" + stampName;
+                string pointsFc = @"memory\Bottleneck_Points_" + stampName;
                 _scratchDir = System.IO.Path.Combine(
                     System.IO.Path.GetTempPath(),
                     "WildlifeTools_Bottleneck");
@@ -548,7 +604,7 @@ namespace WildlifeTools.Corridor
                     la.GpValue, wa,
                     lb.GpValue, wb,
                     hasThr ? (object)thr : "",
-                    _routeFc, _pointsFc, "",
+                    routeFc, pointsFc, "",
                     ParseIntOr(txtStations.Text, 1000),
                     ParseOrEmpty(txtBoundaryStep.Text),
                     ParseOrEmpty(txtSimplify.Text),
@@ -572,10 +628,18 @@ namespace WildlifeTools.Corridor
                 }
                 if (result.IsFailed || !File.Exists(profileJson))
                 {
+                    // The previous run's layers, datasets, graph and Save
+                    // buttons are all still intact -- nothing was replaced.
                     txtRunStatus.Text = "Failed: " + string.Join("; ",
                         result.ErrorMessages.Select(m => m.Text).Take(3));
                     return;
                 }
+                // Success: retire the previous run's quick-look layers
+                // (still findable through the OLD field values), then
+                // commit the new names.
+                await RemovePreviousRunLayers();
+                _routeFc = routeFc;
+                _pointsFc = pointsFc;
                 LoadProfile(profileJson);
                 await RenameQuickLookLayers();
                 txtRunStatus.Text = string.Format(CultureInfo
@@ -1569,8 +1633,18 @@ namespace WildlifeTools.Corridor
             var range = new TextRange(statsViewer.Document.ContentStart,
                                       statsViewer.Document.ContentEnd);
             sb.Append(range.Text);
-            Clipboard.SetText(sb.ToString());
-            txtStatus.Text = "Statistics copied to the clipboard.";
+            // Guarded like every sibling window: another process holding
+            // the clipboard open throws CLIPBRD_E_CANT_OPEN.
+            try
+            {
+                Clipboard.SetText(sb.ToString());
+                txtStatus.Text = "Statistics copied to the clipboard.";
+            }
+            catch (Exception ex)
+            {
+                txtStatus.Text = "Could not copy to the clipboard: "
+                    + ex.Message;
+            }
         }
 
         private void OnClose(object sender, RoutedEventArgs e)

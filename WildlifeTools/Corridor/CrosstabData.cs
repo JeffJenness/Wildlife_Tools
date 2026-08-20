@@ -651,6 +651,16 @@ namespace WildlifeTools.Corridor
             r1 = Math.Min(r1, grid.H - 1);
             if (r1 < r0) return;
             int hh = r1 - r0 + 1;
+            // Columns are windowed exactly like the rows: a small patch on
+            // a wide grid otherwise allocated and scanned a full-raster-
+            // width mask per polygon (billions of wasted mask reads on a
+            // many-polygon paint).
+            int c0 = (int)Math.Floor((env.XMin - grid.X0) / grid.Cx) - 1;
+            int c1 = (int)Math.Ceiling((env.XMax - grid.X0) / grid.Cx) + 1;
+            c0 = Math.Max(c0, 0);
+            c1 = Math.Min(c1, grid.W - 1);
+            if (c1 < c0) return;
+            int ww = c1 - c0 + 1;
             var rings = new List<double[][]>();
             foreach (var part in p.Parts)
             {
@@ -660,13 +670,14 @@ namespace WildlifeTools.Corridor
                 if (pts.Count >= 3) rings.Add(pts.ToArray());
             }
             if (rings.Count == 0) return;
-            var mask = PolygonRasterizer.Rasterize(rings, grid.X0, grid.Cx,
-                grid.Y0 - r0 * grid.Cy, grid.Cy, grid.W, hh);
+            var mask = PolygonRasterizer.Rasterize(rings,
+                grid.X0 + c0 * grid.Cx, grid.Cx,
+                grid.Y0 - r0 * grid.Cy, grid.Cy, ww, hh);
             for (int r = 0; r < hh; r++)
             {
-                long baseIdx = (long)(r0 + r) * grid.W;
-                int rowOff = r * grid.W;
-                for (int c = 0; c < grid.W; c++)
+                long baseIdx = (long)(r0 + r) * grid.W + c0;
+                int rowOff = r * ww;
+                for (int c = 0; c < ww; c++)
                     if (mask[rowOff + c])
                     {
                         if (attr != null) attr[baseIdx + c] = val;
@@ -792,22 +803,33 @@ namespace WildlifeTools.Corridor
 
         /// <summary>2-D mean-preserving compressor: pairs land in a
         /// Micro x Micro grid over the observed ranges; each occupied
-        /// micro-cell keeps sum(w), sum(v1 w), sum(v2 w). NaN values (the
-        /// per-cell "no polygon" marker) keep a dedicated band so they
-        /// survive to the Other class.</summary>
+        /// micro-cell keeps sum(w), sum(v1 w), sum(v2 w) plus the per-axis
+        /// min/max actually seen, so a cell holding one distinct value
+        /// (integer class codes under unequal geographic weights) emits
+        /// that value EXACTLY, not a drifted weighted mean. The grid range
+        /// GROWS as values arrive: values outside the current range
+        /// trigger a rescale-and-rebin with headroom (the old fixed
+        /// first-200k-pairs range pooled everything beyond it into two
+        /// overflow bins -- wholesale-wrong class totals on large trending
+        /// rasters). NaN values (the per-cell "no polygon" marker) keep
+        /// dedicated marginal accumulators with the same compression, so
+        /// they survive to the Other class without unbounded memory.</summary>
         private sealed class PairAccumulator
         {
             private readonly List<double> _v1 = new List<double>();
             private readonly List<double> _v2 = new List<double>();
             private readonly List<double> _w = new List<double>();
-            private Dictionary<long, (double w, double s1, double s2)> _bins;
+            private Dictionary<long, Cell> _bins;
             private double _min1, _max1, _min2, _max2;
             private double _nanW1, _nanW2;        // NaN on one side: track
-            private readonly Dictionary<double, double> _nan1 =
-                new Dictionary<double, double>();  // v2 value -> w (v1 NaN)
-            private readonly Dictionary<double, double> _nan2 =
-                new Dictionary<double, double>();  // v1 value -> w (v2 NaN)
+            private readonly Marginal _nan1 = new Marginal();  // v1 NaN
+            private readonly Marginal _nan2 = new Marginal();  // v2 NaN
             private const int RawCap = 200000;
+
+            private struct Cell
+            {
+                public double W, S1, S2, Lo1, Hi1, Lo2, Hi2;
+            }
 
             public void Add(double a, double b, double w)
             {
@@ -816,17 +838,13 @@ namespace WildlifeTools.Corridor
                 if (na && nb) return;
                 if (na)
                 {
-                    double key = Quant(b);
-                    _nan1[key] = _nan1.TryGetValue(key, out var x)
-                        ? x + w : w;
+                    _nan1.Add(b, w);
                     _nanW1 += w;
                     return;
                 }
                 if (nb)
                 {
-                    double key = Quant(a);
-                    _nan2[key] = _nan2.TryGetValue(key, out var x)
-                        ? x + w : w;
+                    _nan2.Add(a, w);
                     _nanW2 += w;
                     return;
                 }
@@ -838,29 +856,71 @@ namespace WildlifeTools.Corridor
                     if (_v1.Count >= RawCap) Compress();
                     return;
                 }
-                AddBinned(a, b, w);
+                if (a < _min1 || a > _max1 || b < _min2 || b > _max2)
+                    Grow(a, b);
+                AddBinned(a, b, w, a * w, b * w, a, a, b, b);
             }
-
-            private static double Quant(double v) => Math.Round(v, 9);
 
             private void Compress()
             {
                 _min1 = _v1.Min(); _max1 = Math.Max(_v1.Max(), _min1 + 1e-9);
                 _min2 = _v2.Min(); _max2 = Math.Max(_v2.Max(), _min2 + 1e-9);
-                _bins = new Dictionary<long, (double, double, double)>();
+                _bins = new Dictionary<long, Cell>();
                 for (int i = 0; i < _v1.Count; i++)
-                    AddBinned(_v1[i], _v2[i], _w[i]);
+                {
+                    double a = _v1[i], b = _v2[i], w = _w[i];
+                    AddBinned(a, b, w, a * w, b * w, a, a, b, b);
+                }
                 _v1.Clear(); _v2.Clear(); _w.Clear();
             }
 
-            private void AddBinned(double a, double b, double w)
+            /// <summary>Expand the grid range to cover (a, b), with 50%
+            /// headroom on whichever side grew (so a value stream drifting
+            /// steadily -- a raster read top to bottom -- rescales O(log n)
+            /// times, not once per strip), and rebin the existing cells.
+            /// Sums are carried verbatim, so nothing is lost beyond cells
+            /// merging into coarser company.</summary>
+            private void Grow(double a, double b)
+            {
+                double mn1 = Math.Min(a, _min1), mx1 = Math.Max(a, _max1);
+                double mn2 = Math.Min(b, _min2), mx2 = Math.Max(b, _max2);
+                double span1 = Math.Max(mx1 - mn1, 1e-9);
+                double span2 = Math.Max(mx2 - mn2, 1e-9);
+                if (mn1 < _min1) mn1 -= 0.5 * span1;
+                if (mx1 > _max1) mx1 += 0.5 * span1;
+                if (mn2 < _min2) mn2 -= 0.5 * span2;
+                if (mx2 > _max2) mx2 += 0.5 * span2;
+                var old = _bins;
+                _min1 = mn1; _max1 = mx1; _min2 = mn2; _max2 = mx2;
+                _bins = new Dictionary<long, Cell>(old.Count);
+                foreach (var c in old.Values)
+                    AddBinned(c.S1 / c.W, c.S2 / c.W, c.W, c.S1, c.S2,
+                              c.Lo1, c.Hi1, c.Lo2, c.Hi2);
+            }
+
+            private void AddBinned(double a, double b, double w,
+                                   double s1, double s2,
+                                   double lo1, double hi1,
+                                   double lo2, double hi2)
             {
                 int i1 = MicroIdx(a, _min1, _max1);
                 int i2 = MicroIdx(b, _min2, _max2);
                 long key = (long)i1 * (Micro + 2) + i2;
-                _bins[key] = _bins.TryGetValue(key, out var x)
-                    ? (x.Item1 + w, x.Item2 + a * w, x.Item3 + b * w)
-                    : (w, a * w, b * w);
+                if (_bins.TryGetValue(key, out var x))
+                {
+                    x.W += w; x.S1 += s1; x.S2 += s2;
+                    if (lo1 < x.Lo1) x.Lo1 = lo1;
+                    if (hi1 > x.Hi1) x.Hi1 = hi1;
+                    if (lo2 < x.Lo2) x.Lo2 = lo2;
+                    if (hi2 > x.Hi2) x.Hi2 = hi2;
+                    _bins[key] = x;
+                }
+                else
+                    _bins[key] = new Cell
+                    {
+                        W = w, S1 = s1, S2 = s2,
+                        Lo1 = lo1, Hi1 = hi1, Lo2 = lo2, Hi2 = hi2,
+                    };
             }
 
             private static int MicroIdx(double v, double mn, double mx)
@@ -869,6 +929,12 @@ namespace WildlifeTools.Corridor
                 if (v >= mx) return Micro + 1;
                 return 1 + (int)((v - mn) / (mx - mn) * Micro);
             }
+
+            /// <summary>A single-valued cell reports that exact value; a
+            /// mixed cell reports its weighted mean.</summary>
+            private static double CellValue(double s, double w,
+                                            double lo, double hi)
+                => lo == hi ? lo : s / w;
 
             public CrosstabData ToData()
             {
@@ -883,24 +949,24 @@ namespace WildlifeTools.Corridor
                 }
                 else
                 {
-                    foreach (var kv in _bins.Values)
+                    foreach (var c in _bins.Values)
                     {
-                        v1.Add(kv.s1 / kv.w);
-                        v2.Add(kv.s2 / kv.w);
-                        w.Add(kv.w);
+                        v1.Add(CellValue(c.S1, c.W, c.Lo1, c.Hi1));
+                        v2.Add(CellValue(c.S2, c.W, c.Lo2, c.Hi2));
+                        w.Add(c.W);
                     }
                 }
-                foreach (var kv in _nan1)
+                foreach (var (val, wt) in _nan1.Items())
                 {
                     v1.Add(double.NaN);
-                    v2.Add(kv.Key);
-                    w.Add(kv.Value);
+                    v2.Add(val);
+                    w.Add(wt);
                 }
-                foreach (var kv in _nan2)
+                foreach (var (val, wt) in _nan2.Items())
                 {
-                    v1.Add(kv.Key);
+                    v1.Add(val);
                     v2.Add(double.NaN);
-                    w.Add(kv.Value);
+                    w.Add(wt);
                 }
                 return new CrosstabData
                 {
@@ -908,6 +974,92 @@ namespace WildlifeTools.Corridor
                     V2 = v2.ToArray(),
                     W = w.ToArray(),
                 };
+            }
+
+            /// <summary>1-D mean-preserving compressor for the NaN-side
+            /// marginals: exact per-distinct-value up to the cap, then the
+            /// same growable micro-bin scheme as the paired grid. The old
+            /// per-distinct-value dictionary was unbounded -- a continuous
+            /// float raster with sparse polygon coverage accumulated one
+            /// entry per no-polygon CELL VALUE (GBs on large grids).</summary>
+            private sealed class Marginal
+            {
+                private Dictionary<double, double> _exact =
+                    new Dictionary<double, double>();
+                private Dictionary<int, Cell1> _bins;
+                private double _mn, _mx;
+                private const int ExactCap = 65536;
+
+                private struct Cell1
+                {
+                    public double W, S, Lo, Hi;
+                }
+
+                public void Add(double v, double w)
+                {
+                    if (_bins == null)
+                    {
+                        double key = Math.Round(v, 9);
+                        _exact[key] = _exact.TryGetValue(key, out var x)
+                            ? x + w : w;
+                        if (_exact.Count >= ExactCap) Compress();
+                        return;
+                    }
+                    if (v < _mn || v > _mx) Grow(v);
+                    AddBinned(v, w, v * w, v, v);
+                }
+
+                private void Compress()
+                {
+                    _mn = _exact.Keys.Min();
+                    _mx = Math.Max(_exact.Keys.Max(), _mn + 1e-9);
+                    _bins = new Dictionary<int, Cell1>();
+                    foreach (var kv in _exact)
+                        AddBinned(kv.Key, kv.Value, kv.Key * kv.Value,
+                                  kv.Key, kv.Key);
+                    _exact = null;
+                }
+
+                private void Grow(double v)
+                {
+                    double mn = Math.Min(v, _mn), mx = Math.Max(v, _mx);
+                    double span = Math.Max(mx - mn, 1e-9);
+                    if (mn < _mn) mn -= 0.5 * span;
+                    if (mx > _mx) mx += 0.5 * span;
+                    var old = _bins;
+                    _mn = mn; _mx = mx;
+                    _bins = new Dictionary<int, Cell1>(old.Count);
+                    foreach (var c in old.Values)
+                        AddBinned(c.S / c.W, c.W, c.S, c.Lo, c.Hi);
+                }
+
+                private void AddBinned(double v, double w, double s,
+                                       double lo, double hi)
+                {
+                    int i = MicroIdx(v, _mn, _mx);
+                    if (_bins.TryGetValue(i, out var x))
+                    {
+                        x.W += w; x.S += s;
+                        if (lo < x.Lo) x.Lo = lo;
+                        if (hi > x.Hi) x.Hi = hi;
+                        _bins[i] = x;
+                    }
+                    else
+                        _bins[i] = new Cell1
+                        { W = w, S = s, Lo = lo, Hi = hi };
+                }
+
+                public IEnumerable<(double v, double w)> Items()
+                {
+                    if (_bins == null)
+                    {
+                        foreach (var kv in _exact)
+                            yield return (kv.Key, kv.Value);
+                        yield break;
+                    }
+                    foreach (var c in _bins.Values)
+                        yield return (CellValue(c.S, c.W, c.Lo, c.Hi), c.W);
+                }
             }
         }
 

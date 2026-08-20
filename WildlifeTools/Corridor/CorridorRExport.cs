@@ -23,7 +23,11 @@ namespace WildlifeTools.Corridor
         {
             Directory.CreateDirectory(folder);
             var written = new List<string>();
-            string header = string.Join(",", stack.VariableNames);
+            // RFC 4180-quote the names: a comma (legal in Pro layer names)
+            // in the header otherwise shifts every column read.csv sees,
+            // silently misaligning the variables LF_fxns.R clusters on.
+            string header = string.Join(",",
+                stack.VariableNames.Select(CsvQuote));
 
             foreach (var cd in stack.Classes.Values.OrderBy(c => c.Value))
             {
@@ -39,6 +43,16 @@ namespace WildlifeTools.Corridor
                 written.Add(path);
             }
             return written;
+        }
+
+        /// <summary>RFC 4180: wrap in quotes when the value carries a
+        /// comma, quote, or line break; double any embedded quotes.</summary>
+        private static string CsvQuote(string s)
+        {
+            s = s ?? "";
+            if (s.IndexOfAny(new[] { ',', '"', (char)10, (char)13 }) < 0)
+                return s;
+            return "\"" + s.Replace("\"", "\"\"") + "\"";
         }
 
         private static string FormatCode(double code)

@@ -367,13 +367,25 @@ def thin_points(rings, step, cap=300):
                                                   - closed[idx]))
     if not out:
         return np.zeros((0, 2))
-    pts = np.vstack(out)
-    if len(pts) > cap:
+    if sum(len(o) for o in out) > cap:
         # many-ring groups (clipped termini can shatter into dozens of
-        # sliver rings, each contributing its 3-point minimum) still honor
-        # the per-group bound that keeps the graph quadratic in CAP
-        pts = pts[np.linspace(0, len(pts) - 1, cap).astype(int)]
-    return pts
+        # sliver rings) still honor the per-group bound that keeps the
+        # graph quadratic in CAP -- but per RING, never below one point:
+        # the old uniform-index subsample over the stacked array could
+        # delete a sliver ring's only samples, silently disconnecting its
+        # group from a strand it genuinely occupies (a falsely
+        # "NOT CONNECTED" pair). The cap is a soft bound: one point per
+        # ring wins over the exact budget.
+        ring_perims = [p for r, p in zip(rings, perims)
+                       if len(r) >= 3 and p > 0]
+        tot = sum(ring_perims) or 1.0
+        extra = max(0, cap - len(out))
+        thinned = []
+        for o, p in zip(out, ring_perims):
+            a = min(len(o), max(1, 1 + int(round(extra * p / tot))))
+            thinned.append(o[np.linspace(0, len(o) - 1, a).astype(int)])
+        return np.vstack(thinned)
+    return np.vstack(out)
 
 
 def closest_pair(pts_a, edges_a, pts_b, edges_b):
@@ -416,6 +428,35 @@ def closest_pair(pts_a, edges_a, pts_b, edges_b):
     return best
 
 
+def _polygons_overlap(edges_a, edges_b):
+    """True when two polygon boundaries OVERLAP (cross, or one contains
+    the other). ``closest_pair`` is vertex-vs-edge only, which is exact
+    for DISJOINT boundaries but reports a POSITIVE distance (up to ~half
+    the vertex spacing) for crossing ones -- a patch overlapping a
+    terminus block then produced a phantom positive-length "gap crossing"
+    where habitat is actually continuous. Cheap bbox prefilter first."""
+    if len(edges_a) == 0 or len(edges_b) == 0:
+        return False
+    ax0 = min(edges_a[:, 0].min(), edges_a[:, 2].min())
+    ax1 = max(edges_a[:, 0].max(), edges_a[:, 2].max())
+    ay0 = min(edges_a[:, 1].min(), edges_a[:, 3].min())
+    ay1 = max(edges_a[:, 1].max(), edges_a[:, 3].max())
+    bx0 = min(edges_b[:, 0].min(), edges_b[:, 2].min())
+    bx1 = max(edges_b[:, 0].max(), edges_b[:, 2].max())
+    by0 = min(edges_b[:, 1].min(), edges_b[:, 3].min())
+    by1 = max(edges_b[:, 1].max(), edges_b[:, 3].max())
+    if ax1 < bx0 or bx1 < ax0 or ay1 < by0 or by1 < ay0:
+        return False
+    # boundary crossing: any edge of A properly crosses any edge of B
+    if _segments_properly_cross(edges_a[:, :2], edges_a[:, 2:4],
+                                edges_b).any():
+        return True
+    # containment: no crossings, so one vertex decides fully-inside
+    if points_inside(edges_a[:1, :2], edges_b)[0]:
+        return True
+    return bool(points_inside(edges_b[:1, :2], edges_a)[0])
+
+
 # ---------------------------------------------------------------------------
 # the visibility-graph shortest-path engine
 # ---------------------------------------------------------------------------
@@ -455,33 +496,75 @@ class CorridorGraph(object):
         self._graph = None
         self._messages = messages
 
-    def _candidate_blocks(self):
-        """Candidate node-index pairs to visibility-test: reflex-reflex,
-        each group's vertices vs reflex, and group-vs-group direct pairs."""
+    @staticmethod
+    def _chunked_triu(R, chunk):
+        """(ii, jj) chunks of the upper-triangle pairs of range(R),
+        generated LAZILY -- np.triu_indices materialized all R(R-1)/2
+        int64 pairs up front (~20 GB at R = 50k, reachable with
+        simplification off), before any chunk was processed."""
+        buf_i, buf_j, count = [], [], 0
+        for i in range(R - 1):
+            js = np.arange(i + 1, R)
+            pos = 0
+            while pos < len(js):
+                take = min(chunk - count, len(js) - pos)
+                buf_i.append(np.full(take, i, dtype=np.int64))
+                buf_j.append(js[pos:pos + take])
+                count += take
+                pos += take
+                if count >= chunk:
+                    yield (np.concatenate(buf_i), np.concatenate(buf_j))
+                    buf_i, buf_j, count = [], [], 0
+        if count:
+            yield (np.concatenate(buf_i), np.concatenate(buf_j))
+
+    @staticmethod
+    def _chunked_product(ai, bi, chunk):
+        """(ii, jj) chunks of the cartesian product ai x bi, lazily."""
+        if not len(ai) or not len(bi):
+            return
+        per = max(1, chunk // len(bi))
+        for a0 in range(0, len(ai), per):
+            sub = ai[a0:a0 + per]
+            ii = np.repeat(sub, len(bi))
+            jj = np.tile(bi, len(sub))
+            for c0 in range(0, len(ii), chunk):
+                yield ii[c0:c0 + chunk], jj[c0:c0 + chunk]
+
+    def _candidate_total(self):
+        """Arithmetic count of candidate pairs (the progress denominator)."""
         R = len(self.reflex)
-        blocks = []
-        if R > 1:
-            ii, jj = np.triu_indices(R, k=1)
-            blocks.append((ii, jj))
+        total = R * (R - 1) // 2 if R > 1 else 0
         keys = list(self.slices)
+        sizes = [self.slices[k][1] - self.slices[k][0] for k in keys]
+        total += sum(s * R for s in sizes)
+        for x in range(len(sizes)):
+            for y in range(x + 1, len(sizes)):
+                total += sizes[x] * sizes[y]
+        return total
+
+    def _candidate_chunks(self, chunk):
+        """Candidate node-index pairs to visibility-test, in chunks:
+        reflex-reflex, each group's vertices vs reflex, and group-vs-group
+        direct pairs."""
+        R = len(self.reflex)
+        if R > 1:
+            yield from self._chunked_triu(R, chunk)
+        keys = list(self.slices)
+        rr = np.arange(R)
         for key in keys:
             a0, a1 = self.slices[key]
             if R and a1 > a0:
-                gi = np.arange(a0, a1)
-                ii = np.repeat(gi, R)
-                jj = np.tile(np.arange(R), a1 - a0)
-                blocks.append((ii, jj))
+                yield from self._chunked_product(np.arange(a0, a1), rr,
+                                                 chunk)
         for x in range(len(keys)):
             a0, a1 = self.slices[keys[x]]
             for y in range(x + 1, len(keys)):
                 b0, b1 = self.slices[keys[y]]
                 if a1 > a0 and b1 > b0:
-                    ai = np.arange(a0, a1)
-                    bi = np.arange(b0, b1)
-                    ii = np.repeat(ai, len(bi))
-                    jj = np.tile(bi, len(ai))
-                    blocks.append((ii, jj))
-        return blocks
+                    yield from self._chunked_product(np.arange(a0, a1),
+                                                     np.arange(b0, b1),
+                                                     chunk)
 
     def build(self, progress=None):
         """``progress(candidates_done, candidates_total)`` is called before
@@ -491,52 +574,48 @@ class CorridorGraph(object):
 
         n = len(self.coords)
         rows, cols, data = [], [], []
-        blocks = self._candidate_blocks()
-        total = sum(len(bi) for bi, _bj in blocks)
+        total = self._candidate_total()
         done = 0
         if progress:
             progress(0, total)
         chunk = BUILD_CHUNK
-        for bii, bjj in blocks:
-            for c0 in range(0, len(bii), chunk):
-                ii = bii[c0:c0 + chunk]
-                jj = bjj[c0:c0 + chunk]
-                n_in_chunk = len(ii)
-                p = self.coords[ii]
-                q = self.coords[jj]
-                length = np.hypot(q[:, 0] - p[:, 0], q[:, 1] - p[:, 1])
-                live = length > self.eps
-                ii, jj, p, q, length = (ii[live], jj[live], p[live],
-                                        q[live], length[live])
-                if len(ii):
-                    # Cheap prefilter before the expensive crossing test: a
-                    # real visibility edge's midpoint lies inside the
-                    # polygon. The midpoint is nudged perpendicular to the
-                    # segment BOTH ways so wall-hugging edges (midpoint
-                    # exactly on the boundary, where the ray cast is a coin
-                    # flip) test deterministically: one nudge lands in the
-                    # interior.
-                    mid = 0.5 * (p + q)
-                    direction = (q - p) / length[:, None]
-                    normal = np.stack([-direction[:, 1], direction[:, 0]],
-                                      axis=1)
-                    off = normal * (self.eps * 100.0 + 1e-9)
-                    keep = (points_inside(mid + off, self.edges,
-                                          bands=self.bands)
-                            | points_inside(mid - off, self.edges,
-                                            bands=self.bands))
-                    ii, jj, p, q, length = (ii[keep], jj[keep], p[keep],
-                                            q[keep], length[keep])
-                if len(ii):
-                    ok = visible(p, q, self.edges, self.eps,
-                                 bands=self.bands)
-                    if ok.any():
-                        rows.append(ii[ok])
-                        cols.append(jj[ok])
-                        data.append(length[ok])
-                done += n_in_chunk
-                if progress:
-                    progress(done, total)
+        for ii, jj in self._candidate_chunks(chunk):
+            n_in_chunk = len(ii)
+            p = self.coords[ii]
+            q = self.coords[jj]
+            length = np.hypot(q[:, 0] - p[:, 0], q[:, 1] - p[:, 1])
+            live = length > self.eps
+            ii, jj, p, q, length = (ii[live], jj[live], p[live],
+                                    q[live], length[live])
+            if len(ii):
+                # Cheap prefilter before the expensive crossing test: a
+                # real visibility edge's midpoint lies inside the
+                # polygon. The midpoint is nudged perpendicular to the
+                # segment BOTH ways so wall-hugging edges (midpoint
+                # exactly on the boundary, where the ray cast is a coin
+                # flip) test deterministically: one nudge lands in the
+                # interior.
+                mid = 0.5 * (p + q)
+                direction = (q - p) / length[:, None]
+                normal = np.stack([-direction[:, 1], direction[:, 0]],
+                                  axis=1)
+                off = normal * (self.eps * 100.0 + 1e-9)
+                keep = (points_inside(mid + off, self.edges,
+                                      bands=self.bands)
+                        | points_inside(mid - off, self.edges,
+                                        bands=self.bands))
+                ii, jj, p, q, length = (ii[keep], jj[keep], p[keep],
+                                        q[keep], length[keep])
+            if len(ii):
+                ok = visible(p, q, self.edges, self.eps,
+                             bands=self.bands)
+                if ok.any():
+                    rows.append(ii[ok])
+                    cols.append(jj[ok])
+                    data.append(length[ok])
+            done += n_in_chunk
+            if progress:
+                progress(done, total)
         if rows:
             rows = np.concatenate(rows)
             cols = np.concatenate(cols)
@@ -793,12 +872,21 @@ def _explode(geom):
 
 
 def _union_all(geoms):
+    """Union many geometries with a balanced pairwise merge tree. The old
+    sequential chain re-processed the ever-growing accumulator once per
+    geometry -- quadratic in accumulated vertices, minutes of GEOS time on
+    a many-feature patch map where this takes seconds."""
     if not geoms:
         return None
-    out = geoms[0]
-    for g in geoms[1:]:
-        out = out.union(g)
-    return out
+    work = list(geoms)
+    while len(work) > 1:
+        merged = []
+        for i in range(0, len(work) - 1, 2):
+            merged.append(work[i].union(work[i + 1]))
+        if len(work) % 2:
+            merged.append(work[-1])
+        work = merged
+    return work[0]
 
 
 # ---------------------------------------------------------------------------
@@ -1103,11 +1191,15 @@ def run_patch_analysis(corridor, termini, out_fc, name_field=None,
                     for si, ri in enumerate(ext_ring_ids)}
     for i, r in enumerate(cor_rings):
         if _signed_area(r) >= 0:                 # a hole: assign to the
-            p0 = r[0:1]                          # exterior that contains it
-            for si, ri in enumerate(ext_ring_ids):
+            p0 = r[0:1]                          # INNERMOST containing
+            best_si, best_area = None, math.inf  # exterior -- first-found
+            for si, ri in enumerate(ext_ring_ids):   # broke island-in-lake
                 if points_inside(p0, edges_of([cor_rings[ri]]))[0]:
-                    strand_rings[si].append(r)
-                    break
+                    area = abs(_signed_area(cor_rings[ri]))
+                    if area < best_area:
+                        best_si, best_area = si, area
+            if best_si is not None:
+                strand_rings[best_si].append(r)
     ext_edges = {si: edges_of([strand_rings[si][0]])
                  for si in strand_rings}
     for k in keys:
@@ -1140,6 +1232,10 @@ def run_patch_analysis(corridor, termini, out_fc, name_field=None,
                                  gb["pts"], gb["edges"])
         if not math.isfinite(d):
             continue
+        # Overlapping polygons (patch extending into a terminus block) have
+        # TRUE distance zero, which vertex-vs-edge sampling misses.
+        if d > _EPS_TOUCH and _polygons_overlap(ga["edges"], gb["edges"]):
+            d = 0.0
         if d <= _EPS_TOUCH:
             connectors[(ka, kb)] = {
                 "coords": np.array([pa, pb]), "planar": 0.0, "direct": True}
@@ -1302,8 +1398,11 @@ def run_patch_analysis(corridor, termini, out_fc, name_field=None,
                 used_edges[e] = payload
                 pay_pairs = payload.setdefault("used_by", [])
                 pay_pairs.append(pair_label)
+            n_stone_nodes = 0
             for node in node_path[1:-1]:
                 stones_used.add(keys[node])
+                if groups[keys[node]].get("kind") == "patch":
+                    n_stone_nodes += 1
             # zero-length links (touching polygons) are part of the route
             # but are not gaps the animal must cross
             lengths = sorted((p["length_m"] for _e, p in segs
@@ -1317,7 +1416,9 @@ def run_patch_analysis(corridor, termini, out_fc, name_field=None,
                 "n_segments": len(lengths),
                 "critical_gap_m": crit,
                 "segment_lengths_m": lengths,
-                "n_stones": max(0, len(node_path) - 2),
+                # PATCH nodes only -- an intermediate TERMINUS on the
+                # spanning-forest path is not a stepping-stone patch
+                "n_stones": n_stone_nodes,
             })
 
     # add unreachable entries for termini that never made it into groups

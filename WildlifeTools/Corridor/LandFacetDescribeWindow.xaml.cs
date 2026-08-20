@@ -43,10 +43,42 @@ namespace WildlifeTools.Corridor
 
         private List<R.Block> _blocks;          // last report, for copy/save
 
+        // Stop the MCT chain-walk metadata reads when Pro closes with the
+        // window open -- the documented shutdown-race class the sibling
+        // windows guard against.
+        private bool _closedDown;
+        private ArcGIS.Core.Events.SubscriptionToken _appClosingToken;
+
         public LandFacetDescribeWindow()
         {
             InitializeComponent();
-            Loaded += (_, __) => PopulateLayers();
+            Loaded += (_, __) =>
+            {
+                PopulateLayers();
+                if (_appClosingToken == null)
+                    _appClosingToken = ArcGIS.Desktop.Framework.Events
+                        .ApplicationClosingEvent.Subscribe(args =>
+                        {
+                            _closedDown = true;
+                            try { Close(); } catch { }
+                            return System.Threading.Tasks.Task.CompletedTask;
+                        });
+            };
+            Closed += (_, __) =>
+            {
+                _closedDown = true;
+                if (_appClosingToken != null)
+                {
+                    try
+                    {
+                        ArcGIS.Desktop.Framework.Events
+                            .ApplicationClosingEvent
+                            .Unsubscribe(_appClosingToken);
+                    }
+                    catch { }
+                    _appClosingToken = null;
+                }
+            };
         }
 
         private void PopulateLayers()
@@ -175,9 +207,12 @@ namespace WildlifeTools.Corridor
                     string xml = pick.Layer != null
                         ? (XmlForLayer(pick.Layer) ?? XmlForPath(path))
                         : XmlForPath(path);
-                    // The ancestor fetches run right here on the MCT too.
-                    return R.BuildReport(pick.Name, path, xml, XmlForPath);
+                    // The ancestor fetches run right here on the MCT too;
+                    // stop following the chain when Pro is tearing down.
+                    return R.BuildReport(pick.Name, path, xml,
+                        p => _closedDown ? null : XmlForPath(p));
                 });
+                if (_closedDown) return;
                 _blocks = blocks;
                 viewer.Document = Render(blocks);
                 btnCopyText.IsEnabled = btnCopyRtf.IsEnabled = btnSave.IsEnabled = true;

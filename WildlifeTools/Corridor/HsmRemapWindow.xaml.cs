@@ -104,6 +104,12 @@ namespace WildlifeTools.Corridor
             Color.FromRgb(160, 124, 62),    // umber
         };
 
+        // Stop worker activity when Pro closes with this window open --
+        // the documented shutdown-hang class (multi-second MCT raster
+        // scans here); the same guard the sibling windows carry.
+        private bool _closedDown;
+        private ArcGIS.Core.Events.SubscriptionToken _appClosingToken;
+
         public HsmRemapWindow()
         {
             InitializeComponent();
@@ -111,6 +117,28 @@ namespace WildlifeTools.Corridor
             _rows.CollectionChanged += (s, e) => Dirty();
             LoadMapLayers();
             UpdateModeColumns();
+            _appClosingToken = ArcGIS.Desktop.Framework.Events
+                .ApplicationClosingEvent.Subscribe(args =>
+                {
+                    _closedDown = true;
+                    try { Close(); } catch { }
+                    return System.Threading.Tasks.Task.CompletedTask;
+                });
+            Closed += (_, __) =>
+            {
+                _closedDown = true;
+                if (_appClosingToken != null)
+                {
+                    try
+                    {
+                        ArcGIS.Desktop.Framework.Events
+                            .ApplicationClosingEvent
+                            .Unsubscribe(_appClosingToken);
+                    }
+                    catch { }
+                    _appClosingToken = null;
+                }
+            };
         }
 
         // ---- raster choosing --------------------------------------------
@@ -480,6 +508,9 @@ namespace WildlifeTools.Corridor
 
             for (int y0 = 0; y0 < h; y0 += strip)
             {
+                if (_closedDown)
+                    throw new OperationCanceledException(
+                        "ArcGIS Pro is closing.");
                 int hh = Math.Min(strip, h - y0);
                 var pb = raster.CreatePixelBlock(w, hh);
                 raster.Read(0, y0, pb);
@@ -489,19 +520,20 @@ namespace WildlifeTools.Corridor
                 if (n0 != n1) rowFirst = (n0 == hh);
                 // The pixel block's own NoData MASK is authoritative -- an
                 // integer GRID's masked cells otherwise read as value 0
-                // with no declared NoData value to compare against.
-                bool useMask = true;
-                try { pb.GetNoDataMaskValue(0, 0, 0); }
-                catch { useMask = false; }
+                // with no declared NoData value to compare against. Typed
+                // accessors (shared with RasterStack): the per-pixel
+                // GetValue/Convert/GetNoDataMaskValue path boxed ~3 calls
+                // per cell -- many seconds of MCT time on a 40M-cell scan.
+                var maskOk = RasterStack.MaskReader(pb, w, hh);
+                var read = RasterStack.CellReader(data);
                 for (int r = 0; r < hh; r++)
                 {
                     for (int c = 0; c < w; c++)
                     {
-                        if (useMask && Convert.ToInt32(
-                                pb.GetNoDataMaskValue(0, c, r)) == 0)
+                        if (maskOk != null && !maskOk(c, r))
                         { nNoData++; continue; }
                         int i0 = rowFirst ? r : c, i1 = rowFirst ? c : r;
-                        double v = Convert.ToDouble(data.GetValue(i0, i1));
+                        double v = read(i0, i1);
                         bool ok = !double.IsNaN(v) && !double.IsInfinity(v)
                                   && Math.Abs(v) < 1e30;
                         if (ok && hasNd && v == nd) ok = false;
@@ -749,10 +781,14 @@ namespace WildlifeTools.Corridor
             double step = (_max - _min) / k;
             for (int i = 0; i < k; i++)
             {
+                // Raw, not Fmt: Fmt's thousands separators ("1,000.0") are
+                // unparseable by RemapRow.Num (NumberStyles.Float has no
+                // AllowThousands), so autofilled rows at >= 1000 were
+                // silently dropped at Save and those classes became NoData.
                 _rows.Add(new RemapRow
                 {
-                    FromText = Fmt(_min + i * step),
-                    ToText = Fmt(i == k - 1 ? _max : _min + (i + 1) * step),
+                    FromText = Raw(_min + i * step),
+                    ToText = Raw(i == k - 1 ? _max : _min + (i + 1) * step),
                 });
             }
             Dirty();
@@ -764,7 +800,7 @@ namespace WildlifeTools.Corridor
             rbValue.IsChecked = true;
             _rows.Clear();
             foreach (double v in _uniques)
-                _rows.Add(new RemapRow { FromText = Fmt(v) });
+                _rows.Add(new RemapRow { FromText = Raw(v) });
             Dirty();
         }
 

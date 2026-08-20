@@ -120,8 +120,7 @@ namespace WildlifeTools.Corridor
             {
                 return await QueuedTask.Run(() =>
                 {
-                    using (var g = new Geodatabase(
-                        new FileGeodatabaseConnectionPath(new Uri(ws))))
+                    using (var g = OpenGdb(ws))
                     {
                         string cand = name;
                         for (int i = 1; i <= 999 && GdbHas(g, cand); i++)
@@ -198,35 +197,77 @@ namespace WildlifeTools.Corridor
             if (r2.IsFailed)
                 throw new InvalidOperationException(string.Join("; ",
                     r2.ErrorMessages.Select(m => m.Text)));
+            // CreateTable on a folder always adds a mandatory placeholder
+            // column (dBASE needs at least one field); drop it now that the
+            // real schema exists, so exports don't carry a junk Field1.
+            await RunQuiet("management.DeleteField",
+                Geoprocessing.MakeValueArray(path, "Field1"));
 
+            bool needSessionSave = false;
+            // Captured BEFORE any writing: after the fallback EditOperation
+            // runs, HasEdits is true by definition.
+            bool hadPriorEdits = false;
+            try { hadPriorEdits = ArcGIS.Desktop.Core.Project.Current.HasEdits; }
+            catch { }
             await QueuedTask.Run(() =>
             {
                 using (var ds = OpenDatastore(path))
                 using (var table = OpenTable(ds, path))
                 {
-                    var op = new ArcGIS.Desktop.Editing.EditOperation
-                    { Name = "Write statistics table", ShowProgressor = false };
-                    op.Callback(context =>
+                    try
                     {
+                        // Direct row creation: a shapefile/dBASE datastore is
+                        // not transactional, so no Pro edit session is
+                        // involved. The old EditOperation +
+                        // Project.SaveEditsAsync() path committed EVERY
+                        // pending edit project-wide -- including unrelated,
+                        // unsaved feature edits the user might have intended
+                        // to discard.
                         foreach (var row in spec.Rows)
                             using (var buf = table.CreateRowBuffer())
                             {
                                 FillBuffer(buf, row);
-                                using (var r = table.CreateRow(buf))
-                                    context.Invalidate(r);
+                                table.CreateRow(buf).Dispose();
                             }
-                    }, table);
-                    if (!op.Execute())
-                        throw new InvalidOperationException(
-                            op.ErrorMessage ?? "row insert failed");
+                    }
+                    catch (Exception)
+                    {
+                        // Fallback: some datastore states still demand the
+                        // edit-session path.
+                        var op = new ArcGIS.Desktop.Editing.EditOperation
+                        {
+                            Name = "Write statistics table",
+                            ShowProgressor = false,
+                        };
+                        op.Callback(context =>
+                        {
+                            foreach (var row in spec.Rows)
+                                using (var buf = table.CreateRowBuffer())
+                                {
+                                    FillBuffer(buf, row);
+                                    using (var r = table.CreateRow(buf))
+                                        context.Invalidate(r);
+                                }
+                        }, table);
+                        if (!op.Execute())
+                            throw new InvalidOperationException(
+                                op.ErrorMessage ?? "row insert failed");
+                        needSessionSave = true;
+                    }
                 }
             });
-            // commit so nothing stays pending in Pro's edit session
-            try
+            if (needSessionSave && !hadPriorEdits)
             {
-                await ArcGIS.Desktop.Core.Project.Current.SaveEditsAsync();
+                // Commit the fallback's edit operation -- but never silently
+                // commit the user's own unrelated pending edits along with
+                // it; when the user already had pending edits, the rows stay
+                // pending with them, saved or discarded together.
+                try
+                {
+                    await ArcGIS.Desktop.Core.Project.Current.SaveEditsAsync();
+                }
+                catch { }
             }
-            catch { }
             return path;
         }
 
@@ -239,12 +280,25 @@ namespace WildlifeTools.Corridor
             catch { return false; }
         }
 
+        /// <summary>Open a geodatabase workspace: file gdb via its folder
+        /// path, enterprise via the .sde connection file. SplitPath
+        /// classifies BOTH as gdb=true; opening an .sde with
+        /// FileGeodatabaseConnectionPath failed with an unhelpful
+        /// exception.</summary>
+        private static Geodatabase OpenGdb(string ws)
+        {
+            return ws.TrimEnd('\\', '/').EndsWith(".sde",
+                    StringComparison.OrdinalIgnoreCase)
+                ? new Geodatabase(new DatabaseConnectionFile(new Uri(ws)))
+                : new Geodatabase(new FileGeodatabaseConnectionPath(
+                    new Uri(ws)));
+        }
+
         private static Datastore OpenDatastore(string tablePath)
         {
             var (ws, _n, gdb) = SplitPath(tablePath);
             if (gdb)
-                return new Geodatabase(new FileGeodatabaseConnectionPath(
-                    new Uri(ws)));
+                return OpenGdb(ws);
             return new FileSystemDatastore(new FileSystemConnectionPath(
                 new Uri(ws), FileSystemDatastoreType.Shapefile));
         }

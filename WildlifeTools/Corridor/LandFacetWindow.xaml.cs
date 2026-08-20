@@ -130,6 +130,8 @@ namespace WildlifeTools.Corridor
         private string _analysisId;              // linkage id stamped on the last output
         private RasterStack _stack;
         private List<VarFlag> _varFlags = new();
+        private bool _slopeResolved;    // percent-slope question answered
+                                        // for the CURRENT stack
         private List<string> _varPaths = new();  // catalog paths, in VariableNames order
         private int _step = 1;
 
@@ -180,11 +182,45 @@ namespace WildlifeTools.Corridor
             var b = new SolidColorBrush(c); b.Freeze(); return b;
         }
 
+        // When PRO closes with this window still open, stop all worker
+        // activity immediately -- dataset reads and GP calls racing Pro's
+        // teardown are the documented won't-close hang class (fixed in
+        // BottleneckWindow, HistogramWindow, CrosstabWindow; this window
+        // was missed).
+        private bool _closedDown;
+        private ArcGIS.Core.Events.SubscriptionToken _appClosingToken;
+
         public LandFacetWindow()
         {
             InitializeComponent();
             ShowStep(1);                 // paint the step chips for the initial state
-            Loaded += (_, __) => PopulateLayers();
+            Loaded += (_, __) =>
+            {
+                PopulateLayers();
+                if (_appClosingToken == null)
+                    _appClosingToken = ArcGIS.Desktop.Framework.Events
+                        .ApplicationClosingEvent.Subscribe(args =>
+                        {
+                            _closedDown = true;
+                            try { Close(); } catch { }
+                            return Task.CompletedTask;
+                        });
+            };
+            Closed += (_, __) =>
+            {
+                _closedDown = true;
+                if (_appClosingToken != null)
+                {
+                    try
+                    {
+                        ArcGIS.Desktop.Framework.Events
+                            .ApplicationClosingEvent
+                            .Unsubscribe(_appClosingToken);
+                    }
+                    catch { }
+                    _appClosingToken = null;
+                }
+            };
         }
 
         private void SetStatus(string t) => txtStatus.Text = t;
@@ -538,10 +574,12 @@ namespace WildlifeTools.Corridor
                     var flags = vars.Select(v => DetectVarType(v.Name, GetMetadataXml(v.Raster))).ToList();
                     return (st, flags);
                 });
+                if (_closedDown) return;
                 var stack = res.st;
                 _stack = stack;
                 btnExportR.IsEnabled = true;
                 _varFlags = res.flags;
+                _slopeResolved = false;      // fresh data -> ask again
                 // Same order as stack.VariableNames -- recorded in the linkage
                 // metadata so the Mahalanobis tool can re-find these exact rasters.
                 _varPaths = vars.Select(v => v.Path).ToList();
@@ -872,6 +910,7 @@ namespace WildlifeTools.Corridor
                 var sample = Subsample(_activeClass, MaxSample, new Random(12345));
                 var model = LandFacetEngine.KdePrepare(sample, 2000, new Random(999));
                 var density = await Task.Run(() => LandFacetEngine.KdeEval(sample, model));
+                if (_closedDown) return;
                 _sample = sample;
                 _kdeModel = model;
                 _sampleDensity = density;
@@ -919,8 +958,11 @@ namespace WildlifeTools.Corridor
             if (txtFractionEdit == null) return;
             string t = txtFractionEdit.Text.Trim().TrimEnd('%').Trim();
             double frac;
-            if (double.TryParse(t, NumberStyles.Any, CultureInfo.CurrentCulture, out double pct) ||
-                double.TryParse(t, NumberStyles.Any, CultureInfo.InvariantCulture, out pct))
+            // Float, not Any: Any allows thousands separators, so "12.5"
+            // parsed as 125 in comma-decimal locales ('.' is the GROUP
+            // separator there, and .NET does not validate group sizes).
+            if (double.TryParse(t, NumberStyles.Float, CultureInfo.CurrentCulture, out double pct) ||
+                double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out pct))
                 frac = Math.Max(sldFraction.Minimum, Math.Min(sldFraction.Maximum, pct / 100.0));
             else
                 frac = sldFraction.Value;                    // bad input -> revert
@@ -1108,6 +1150,7 @@ namespace WildlifeTools.Corridor
             try
             {
                 var res = await Task.Run(() => Cluster(raw.ToArray(), psi, restarts));
+                if (_closedDown) return;
                 _stdMean = res.mean; _stdSd = res.sd; _cValues = res.cValues;
                 _indicesByC = res.indices; _centroidsByC = res.centroids;
                 int suggested = SuggestK();
@@ -1296,7 +1339,10 @@ namespace WildlifeTools.Corridor
         /// given. Must run on the MCT (uses Project.Current).</summary>
         private static OutputTarget ResolveOutputTarget(string typed)
         {
-            typed = (typed ?? "").Trim().Trim('"');
+            // The standing dataset-path rule: strip trailing separators
+            // BEFORE any extension logic, else "D:\out\name\" becomes
+            // "D:\out\name\.tif".
+            typed = (typed ?? "").Trim().Trim('"').TrimEnd('\\', '/');
             if (typed.Length == 0) return null;
 
             var proj = ArcGIS.Desktop.Core.Project.Current;
@@ -1566,6 +1612,7 @@ namespace WildlifeTools.Corridor
                     var centers = a.CentroidsByC[k];
                     var kde = a.Kde; var mean = a.StdMean; var sd = a.StdSd; double psi = a.Psi;
                     var data = a.Data;
+                    if (_closedDown) return;
                     var res = await Task.Run(() => ClassifyInto(
                         arr, off, data, centers, mean, sd, psi, kde, densThresh, confThresh, k));
                     for (int c = 0; c < k; c++)
@@ -1616,15 +1663,20 @@ namespace WildlifeTools.Corridor
                     .Select(l => (l.id, l.catValue, l.catLabel, l.cluster, l.count)).ToList();
                 string dsName = System.IO.Path.GetFileNameWithoutExtension(finalPath);
                 _symbologyWarning = null;
+                if (_closedDown) return;
                 await QueuedTask.Run(() =>
                 {
                     var map = MapView.Active?.Map;
                     if (map == null) return;
                     // The geodatabase path was added by Copy Raster; find that layer.
                     // A GeoTIFF path is created here (Copy Raster was not used).
+                    // FIRST, not Last: Copy Raster inserts its result at the
+                    // TOP of the TOC, and GetLayersAsFlattenedList enumerates
+                    // top-down -- LastOrDefault picked the OLDEST same-named
+                    // layer on a rerun and symbolized the stale one.
                     RasterLayer lyr = addedByGp
                         ? map.GetLayersAsFlattenedList().OfType<RasterLayer>()
-                             .LastOrDefault(l => string.Equals(l.Name, dsName,
+                             .FirstOrDefault(l => string.Equals(l.Name, dsName,
                                  StringComparison.OrdinalIgnoreCase))
                         : LayerFactory.Instance.CreateLayer(new Uri(finalPath), map) as RasterLayer;
                     // Custom symbology is best-effort: never let it abort a successful write.
@@ -1847,13 +1899,24 @@ namespace WildlifeTools.Corridor
                         "Land Facet Clustering", MessageBoxButton.YesNo, MessageBoxImage.Warning);
                     if (r != MessageBoxResult.Yes) return;
                 }
-                // Percent-slope three-option confirmation.
+                // Percent-slope three-option confirmation. Asked ONCE per
+                // loaded stack: re-asking on a Back/Next round trip either
+                // double-converted the already-converted values
+                // (atan(45/100) on data already in degrees) or invited a
+                // contradictory second answer over mutated data.
                 var slopeVars = _varFlags.Where(f => f.PercentSlope).Select(f => f.Name).ToList();
-                if (slopeVars.Count > 0)
+                if (slopeVars.Count > 0 && !_slopeResolved)
                 {
                     var choice = AskSlope(slopeVars);
                     if (choice == SlopeChoice.DoNotProceed) return;
-                    if (choice == SlopeChoice.ConvertDegrees) ConvertPercentToDegrees(slopeVars);
+                    if (choice == SlopeChoice.ConvertDegrees)
+                    {
+                        ConvertPercentToDegrees(slopeVars);
+                        // the data IS degrees now
+                        foreach (var f in _varFlags)
+                            f.PercentSlope = false;
+                    }
+                    _slopeResolved = true;
                 }
                 ShowStep(2);
                 return;

@@ -771,11 +771,19 @@ def _gdal_source_path(raster, scratch):
 
 
 def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
-                           scratch, messages):
+                           scratch, messages, value_caps=None):
     """Mean/cov/corr from cells where a categorical raster equals ``cat_value``.
 
     The category raster is aligned to the analysis grid (nearest), then predictors
     are accumulated (streaming, block by block) over matching, fully-valid cells.
+
+    ``value_caps`` (optional): ``{variable_index: max_valid_value}`` -- sample
+    cells where a capped variable exceeds its cap are EXCLUDED and counted,
+    with a warning. This is the per-cell screen for lost-NoData sentinels
+    (a gdb multi-band density raster can drop its NoData declaration, so the
+    65535 sentinel arrives scaled as 6.55 -- a mean-based check only fired
+    above ~8% contamination, while a single sentinel cell already inflates a
+    density variance of ~0.05 by ~36 per cell).
     """
     gdal = _gdal()
     width, height = geo["width"], geo["height"]
@@ -796,6 +804,7 @@ def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
 
     k = len(vrts)
     n = 0
+    n_capped = 0
     shift = None                    # center subtracted before accumulating (stability)
     s1 = np.zeros(k)                # sum of (X - shift)
     s2 = np.zeros((k, k))           # sum of (X - shift)(X - shift)^T
@@ -806,6 +815,14 @@ def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
         for j, band in enumerate(bands):
             stack[j] = band.ReadAsArray(0, yoff, width, rows)
         mask = np.isclose(cat, target) & np.all(np.isfinite(stack), axis=0)
+        if value_caps:
+            for j, cap in value_caps.items():
+                with np.errstate(invalid="ignore"):
+                    over = mask & (stack[j] > cap)
+                m = int(over.sum())
+                if m:
+                    n_capped += m
+                    mask &= ~over
         if not mask.any():
             continue
         X = stack[:, mask]                  # (k, m)
@@ -823,6 +840,13 @@ def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
             arcpy.management.Delete(cat_tmp)
         except Exception:
             pass
+    if n_capped and messages is not None:
+        messages.addWarningMessage(
+            "{:,} sample cells held a value above the valid maximum for "
+            "one of the variables and were excluded -- a raster has "
+            "probably lost its NoData declaration (a file geodatabase may "
+            "not preserve it on a multi-band raster), so NoData sentinels "
+            "arrive as data.".format(n_capped))
     if n < k + 1:
         raise arcpy.ExecuteError(
             "Only {} cells matched category {}; need at least {} for a {}-variable "
@@ -1603,7 +1627,8 @@ def _stretch_stats_dict(stats):
             "resolution": stats["resolution"]}
 
 
-def compute_mahalanobis(vrts, geo, mean, inv_cov, out_type, scratch, messages):
+def compute_mahalanobis(vrts, geo, mean, inv_cov, out_type, scratch, messages,
+                        value_caps=None):
     """Compute the D2 / D / p-value raster, block by block, into a scratch GeoTIFF.
 
     Returns ``(scratch_path, stats)`` where ``stats`` is the dataset min/max/mean/std
@@ -1648,6 +1673,11 @@ def compute_mahalanobis(vrts, geo, mean, inv_cov, out_type, scratch, messages):
         for j, band in enumerate(bands):
             stack[j] = band.ReadAsArray(0, yoff, width, rows).reshape(-1)
         valid = np.all(np.isfinite(stack), axis=0)
+        if value_caps:
+            # per-cell lost-NoData sentinel screen (see stats_from_categorical)
+            for j, cap in value_caps.items():
+                with np.errstate(invalid="ignore"):
+                    valid &= ~(stack[j] > cap)
         if mask_band is not None:
             mblock = mask_band.ReadAsArray(0, yoff, width, rows).reshape(-1)
             valid = valid & np.isfinite(mblock)

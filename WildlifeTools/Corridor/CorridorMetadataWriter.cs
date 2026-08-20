@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -111,7 +112,13 @@ namespace WildlifeTools.Corridor
                     ["schema"] = "jenness.landfacet/1",
                     ["record"] = "facets",
                     ["analysis_id"] = analysisId,
-                    ["created"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                    // InvariantCulture: DateTime.ToString uses the current
+                    // culture's CALENDAR for yyyy -- a Buddhist/Um-al-Qura
+                    // default calendar stamped year 2569/1447, which the
+                    // invariant-parsing reader then compared as Gregorian,
+                    // firing false STALE warnings on every fresh chain.
+                    ["created"] = DateTime.UtcNow.ToString(
+                        "yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture),
                     ["tool"] = "Land Facet Clustering",
                     ["source"] = new Dictionary<string, object>
                     {

@@ -367,6 +367,12 @@ namespace WildlifeTools.Corridor
                     double w = ww[i];
                     if (w <= 0) continue;
                     double v = vv[i];
+                    // Out-of-axis-range data is EXCLUDED, matching the
+                    // bars (BinTotals drops it as excludedWeight). The
+                    // boundary reflection otherwise teleported an
+                    // out-of-range point's full mass INSIDE a zoomed
+                    // axis, drawing a spurious bump the bars don't show.
+                    if (v < min || v > max) continue;
                     s += w * (G(x - v) + G(x - (2 * min - v))
                               + G(x - (2 * max - v)));
                 }

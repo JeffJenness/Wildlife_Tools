@@ -230,7 +230,19 @@ def run_density(in_raster, out_raster, facet_values=None,
                 want.add(int(v))
             except (TypeError, ValueError):
                 want.add(v)
-        entries = [e for e in entries if e["facet_id"] in want]
+        matched = [e for e in entries if e["facet_id"] in want]
+        missing = want - {e["facet_id"] for e in matched}
+        if missing:
+            # A stale dialog pick list (input swapped after choosing) used
+            # to narrow the run SILENTLY; name what was asked for but absent.
+            _warn(messages,
+                  "Requested facet value{} {} do{} not occur in the raster "
+                  "and {} skipped.".format(
+                      "" if len(missing) == 1 else "s",
+                      ", ".join(str(m) for m in sorted(missing, key=str)),
+                      "es" if len(missing) == 1 else "",
+                      "was" if len(missing) == 1 else "were"))
+        entries = matched
         if not entries:
             raise arcpy.ExecuteError(
                 "None of the requested facet values occur in the raster.")

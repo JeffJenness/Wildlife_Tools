@@ -196,31 +196,24 @@ def _projected_extent(d, out_sr):
     return pext.XMin, pext.YMin, pext.XMax, pext.YMax
 
 
-def _build_grid(inputs, out_sr, cell_size, messages):
+def _build_grid(inputs, out_sr, cell_size, opened, messages):
     """The shared analysis grid: ``(gt, width, height, csx, csy, note)``.
 
     Cell size = the user's override, else the smallest raster cell, else
     1/1000 of the union extent's longest edge (the original's rules). The
     union extent covers every input; with rasters present the grid is
-    additionally snapped to the smallest-cell raster's own cell origin."""
-    import arcpy
-
+    additionally snapped to the smallest-cell raster's own cell origin.
+    ``opened`` is the orchestrator's ``{path: (dataset, tmp)}`` cache --
+    rasters are opened ONCE for the whole run (the old open-read-delete-
+    reopen doubled a whole-raster scratch export on formats GDAL can only
+    reach through the CopyRaster fallback)."""
     xmin = ymin = xmax = ymax = None
     best = None          # (cell, origin_x, origin_y) of the smallest-cell raster
-    scratch = arcpy.env.scratchFolder
     for kind, ds, d, path, name in inputs:
         if kind == "raster":
-            src, tmp = _hs._open_source(path, scratch, messages)
-            try:
-                gt = src.GetGeoTransform()
-                w, h = src.RasterXSize, src.RasterYSize
-            finally:
-                src = None
-                if tmp:
-                    try:
-                        arcpy.management.Delete(tmp)
-                    except Exception:                            # noqa: BLE001
-                        pass
+            src = opened[path][0]
+            gt = src.GetGeoTransform()
+            w, h = src.RasterXSize, src.RasterYSize
             cx, cy = abs(gt[1]), abs(gt[5])
             x0, y0 = gt[0], gt[3]
             x1, y1 = x0 + gt[1] * w, y0 + gt[5] * h
@@ -271,52 +264,44 @@ def _build_grid(inputs, out_sr, cell_size, messages):
 # ---------------------------------------------------------------------------
 #  Presence layers
 # ---------------------------------------------------------------------------
-def _raster_presence(counts, path, gt, width, height, messages):
+def _raster_presence(counts, src, path, gt, width, height, messages):
     """Add one raster's presence (value neither NoData nor zero) to
-    ``counts`` on the shared grid, nearest-neighbor. Returns the number of
+    ``counts`` on the shared grid, nearest-neighbor. ``src`` is the
+    already-open GDAL dataset (opened once per run). Returns the number of
     present cells."""
     import arcpy
 
     gdal = _mh._gdal()
-    scratch = arcpy.env.scratchFolder
     xmin, csx = gt[0], gt[1]
     ymax, csy = gt[3], -gt[5]
-    src, tmp = _hs._open_source(path, scratch, messages)
+    # A warped VRT resamples lazily, so only one strip is ever
+    # materialized. LIFETIME RULE (see the GDAL traps memory): the
+    # source dataset must stay referenced until the VRT is released,
+    # else reads silently return NaN -- the caller owns ``src`` and keeps
+    # it alive past this call.
+    vrt = gdal.Warp(
+        "", src, format="VRT",
+        outputBounds=(xmin, ymax - csy * height,
+                      xmin + csx * width, ymax),
+        width=width, height=height, resampleAlg="near",
+        outputType=gdal.GDT_Float64, dstNodata=float("nan"))
+    if vrt is None:
+        raise arcpy.ExecuteError(
+            "Could not align {} to the analysis grid.".format(path))
+    n_present = 0
     try:
-        # A warped VRT resamples lazily, so only one strip is ever
-        # materialized. LIFETIME RULE (see the GDAL traps memory): the
-        # source dataset must stay referenced until the VRT is released,
-        # else reads silently return NaN.
-        vrt = gdal.Warp(
-            "", src, format="VRT",
-            outputBounds=(xmin, ymax - csy * height,
-                          xmin + csx * width, ymax),
-            width=width, height=height, resampleAlg="near",
-            outputType=gdal.GDT_Float64, dstNodata=float("nan"))
-        if vrt is None:
-            raise arcpy.ExecuteError(
-                "Could not align {} to the analysis grid.".format(path))
-        n_present = 0
-        try:
-            slab = max(1, int(8_000_000 // max(1, width)))
-            for r0 in range(0, height, slab):
-                nr = min(slab, height - r0)
-                a = vrt.GetRasterBand(1).ReadAsArray(0, r0, width, nr)
-                with np.errstate(invalid="ignore"):
-                    pres = np.isfinite(a) & (a != 0.0)
-                counts[r0:r0 + nr][pres] += 1
-                n_present += int(pres.sum())
-                del a, pres
-        finally:
-            vrt = None
-        return n_present
+        slab = max(1, int(8_000_000 // max(1, width)))
+        for r0 in range(0, height, slab):
+            nr = min(slab, height - r0)
+            a = vrt.GetRasterBand(1).ReadAsArray(0, r0, width, nr)
+            with np.errstate(invalid="ignore"):
+                pres = np.isfinite(a) & (a != 0.0)
+            counts[r0:r0 + nr][pres] += 1
+            n_present += int(pres.sum())
+            del a, pres
     finally:
-        src = None
-        if tmp:
-            try:
-                arcpy.management.Delete(tmp)
-            except Exception:                                    # noqa: BLE001
-                pass
+        vrt = None
+    return n_present
 
 
 def _polygon_geoms(ds, path, name, use_selected, out_sr, densify_step,
@@ -502,64 +487,85 @@ def run_cumulative_surface(datasets, out_raster, use_selected=False,
                        n_rasters, "" if n_rasters == 1 else "s",
                        n_polys, "" if n_polys == 1 else "s"))
 
-    gt, width, height, csx, csy, note = _build_grid(
-        inputs, out_sr, cell_size, messages)
-    proj = _kd._osr_sr(out_sr).ExportToWkt()
-    _say(messages,
-         "Analysis grid: {:,} columns x {:,} rows, {}, in {}.".format(
-             width, height, note, out_sr.name))
-    _mh.phase_advance()
+    # Open every raster ONCE for the whole run (grid probe + presence
+    # read); released in the finally below.
+    scratch0 = arcpy.env.scratchFolder
+    opened = {}
+    for kind, ds, d, path, name in inputs:
+        if kind == "raster" and path not in opened:
+            opened[path] = _hs._open_source(path, scratch0, messages)
 
-    counts = np.zeros((height, width), dtype=np.uint16)
-    scratch = arcpy.env.scratchFolder
-    densify_step = min(csx, csy) * 0.5
-    sources_rec = []
-    source_ids = []
-    for i, (kind, ds, d, path, name) in enumerate(inputs, start=1):
-        entry = {"path": path, "type": kind}
-        rec = _lnk.read(path, None)
-        entry["record_kind"] = (rec or {}).get("record")
-        entry["analysis_id"] = (rec or {}).get("analysis_id")
-        if entry["analysis_id"]:
-            source_ids.append(entry["analysis_id"])
-        if kind == "raster":
-            n_present = _raster_presence(counts, path, gt, width, height,
-                                         messages)
-            _say(messages,
-                 "  {} of {}: {} (raster) -- present on {:,} cells (value "
-                 "not NoData and not 0).".format(i, len(inputs), name,
-                                                 n_present))
-        else:
-            geoms, n_total, n_selected, sel_used = _polygon_geoms(
-                ds, path, name, use_selected, out_sr, densify_step, messages)
-            entry.update({"n_total": n_total, "n_selected": n_selected,
-                          "selected": sel_used})
-            if geoms:
-                mask = _hsm._rasterize_mask(gdal, geoms, out_sr, gt, proj,
-                                            width, height, scratch)
-                counts[mask] += 1
-                n_present = int(mask.sum())
-                del mask
-            else:
-                n_present = 0
-            if sel_used:
-                ftxt = "{} selected of {} polygons".format(n_selected,
-                                                           n_total)
-            elif n_total is not None:
-                ftxt = "all {} polygon{}".format(
-                    n_total, "" if n_total == 1 else "s")
-            else:
-                ftxt = "all polygons"
-            _say(messages,
-                 "  {} of {}: {} ({}) -- present on {:,} cells.".format(
-                     i, len(inputs), name, ftxt, n_present))
-            if n_present == 0:
-                _warn(messages,
-                      "{} contributed no cells -- its polygons may not "
-                      "overlap the analysis extent, or the selection may "
-                      "be empty.".format(name))
-        sources_rec.append(entry)
+    try:
+        gt, width, height, csx, csy, note = _build_grid(
+            inputs, out_sr, cell_size, opened, messages)
+        proj = _kd._osr_sr(out_sr).ExportToWkt()
+        _say(messages,
+             "Analysis grid: {:,} columns x {:,} rows, {}, in {}.".format(
+                 width, height, note, out_sr.name))
         _mh.phase_advance()
+
+        counts = np.zeros((height, width), dtype=np.uint16)
+        scratch = arcpy.env.scratchFolder
+        densify_step = min(csx, csy) * 0.5
+        sources_rec = []
+        source_ids = []
+        for i, (kind, ds, d, path, name) in enumerate(inputs, start=1):
+            entry = {"path": path, "type": kind}
+            rec = _lnk.read(path, None)
+            entry["record_kind"] = (rec or {}).get("record")
+            entry["analysis_id"] = (rec or {}).get("analysis_id")
+            if entry["analysis_id"]:
+                source_ids.append(entry["analysis_id"])
+            if kind == "raster":
+                n_present = _raster_presence(counts, opened[path][0], path,
+                                             gt, width, height, messages)
+                _say(messages,
+                     "  {} of {}: {} (raster) -- present on {:,} cells (value "
+                     "not NoData and not 0).".format(i, len(inputs), name,
+                                                     n_present))
+            else:
+                geoms, n_total, n_selected, sel_used = _polygon_geoms(
+                    ds, path, name, use_selected, out_sr, densify_step, messages)
+                entry.update({"n_total": n_total, "n_selected": n_selected,
+                              "selected": sel_used})
+                if geoms:
+                    mask = _hsm._rasterize_mask(gdal, geoms, out_sr, gt, proj,
+                                                width, height, scratch)
+                    counts[mask] += 1
+                    n_present = int(mask.sum())
+                    del mask
+                else:
+                    n_present = 0
+                if sel_used:
+                    ftxt = "{} selected of {} polygons".format(n_selected,
+                                                               n_total)
+                elif n_total is not None:
+                    ftxt = "all {} polygon{}".format(
+                        n_total, "" if n_total == 1 else "s")
+                else:
+                    ftxt = "all polygons"
+                _say(messages,
+                     "  {} of {}: {} ({}) -- present on {:,} cells.".format(
+                         i, len(inputs), name, ftxt, n_present))
+                if n_present == 0:
+                    _warn(messages,
+                          "{} contributed no cells -- its polygons may not "
+                          "overlap the analysis extent, or the selection may "
+                          "be empty.".format(name))
+            sources_rec.append(entry)
+            _mh.phase_advance()
+    finally:
+        # Release every GDAL handle, then delete the scratch copies
+        # (a still-open dataset keeps its copy file-locked).
+        for _p, (srcd, tmp) in list(opened.items()):
+            opened[_p] = (None, tmp)
+        for _p, (_srcd, tmp) in opened.items():
+            if tmp:
+                try:
+                    arcpy.management.Delete(tmp)
+                except Exception:
+                    pass
+
 
     max_count = int(counts.max()) if counts.size else 0
     valid = np.ones(counts.shape, dtype=bool)

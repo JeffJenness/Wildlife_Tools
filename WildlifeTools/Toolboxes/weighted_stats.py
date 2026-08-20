@@ -130,8 +130,13 @@ def _warn(messages, text):
     _say(messages, "WARNING: " + text)
 
 
-def _shape_weight(shp, is_polygon, geodesic):
-    """Geodesic meters / square meters (planar map units as fallback)."""
+def _shape_weight(shp, is_polygon, geodesic, fallbacks=None):
+    """Geodesic meters / square meters (planar map units as fallback).
+
+    In geodesic mode the planar fallback is UNIT-MIXING (square DEGREES
+    among square meters on a geographic input -- effectively zero weight),
+    so each fall-through is counted in ``fallbacks`` (a one-element list)
+    and reported once at the end instead of passing silently."""
     if shp is None:
         return 0.0
     try:
@@ -140,7 +145,8 @@ def _shape_weight(shp, is_polygon, geodesic):
                 return abs(shp.getArea("GEODESIC", "SQUAREMETERS"))
             return abs(shp.getLength("GEODESIC", "METERS"))
     except Exception:
-        pass
+        if fallbacks is not None:
+            fallbacks[0] += 1
     try:
         return abs(shp.area) if is_polygon else abs(shp.length)
     except Exception:
@@ -216,12 +222,13 @@ def run_weighted_stats(in_features, fields, out_table, case_field=None,
     case_order = []                 # first-appearance order (sorted later)
     cursor_fields = ["SHAPE@"] + fields + ([case_field] if case_field else [])
     done = 0
+    geo_fallbacks = [0]
     with arcpy.da.SearchCursor(in_features, cursor_fields) as cur:
         for row in cur:
             done += 1
             if total_feat and done % 500 == 0:
                 _mh.phase_step(done, total_feat)
-            wt = _shape_weight(row[0], is_polygon, geodesic)
+            wt = _shape_weight(row[0], is_polygon, geodesic, geo_fallbacks)
             ck = _case_display(row[-1]) if case_field else None
             if ck not in groups:
                 groups[ck] = {f: ([], []) for f in fields}
@@ -239,6 +246,14 @@ def run_weighted_stats(in_features, fields, out_table, case_field=None,
 
     _say(messages, "Read {:,} feature(s) and measured their geometry "
          "in {:.1f} s.".format(done, time.perf_counter() - _t0))
+    if geo_fallbacks[0]:
+        _warn(messages,
+              "{:,} feature(s) could not be measured geodesically "
+              "(corrupt or degenerate geometry?) and fell back to a "
+              "PLANAR measure in map units -- on a geographic input that "
+              "means effectively zero weight among square-meter weights. "
+              "Check those features (Repair Geometry) before trusting "
+              "the weighted family.".format(geo_fallbacks[0]))
     _mh.phase_advance()
     _t0 = time.perf_counter()
 

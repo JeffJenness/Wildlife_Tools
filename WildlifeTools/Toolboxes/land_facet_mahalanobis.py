@@ -438,7 +438,17 @@ def run_facet_mahalanobis(in_raster, blocks, variables, out_workspace,
                 want.add(int(v))
             except (TypeError, ValueError):
                 want.add(v)
-        entries = [e for e in entries if e["facet_id"] in want]
+        matched = [e for e in entries if e["facet_id"] in want]
+        missing = want - {e["facet_id"] for e in matched}
+        if missing:
+            _warn(messages,
+                  "Requested facet value{} {} do{} not occur in the facet "
+                  "raster and {} skipped.".format(
+                      "" if len(missing) == 1 else "s",
+                      ", ".join(str(m) for m in sorted(missing, key=str)),
+                      "es" if len(missing) == 1 else "",
+                      "was" if len(missing) == 1 else "were"))
+        entries = matched
     if not entries:
         raise arcpy.ExecuteError("No land facets were selected to process.")
     ids = [e["facet_id"] for e in entries]
@@ -506,9 +516,123 @@ def run_facet_mahalanobis(in_raster, blocks, variables, out_workspace,
     def _vrt_index_for_band(b):
         return n_shared + int(b) - 1
 
+    def _stats_all_facets(all_vrts, geo_, cat_path_, fids, cols_map,
+                          dens_map, scratch_, msgs):
+        """{facet_id: (mean, cov, corr, n)} for EVERY facet in one
+        streaming pass; (None, None, None, n) marks a facet whose sample
+        is too small (the caller's existing n_used check reports it).
+        Numerics mirror mahalanobis.stats_from_categorical exactly:
+        per-facet shift from the first matching block, shift-centered
+        sums, symmetrized covariance, and the per-cell density sentinel
+        cap (values above 1.0 excluded and counted)."""
+        gdal = _mh._gdal()
+        width, height = geo_["width"], geo_["height"]
+        minx, maxy, cell = geo_["minx"], geo_["maxy"], geo_["cell"]
+        cat_src, cat_tmp = _mh._gdal_source_path(cat_path_, scratch_)
+        cat_vrt = gdal.Warp(
+            "", cat_src, format="VRT", outputType=gdal.GDT_Float64,
+            outputBounds=(minx, maxy - height * cell,
+                          minx + width * cell, maxy),
+            width=width, height=height, resampleAlg="near",
+            dstNodata=float("nan"))
+        cat_band = cat_vrt.GetRasterBand(1)
+        bands = [v.GetRasterBand(1) for v in all_vrts]
+        kk = len(all_vrts)
+        acc = {fid: {"n": 0, "shift": None, "s1": None, "s2": None,
+                     "capped": 0} for fid in fids}
+        try:
+            for yoff, rows in _mh._row_strips(height, width, kk):
+                cat = cat_band.ReadAsArray(0, yoff, width, rows).astype(float)
+                stack = np.empty((kk, rows, width))
+                for j, band in enumerate(bands):
+                    stack[j] = band.ReadAsArray(0, yoff, width, rows)
+                for fid in fids:
+                    cols = cols_map[fid]
+                    sub = stack[cols]
+                    a = acc[fid]
+                    mask = (np.isclose(cat, float(fid))
+                            & np.all(np.isfinite(sub), axis=0))
+                    dcol = dens_map.get(fid)
+                    if dcol is not None:
+                        with np.errstate(invalid="ignore"):
+                            over = mask & (sub[dcol] > 1.0 + 1e-9)
+                        m = int(over.sum())
+                        if m:
+                            a["capped"] += m
+                            mask &= ~over
+                    if not mask.any():
+                        continue
+                    X = sub[:, mask]
+                    if a["shift"] is None:
+                        a["shift"] = X.mean(axis=1)
+                        a["s1"] = np.zeros(len(cols))
+                        a["s2"] = np.zeros((len(cols), len(cols)))
+                    dev = X - a["shift"][:, None]
+                    a["n"] += X.shape[1]
+                    a["s1"] += dev.sum(axis=1)
+                    a["s2"] += dev @ dev.T
+        finally:
+            cat_band = None
+            cat_vrt = None
+            if cat_tmp:
+                try:
+                    arcpy.management.Delete(cat_tmp)
+                except Exception:                                # noqa: BLE001
+                    pass
+        total_capped = sum(a["capped"] for a in acc.values())
+        if total_capped:
+            _warn(msgs,
+                  "{:,} sample cells held a density value above the valid "
+                  "maximum (1.0) and were excluded -- the density raster "
+                  "has probably lost its NoData declaration (a file "
+                  "geodatabase may not preserve it on a multi-band "
+                  "raster), so NoData sentinels arrive as data.".format(
+                      total_capped))
+        out = {}
+        for fid in fids:
+            a = acc[fid]
+            n = a["n"]
+            k_f = len(cols_map[fid])
+            if n < k_f + 1:
+                out[fid] = (None, None, None, n)
+                continue
+            mean_dev = a["s1"] / n
+            cov = (a["s2"] - n * np.outer(mean_dev, mean_dev)) / (n - 1)
+            cov = (cov + cov.T) / 2.0
+            mean = a["shift"] + mean_dev
+            dg = np.sqrt(np.diag(cov))
+            with np.errstate(invalid="ignore", divide="ignore"):
+                corr = cov / np.outer(dg, dg)
+            out[fid] = (mean, cov, corr, n)
+        return out
+
     # ---- statistics category raster ---------------------------------------
     _mh.phase_advance()
     cat_path = masked_facet_raster(in_raster, blocks, scratch, messages)
+
+    # ---- every facet's statistics in ONE streaming pass --------------------
+    # The old per-facet stats_from_categorical calls re-warped and re-read
+    # the ENTIRE grid (category + all k variables) once per facet --
+    # 30 x (k + 1) full-grid reads for 30 facets. One pass reads each band
+    # once and accumulates all facets' shift-centered sums simultaneously,
+    # with identical numerics (same shift/cov math, same per-cell density
+    # sentinel cap).
+    def _vrt_cols(fid):
+        cols = list(range(n_shared))
+        dcol = None
+        if density_raster:
+            dcol = len(cols)
+            cols.append(_vrt_index_for_band(band_of[fid]))
+        return cols, dcol
+
+    cols_for = {e["facet_id"]: _vrt_cols(e["facet_id"])[0] for e in entries}
+    dens_col_for = {e["facet_id"]: _vrt_cols(e["facet_id"])[1]
+                    for e in entries}
+    _say(messages, "Computing every facet's statistics in one pass over "
+                   "the grid...")
+    all_stats = _stats_all_facets(
+        vrts, geo, cat_path, [e["facet_id"] for e in entries],
+        cols_for, dens_col_for, scratch, messages)
 
     # ---- one surface per facet --------------------------------------------
     analysis_id = (frec or {}).get("analysis_id") or _lnk.new_analysis_id()
@@ -535,14 +659,16 @@ def run_facet_mahalanobis(in_raster, blocks, variables, out_workspace,
             sub_vrts = [vrts[j] for j in idx]
             sub_vars = [resolved[j] for j in idx]
 
-            try:
-                mean, cov, corr, n_used = _mh.stats_from_categorical(
-                    sub_vrts, geo, cat_path, fid, sample_method, scratch,
-                    messages)
-            except Exception as e:                                # noqa: BLE001
-                failures.append((label, "statistics: {}".format(e)))
-                _warn(messages, "Skipped {}: {}".format(label, e))
+            res = all_stats.get(fid)
+            if res is None:
+                failures.append((label, "statistics: no sample"))
+                _warn(messages, "Skipped {}: no statistics could be "
+                                "computed.".format(label))
                 continue
+            mean, cov, corr, n_used = res
+            _say(messages,
+                 "Categorical source: {:,} cells matched category "
+                 "{}.".format(n_used, fid))
 
             if n_used is not None and n_used < len(sub_vars) + 1:
                 failures.append((label, "only {} sample cells".format(n_used)))
@@ -614,7 +740,9 @@ def run_facet_mahalanobis(in_raster, blocks, variables, out_workspace,
                 with _InnerProgress(step_label):
                     scratch_tif, out_stats = _mh.compute_mahalanobis(
                         sub_vrts, geo, mean, inv_cov, out_type, scratch,
-                        messages)
+                        messages,
+                        value_caps=({dens_pos: 1.0 + 1e-9}
+                                    if dens_pos is not None else None))
             except Exception as e:                                # noqa: BLE001
                 failures.append((label, "surface: {}".format(e)))
                 _warn(messages, "Skipped {}: {}".format(label, e))

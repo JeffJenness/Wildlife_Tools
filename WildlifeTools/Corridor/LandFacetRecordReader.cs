@@ -215,6 +215,26 @@ namespace WildlifeTools.Corridor
                                                 string metadataXml,
                                                 Func<string, string> fetchXml)
         {
+            // Memoize the metadata fetch for THIS report build: the chain
+            // walk, every section's AddSourceCheck, the per-corridor
+            // cost-raster labels, and the union/cumulative background
+            // chains all re-fetch the same paths -- and the delegate is an
+            // ItemFactory.Create + GetXml on the MCT per call, the most
+            // expensive operation in the whole build (2-12x per dataset).
+            // Null results are cached too (missing sources stay missing).
+            if (fetchXml != null)
+            {
+                var inner = fetchXml;
+                var memo = new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase);
+                fetchXml = p =>
+                {
+                    string key = (p ?? "").Trim();
+                    if (!memo.TryGetValue(key, out string xml))
+                        memo[key] = xml = inner(p);
+                    return xml;
+                };
+            }
             var blocks = new List<Block>
             {
                 new Block(BlockKind.Title, "Corridor Analysis Data Report"),

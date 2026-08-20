@@ -414,6 +414,19 @@ def run_bottleneck(corridor, block_a, block_b,
                        "system; the analysis runs in a corridor-centered "
                        "azimuthal equidistant projection and all widths "
                        "and lengths are meters.")
+    # The analysis runs in the working SR's own linear unit; every
+    # reported width/length is METERS. A foot-based projected corridor
+    # (US State Plane) previously had its widths reported as-if-meters
+    # (~3.3x overstated) and the meters threshold compared against feet.
+    try:
+        unit_m = float(getattr(working_sr, "metersPerUnit", 1.0) or 1.0)
+    except Exception:                                            # noqa: BLE001
+        unit_m = 1.0
+    if abs(unit_m - 1.0) > 1e-9:
+        _say(messages, "The corridor's coordinate system measures in a "
+                       "unit of {:.6g} m; widths and lengths are "
+                       "converted to METERS for every result.".format(
+                           unit_m))
     cor_w = cor_union.projectAs(working_sr)
     ext = cor_w.extent
     diag = math.hypot(ext.width, ext.height)
@@ -455,7 +468,7 @@ def run_bottleneck(corridor, block_a, block_b,
                         "repaired to simple geometry; results may be "
                         "affected.")
     tol = (diag / 2000.0) if simplify_tolerance is None \
-        else max(0.0, float(simplify_tolerance))
+        else max(0.0, float(simplify_tolerance) / unit_m)
     if tol > 0:
         try:
             gen = habitat.generalize(tol)
@@ -476,16 +489,17 @@ def run_bottleneck(corridor, block_a, block_b,
     _say(messages, "Analysis polygon: {:,} boundary vertices "
                    "(simplification tolerance {}).".format(
                        sum(len(r) for r in rings),
-                       "off" if tol <= 0 else "{:.1f} m".format(tol)))
+                       "off" if tol <= 0
+                       else "{:.1f} m".format(tol * unit_m)))
     _mh.phase_advance()
 
     # ---- medial-axis graph ----------------------------------------------
     bstep = (diag / 2000.0) if boundary_step is None \
-        else max(0.01, float(boundary_step))
+        else max(0.01, float(boundary_step) / unit_m)
     verts, graph_edges, clearance = build_medial_graph(rings, bstep)
     _say(messages, "Medial-axis graph: {:,} Voronoi vertices, {:,} "
                    "edges, from boundary samples every ~{:,.1f} m.".format(
-                       len(verts), len(graph_edges), bstep))
+                       len(verts), len(graph_edges), bstep * unit_m))
     _mh.phase_advance()
 
     # ---- sources / targets: medial vertices inside each block shell -----
@@ -576,6 +590,10 @@ def run_bottleneck(corridor, block_a, block_b,
     geod_len = _pa._geodesic_m(path_xy, working_sr)
     scale = (geod_len / planar_len) if planar_len > 0 else 1.0
     stations_g = stations * scale
+    # Working units -> METERS for everything reported from here on
+    # (stations get the geodesic scale, which already lands in meters).
+    widths = widths * unit_m
+    bottleneck_w *= unit_m
 
     w_sorted = np.sort(widths)
     stats = {
@@ -634,8 +652,8 @@ def run_bottleneck(corridor, block_a, block_b,
         source_corridor=cor_path,
         block_a=block_a_label, block_b=block_b_label,
         params={
-            "boundary_step_m": bstep,
-            "simplify_tolerance_m": tol,
+            "boundary_step_m": bstep * unit_m,
+            "simplify_tolerance_m": tol * unit_m,
             "n_stations": int(n_stations),
             "working_sr": working_sr.name,
             "corridor_where": corridor_where or None,

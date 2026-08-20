@@ -566,7 +566,13 @@ def _deliver_class_output(out_scratch, out_raster, messages, title, summary,
     try:
         if arcpy.Exists(out_raster):
             arcpy.management.Delete(out_raster)
-        arcpy.management.CopyRaster(out_scratch, out_raster)
+        # Grid-native contract (same as topographic_tools._deliver_output):
+        # without the neutral env, an Output Coordinate System / Extent /
+        # Snap Raster / Cell Size / Mask environment would make CopyRaster
+        # re-project, crop, or resample the finished class raster off the
+        # analysis grid the tool just built.
+        with _mh.neutral_grid_env():
+            arcpy.management.CopyRaster(out_scratch, out_raster)
     finally:
         arcpy.env.pyramid = prev_pyr
     try:

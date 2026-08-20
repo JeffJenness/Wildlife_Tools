@@ -108,8 +108,10 @@ def source_density_record(in_raster):
     path = str(in_raster)
     m = _BAND_RE.match(os.path.basename(path))
     if m:
-        rec = _lnk.read(os.path.dirname(path), _lnk.DENSITY)
-        return (rec, int(m.group(1))) if rec else (None, None)
+        # The parsed band number is returned even when the parent has no
+        # density record -- the linkage record otherwise stamped "band": 1
+        # for ANY record-less Band_<n> path.
+        return _lnk.read(os.path.dirname(path), _lnk.DENSITY), int(m.group(1))
     return _lnk.read(path, _lnk.DENSITY), None
 
 
@@ -430,9 +432,22 @@ def run_invert(in_raster, out_raster=None, out_workspace=None,
                 band_nos = [b for b in band_nos
                             if (_facet_of(rec, b) or {}).get("facet_id") in want]
                 kind = "facet"
+                have = {(_facet_of(rec, b) or {}).get("facet_id")
+                        for b in band_nos}
             else:
                 band_nos = [b for b in band_nos if b in want]
                 kind = "band"
+                have = set(band_nos)
+            missing = want - have
+            if missing:
+                _warn(messages,
+                      "Requested {} value{} {} do{} not occur in the raster "
+                      "and {} skipped.".format(
+                          kind, "" if len(missing) == 1 else "s",
+                          ", ".join(str(m) for m in sorted(missing,
+                                                           key=str)),
+                          "es" if len(missing) == 1 else "",
+                          "was" if len(missing) == 1 else "were"))
             if not band_nos:
                 raise arcpy.ExecuteError(
                     "None of the requested {} values occur in the "

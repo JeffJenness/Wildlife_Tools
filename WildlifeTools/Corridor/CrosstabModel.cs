@@ -95,7 +95,13 @@ namespace WildlifeTools.Corridor
             double w = (max - min) / n;
             for (int i = 0; i < n; i++)
             {
-                double lo = min + i * w, hi = min + (i + 1) * w;
+                // The final class's Max is the data max VERBATIM:
+                // min + n*((max-min)/n) can round an ulp below max, and a
+                // value exactly at the data maximum (always present -- the
+                // range came from the data) then fell into a spurious
+                // "Other" row.
+                double lo = min + i * w;
+                double hi = i == n - 1 ? max : min + (i + 1) * w;
                 list.Add(new CrosstabClass
                 {
                     Min = lo,
@@ -236,9 +242,16 @@ namespace WildlifeTools.Corridor
                                                   decimals, flip, factor);
             var sb = new StringBuilder();
             foreach (var row in grid)
-                sb.AppendLine(string.Join("\t", row));
+                sb.AppendLine(string.Join("\t", row.Select(TsvCell)));
             return sb.ToString();
         }
+
+        /// <summary>Tab/newline-proof a cell for TSV output: user-editable
+        /// class names pasted from Excel can carry embedded tabs or
+        /// newlines, which silently shift every later cell.</summary>
+        private static string TsvCell(string s)
+            => (s ?? "").Replace((char)9, ' ').Replace((char)13, ' ')
+                        .Replace((char)10, ' ');
 
         /// <summary>The rendered table as a string grid: first row =
         /// headers ("Classes", column class names..., "Sum"), then one row
@@ -345,7 +358,7 @@ namespace WildlifeTools.Corridor
         private static void AppendGrid(StringBuilder sb, List<string[]> grid)
         {
             foreach (var row in grid)
-                sb.AppendLine(string.Join("\t", row));
+                sb.AppendLine(string.Join("\t", row.Select(TsvCell)));
         }
 
         private static void AppendAxis(StringBuilder sb, CrosstabAxis ax,

@@ -58,10 +58,25 @@ namespace WildlifeTools.Corridor
 
             try
             {
-                // Raw binary array (int32, row-major) -- byte-exact handoff.
-                var bytes = new byte[clusterIds.Length * sizeof(int)];
-                Buffer.BlockCopy(clusterIds, 0, bytes, 0, bytes.Length);
-                File.WriteAllBytes(binPath, bytes);
+                // Raw binary array (int32, row-major) -- byte-exact handoff,
+                // written in strips. A single byte[] of Length*4 overflowed
+                // int arithmetic above ~537M cells (negative array size)
+                // while the dialog's guard admits arrays up to int.MaxValue
+                // cells -- and it doubled peak memory by holding a second
+                // full-raster copy.
+                using (var fs = new FileStream(binPath, FileMode.Create,
+                                               FileAccess.Write, FileShare.None,
+                                               1 << 20))
+                {
+                    const int chunkInts = 1 << 22;   // 16 MB per write
+                    for (int off = 0; off < clusterIds.Length; off += chunkInts)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        int n = Math.Min(chunkInts, clusterIds.Length - off);
+                        fs.Write(System.Runtime.InteropServices.MemoryMarshal
+                            .AsBytes(clusterIds.AsSpan(off, n)));
+                    }
+                }
 
                 var job = new
                 {

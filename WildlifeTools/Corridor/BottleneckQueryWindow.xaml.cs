@@ -6,10 +6,12 @@ namespace WildlifeTools.Corridor
 {
     /// <summary>
     /// A small modal host for building a selection expression: Esri's own
-    /// Query Builder control when the source is a MAP LAYER, or a plain
-    /// SQL text box when the source is a feature class on disk (the
-    /// builder control needs a MapMember). Used by the Bottleneck
-    /// Analysis window's SQL... buttons.
+    /// Query Builder control whenever a MapMember is available -- a real
+    /// map layer, or the TEMPORARY invisible layer the Bottleneck window
+    /// stands up for a disk-picked feature class (the builder control
+    /// binds only to map members). The plain SQL text box remains solely
+    /// for the no-open-map case. Used by the Bottleneck Analysis window's
+    /// SQL... buttons.
     /// </summary>
     public partial class BottleneckQueryWindow
         : ArcGIS.Desktop.Framework.Controls.ProWindow
@@ -43,8 +45,8 @@ namespace WildlifeTools.Corridor
             {
                 txtPrompt.Text = string.Format(
                     "Enter a SQL expression selecting the features of "
-                    + "'{0}' to use (the interactive builder is available "
-                    + "when the source is a map layer).", sourceName);
+                    + "'{0}' to use (the interactive builder needs an "
+                    + "open map).", sourceName);
                 txtExpr.Text = initialExpr ?? "";
                 txtExpr.Visibility = Visibility.Visible;
                 host.Visibility = Visibility.Collapsed;

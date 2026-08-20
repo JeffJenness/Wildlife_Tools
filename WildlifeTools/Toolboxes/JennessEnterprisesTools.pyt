@@ -7793,6 +7793,12 @@ class LandFacetDensity(object):
                             f.get("facet_id"), land_facet_linkage.facet_label(f)))
                 if choices:
                     P["facets"].filter.list = choices
+                else:
+                    # New input carries no record: CLEAR the previous
+                    # raster's facet list (and any stale picks), else a
+                    # pick from the old raster silently narrows the run.
+                    P["facets"].filter.list = []
+                    P["facets"].value = None
             except Exception:
                 pass
 
@@ -8018,6 +8024,12 @@ class LandFacetMahalanobis(object):
                         for f in (rec.get("facets") or [])]
                     if choices:
                         P["facets"].filter.list = choices
+                    else:
+                        # New input carries no record: CLEAR the previous
+                        # raster's facet list (and any stale picks), else a
+                        # pick from the old raster silently narrows the run.
+                        P["facets"].filter.list = []
+                        P["facets"].value = None
             except Exception:
                 pass
         return
@@ -8192,8 +8204,14 @@ class IdentifyTerminiPolygons(object):
         return True
 
     def _band_count(self, inr):
+        # Resolve through the value OBJECT first: a map layer can report
+        # .valueAsText as a CIMPATH=... string Describe rejects, which
+        # silently returned 1 and disabled the multi-band UI for exactly
+        # the multi-band Density input it exists for.
         try:
-            return getattr(arcpy.Describe(inr.valueAsText), "bandCount", 1)
+            return getattr(
+                arcpy.Describe(_resolve_raster_path(inr)
+                               or inr.valueAsText), "bandCount", 1)
         except Exception:
             return 1
 
@@ -8215,6 +8233,12 @@ class IdentifyTerminiPolygons(object):
                             land_facet_linkage.facet_label(b)))
                 if choices:
                     P["facets"].filter.list = choices
+                else:
+                    # New input carries no record: CLEAR the previous
+                    # raster's facet list (and any stale picks), else a
+                    # pick from the old raster silently narrows the run.
+                    P["facets"].filter.list = []
+                    P["facets"].value = None
                 # The manual's rules, applied automatically when the input's
                 # own records identify it: a Land Facet Density raster ->
                 # fixed threshold 0 (any density at all); a Diversity
@@ -8243,10 +8267,11 @@ class IdentifyTerminiPolygons(object):
         if inr.valueAsText:
             if not outr.altered or outr.valueAsText == self._auto_out:
                 try:
+                    src = _resolve_raster_path(inr) or inr.valueAsText
                     base = _legalize(os.path.splitext(os.path.basename(
-                        inr.valueAsText))[0] + "_Termini")
+                        src))[0] + "_Termini")
                     ws = arcpy.env.workspace or os.path.dirname(
-                        arcpy.Describe(inr.valueAsText).catalogPath)
+                        arcpy.Describe(src).catalogPath)
                     sug = _unique_name(base, ws)
                     outr.value = sug
                     self._auto_out = sug
@@ -9494,8 +9519,14 @@ class InvertRaster(object):
         return True
 
     def _band_count(self, inr):
+        # Resolve through the value OBJECT first: a map layer can report
+        # .valueAsText as a CIMPATH=... string Describe rejects, which
+        # silently returned 1 and disabled the multi-band UI for exactly
+        # the multi-band Density input it exists for.
         try:
-            return getattr(arcpy.Describe(inr.valueAsText), "bandCount", 1)
+            return getattr(
+                arcpy.Describe(_resolve_raster_path(inr)
+                               or inr.valueAsText), "bandCount", 1)
         except Exception:
             return 1
 
@@ -9533,6 +9564,12 @@ class InvertRaster(object):
                             land_facet_linkage.facet_label(b)))
                 if choices:
                     P["facets"].filter.list = choices
+                else:
+                    # New input carries no record: CLEAR the previous
+                    # raster's facet list (and any stale picks), else a
+                    # pick from the old raster silently narrows the run.
+                    P["facets"].filter.list = []
+                    P["facets"].value = None
             except Exception:
                 pass
 

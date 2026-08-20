@@ -357,6 +357,148 @@ def _read_on_grid(gdal, src, gt, proj, w, h, label, messages):
     return a, valid
 
 
+def _critical_presence_on_grid(gdal, src, gt, proj, w, h, label, scratch,
+                               messages):
+    """Boolean (h, w): where the critical-feature RASTER is present, on the
+    HSM grid.
+
+    Presence is decided on the SOURCE grid and aggregated to the HSM grid
+    with MAX ("any presence inside the target cell"). Nearest-neighbor
+    sampling -- the value-factor resample `_read_on_grid` uses -- THINNED
+    fine linear features: a 5 m stream mask on a 30 m HSM kept only the
+    source cells under each target cell's center (~1 in 6), so the
+    distance transform measured to a dotted line and the distance bands
+    were systematically wrong exactly along the feature.
+
+    One strip pass over the source builds a coded Byte grid (0 = NoData,
+    1 = valid zero, 2 = valid nonzero) and collects the distinct values.
+    A two-valued 0/x raster treats 0 as background (presence = code 2);
+    anything else counts every data cell (presence = code >= 1), with the
+    same >50% sanity warning as before, now computed on source cells.
+    MAX-aggregation is exact for both codings: a target cell holding any
+    nonzero source cell aggregates to 2, one holding only zeros to 1.
+    """
+    import arcpy
+
+    sgt = src.GetGeoTransform()
+    sw, sh = src.RasterXSize, src.RasterYSize
+    band = src.GetRasterBand(1)
+    nod = band.GetNoDataValue()
+    try:
+        mask = band.GetMaskBand()
+    except Exception:                                            # noqa: BLE001
+        mask = None
+
+    same = (sw == w and sh == h and all(
+        abs(sgt[i] - gt[i]) <= 1e-6 * max(1.0, abs(gt[i]))
+        for i in range(6)))
+
+    drv = gdal.GetDriverByName("GTiff")
+    code_path = None
+    if same:
+        codes = np.zeros((sh, sw), dtype=np.uint8)
+        code_ds = None
+    else:
+        code_path = arcpy.CreateUniqueName("hsm_critpres.tif", scratch)
+        code_ds = drv.Create(code_path, sw, sh, 1, gdal.GDT_Byte,
+                             options=["TILED=YES", "COMPRESS=LZW",
+                                      "BIGTIFF=IF_SAFER"])
+        code_ds.SetGeoTransform(sgt)
+        try:
+            code_ds.SetProjection(src.GetProjection())
+        except Exception:                                        # noqa: BLE001
+            pass
+        code_band = code_ds.GetRasterBand(1)
+        codes = None
+
+    distinct = set()
+    many = False
+    n_valid = 0
+    n_nonzero = 0
+    slab = max(1, int(8_000_000 // max(1, sw)))
+    for r0 in range(0, sh, slab):
+        nr = min(slab, sh - r0)
+        a = np.asarray(band.ReadAsArray(0, r0, sw, nr), dtype=np.float64)
+        v = np.isfinite(a)
+        if nod is not None:
+            with np.errstate(invalid="ignore"):
+                v &= (a != np.float64(nod))
+        with np.errstate(invalid="ignore"):
+            v &= (a != np.float64(_tt.NODATA_OUT))
+        if mask is not None:
+            try:
+                mv = mask.ReadAsArray(0, r0, sw, nr)
+                if mv is not None:
+                    v &= (mv != 0)
+            except Exception:                                    # noqa: BLE001
+                pass
+        strip = np.zeros(a.shape, dtype=np.uint8)
+        nz = v & (a != 0.0)
+        strip[v] = 1
+        strip[nz] = 2
+        n_valid += int(v.sum())
+        n_nonzero += int(nz.sum())
+        if not many:
+            distinct.update(np.unique(a[v]).tolist())
+            if len(distinct) > 3:
+                many = True
+                distinct.clear()     # only the <=2-distinct case matters
+        if same:
+            codes[r0:r0 + nr] = strip
+        else:
+            code_band.WriteArray(strip, 0, r0)
+        del a, v, nz, strip
+
+    if not same:
+        code_band.FlushCache()
+        code_ds.FlushCache()
+        code_band = None
+        code_ds = None
+        _say(messages,
+             "{} is on a different grid than the HSM and is aggregated "
+             "onto it (a cell counts as the feature when ANY source "
+             "presence falls inside it).".format(label))
+        xmin, ymax = gt[0], gt[3]
+        xmax = xmin + gt[1] * w
+        ymin = ymax + gt[5] * h
+        code_src = gdal.Open(code_path)
+        # No dstNodata: declaring 0 NoData made GDAL "helpfully" rewrite
+        # source code-0 cells to 1 (flooding presence everywhere); the MEM
+        # destination zero-initializes, so uncovered ground is code 0
+        # (absent) with no declaration needed.
+        warped = gdal.Warp(
+            "", code_src, format="MEM", dstSRS=(proj or None),
+            outputBounds=(xmin, min(ymin, ymax), xmax, max(ymin, ymax)),
+            width=w, height=h, resampleAlg="max")
+        codes = warped.GetRasterBand(1).ReadAsArray(0, 0, w, h)
+        warped = None
+        code_src = None
+        try:
+            arcpy.management.Delete(code_path)
+        except Exception:                                        # noqa: BLE001
+            pass
+
+    zero_coded = (not many and len(distinct) == 2
+                  and any(d == 0.0 for d in distinct))
+    if zero_coded:
+        other = [d for d in distinct if d != 0.0][0]
+        _say(messages,
+             "The critical-feature raster is coded {:g}/0; cells with "
+             "value 0 are treated as background, not part of the "
+             "feature.".format(float(other)))
+        target = codes >= 2
+    else:
+        # not 0/x-coded: every data cell counts as the feature
+        target = codes >= 1
+        if n_valid:
+            _warn(messages,
+                  "All {:,} data cells count as the critical feature. If "
+                  "this raster stores background as a data value, "
+                  "distances will be wrong -- make the background NoData "
+                  "first.".format(n_valid))
+    return target
+
+
 def _deliver(gdal, out, valid, gt, proj, w, h, out_path, scratch, messages,
              summary, description, title=None):
     """Scratch GeoTIFF + streamed statistics + CopyRaster delivery, the same
@@ -533,9 +675,15 @@ def run_hsm(factors, method, out_raster, save_reclassified=False,
 
         _mh.begin_phases(
             [("Opening the factor rasters...", 1)]
-            + [("Reclassifying factor {} of {}: {}...".format(
-                i + 1, len(factors), lab), 3)
-               for i, lab in enumerate(labels)]
+            # Each saved reclassified factor consumes a SECOND phase
+            # (_deliver -> _tt._deliver_output advances once internally);
+            # without budgeting it the bar read "Combining..." by factor
+            # 2 and parked at ~100% for the rest of the run.
+            + sum(([("Reclassifying factor {} of {}: {}...".format(
+                        i + 1, len(factors), lab), 3)]
+                   + ([("Saving reclassified factor {}...".format(i + 1),
+                        1)] if save_dir else [])
+                   for i, lab in enumerate(labels)), [])
             + [("Combining habitat factors...", 2),
                ("Saving the output raster...", 2)])
         _say(messages,
@@ -587,6 +735,12 @@ def run_hsm(factors, method, out_raster, save_reclassified=False,
         _mh.end_phases()
         return out_raster
     finally:
+        # Null EVERY dataset handle before deleting the scratch copies:
+        # the locals ref/src still referenced the first/last factor's
+        # dataset, so their copies stayed file-locked and Delete failed
+        # silently (accumulating multi-hundred-MB scratch GeoTIFFs).
+        ref = None
+        src = None
         opened = None
         for cp in copies:
             try:
@@ -677,6 +831,12 @@ def run_combine(factors, method, out_raster, messages=None):
         _mh.end_phases()
         return out_raster
     finally:
+        # Null EVERY dataset handle before deleting the scratch copies:
+        # the locals ref/src still referenced the first/last factor's
+        # dataset, so their copies stayed file-locked and Delete failed
+        # silently (accumulating multi-hundred-MB scratch GeoTIFFs).
+        ref = None
+        src = None
         opened = None
         for cp in copies:
             try:
@@ -944,6 +1104,14 @@ def run_critical_feature(in_hsm, in_critical, bands, out_raster,
             raise arcpy.ExecuteError(
                 "The percentage for band {:g}-{:g} is negative.".format(
                     lo, hi))
+        if pc > 100:
+            # warn-and-run, matching run_reclassify_features' policy: the
+            # dialog enforces 0-100, but scripted callers bypass it, and a
+            # silent 800 (a typo for 80) poisons every 0-100 consumer.
+            _warn(messages,
+                  "The percentage for band {:g}-{:g} is {:g} -- above 100, "
+                  "so cells there will EXCEED the 0-100 suitability "
+                  "scale.".format(lo, hi, pc))
     for i in range(1, len(bands)):
         if bands[i][0] < bands[i - 1][0] or bands[i][1] < bands[i - 1][1]:
             raise arcpy.ExecuteError(
@@ -1034,33 +1202,12 @@ def run_critical_feature(in_hsm, in_critical, bands, out_raster,
         if is_raster:
             crit_ds, crit_copy = _hs._open_source(str(in_critical), scratch,
                                                   messages)
-            ca, cvalid = _read_on_grid(gdal, crit_ds, gt, proj, w, h,
-                                       os.path.basename(str(in_critical)),
-                                       messages)
-            # A 0/x-coded presence raster (0 = background stored as DATA)
-            # would otherwise make every cell 'the feature' and every
-            # distance zero. Two-valued rasters including 0 treat 0 as
-            # background; anything else falls back to all-data-cells with
-            # a proportion sanity warning.
-            vals = np.unique(ca[cvalid]) if cvalid.any() else np.array([])
-            if vals.size == 2 and 0.0 in vals:
-                _say(messages,
-                     "The critical-feature raster is coded {:g}/0; cells "
-                     "with value 0 are treated as background, not part of "
-                     "the feature.".format(float(vals[vals != 0][0])))
-                target = cvalid & (ca != 0)
-            else:
-                target = cvalid
-                n_t, n_v = int(target.sum()), int(cvalid.sum())
-                if n_v and n_t > 0.5 * n_v:
-                    _warn(messages,
-                          "{:,} of {:,} data cells ({:.0f}%) count as the "
-                          "critical feature (every data cell does). If this "
-                          "raster stores background as a data value, "
-                          "distances will be wrong -- make the background "
-                          "NoData first.".format(n_t, n_v,
-                                                 100.0 * n_t / n_v))
-            del ca
+            # Presence decided on the SOURCE grid and MAX-aggregated onto
+            # the HSM grid -- nearest sampling thinned fine linear masks
+            # (see _critical_presence_on_grid).
+            target = _critical_presence_on_grid(
+                gdal, crit_ds, gt, proj, w, h,
+                os.path.basename(str(in_critical)), scratch, messages)
         else:
             sel_note = _selection_note(in_critical, messages)
             step = 0.5 * min(abs(gt[1]), abs(gt[5]))
@@ -1272,7 +1419,22 @@ def _patch_map_lyrx(out_fc, messages):
     try:
         ws = os.path.dirname(str(out_fc))
         name = os.path.splitext(os.path.basename(str(out_fc)))[0]
-        lyr_dir = os.path.dirname(ws) if _mh.is_gdb_workspace(ws) else ws
+        # The question is "is out_fc INSIDE a gdb container" (feature
+        # datasets count: x.gdb\fds\fc), not "is the immediate parent a
+        # workspace" -- a feature-dataset output made lyr_dir a path
+        # inside the gdb, where no filesystem directory exists, and
+        # SaveToLayerFile failed. Walk up to the container, place the
+        # .lyrx beside it.
+        lyr_dir = ws
+        if _mh.in_gdb_container(ws):
+            probe = ws
+            while probe and not _mh.is_gdb_workspace(probe):
+                parent = os.path.dirname(probe)
+                if parent == probe:
+                    break
+                probe = parent
+            if _mh.is_gdb_workspace(probe):
+                lyr_dir = os.path.dirname(probe)
         out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
 
         legend_labels = {1: "Smaller than Breeding Patch",

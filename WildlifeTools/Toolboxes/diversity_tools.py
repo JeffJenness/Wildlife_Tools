@@ -180,6 +180,13 @@ def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
     if in_nodata is not None:
         with np.errstate(invalid="ignore"):
             valid &= (a != in_nodata)
+    # The clustering tool writes -9999 for outlier cells; honor it even
+    # when the raster never declared it (the gdb round-trip can lose the
+    # declaration) -- same screen as the density/Mahalanobis/invert
+    # siblings, without which those cells became a phantom class inflating
+    # every neighborhood's richness.
+    with np.errstate(invalid="ignore"):
+        valid &= (a != NODATA_OUT)
     if vmask is not None:
         valid &= vmask
     shape = a.shape

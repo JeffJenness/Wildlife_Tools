@@ -105,6 +105,7 @@ namespace WildlifeTools.Corridor
                 });
                 if (d == null || _closedDown) return;
                 _data = d;
+                _binDirty = true;
                 // defaults: a variable with at most 5 distinct values is
                 // DISCRETE -- one single-value class per value (GRIDCODE
                 // 1,2,3 makes exactly three classes); otherwise the
@@ -243,12 +244,23 @@ namespace WildlifeTools.Corridor
         // =================================================================
         // rebuild
         // =================================================================
+        // Bin depends ONLY on the data and the class definitions --
+        // formatting options (names, decimals, percent, unit, flip,
+        // fonts) reuse the cached result. Without the cache, every
+        // KEYSTROKE in the variable-name and decimals boxes re-walked
+        // every paired observation (millions on raster pairings).
+        private bool _binDirty = true;
+
         private void Rebuild()
         {
             if (_loading || _closedDown || _data == null) return;
             _h.VariableName = txtVar1.Text;
             _v.VariableName = txtVar2.Text;
-            _result = CrosstabMath.Bin(_data, _h, _v);
+            if (_binDirty || _result == null)
+            {
+                _result = CrosstabMath.Bin(_data, _h, _v);
+                _binDirty = false;
+            }
             var (grid, colVar, rowVar) = CrosstabReport.Grid(_result, _h, _v,
                 rbPercent.IsChecked == true, Decimals(),
                 chkFlip.IsChecked == true, CurrentFactor());
@@ -298,7 +310,10 @@ namespace WildlifeTools.Corridor
             if (CrosstabClassEditor.Show(this,
                     "Edit Column Classes (" + _h.VariableName + ")",
                     _h.Classes, mn, mx))
+            {
+                _binDirty = true;
                 Rebuild();
+            }
         }
 
         private void OnEditV(object sender, RoutedEventArgs e)
@@ -307,7 +322,10 @@ namespace WildlifeTools.Corridor
             if (CrosstabClassEditor.Show(this,
                     "Edit Row Classes (" + _v.VariableName + ")",
                     _v.Classes, mn, mx))
+            {
+                _binDirty = true;
                 Rebuild();
+            }
         }
 
         // =================================================================

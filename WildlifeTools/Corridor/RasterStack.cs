@@ -193,6 +193,99 @@ namespace WildlifeTools.Corridor
         // even when the raster declares no NoData value.
         private const double SentinelNoData = -9999.0;
 
+        /// <summary>Typed per-cell accessor over GetPixelData's 2-D array.
+        /// Array.GetValue + Convert.ToDouble boxed EVERY pixel (reflection
+        /// plus IConvertible dispatch) -- the dominant per-cell cost of
+        /// every raster read in the suite. Exotic element types keep the
+        /// boxed fallback.</summary>
+        internal static Func<int, int, double> CellReader(Array data)
+        {
+            switch (data)
+            {
+                case float[,] a: return (i, j) => a[i, j];
+                case double[,] a: return (i, j) => a[i, j];
+                case int[,] a: return (i, j) => a[i, j];
+                case short[,] a: return (i, j) => a[i, j];
+                case byte[,] a: return (i, j) => a[i, j];
+                case ushort[,] a: return (i, j) => a[i, j];
+                case sbyte[,] a: return (i, j) => a[i, j];
+                case uint[,] a: return (i, j) => a[i, j];
+                case long[,] a: return (i, j) => a[i, j];
+                default: return (i, j) => Convert.ToDouble(data.GetValue(i, j));
+            }
+        }
+
+        /// <summary>(col, row) -> cell-is-valid accessor for one pixel
+        /// block, or null when the block carries no NoData mask. Fetches
+        /// the whole mask ONCE (GetNoDataMask) instead of one SDK call per
+        /// pixel; the bulk array's orientation is VERIFIED against a few
+        /// per-pixel probes (corners + center), falling back to the
+        /// per-pixel path on any surprise.</summary>
+        internal static Func<int, int, bool> MaskReader(PixelBlock pb,
+                                                        int w, int h)
+        {
+            bool perPixelWorks = true;
+            try { pb.GetNoDataMaskValue(0, 0, 0); }
+            catch { perPixelWorks = false; }
+
+            Array m = null;
+            try { m = pb.GetNoDataMask(0, true); }
+            catch { }
+            if (m != null)
+            {
+                Func<int, int, bool> cand = null;
+                if (m.Rank == 2)
+                {
+                    int n0 = m.GetLength(0), n1 = m.GetLength(1);
+                    bool rowFirst = n0 != n1 ? (n0 == h) : false;
+                    if ((rowFirst ? n0 : n1) == h && (rowFirst ? n1 : n0) == w)
+                    {
+                        if (m is byte[,] b2)
+                            cand = rowFirst
+                                ? (Func<int, int, bool>)((c, r) => b2[r, c] != 0)
+                                : ((c, r) => b2[c, r] != 0);
+                        else
+                        {
+                            var mm = m; bool rf = rowFirst;
+                            cand = (c, r) => Convert.ToInt32(
+                                mm.GetValue(rf ? r : c, rf ? c : r)) != 0;
+                        }
+                    }
+                }
+                else if (m.Rank == 1 && m.LongLength == (long)w * h
+                         && m is byte[] b1)
+                    cand = (c, r) => b1[(long)r * w + c] != 0;
+
+                if (cand != null && perPixelWorks)
+                {
+                    // verify orientation on a handful of probe cells
+                    bool agrees = true;
+                    foreach (var (c, r) in new[]
+                    {
+                        (0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1),
+                        (w / 2, h / 2),
+                    })
+                    {
+                        try
+                        {
+                            if ((Convert.ToInt32(
+                                    pb.GetNoDataMaskValue(0, c, r)) != 0)
+                                != cand(c, r))
+                            { agrees = false; break; }
+                        }
+                        catch { agrees = false; break; }
+                    }
+                    if (agrees) return cand;
+                }
+                else if (cand != null)
+                    return cand;
+            }
+
+            if (!perPixelWorks) return null;
+            return (c, r) =>
+                Convert.ToInt32(pb.GetNoDataMaskValue(0, c, r)) != 0;
+        }
+
         internal static void ReadStrip(Raster raster, int w, int h, int y0,
                                        out double[,] values, out bool[,] valid,
                                        object noData, bool useSentinel)
@@ -231,19 +324,17 @@ namespace WildlifeTools.Corridor
             // The pixel block's own NoData MASK is authoritative -- an
             // integer GRID accessed through a layer may declare no NoData
             // value at all, its masked cells reading as phantom zeros.
-            bool useMask = true;
-            try { pb.GetNoDataMaskValue(0, 0, 0); }
-            catch { useMask = false; }
+            var maskOk = MaskReader(pb, w, h);
+            var read = CellReader(data);
 
             for (int r = 0; r < h; r++)
             {
                 for (int c = 0; c < w; c++)
                 {
                     int i0 = rowFirst ? r : c, i1 = rowFirst ? c : r;
-                    double v = Convert.ToDouble(data.GetValue(i0, i1));
+                    double v = read(i0, i1);
                     bool ok = !double.IsNaN(v) && !double.IsInfinity(v);
-                    if (ok && useMask && Convert.ToInt32(
-                            pb.GetNoDataMaskValue(0, c, r)) == 0)
+                    if (ok && maskOk != null && !maskOk(c, r))
                         ok = false;
                     if (ok && hasNd && v == nd) ok = false;
                     // On a continuous variable, exclude the -9999 NoData sentinel and
