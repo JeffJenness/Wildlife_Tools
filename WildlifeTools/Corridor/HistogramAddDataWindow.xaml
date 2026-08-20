@@ -1,0 +1,103 @@
+<controls:ProWindow x:Class="WildlifeTools.Corridor.HistogramAddDataWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        Title="Add Data to Histogram"
+        Height="430" Width="470" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <controls:ProWindow.Resources>
+        <!-- long hover help wraps instead of running one endless line -->
+        <Style TargetType="ToolTip">
+            <Setter Property="MaxWidth" Value="420"/>
+            <Setter Property="ContentTemplate">
+                <Setter.Value>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextWrapping="Wrap"
+                                   MaxWidth="400"/>
+                    </DataTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </controls:ProWindow.Resources>
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="Layer or table:" Margin="0,0,0,2"/>
+        <ComboBox Grid.Row="1" x:Name="cboSource" Margin="0,0,0,8"
+                  SelectionChanged="OnSourceChanged"
+                  ToolTip="Raster layers, polygon / polyline / point layers, and standalone tables in the active map."/>
+
+        <Grid Grid.Row="2" x:Name="pnlField" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Value field:" Margin="0,0,8,0"
+                       VerticalAlignment="Center"/>
+            <ComboBox Grid.Column="1" x:Name="cboField"
+                      ToolTip="The numeric field whose values build the histogram."/>
+        </Grid>
+
+        <StackPanel Grid.Row="3" x:Name="pnlRecords" Orientation="Horizontal"
+                    Margin="0,0,0,8">
+            <RadioButton x:Name="rbAll" Content="All records" IsChecked="True"
+                         GroupName="Rec" Margin="0,0,14,0"/>
+            <RadioButton x:Name="rbSelected" Content="Selected records only"
+                         GroupName="Rec"
+                         ToolTip="Uses only the layer's current selection; with nothing selected, all records are used."/>
+        </StackPanel>
+
+        <CheckBox Grid.Row="4" x:Name="chkWeight" Margin="0,0,0,8"
+                  Content="Weight each feature by its geodesic size (area / length)"
+                  IsChecked="True"
+                  ToolTip="A 100-hectare polygon counts twice as much as a 50-hectare polygon, so the histogram describes the LANDSCAPE rather than the mapping units. Unchecked, every record counts once."/>
+
+        <Grid Grid.Row="5" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Clip to polygon:" Margin="0,0,8,0"
+                       VerticalAlignment="Center"/>
+            <ComboBox Grid.Column="1" x:Name="cboClip"
+                      ToolTip="Optional: analyze only the data inside this polygon layer (its selection is honored; multiple polygons are unioned). Rasters are masked cell-by-cell; features are geometrically intersected so only the inside portion's size counts. This replaces the original tool's requirement to pre-clip every dataset."/>
+        </Grid>
+
+        <StackPanel Grid.Row="6">
+            <Expander x:Name="expSample" Header="Raster sampling (advanced)">
+                <StackPanel Orientation="Horizontal" Margin="4,6,0,0">
+                    <TextBlock Text="Read:" VerticalAlignment="Center"
+                               Margin="0,0,8,0"/>
+                    <ComboBox x:Name="cboStride" Width="220"
+                              ToolTip="Full read is exact and is the default -- unlike the original's 250,000-cell sample, the whole raster is streamed. Sampling remains for truly enormous rasters."/>
+                </StackPanel>
+            </Expander>
+            <Grid Margin="0,10,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="Dataset name:" Margin="0,0,8,0"
+                           VerticalAlignment="Center"/>
+                <TextBox Grid.Column="1" x:Name="txtName"
+                         ToolTip="The name shown in the legend and the statistics report (editable later too)."/>
+            </Grid>
+        </StackPanel>
+
+        <StackPanel Grid.Row="7" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="OK" Width="80" Padding="0,3" Click="OnOk"/>
+            <Button Content="Cancel" Width="80" Padding="0,3" Margin="8,0,0,0"
+                    Click="OnCancel"/>
+        </StackPanel>
+    </Grid>
+</controls:ProWindow>

@@ -142,8 +142,9 @@ namespace WildlifeTools.Corridor
         }
 
         /// <summary>Rasterize the clip polygon to a cell mask on the template grid,
-        /// projecting it to the template projection first.</summary>
-        private static bool[] BuildClipMask(Polygon clip, SpatialReference templateSr,
+        /// projecting it to the template projection first. Internal so the
+        /// histogram tool's clip-to-polygon option shares it.</summary>
+        internal static bool[] BuildClipMask(Polygon clip, SpatialReference templateSr,
             double originX, double cellX, double originY, double cellY, int w, int h)
         {
             Polygon poly = clip;
@@ -192,9 +193,9 @@ namespace WildlifeTools.Corridor
         // even when the raster declares no NoData value.
         private const double SentinelNoData = -9999.0;
 
-        private static void ReadStrip(Raster raster, int w, int h, int y0,
-                                      out double[,] values, out bool[,] valid,
-                                      object noData, bool useSentinel)
+        internal static void ReadStrip(Raster raster, int w, int h, int y0,
+                                       out double[,] values, out bool[,] valid,
+                                       object noData, bool useSentinel)
         {
             var pb = raster.CreatePixelBlock(w, h);
             raster.Read(0, y0, pb);

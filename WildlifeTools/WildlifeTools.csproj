@@ -297,6 +297,11 @@
     <Content Include="Images\Bottleneck_32.png" />
     <Content Include="Images\WeightedStats_16.png" />
     <Content Include="Images\WeightedStats_32.png" />
+    <Content Include="Images\Histogram_16.png" />
+    <Content Include="Images\Histogram_32.png" />
+    <!-- embedded copy of the Jenness logo: window icons load it by pack
+         URI, immune to Assembly.Location quirks in the add-in context -->
+    <Resource Include="Corridor\JennessLogoRes.png" />
     <!-- Sudoku skin fonts, embedded as WPF resources so they render on every
          machine with no installation (all SIL Open Font License; the OFL
          texts ship alongside as required for redistribution). -->

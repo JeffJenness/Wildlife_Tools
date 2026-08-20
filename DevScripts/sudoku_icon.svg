@@ -29,8 +29,8 @@
   <!-- digits -->
   <g fill="#332612" font-family="Georgia, serif" font-weight="bold"
      font-size="8.2" text-anchor="middle">
-    <text x="7.3" y="10.1">5</text>
-    <text x="16.1" y="19.6">3</text>
-    <text x="24.9" y="29.0" fill="#8C2F1B">9</text>
+    <text x="7.3" y="8.1">5</text>
+    <text x="16.1" y="17.6">3</text>
+    <text x="24.9" y="27.0" fill="#8C2F1B">9</text>
   </g>
 </svg>
