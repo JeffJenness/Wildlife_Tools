@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Voronoi (Thiessen) Polygons: a small tessellation with its
+       generating points, clipped by the tool's boundary frame. -->
+  <rect x="1.5" y="1.5" width="29" height="29" rx="1.5"
+        fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.8"/>
+  <g stroke="#2E6B8A" stroke-width="1.1" fill="none">
+    <polyline points="1.5,12.5 10.2,10.4 14.8,1.5"/>
+    <polyline points="10.2,10.4 12.6,17.8 6.4,24.0 1.5,22.6"/>
+    <polyline points="6.4,24.0 8.8,30.5"/>
+    <polyline points="12.6,17.8 20.8,19.6 24.4,13.0 21.6,6.2 14.8,1.5"/>
+    <polyline points="21.6,6.2 30.5,4.4"/>
+    <polyline points="24.4,13.0 30.5,14.6"/>
+    <polyline points="20.8,19.6 22.4,27.0 18.0,30.5"/>
+    <polyline points="22.4,27.0 30.5,25.2"/>
+    <polyline points="12.6,17.8 14.4,25.6 8.8,30.5"/>
+    <polyline points="14.4,25.6 18.0,30.5"/>
+  </g>
+  <g fill="#B0500F">
+    <circle cx="6.2" cy="6.0" r="1.7"/>
+    <circle cx="18.4" cy="9.6" r="1.7"/>
+    <circle cx="6.6" cy="17.2" r="1.7"/>
+    <circle cx="16.6" cy="22.6" r="1.7"/>
+    <circle cx="26.6" cy="8.0" r="1.7"/>
+    <circle cx="26.0" cy="20.4" r="1.7"/>
+    <circle cx="11.0" cy="27.4" r="1.7"/>
+    <circle cx="24.4" cy="29.0" r="1.7"/>
+  </g>
+</svg>

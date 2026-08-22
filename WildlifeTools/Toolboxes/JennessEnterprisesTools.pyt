@@ -67,6 +67,9 @@ import clip_tools      # noqa: E402
 import patch_analysis  # noqa: E402
 import bottleneck_analysis  # noqa: E402
 import cumulative_surface  # noqa: E402
+import voronoi_tools  # noqa: E402
+import adaptive_voronoi  # noqa: E402
+import repeating_shapes  # noqa: E402
 import weighted_stats  # noqa: E402
 import raster_extremes  # noqa: E402
 import tool_metadata  # noqa: E402
@@ -331,7 +334,9 @@ class Toolbox(object):
                       CriticalHabitatFeature, HabitatPatches,
                       ClipDataToAnalysisArea, PatchAnalysis,
                       BottleneckAnalysis, WeightedSummaryStatistics,
-                      CumulativeSurface, FindRasterExtremeValues]
+                      CumulativeSurface, FindRasterExtremeValues,
+                      VoronoiPolygons, AdaptiveVoronoiPolygons,
+                      RepeatingShapes]
 
 
 class LoCoHStandard(object):
@@ -10817,6 +10822,666 @@ class CumulativeSurface(object):
                 except Exception as e:
                     messages.addWarningMessage(
                         "Could not set output symbology: {}".format(e))
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class VoronoiPolygons(object):
+    """Voronoi (Thiessen) Polygons within Boundary. See
+    ``voronoi_tools.run_voronoi``."""
+
+    def __init__(self):
+        self.label = "Voronoi (Thiessen) Polygons within Boundary"
+        self.description = (
+            "Builds Voronoi (Thiessen) polygons around a point feature "
+            "class -- each cell is the region closer to its generating "
+            "point than to any other -- optionally clipped to a boundary "
+            "polygon such as a management or analysis area. Without a "
+            "boundary, cells fill a rectangle covering the points' extent "
+            "expanded 10% per axis (the Extent geoprocessing environment "
+            "replaces that frame when set). Geographic inputs are "
+            "tessellated exactly on the sphere (great-circle bisectors), "
+            "with optional refinement to true ellipsoidal geodesics; "
+            "projected inputs are tessellated planar in the output "
+            "coordinate system. Chosen point attributes transfer to the "
+            "cells, every cell carries a Point_FID link to its generating "
+            "point, and a geodesic-hectares area field is optional. "
+            "Selections are honored; multipoints are exploded; coincident "
+            "points are dropped with a warning (first-in wins). Works at "
+            "every license level.")
+        self.category = "Geometric Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_points = arcpy.Parameter(
+            displayName="Input point features", name="in_points",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        try:
+            in_points.filter.list = ["Point", "Multipoint"]
+        except Exception:
+            pass
+        boundary = arcpy.Parameter(
+            displayName="Boundary polygon (optional -- cells are clipped "
+                        "to it)",
+            name="boundary",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Optional", direction="Input")
+        try:
+            boundary.filter.list = ["Polygon"]
+        except Exception:
+            pass
+        fields = arcpy.Parameter(
+            displayName="Point attribute field(s) to transfer to the "
+                        "polygons",
+            name="fields", datatype="Field",
+            parameterType="Optional", direction="Input", multiValue=True)
+        fields.parameterDependencies = ["in_points"]
+        try:
+            fields.filter.list = ["Short", "Long", "Float", "Double",
+                                  "Text", "Date", "GUID"]
+        except Exception:
+            pass
+        out_fc = arcpy.Parameter(
+            displayName="Output Voronoi polygon feature class",
+            name="out_fc", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        only_inside = arcpy.Parameter(
+            displayName="Use only points inside the boundary",
+            name="only_inside", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        only_inside.value = False
+        refine = arcpy.Parameter(
+            displayName="Ellipsoidal (geodesic) refinement of cell edges "
+                        "(geographic coordinate systems only)",
+            name="refine", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        refine.value = False
+        add_area = arcpy.Parameter(
+            displayName="Add a cell area field (Area_Ha, geodesic "
+                        "hectares)",
+            name="add_area", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        add_area.value = False
+        return [in_points, boundary, fields, out_fc, only_inside, refine,
+                add_area]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inp, outp = P["in_points"], P["out_fc"]
+        # suggest-once output name <points>_Voronoi (hasBeenValidated
+        # pattern; a user-cleared or hand-edited name is left alone)
+        if inp.valueAsText and not inp.hasBeenValidated:
+            if not outp.altered or outp.valueAsText == self._auto_out:
+                try:
+                    src = arcpy.Describe(inp.value or
+                                         inp.valueAsText).catalogPath
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(src))[0] + "_Voronoi")
+                    ws = arcpy.env.workspace or os.path.dirname(src)
+                    sug = _unique_name(base, ws)
+                    outp.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        # the boundary-dependent and geographic-only options
+        P["only_inside"].enabled = bool(P["boundary"].valueAsText)
+        try:
+            d = arcpy.Describe(P["in_points"].value
+                               or P["in_points"].valueAsText)
+            sr = arcpy.env.outputCoordinateSystem or d.spatialReference
+            P["refine"].enabled = (sr is not None
+                                   and sr.type == "Geographic")
+        except Exception:
+            pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        b = P["boundary"]
+        if b.valueAsText:
+            try:
+                if arcpy.Describe(b.value
+                                  or b.valueAsText).shapeType != "Polygon":
+                    b.setErrorMessage(
+                        "The boundary must be a POLYGON feature class.")
+            except Exception:
+                pass
+        p = P["in_points"]
+        if p.valueAsText:
+            try:
+                st = arcpy.Describe(p.value or p.valueAsText).shapeType
+                if st not in ("Point", "Multipoint"):
+                    p.setErrorMessage(
+                        "The input must be a POINT (or multipoint) "
+                        "feature class (this input is {}).".format(st))
+            except Exception:
+                pass
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(voronoi_tools)
+            P = {p.name: p for p in parameters}
+            fields = [str(f) for f in (P["fields"].values or [])
+                      if f not in (None, "")]
+            voronoi_tools.run_voronoi(
+                in_points=P["in_points"].value
+                    or P["in_points"].valueAsText,
+                out_fc=P["out_fc"].valueAsText,
+                boundary=P["boundary"].value or P["boundary"].valueAsText,
+                fields=fields,
+                only_inside=bool(P["only_inside"].value)
+                    and bool(P["only_inside"].enabled),
+                refine_ellipsoid=bool(P["refine"].value),
+                add_area=bool(P["add_area"].value),
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class AdaptiveVoronoiPolygons(object):
+    """Adaptive Voronoi Polygons -- Lloyd's algorithm / centroidal
+    Voronoi tessellation inside a boundary. See
+    ``adaptive_voronoi.run_adaptive_voronoi``."""
+
+    def __init__(self):
+        self.label = "Adaptive Voronoi Polygons"
+        self.description = (
+            "Subdivides a boundary polygon into compact, nearly "
+            "equal-area Voronoi cells arranged in a honeycomb-like "
+            "pattern (a centroidal Voronoi tessellation, built with "
+            "Lloyd's algorithm): Voronoi polygons are generated around "
+            "seed points, clipped to the boundary, each point moves to "
+            "its clipped cell's centroid, and the process repeats until "
+            "the cells settle, the iteration limit is reached, or the "
+            "time limit expires. Seeds are the features of a point "
+            "feature class or a chosen number of random points placed "
+            "inside the boundary (with an optional random seed for "
+            "reproducible runs). All points always participate; a point "
+            "is lost only when its cell falls entirely outside the "
+            "boundary. Geographic data is tessellated exactly on the "
+            "sphere. Equal-area, compact partitions make ecological "
+            "analysis and management units more defensible than narrow "
+            "slices. Works at every license level.")
+        self.category = "Geometric Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        boundary = arcpy.Parameter(
+            displayName="Boundary polygon (the area to subdivide)",
+            name="boundary",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        try:
+            boundary.filter.list = ["Polygon"]
+        except Exception:
+            pass
+        in_points = arcpy.Parameter(
+            displayName="Seed points (optional -- else random points "
+                        "below)",
+            name="in_points",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Optional", direction="Input")
+        try:
+            in_points.filter.list = ["Point", "Multipoint"]
+        except Exception:
+            pass
+        n_random = arcpy.Parameter(
+            displayName="Number of random seed points (used when no "
+                        "seed feature class is given)",
+            name="n_random", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        out_fc = arcpy.Parameter(
+            displayName="Output adaptive Voronoi polygon feature class",
+            name="out_fc", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        iterations = arcpy.Parameter(
+            displayName="Maximum iterations",
+            name="iterations", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        iterations.value = 100
+        time_limit = arcpy.Parameter(
+            displayName="Time limit (minutes, optional)",
+            name="time_limit_min", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        tolerance = arcpy.Parameter(
+            displayName="Convergence tolerance (output CS linear units; "
+                        "blank = automatic)",
+            name="tolerance", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        out_points = arcpy.Parameter(
+            displayName="Output final center points (optional)",
+            name="out_points", datatype="DEFeatureClass",
+            parameterType="Optional", direction="Output")
+        random_seed = arcpy.Parameter(
+            displayName="Random seed (optional -- reproducible random "
+                        "points)",
+            name="random_seed", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        return [boundary, in_points, n_random, out_fc, iterations,
+                time_limit, tolerance, out_points, random_seed]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        b, outp = P["boundary"], P["out_fc"]
+        if b.valueAsText and not b.hasBeenValidated:
+            if not outp.altered or outp.valueAsText == self._auto_out:
+                try:
+                    src = arcpy.Describe(b.value or
+                                         b.valueAsText).catalogPath
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(src))[0] + "_AdaptiveVoronoi")
+                    ws = arcpy.env.workspace or os.path.dirname(src)
+                    sug = _unique_name(base, ws)
+                    outp.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        # random-count and random-seed only matter without seed points
+        no_seeds = not P["in_points"].valueAsText
+        P["n_random"].enabled = no_seeds
+        P["random_seed"].enabled = no_seeds
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        if not P["in_points"].valueAsText and not P["n_random"].value:
+            P["n_random"].setErrorMessage(
+                "Give either a seed point feature class or a number of "
+                "random seed points.")
+        n = P["n_random"].value
+        if n is not None and n < 2 and not P["in_points"].valueAsText:
+            P["n_random"].setErrorMessage(
+                "At least 2 random seed points are needed.")
+        it = P["iterations"].value
+        if it is not None and it < 1:
+            P["iterations"].setErrorMessage(
+                "At least 1 iteration is needed.")
+        t = P["time_limit_min"].value
+        if t is not None and t <= 0:
+            P["time_limit_min"].setErrorMessage(
+                "The time limit must be positive (or blank for none).")
+        tol = P["tolerance"].value
+        if tol is not None and tol <= 0:
+            P["tolerance"].setErrorMessage(
+                "The tolerance must be positive (or blank for the "
+                "automatic value).")
+        p = P["in_points"]
+        if p.valueAsText:
+            try:
+                st = arcpy.Describe(p.value or p.valueAsText).shapeType
+                if st not in ("Point", "Multipoint"):
+                    p.setErrorMessage(
+                        "The seeds must be a POINT feature class (this "
+                        "input is {}).".format(st))
+            except Exception:
+                pass
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(voronoi_tools)
+            importlib.reload(adaptive_voronoi)
+            P = {p.name: p for p in parameters}
+            adaptive_voronoi.run_adaptive_voronoi(
+                boundary=P["boundary"].value or P["boundary"].valueAsText,
+                out_fc=P["out_fc"].valueAsText,
+                in_points=(P["in_points"].value
+                           or P["in_points"].valueAsText),
+                n_random=P["n_random"].value
+                    if P["n_random"].enabled else None,
+                iterations=P["iterations"].value or 100,
+                time_limit_min=P["time_limit_min"].value,
+                tolerance=P["tolerance"].value,
+                out_points=P["out_points"].valueAsText,
+                random_seed=(P["random_seed"].value
+                             if P["random_seed"].enabled else None),
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class RepeatingShapes(object):
+    """Repeating Shapes -- tessellations and sampling lattices. See
+    ``repeating_shapes.run_repeating_shapes``."""
+
+    # measure-name -> dialog parameter name (interlocked boxes)
+    _MEASURE_PARAMS = ["area", "edge", "width", "height", "diameter",
+                       "radius", "circumference", "spacing"]
+
+    def __init__(self):
+        self.label = "Repeating Shapes"
+        self.description = (
+            "Tessellates an area of interest with hexagons, squares, "
+            "triangles or rectangles (brick courses with an adjustable "
+            "offset), or lays out sampling points or circles in a square "
+            "or triangular arrangement -- with a free orientation angle. "
+            "Sizes are given in REAL units (hectares, feet, miles, ...) "
+            "and converted to the output coordinate system "
+            "automatically; typing any one measure fills the others "
+            "(enter a square area of 4 square miles and the edge length "
+            "becomes 2 miles). The area of interest is a polygon layer "
+            "(selection honored, holes respected) or a plain extent. "
+            "Shapes on the edge are kept whole when they intersect the "
+            "area (the classic behavior), kept only when their center is "
+            "inside, or clipped to the area. A modernized port of Jeff "
+            "Jenness's classic Repeating Shapes extension, rebuilt on "
+            "vectorized generation for speed. Works at every license "
+            "level.")
+        self.category = "Geometric Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+        self._last = {}
+
+    def getParameterInfo(self):
+        shape_type = arcpy.Parameter(
+            displayName="Shape and pattern", name="shape_type",
+            datatype="GPString", parameterType="Required",
+            direction="Input")
+        shape_type.filter.type = "ValueList"
+        shape_type.filter.list = repeating_shapes.SHAPE_TYPES
+        shape_type.value = repeating_shapes.SHAPE_TYPES[0]
+        boundary = arcpy.Parameter(
+            displayName="Area of interest (optional -- polygons enclose "
+                        "the area; lines or points keep the shapes that "
+                        "touch them; else the extent below)",
+            name="boundary",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Optional", direction="Input")
+        try:
+            boundary.filter.list = ["Polygon", "Polyline", "Point",
+                                    "Multipoint"]
+        except Exception:
+            pass
+        extent = arcpy.Parameter(
+            displayName="Extent (used when no polygon is given; the "
+                        "Extent environment overrides both)",
+            name="extent", datatype="GPExtent",
+            parameterType="Optional", direction="Input")
+        area = arcpy.Parameter(
+            displayName="Shape area (hexagon / square / triangle / "
+                        "circle)",
+            name="area", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        area_units = arcpy.Parameter(
+            displayName="Area units",
+            name="area_units", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        area_units.filter.type = "ValueList"
+        area_units.filter.list = repeating_shapes.AREA_UNITS
+        area_units.value = "Hectares"
+        linear_units = arcpy.Parameter(
+            displayName="Units for all lengths, spacings and radii",
+            name="linear_units", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        linear_units.filter.type = "ValueList"
+        linear_units.filter.list = repeating_shapes.LINEAR_UNITS
+        linear_units.value = "Meters"
+        edge = arcpy.Parameter(
+            displayName="Edge length (hexagon / triangle / square edge)",
+            name="edge", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        width = arcpy.Parameter(
+            displayName="Width (hexagon width across flats, or "
+                        "rectangle Edge 1)",
+            name="width", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        height = arcpy.Parameter(
+            displayName="Height (triangle height, or rectangle Edge 2)",
+            name="height", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        diameter = arcpy.Parameter(
+            displayName="Diameter (hexagon corner-to-corner, or circle "
+                        "diameter)",
+            name="diameter", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        radius = arcpy.Parameter(
+            displayName="Circle radius",
+            name="radius", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        circumference = arcpy.Parameter(
+            displayName="Circle circumference",
+            name="circumference", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        spacing = arcpy.Parameter(
+            displayName="Spacing between point or circle centers",
+            name="spacing", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        offset_pct = arcpy.Parameter(
+            displayName="Brick offset, percent of Edge 1 (rectangles; "
+                        "50 = running bond)",
+            name="offset_pct", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        offset_pct.value = 50.0
+        orientation = arcpy.Parameter(
+            displayName="Orientation (degrees, counterclockwise)",
+            name="orientation", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        orientation.value = 0.0
+        edge_policy = arcpy.Parameter(
+            displayName="Shapes at the area's edge",
+            name="edge_policy", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        edge_policy.filter.type = "ValueList"
+        edge_policy.filter.list = repeating_shapes.EDGE_POLICIES
+        edge_policy.value = repeating_shapes.EDGE_POLICIES[0]
+        out_fc = arcpy.Parameter(
+            displayName="Output feature class",
+            name="out_fc", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        return [shape_type, boundary, extent, area, area_units,
+                linear_units, edge, width, height, diameter, radius,
+                circumference, spacing, offset_pct, orientation,
+                edge_policy, out_fc]
+
+    def isLicensed(self):
+        return True
+
+    def _fill(self, P, name, value):
+        """Write a derived value into a box and remember it, so the next
+        cycle does not mistake our own write for a user edit."""
+        txt = "{:g}".format(value)
+        P[name].value = float(txt)
+        self._last[name] = P[name].valueAsText
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        RS = repeating_shapes
+        st = P["shape_type"].valueAsText or ""
+        measures = RS.MEASURES_FOR.get(st, [])
+
+        # enable exactly the measures this shape accepts
+        for m in self._MEASURE_PARAMS:
+            P[m].enabled = m in measures
+        P["offset_pct"].enabled = st == RS.RECTANGLES
+        P["area_units"].enabled = P["area"].enabled
+        P["edge_policy"].enabled = st not in (RS.POINTS_SQ, RS.POINTS_TRI)
+
+        au = P["area_units"].valueAsText or "Hectares"
+        lu = P["linear_units"].valueAsText or "Meters"
+        lin_m = RS._LIN_M.get(lu, 1.0)
+        area_m2 = RS._AREA_M2.get(au, 1.0)
+        a2l = area_m2 / (lin_m * lin_m)     # area units -> linear^2
+
+        def changed(name):
+            t = P[name].valueAsText
+            return t not in (None, "") and t != self._last.get(name)
+
+        # units coupling: picking an area unit snaps the linear unit
+        driver = None
+        if changed("area_units"):
+            new_lu = RS.AREA_TO_LINEAR.get(P["area_units"].valueAsText)
+            if new_lu:
+                P["linear_units"].value = new_lu
+                self._last["linear_units"] = new_lu
+                lu = new_lu
+                lin_m = RS._LIN_M[lu]
+                a2l = RS._AREA_M2[P["area_units"].valueAsText] \
+                    / (lin_m * lin_m)
+            self._last["area_units"] = P["area_units"].valueAsText
+            if P["area"].enabled and P["area"].value:
+                driver = "area"
+        elif changed("linear_units"):
+            self._last["linear_units"] = P["linear_units"].valueAsText
+            for m in measures:
+                if m != "area" and P[m].value:
+                    driver = m
+                    break
+            if driver is None and P["area"].enabled and P["area"].value:
+                driver = "area"
+        else:
+            for m in measures:
+                if P[m].enabled and changed(m):
+                    driver = m
+                    break
+
+        # the original dialogs' fill-the-rest interlock
+        if driver is not None and st != RS.RECTANGLES:
+            try:
+                v = float(P[driver].value)
+                if v > 0:
+                    v_lin = v * a2l if driver == "area" else v
+                    derived = RS.derive_measures(st, driver, v_lin)
+                    for m, dv in derived.items():
+                        if m == driver or m not in measures \
+                                or not P[m].enabled:
+                            continue
+                        if m == "area":
+                            self._fill(P, m, dv / a2l)
+                        else:
+                            self._fill(P, m, dv)
+                    self._last[driver] = P[driver].valueAsText
+            except Exception:
+                pass
+        elif driver is not None:
+            self._last[driver] = P[driver].valueAsText
+
+        b, outp = P["boundary"], P["out_fc"]
+        drv2 = b if b.valueAsText else P["shape_type"]
+        if not drv2.hasBeenValidated:
+            if not outp.altered or outp.valueAsText == self._auto_out:
+                try:
+                    stem = "RepeatingShapes"
+                    ws = arcpy.env.workspace
+                    if b.valueAsText:
+                        src = arcpy.Describe(b.value
+                                             or b.valueAsText).catalogPath
+                        stem = os.path.splitext(
+                            os.path.basename(src))[0] + "_Shapes"
+                        ws = ws or os.path.dirname(src)
+                    if ws:
+                        sug = _unique_name(_legalize(stem), ws)
+                        outp.value = sug
+                        self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        RS = repeating_shapes
+        st = P["shape_type"].valueAsText or ""
+        try:
+            RS.resolve_size(
+                st,
+                area=P["area"].value if P["area"].enabled else None,
+                edge=P["edge"].value if P["edge"].enabled else None,
+                height=P["height"].value if P["height"].enabled else None,
+                width=P["width"].value if P["width"].enabled else None,
+                diameter=P["diameter"].value
+                    if P["diameter"].enabled else None,
+                radius=P["radius"].value if P["radius"].enabled else None,
+                circumference=P["circumference"].value
+                    if P["circumference"].enabled else None,
+                spacing=P["spacing"].value
+                    if P["spacing"].enabled else None,
+                offset_pct=P["offset_pct"].value
+                    if P["offset_pct"].enabled else 50.0)
+        except ValueError as e:
+            for m in RS.MEASURES_FOR.get(st, []) or ["edge"]:
+                if P[m].enabled and not P[m].value:
+                    P[m].setErrorMessage(str(e))
+                    break
+        except Exception:
+            pass
+        for m in self._MEASURE_PARAMS:
+            v = P[m].value
+            if v is not None and v <= 0:
+                P[m].setErrorMessage("Must be positive.")
+        off = P["offset_pct"].value
+        if off is not None and not (0 <= off <= 100):
+            P["offset_pct"].setErrorMessage(
+                "The brick offset must be between 0 and 100 percent.")
+        b = P["boundary"]
+        if b.valueAsText:
+            try:
+                if arcpy.Describe(b.value
+                                  or b.valueAsText).shapeType != "Polygon":
+                    b.setErrorMessage(
+                        "The area of interest must be a POLYGON feature "
+                        "class.")
+            except Exception:
+                pass
+        elif not P["extent"].valueAsText:
+            P["extent"].setErrorMessage(
+                "Give an area-of-interest polygon or an extent (or set "
+                "the Extent environment).")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(voronoi_tools)
+            importlib.reload(repeating_shapes)
+            P = {p.name: p for p in parameters}
+
+            def val(name):
+                return P[name].value if P[name].enabled else None
+
+            repeating_shapes.run_repeating_shapes(
+                shape_type=P["shape_type"].valueAsText,
+                out_fc=P["out_fc"].valueAsText,
+                boundary=P["boundary"].value or P["boundary"].valueAsText,
+                extent=P["extent"].value or P["extent"].valueAsText,
+                area=val("area"), edge=val("edge"), height=val("height"),
+                width=val("width"), diameter=val("diameter"),
+                radius=val("radius"),
+                circumference=val("circumference"),
+                spacing=val("spacing"),
+                offset_pct=(P["offset_pct"].value
+                            if P["offset_pct"].enabled else 50.0),
+                area_units=P["area_units"].valueAsText or "Square Meters",
+                linear_units=P["linear_units"].valueAsText or "Meters",
+                orientation=P["orientation"].value or 0.0,
+                edge_policy=(P["edge_policy"].valueAsText
+                             or repeating_shapes.EDGE_POLICIES[0]),
+                messages=messages)
         except arcpy.ExecuteError:
             raise
         except Exception:

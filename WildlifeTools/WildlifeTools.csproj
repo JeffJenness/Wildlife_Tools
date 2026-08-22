@@ -303,6 +303,12 @@
     <Content Include="Images\Crosstab_32.png" />
     <Content Include="Images\CumulativeSurface_16.png" />
     <Content Include="Images\CumulativeSurface_32.png" />
+    <Content Include="Images\Voronoi_16.png" />
+    <Content Include="Images\Voronoi_32.png" />
+    <Content Include="Images\AdaptiveVoronoi_16.png" />
+    <Content Include="Images\AdaptiveVoronoi_32.png" />
+    <Content Include="Images\RepeatingShapes_16.png" />
+    <Content Include="Images\RepeatingShapes_32.png" />
     <!-- embedded copy of the Jenness logo: window icons load it by pack
          URI, immune to Assembly.Location quirks in the add-in context -->
     <Resource Include="Corridor\JennessLogoRes.png" />
@@ -314,6 +320,11 @@
          windows (the Land Facet help windows) can show it as their title-bar
          icon via a pack URI regardless of where the add-in is installed. -->
     <Resource Include="Images\JennessEnterprises.ico" />
+    <!-- Repeating Shapes window artwork: the classic pattern gallery tiles
+         and per-shape measure diagrams, embedded so the window's image
+         picker works via pack URIs wherever the add-in is installed. -->
+    <Resource Include="Geometric\Img\*.gif" />
+    <Resource Include="Geometric\Img\*.png" />
     <Content Include="Fonts\Licenses\*.txt" />
     <Content Include="Images\LSRI_DEM_16.png" />
     <Content Include="Images\LSRI_DEM_32.png" />

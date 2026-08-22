@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.69.1" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.72.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -28,6 +28,7 @@
           <group refID="WildlifeTools_GroupDirectional"/>
           <group refID="WildlifeTools_GroupCorridor"/>
           <group refID="WildlifeTools_GroupData"/>
+          <group refID="WildlifeTools_GroupGeometric"/>
           <group refID="WildlifeTools_GroupBreak"/>
         </tab>
       </tabs>
@@ -53,6 +54,9 @@
         </group>
         <group id="WildlifeTools_GroupData" caption="Data Tools" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\FavoriteData_32.png" smallImage="Images\FavoriteData_32.png">
           <subgroup refID="WildlifeTools_SubData" />
+        </group>
+        <group id="WildlifeTools_GroupGeometric" caption="Geometric Tools" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\Voronoi_32.png" smallImage="Images\Voronoi_32.png">
+          <subgroup refID="WildlifeTools_SubGeometric" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\Sudoku_32.png" smallImage="Images\Sudoku_32.png">
           <subgroup refID="WildlifeTools_SubBreak" />
@@ -108,6 +112,11 @@
 
           <button refID="WildlifeTools_FavoriteDatasets" size="large" />
           <button refID="WildlifeTools_AttributeSummary" size="large" />
+        </subgroup>
+        <subgroup id="WildlifeTools_SubGeometric" size="LargeThenMediumWhenMedium">
+          <button refID="WildlifeTools_Voronoi" size="large" />
+          <button refID="WildlifeTools_AdaptiveVoronoi" size="large" />
+          <button refID="WildlifeTools_RepeatingShapes" size="large" />
         </subgroup>
         <subgroup id="WildlifeTools_SubBreak" size="LargeThenMediumWhenMedium">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -848,6 +857,39 @@
                 keytip="CU">
           <tooltip heading="Cumulative Surface">
             How many layers occur on each cell? Combine any mix of polygon layers and rasters -- patch maps, corridors, whole-species footprints, dragged into the dialog together -- into one integer raster whose cell value counts the layers present there: an estimate of the relative importance (or number of species served) of preserving that ground. Each layer counts at most once per cell; a raster counts where its value is neither NoData nor 0, so a corridor raster's background never counts. Optionally honor each layer's selection, label the legend ("3 Species"), and exclude cells where no layer occurs. Symbolized with the color-blind-friendly viridis ramp: dark violet (fewest) through teal to bright yellow (most). A modernized port of the CorridorDesigner Evaluation Tools' Cumulative Surface Tool. No Spatial Analyst needed.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_Voronoi"
+                caption="Voronoi (Thiessen) Polygons"
+                className="Geometric.VoronoiButton"
+                loadOnClick="true"
+                smallImage="Images\Voronoi_16.png"
+                largeImage="Images\Voronoi_32.png"
+                keytip="VP">
+          <tooltip heading="Voronoi (Thiessen) Polygons within Boundary">
+            Build Voronoi (Thiessen) polygons around a point feature class -- each cell is the region closer to its generating point than to any other -- optionally clipped to a boundary polygon such as a management or analysis area. Without a boundary, cells fill the points' extent expanded 10% per axis. Geographic data is tessellated exactly on the sphere with true great-circle bisectors, optionally refined to ellipsoidal geodesics; projected data is tessellated planar. Transfers chosen point attributes to the cells, links every cell to its point by Point_FID, and can add a geodesic area field. Works at every license level.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_AdaptiveVoronoi"
+                caption="Adaptive Voronoi Polygons"
+                className="Geometric.AdaptiveVoronoiButton"
+                loadOnClick="true"
+                smallImage="Images\AdaptiveVoronoi_16.png"
+                largeImage="Images\AdaptiveVoronoi_32.png"
+                keytip="AV">
+          <tooltip heading="Adaptive Voronoi Polygons">
+            Subdivide a boundary polygon into compact, nearly equal-area cells arranged in a honeycomb-like pattern. Voronoi polygons are built around seed points (from a point feature class, or random points placed inside the boundary), clipped to the boundary, and each point then moves to its clipped cell's centroid; the process repeats until the cells settle, an iteration limit is reached, or a time limit expires. Over the iterations the cell areas equalize -- an ecologically defensible way to cut an analysis or management area into workable, near-circular pieces rather than narrow slices. Geographic data runs exactly on the sphere. Works at every license level.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_RepeatingShapes"
+                caption="Repeating Shapes"
+                className="Geometric.RepeatingShapesButton"
+                loadOnClick="true"
+                smallImage="Images\RepeatingShapes_16.png"
+                largeImage="Images\RepeatingShapes_32.png"
+                keytip="RS">
+          <tooltip heading="Repeating Shapes">
+            Tessellate an area of interest with hexagons, squares, triangles or brick-course rectangles, or lay out sampling points or circles in a square or triangular arrangement, at any orientation angle. The area comes from a polygon layer (selection honored), line or point features (every shape touching them is kept -- hexagons over a river, squares over observation locations), or an extent; edge shapes are kept whole (the classic behavior), kept by center, or clipped. Opens a friendly picture-gallery window (sizes update as you type; runs still land in Geoprocessing History); the same tool is also available in the Geoprocessing pane and ModelBuilder. A modernized port of Jeff Jenness's classic Repeating Shapes extension, rebuilt on vectorized generation for speed. Works at every license level.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_LandFacetDescribe"
