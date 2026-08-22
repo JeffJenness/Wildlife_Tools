@@ -70,6 +70,7 @@ import cumulative_surface  # noqa: E402
 import voronoi_tools  # noqa: E402
 import adaptive_voronoi  # noqa: E402
 import repeating_shapes  # noqa: E402
+import random_points  # noqa: E402
 import weighted_stats  # noqa: E402
 import raster_extremes  # noqa: E402
 import tool_metadata  # noqa: E402
@@ -336,7 +337,7 @@ class Toolbox(object):
                       BottleneckAnalysis, WeightedSummaryStatistics,
                       CumulativeSurface, FindRasterExtremeValues,
                       VoronoiPolygons, AdaptiveVoronoiPolygons,
-                      RepeatingShapes]
+                      RepeatingShapes, RandomPointGenerator]
 
 
 class LoCoHStandard(object):
@@ -968,6 +969,11 @@ def _mahal_update(tool, P, out_name, out_base, derived_re):
         P["cat_raster"].enabled = is_cat
         P["cat_field"].enabled = is_cat
         P["cat_value"].enabled = is_cat
+        # a DISABLED Field param is HIDDEN by Pro, yet a stale value
+        # (a field the current cat_raster lacks) still fails Pro's
+        # dependency validation -- an invisible "fix 1 parameter"
+        if not is_cat and P["cat_field"].valueAsText:
+            P["cat_field"].value = None
     P["mean_table"].enabled = is_tab
     P["cov_table"].enabled = is_tab
 
@@ -1398,6 +1404,11 @@ class MahalanobisCovariance(object):
         P["cat_raster"].enabled = is_cat
         P["cat_field"].enabled = is_cat
         P["cat_value"].enabled = is_cat
+        # a DISABLED Field param is HIDDEN by Pro, yet a stale value
+        # (a field the current cat_raster lacks) still fails Pro's
+        # dependency validation -- an invisible "fix 1 parameter"
+        if not is_cat and P["cat_field"].valueAsText:
+            P["cat_field"].value = None
         # The inversion method only governs the inverse-covariance table.
         P["inversion"].enabled = bool(P["out_invcov"].value)
 
@@ -11481,6 +11492,375 @@ class RepeatingShapes(object):
                 orientation=P["orientation"].value or 0.0,
                 edge_policy=(P["edge_policy"].valueAsText
                              or repeating_shapes.EDGE_POLICIES[0]),
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+class RandomPointGenerator(object):
+    """Random Point Generator -- uniform random points within polygons,
+    along polylines, or within an integer raster's categories, with a
+    stratified sampling design. See
+    ``random_points.run_random_points``."""
+
+    def __init__(self):
+        self.label = "Random Point Generator"
+        self.description = (
+            "Generates uniform random points inside polygon features "
+            "(selection honored, holes respected), ALONG polyline "
+            "features, within the data cells of an integer raster with "
+            "an attribute table (NoData excluded), or in a plain "
+            "extent -- a modernized port of Jeff Jenness's classic "
+            "Random Point Generator extension. STRATIFIED sampling "
+            "replicates Esri's Create Spatial Sampling Locations "
+            "model: strata are individual polygons/polylines, raster "
+            "categories, contiguous raster regions, or groups sharing "
+            "a strata ID value; counts are allocated equally, "
+            "proportionally to stratum area or length, from a "
+            "population field (equal or proportional), or by density "
+            "(per acre/square mile/hectare/square kilometer, or per "
+            "foot/mile/meter/kilometer of line). Optional hard "
+            "constraints: a minimum separation between points, and a "
+            "minimum separation from the area boundary (which Esri's "
+            "Create Random Points does not offer). An optional seed "
+            "makes runs reproducible; geographic data is handled with "
+            "equal-area honesty. Works at every license level.")
+        self.category = "Geometric Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        RP = random_points
+        boundary = arcpy.Parameter(
+            displayName="Area of interest (polygons, polylines, or an "
+                        "integer raster with an attribute table; "
+                        "optional -- else the extent below)",
+            name="boundary",
+            datatype=["GPFeatureLayer", "DEFeatureClass",
+                      "GPRasterLayer", "DERasterDataset"],
+            parameterType="Optional", direction="Input")
+        try:
+            boundary.filter.list = ["Polygon", "Polyline"]
+        except Exception:
+            pass
+        extent = arcpy.Parameter(
+            displayName="Extent (used when no area of interest is "
+                        "given; the Extent environment clips polygon "
+                        "areas)",
+            name="extent", datatype="GPExtent",
+            parameterType="Optional", direction="Input")
+        strata_method = arcpy.Parameter(
+            displayName="Sampling method (how the strata are defined)",
+            name="strata_method", datatype="GPString",
+            parameterType="Required", direction="Input")
+        strata_method.filter.type = "ValueList"
+        strata_method.filter.list = RP.STRATA_POLYGON
+        strata_method.value = RP.STRATA_POLYGON[0]
+        strata_field = arcpy.Parameter(
+            displayName="Strata ID field (integer or text; polygons, "
+                        "polylines, or a raster attribute-table field)",
+            name="strata_field", datatype="Field",
+            parameterType="Optional", direction="Input")
+        strata_field.parameterDependencies = ["boundary"]
+        try:
+            # OID included deliberately: a feature class whose only
+            # integer field is the ObjectID would otherwise offer an
+            # EMPTY list (equivalent to stratifying by individual
+            # feature, but the choice should exist)
+            strata_field.filter.list = ["Short", "Long", "BigInteger",
+                                        "OID", "Text"]
+        except Exception:
+            pass
+        alloc_method = arcpy.Parameter(
+            displayName="Sample count allocation method",
+            name="alloc_method", datatype="GPString",
+            parameterType="Required", direction="Input")
+        alloc_method.filter.type = "ValueList"
+        alloc_method.filter.list = RP.ALLOC_UNSTRAT
+        alloc_method.value = RP.ALLOC_UNSTRAT[0]
+        n_points = arcpy.Parameter(
+            displayName="Number of samples (the total, spread across "
+                        "the strata)",
+            name="n_points", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        n_per_stratum = arcpy.Parameter(
+            displayName="Number of samples per stratum",
+            name="n_per_stratum", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        population_field = arcpy.Parameter(
+            displayName="Population field (non-negative; per feature, "
+                        "or a raster attribute-table field)",
+            name="population_field", datatype="Field",
+            parameterType="Optional", direction="Input")
+        population_field.parameterDependencies = ["boundary"]
+        try:
+            population_field.filter.list = ["Short", "Long", "Float",
+                                            "Double"]
+        except Exception:
+            pass
+        density = arcpy.Parameter(
+            displayName="Density: points per unit (area unit; length "
+                        "unit for polylines)",
+            name="density", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        density_units = arcpy.Parameter(
+            displayName="Density unit",
+            name="density_units", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        density_units.filter.type = "ValueList"
+        density_units.filter.list = RP.DENSITY_UNITS
+        density_units.value = "Hectare"
+        min_spacing = arcpy.Parameter(
+            displayName="Minimum distance between points (optional)",
+            name="min_spacing", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        spacing_type = arcpy.Parameter(
+            displayName="How the minimum distance is measured "
+                        "(polylines only)",
+            name="spacing_type", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        spacing_type.filter.type = "ValueList"
+        spacing_type.filter.list = RP.SPACING_TYPES
+        spacing_type.value = RP.SPACING_TYPES[0]
+        boundary_gap = arcpy.Parameter(
+            displayName="Minimum distance from the area boundary "
+                        "(optional; polylines: from each end along "
+                        "the line; rasters: from NoData/edge cells)",
+            name="boundary_gap", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        linear_units = arcpy.Parameter(
+            displayName="Units for the two distances above",
+            name="linear_units", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        linear_units.filter.type = "ValueList"
+        linear_units.filter.list = RP.LINEAR_UNITS
+        linear_units.value = "Meters"
+        random_seed = arcpy.Parameter(
+            displayName="Random seed (optional -- same seed, same "
+                        "points)",
+            name="random_seed", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        max_attempts = arcpy.Parameter(
+            displayName="Placement attempts per point before giving up "
+                        "(used when a minimum spacing is set)",
+            name="max_attempts", datatype="GPLong",
+            parameterType="Optional", direction="Input",
+            category="Advanced")
+        max_attempts.value = 1000
+        out_fc = arcpy.Parameter(
+            displayName="Output point feature class",
+            name="out_fc", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        return [boundary, extent, strata_method, strata_field,
+                alloc_method, n_points, n_per_stratum,
+                population_field, density, density_units, min_spacing,
+                spacing_type, boundary_gap, linear_units, random_seed,
+                max_attempts, out_fc]
+
+    def isLicensed(self):
+        return True
+
+    @staticmethod
+    def _aoi_kind(b):
+        """polygon / polyline / raster / None for the boundary param."""
+        if not b.valueAsText:
+            return None
+        try:
+            d = arcpy.Describe(b.value or b.valueAsText)
+            dt = getattr(d, "dataType", "")
+            if dt in ("RasterLayer", "RasterDataset", "RasterBand",
+                      "MosaicLayer", "MosaicDataset"):
+                return "raster"
+            return {"Polygon": "polygon",
+                    "Polyline": "polyline"}.get(
+                        getattr(d, "shapeType", ""), None)
+        except Exception:
+            return None
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        RP = random_points
+        kind = self._aoi_kind(P["boundary"])
+        # strata choices are phrased per input kind; the current choice
+        # carries across by canonical meaning
+        slists = {"polygon": RP.STRATA_POLYGON,
+                  "polyline": RP.STRATA_POLYLINE,
+                  "raster": RP.STRATA_RASTER,
+                  None: RP.STRATA_EXTENT}
+        slist = slists.get(kind, RP.STRATA_POLYGON)
+        sm = P["strata_method"]
+        s_canon = RP.canon_strata(sm.valueAsText)
+        try:
+            if sm.filter.list != slist:
+                sm.filter.list = slist
+        except Exception:
+            pass
+        if sm.valueAsText not in slist:
+            match = [x for x in slist
+                     if RP.canon_strata(x) == s_canon]
+            sm.value = match[0] if match else slist[0]
+        strata = RP.canon_strata(sm.valueAsText) or RP.STRATA_NONE
+        # allocation choices depend on stratified-or-not and kind
+        if strata == RP.STRATA_NONE:
+            alist = RP.ALLOC_UNSTRAT_LINE if kind == "polyline"                 else RP.ALLOC_UNSTRAT
+        else:
+            alist = RP.ALLOC_STRAT_LINE if kind == "polyline"                 else RP.ALLOC_STRAT
+        am = P["alloc_method"]
+        a_canon = RP.canon_alloc(am.valueAsText)
+        try:
+            if am.filter.list != alist:
+                am.filter.list = alist
+        except Exception:
+            pass
+        if am.valueAsText not in alist:
+            match = [x for x in alist if RP.canon_alloc(x) == a_canon]
+            if not match and a_canon in (RP.ALLOC_TOTAL,
+                                         RP.ALLOC_PROP_AREA):
+                # total <-> proportional-to-area are the same design
+                match = [x for x in alist if RP.canon_alloc(x) in
+                         (RP.ALLOC_TOTAL, RP.ALLOC_PROP_AREA)]
+            am.value = match[0] if match else alist[0]
+        alloc = RP.canon_alloc(am.valueAsText) or RP.ALLOC_TOTAL
+        # density units: length units for polylines, area otherwise
+        du = P["density_units"]
+        ulist = RP.DENSITY_UNITS_LINE if kind == "polyline"             else RP.DENSITY_UNITS
+        try:
+            if du.filter.list != ulist:
+                du.filter.list = ulist
+        except Exception:
+            pass
+        if du.valueAsText not in ulist:
+            du.value = "Meter" if kind == "polyline" else "Hectare"
+        P["strata_field"].enabled = strata == RP.STRATA_IDFIELD
+        P["n_points"].enabled = alloc in (RP.ALLOC_TOTAL,
+                                          RP.ALLOC_PROP_AREA,
+                                          RP.ALLOC_PROP_FIELD)
+        P["n_per_stratum"].enabled = alloc == RP.ALLOC_EQUAL
+        P["population_field"].enabled = alloc in (RP.ALLOC_EQUAL_FIELD,
+                                                  RP.ALLOC_PROP_FIELD)
+        P["density"].enabled = alloc == RP.ALLOC_DENSITY
+        P["density_units"].enabled = alloc == RP.ALLOC_DENSITY
+        P["max_attempts"].enabled = P["min_spacing"].value is not None
+        P["spacing_type"].enabled = kind == "polyline" \
+            and P["min_spacing"].value is not None
+        # a DISABLED Field parameter is HIDDEN by Pro, yet its stale
+        # value (a field from a previous input) still fails Pro's
+        # built-in dependency validation -- "Fix the missing or
+        # invalid parameters" with no visible culprit. Empty every
+        # disabled field parameter unconditionally.
+        for nm in ("strata_field", "population_field"):
+            if not P[nm].enabled and P[nm].valueAsText:
+                P[nm].value = None
+
+        b, outp = P["boundary"], P["out_fc"]
+        if b.valueAsText and not b.hasBeenValidated:
+            if not outp.altered or outp.valueAsText == self._auto_out:
+                try:
+                    src = arcpy.Describe(b.value
+                                         or b.valueAsText).catalogPath
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(src))[0] + "_RandPts")
+                    ws = arcpy.env.workspace or os.path.dirname(src)
+                    sug = _unique_name(base, ws)
+                    outp.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        RP = random_points
+        strata = RP.canon_strata(P["strata_method"].valueAsText) \
+            or RP.STRATA_NONE
+        alloc = RP.canon_alloc(P["alloc_method"].valueAsText) \
+            or RP.ALLOC_TOTAL
+        kind = self._aoi_kind(P["boundary"])
+        if strata != RP.STRATA_NONE and not P["boundary"].valueAsText:
+            P["strata_method"].setErrorMessage(
+                "Stratified sampling needs an area-of-interest input "
+                "(an extent has no strata).")
+        if strata == RP.STRATA_IDFIELD and P["strata_field"].enabled \
+                and not P["strata_field"].valueAsText:
+            P["strata_field"].setErrorMessage(
+                "Give the strata ID field.")
+        for nm, msg in (("n_points", "Give a number of samples "
+                         "greater than zero."),
+                        ("n_per_stratum", "Give a number of samples "
+                         "per stratum greater than zero.")):
+            if P[nm].enabled and P[nm].value is not None \
+                    and int(P[nm].value) <= 0:
+                P[nm].setErrorMessage(msg)
+        if P["population_field"].enabled \
+                and not P["population_field"].valueAsText:
+            P["population_field"].setErrorMessage(
+                "Give the population field.")
+        if alloc == RP.ALLOC_DENSITY and P["density"].enabled \
+                and P["density"].value is not None \
+                and float(P["density"].value) <= 0:
+            P["density"].setErrorMessage(
+                "Give a density greater than zero.")
+        for nm in ("min_spacing", "boundary_gap"):
+            if P[nm].value is not None and float(P[nm].value) < 0:
+                P[nm].setErrorMessage("Distances cannot be negative.")
+        if P["max_attempts"].value is not None \
+                and int(P["max_attempts"].value) < 1:
+            P["max_attempts"].setErrorMessage(
+                "Give at least 1 placement attempt per point.")
+        b = P["boundary"]
+        if b.valueAsText:
+            if kind is None:
+                b.setErrorMessage(
+                    "The area of interest must be polygons, "
+                    "polylines, or an integer raster with an "
+                    "attribute table.")
+            elif kind == "raster":
+                try:
+                    rp = arcpy.Describe(b.value
+                                        or b.valueAsText).catalogPath
+                    rr = arcpy.Raster(rp)
+                    if not rr.isInteger:
+                        b.setErrorMessage(
+                            "The raster must be an INTEGER raster "
+                            "(this one is floating-point).")
+                    elif not rr.hasRAT:
+                        b.setErrorMessage(
+                            "The raster has no attribute table -- "
+                            "run Build Raster Attribute Table on it "
+                            "first.")
+                except Exception:
+                    pass
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(random_points)
+            P = {p.name: p for p in parameters}
+            random_points.run_random_points(
+                out_fc=P["out_fc"].valueAsText,
+                boundary=P["boundary"].value
+                    or P["boundary"].valueAsText,
+                extent=P["extent"].value or P["extent"].valueAsText,
+                strata_method=P["strata_method"].valueAsText,
+                strata_field=P["strata_field"].valueAsText,
+                alloc_method=P["alloc_method"].valueAsText,
+                n_points=P["n_points"].value,
+                n_per_stratum=P["n_per_stratum"].value,
+                population_field=P["population_field"].valueAsText,
+                density=P["density"].value,
+                density_units=P["density_units"].valueAsText
+                    or "Hectare",
+                min_spacing=P["min_spacing"].value,
+                spacing_type=P["spacing_type"].valueAsText,
+                boundary_gap=P["boundary_gap"].value,
+                linear_units=P["linear_units"].valueAsText or "Meters",
+                random_seed=P["random_seed"].value,
+                max_attempts=P["max_attempts"].value or 1000,
                 messages=messages)
         except arcpy.ExecuteError:
             raise

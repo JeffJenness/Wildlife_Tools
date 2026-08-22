@@ -309,6 +309,8 @@
     <Content Include="Images\AdaptiveVoronoi_32.png" />
     <Content Include="Images\RepeatingShapes_16.png" />
     <Content Include="Images\RepeatingShapes_32.png" />
+    <Content Include="Images\RandomPoints_16.png" />
+    <Content Include="Images\RandomPoints_32.png" />
     <!-- embedded copy of the Jenness logo: window icons load it by pack
          URI, immune to Assembly.Location quirks in the add-in context -->
     <Resource Include="Corridor\JennessLogoRes.png" />
