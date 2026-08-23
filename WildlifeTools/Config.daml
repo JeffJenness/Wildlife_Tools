@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.74.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.75.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -119,6 +119,7 @@
           <button refID="WildlifeTools_AdaptiveVoronoi" size="large" />
           <button refID="WildlifeTools_RepeatingShapes" size="large" />
           <button refID="WildlifeTools_RandomPoints" size="large" />
+          <button refID="WildlifeTools_RandomArrays" size="large" />
         </subgroup>
         <subgroup id="WildlifeTools_SubBreak" size="LargeThenMediumWhenMedium">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -903,6 +904,17 @@
                 keytip="RP">
           <tooltip heading="Random Point Generator">
             Generate uniform random points inside polygon features (selection honored, holes respected), ALONG polyline features, within the data cells of an integer raster's categories (NoData excluded; requires an attribute table), or in a plain extent -- with two optional hard constraints Esri's Create Random Points only half covers: a minimum separation between points AND a minimum separation from the area boundary (line ends for polylines; NoData/edge cells for rasters). Stratified sampling replicates Esri's Create Spatial Sampling Locations model: strata by individual polygon/polyline, raster category, contiguous raster region, or a strata ID field; counts allocated equally, proportionally to area/length, from a population field, or by density (per acre, square mile, hectare or square kilometer of area; per foot, mile, meter or kilometer of line). An optional seed makes runs exactly reproducible; geographic data is handled with equal-area honesty everywhere. A modernized port of Jeff Jenness's classic Random Point Generator extension. Works at every license level.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_RandomArrays"
+                caption="Random Sample Array Generator"
+                className="Geometric.RandomArraysButton"
+                loadOnClick="true"
+                smallImage="Images\RandomArrays_16.png"
+                largeImage="Images\RandomArrays_32.png"
+                keytip="RA">
+          <tooltip heading="Random Sample Array Generator">
+            Generate randomly placed ARRAYS of sampling points -- the standard field design of multiple sampling stations per plot -- inside polygon features, along polyline features, within the data cells of an integer raster's categories, or in a plain extent. Each array is built around a randomly placed focal location using the Random Point Generator's stratified sampling design; counts, the minimum distance between arrays, and the minimum distance from the boundary all refer to the arrays themselves (footprints: nearest points, never centers). Array shapes: a grid of rows and columns, a triangular lattice filling a circle, a circle of evenly spaced points (optionally including the center), or a one-dimensional array along a polyline that walks straight through junctions and warns when a Y confluence forces a branch choice. Arrays can be required to fit entirely inside the area (rejected placements are redrawn -- every array complete) or allowed to extend beyond it. Orientation: fixed angle, random per array, or aligned to the line direction. An optional seed makes runs exactly reproducible. Works at every license level.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_LandFacetDescribe"

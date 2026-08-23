@@ -126,6 +126,18 @@ namespace WildlifeTools.Sudoku
         private readonly Border[,] _cellB = new Border[9, 9];
         private readonly TextBlock[,] _cellT = new TextBlock[9, 9];
 
+        // pencil-mark notes: _notes[r, c, d-1] = "d is a candidate";
+        // each digit renders in its home slot of a 3x3 mini-grid (1 top
+        // left ... 9 bottom right), in red. The note size is fixed at a
+        // quarter of the CELL size (the slots are a third of the cell,
+        // so this fills them without crowding) rather than a fraction
+        // of the skin's digit size -- the slots never change between
+        // skins, so neither should the notes.
+        private const double NoteFontSize = CellSize / 4.0;   // 11 px
+        private readonly bool[,,] _notes = new bool[9, 9, 9];
+        private readonly TextBlock[,,] _noteT = new TextBlock[9, 9, 9];
+        private readonly SolidColorBrush _inkNote = new(Colors.Red);
+
         // shared, non-frozen brushes: swapping their Color re-inks every cell
         private readonly SolidColorBrush _inkGiven = new(Colors.Black);
         private readonly SolidColorBrush _inkEntry = new(Colors.DarkSlateBlue);
@@ -190,6 +202,11 @@ namespace WildlifeTools.Sudoku
                     {
                         _cellT[r, c].FontFamily = s.DigitFont;
                         _cellT[r, c].FontSize = s.DigitSize;
+                        for (int d = 0; d < 9; d++)
+                        {
+                            _noteT[r, c, d].FontFamily = s.DigitFont;
+                            _noteT[r, c, d].FontSize = NoteFontSize;
+                        }
                     }
 
             _inkGiven.Color = s.InkGiven;
@@ -236,6 +253,33 @@ namespace WildlifeTools.Sudoku
                         FontFamily = _skin.DigitFont,
                         FontSize = _skin.DigitSize,
                     };
+                    // notes layer: a fixed 3x3 mini-grid behind the main
+                    // digit; unchecked slots are simply empty strings, so
+                    // no visibility juggling is ever needed
+                    var noteGrid = new Grid();
+                    for (int i = 0; i < 3; i++)
+                    {
+                        noteGrid.RowDefinitions.Add(new RowDefinition());
+                        noteGrid.ColumnDefinitions.Add(new ColumnDefinition());
+                    }
+                    for (int d = 0; d < 9; d++)
+                    {
+                        var nt = new TextBlock
+                        {
+                            HorizontalAlignment = HorizontalAlignment.Center,
+                            VerticalAlignment = VerticalAlignment.Center,
+                            FontFamily = _skin.DigitFont,
+                            FontSize = NoteFontSize,
+                            Foreground = _inkNote,
+                        };
+                        Grid.SetRow(nt, d / 3);
+                        Grid.SetColumn(nt, d % 3);
+                        noteGrid.Children.Add(nt);
+                        _noteT[r, c, d] = nt;
+                    }
+                    var host = new Grid();
+                    host.Children.Add(noteGrid);
+                    host.Children.Add(text);
                     var cell = new Border
                     {
                         Background = new SolidColorBrush(_skin.CellBase),   // animatable
@@ -243,11 +287,12 @@ namespace WildlifeTools.Sudoku
                         BorderThickness = new Thickness(
                             c % 3 == 0 ? 2.5 : 0.75, r % 3 == 0 ? 2.5 : 0.75,
                             c == 8 ? 2.5 : 0, r == 8 ? 2.5 : 0),
-                        Child = text,
+                        Child = host,
                         SnapsToDevicePixels = true,
                         Tag = r * 9 + c,
                     };
                     cell.MouseLeftButtonDown += OnCellClick;
+                    cell.MouseRightButtonUp += OnCellRightClick;
                     Grid.SetRow(cell, r);
                     Grid.SetColumn(cell, c);
                     BoardHost.Children.Add(cell);
@@ -282,6 +327,7 @@ namespace WildlifeTools.Sudoku
                 for (int c = 0; c < 9; c++)
                 {
                     _entry[r, c] = _given[r, c] ? _solution[r, c] : 0;
+                    ClearNotes(r, c);
                     var t = _cellT[r, c];
                     t.Text = _given[r, c] ? _solution[r, c].ToString() : "";
                     t.FontWeight = _given[r, c] ? FontWeights.Bold : FontWeights.Normal;
@@ -326,6 +372,60 @@ namespace WildlifeTools.Sudoku
             int idx = (int)((Border)sender).Tag;
             Select(idx / 9, idx % 9);
             Keyboard.Focus(this);
+        }
+
+        // ------------------------------------------------------------------
+        //  pencil-mark notes (right-click)
+        // ------------------------------------------------------------------
+        private void OnCellRightClick(object sender, MouseButtonEventArgs e)
+        {
+            var cell = (Border)sender;
+            int idx = (int)cell.Tag;
+            int r = idx / 9, c = idx % 9;
+            Select(r, c);
+            e.Handled = true;
+            if (_solved || _given[r, c] || _entry[r, c] != 0)
+            {
+                Keyboard.Focus(this);
+                return;      // notes only make sense in cells still open
+            }
+
+            var menu = new ContextMenu { PlacementTarget = cell };
+            for (int d = 1; d <= 9; d++)
+            {
+                var item = new MenuItem
+                {
+                    Header = "Note " + d,
+                    IsCheckable = true,
+                    IsChecked = _notes[r, c, d - 1],
+                    StaysOpenOnClick = true,    // mark several candidates
+                                                // in one visit
+                    Tag = d,
+                };
+                item.Click += (_, __) =>
+                {
+                    int dd = (int)item.Tag;
+                    _notes[r, c, dd - 1] = item.IsChecked;
+                    _noteT[r, c, dd - 1].Text =
+                        item.IsChecked ? dd.ToString() : "";
+                };
+                menu.Items.Add(item);
+            }
+            menu.Items.Add(new Separator());
+            var clear = new MenuItem { Header = "Clear this cell's notes" };
+            clear.Click += (_, __) => ClearNotes(r, c);
+            menu.Items.Add(clear);
+            menu.Closed += (_, __) => Keyboard.Focus(this);
+            menu.IsOpen = true;
+        }
+
+        private void ClearNotes(int r, int c)
+        {
+            for (int d = 0; d < 9; d++)
+            {
+                _notes[r, c, d] = false;
+                if (_noteT[r, c, d] != null) _noteT[r, c, d].Text = "";
+            }
         }
 
         private void OnBoardKeyDown(object sender, KeyEventArgs e)
@@ -373,6 +473,8 @@ namespace WildlifeTools.Sudoku
         {
             if (_solved || _given[_selR, _selC]) return;
             _entry[_selR, _selC] = d;
+            ClearNotes(_selR, _selC);   // a real entry (or Delete, the
+                                        // note eraser) retires the notes
             var t = _cellT[_selR, _selC];
             t.Text = d == 0 ? "" : d.ToString();
             t.Foreground = _inkEntry;                // editing resets Check coloring
@@ -449,6 +551,7 @@ namespace WildlifeTools.Sudoku
             if (r == MessageBoxResult.Yes)
             {
                 _entry[_selR, _selC] = _solution[_selR, _selC];
+                ClearNotes(_selR, _selC);
                 var t = _cellT[_selR, _selC];
                 t.Text = _solution[_selR, _selC].ToString();
                 t.Foreground = _inkCorrect;          // known correct: blue
@@ -467,7 +570,7 @@ namespace WildlifeTools.Sudoku
             StatusText.Text = remaining == 0
                 ? $"{_difficultyName} — board full."
                 : $"{_difficultyName} — {remaining} cell{(remaining == 1 ? "" : "s")} to go.  "
-                  + "Click a cell, type 1-9; arrows and Tab move around.";
+                  + "Click a cell, type 1-9; right-click for candidate notes.";
         }
 
         // ------------------------------------------------------------------

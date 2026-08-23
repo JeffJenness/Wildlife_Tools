@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Random Sample Array Generator: the same study-area polygon as the
+       Random Point Generator icon, holding two compact ARRAYS of points
+       (a 3x3 grid and a tilted 2x2), conveying arrays-not-single-points
+       placed at random locations. -->
+  <rect x="1.5" y="1.5" width="29" height="29" rx="1.5"
+        fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.8"/>
+  <polygon points="5.0,10.0 12.0,4.4 22.5,5.2 28.0,12.4 26.4,22.8 17.8,28.0 7.4,25.4 4.0,17.6"
+           fill="#EAF2E4" stroke="#2E6B8A" stroke-width="1.6"/>
+  <g fill="#B0500F">
+    <circle cx="9.4" cy="10.4" r="1.45"/>
+    <circle cx="13.4" cy="10.4" r="1.45"/>
+    <circle cx="17.4" cy="10.4" r="1.45"/>
+    <circle cx="9.4" cy="14.4" r="1.45"/>
+    <circle cx="13.4" cy="14.4" r="1.45"/>
+    <circle cx="17.4" cy="14.4" r="1.45"/>
+    <circle cx="9.4" cy="18.4" r="1.45"/>
+    <circle cx="13.4" cy="18.4" r="1.45"/>
+    <circle cx="17.4" cy="18.4" r="1.45"/>
+  </g>
+  <g fill="#2E6B8A">
+    <circle cx="21.6" cy="21.0" r="1.45"/>
+    <circle cx="24.9" cy="19.4" r="1.45"/>
+    <circle cx="23.2" cy="24.3" r="1.45"/>
+    <circle cx="26.5" cy="22.7" r="1.45"/>
+  </g>
+</svg>

@@ -311,6 +311,8 @@
     <Content Include="Images\RepeatingShapes_32.png" />
     <Content Include="Images\RandomPoints_16.png" />
     <Content Include="Images\RandomPoints_32.png" />
+    <Content Include="Images\RandomArrays_16.png" />
+    <Content Include="Images\RandomArrays_32.png" />
     <Content Include="Images\SelectRandom_16.png" />
     <Content Include="Images\SelectRandom_32.png" />
     <!-- embedded copy of the Jenness logo: window icons load it by pack

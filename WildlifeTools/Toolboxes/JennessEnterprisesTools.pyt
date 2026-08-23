@@ -71,6 +71,7 @@ import voronoi_tools  # noqa: E402
 import adaptive_voronoi  # noqa: E402
 import repeating_shapes  # noqa: E402
 import random_points  # noqa: E402
+import random_arrays  # noqa: E402
 import select_random  # noqa: E402
 import weighted_stats  # noqa: E402
 import raster_extremes  # noqa: E402
@@ -339,6 +340,7 @@ class Toolbox(object):
                       CumulativeSurface, FindRasterExtremeValues,
                       VoronoiPolygons, AdaptiveVoronoiPolygons,
                       RepeatingShapes, RandomPointGenerator,
+                      RandomSampleArrayGenerator,
                       SelectRandomRecords]
 
 
@@ -11872,6 +11874,534 @@ class RandomPointGenerator(object):
             error_report.report(messages, self.label, parameters)
             raise arcpy.ExecuteError(
                 "The tool stopped because of an unexpected error; see the report above.")
+
+
+class RandomSampleArrayGenerator(object):
+    """Random Sample Array Generator -- randomly placed ARRAYS of
+    sampling points (grid / triangular / circular / along-the-line),
+    following the Random Point Generator's sampling design. See
+    ``random_arrays.run_random_arrays``."""
+
+    def __init__(self):
+        self.label = "Random Sample Array Generator"
+        self.description = (
+            "Generates randomly placed arrays of sampling points -- "
+            "the standard field design of multiple sampling stations "
+            "per plot -- inside polygon features, along polyline "
+            "features, or within the data cells of an integer raster "
+            "with an attribute table. Each array is built around a "
+            "randomly placed focal location using the Random Point "
+            "Generator's stratified sampling design; counts, the "
+            "minimum distance between arrays, and the minimum "
+            "distance from the boundary all refer to the arrays "
+            "(their footprints -- nearest points, not centers). Array "
+            "shapes: a grid of rows and columns, a triangular "
+            "lattice filling a circle, a circle of evenly spaced "
+            "points (optionally including the center), or a "
+            "one-dimensional array along a polyline. Arrays can be "
+            "required to fit entirely inside the area (rejected "
+            "placements are redrawn) or allowed to extend beyond it "
+            "-- the full array is generated either way. An optional "
+            "seed makes runs reproducible. Works at every license "
+            "level.")
+        self.category = "Geometric Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        RA = random_arrays
+        boundary = arcpy.Parameter(
+            displayName="Area of interest (polygons, polylines, or an "
+                        "integer raster with an attribute table; "
+                        "optional -- else the extent below)",
+            name="boundary",
+            datatype=["GPFeatureLayer", "DEFeatureClass",
+                      "GPRasterLayer", "DERasterDataset"],
+            parameterType="Optional", direction="Input")
+        try:
+            boundary.filter.list = ["Polygon", "Polyline"]
+        except Exception:
+            pass
+        extent = arcpy.Parameter(
+            displayName="Extent (used when no area of interest is "
+                        "given; the Extent environment clips polygon "
+                        "areas)",
+            name="extent", datatype="GPExtent",
+            parameterType="Optional", direction="Input")
+        strata_method = arcpy.Parameter(
+            displayName="Sampling method (how the strata are defined)",
+            name="strata_method", datatype="GPString",
+            parameterType="Required", direction="Input")
+        strata_method.filter.type = "ValueList"
+        strata_method.filter.list = RA.STRATA_POLYGON
+        strata_method.value = RA.STRATA_POLYGON[0]
+        strata_field = arcpy.Parameter(
+            displayName="Strata ID field (integer or text; polygons, "
+                        "polylines, or a raster attribute-table field)",
+            name="strata_field", datatype="Field",
+            parameterType="Optional", direction="Input")
+        strata_field.parameterDependencies = ["boundary"]
+        try:
+            strata_field.filter.list = ["Short", "Long", "BigInteger",
+                                        "OID", "Text"]
+        except Exception:
+            pass
+        alloc_method = arcpy.Parameter(
+            displayName="Sample count allocation method (counts are "
+                        "ARRAYS, not points)",
+            name="alloc_method", datatype="GPString",
+            parameterType="Required", direction="Input")
+        alloc_method.filter.type = "ValueList"
+        alloc_method.filter.list = RA.ALLOC_UNSTRAT
+        alloc_method.value = RA.ALLOC_UNSTRAT[0]
+        n_arrays = arcpy.Parameter(
+            displayName="Number of sample arrays (the total, spread "
+                        "across the strata)",
+            name="n_arrays", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        n_per_stratum = arcpy.Parameter(
+            displayName="Number of sample arrays per stratum",
+            name="n_per_stratum", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        population_field = arcpy.Parameter(
+            displayName="Population field (non-negative; per feature, "
+                        "or a raster attribute-table field)",
+            name="population_field", datatype="Field",
+            parameterType="Optional", direction="Input")
+        population_field.parameterDependencies = ["boundary"]
+        try:
+            population_field.filter.list = ["Short", "Long", "Float",
+                                            "Double"]
+        except Exception:
+            pass
+        density = arcpy.Parameter(
+            displayName="Density: arrays per unit (area unit; length "
+                        "unit for polylines)",
+            name="density", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        density_units = arcpy.Parameter(
+            displayName="Density unit",
+            name="density_units", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        density_units.filter.type = "ValueList"
+        density_units.filter.list = RA.DENSITY_UNITS
+        density_units.value = "Hectare"
+        array_shape = arcpy.Parameter(
+            displayName="Array shape",
+            name="array_shape", datatype="GPString",
+            parameterType="Required", direction="Input")
+        array_shape.filter.type = "ValueList"
+        array_shape.filter.list = RA.SHAPES_AREA
+        array_shape.value = RA.SHAPES_AREA[0]
+        n_rows = arcpy.Parameter(
+            displayName="Number of rows (grid)",
+            name="n_rows", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        n_cols = arcpy.Parameter(
+            displayName="Number of columns (grid)",
+            name="n_cols", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        array_points = arcpy.Parameter(
+            displayName="Number of points in each array",
+            name="array_points", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        point_spacing = arcpy.Parameter(
+            displayName="Spacing between points in the array",
+            name="point_spacing", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        radius = arcpy.Parameter(
+            displayName="Circle radius (points sit on this circle "
+                        "around the focal point)",
+            name="radius", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        orientation_mode = arcpy.Parameter(
+            displayName="Array orientation (grid and triangular)",
+            name="orientation_mode", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        orientation_mode.filter.type = "ValueList"
+        orientation_mode.filter.list = RA.ORIENT_MODES_AREA
+        orientation_mode.value = RA.ORIENT_MODES_AREA[0]
+        orientation_angle = arcpy.Parameter(
+            displayName="Orientation angle (degrees clockwise from "
+                        "north; at 0 a grid's columns run "
+                        "north-south)",
+            name="orientation_angle", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        orientation_angle.value = 0.0
+        randomize_start = arcpy.Parameter(
+            displayName="Random starting angle for the first point on "
+                        "the circle (otherwise it lies due north of "
+                        "the center)",
+            name="randomize_start", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        randomize_start.value = True
+        include_center = arcpy.Parameter(
+            displayName="Include the center point as a sample point "
+                        "(it counts toward the number of points)",
+            name="include_center", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        include_center.value = False
+        must_fit = arcpy.Parameter(
+            displayName="Entire array must fit inside the area of "
+                        "interest (uncheck to let arrays extend "
+                        "beyond it; the full array is generated "
+                        "either way)",
+            name="must_fit", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        must_fit.value = True
+        min_spacing = arcpy.Parameter(
+            displayName="Minimum distance between arrays (between "
+                        "their nearest points, not centers; optional)",
+            name="min_spacing", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        spacing_type = arcpy.Parameter(
+            displayName="How the minimum distance is measured "
+                        "(polylines only)",
+            name="spacing_type", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        spacing_type.filter.type = "ValueList"
+        spacing_type.filter.list = RA.SPACING_TYPES
+        spacing_type.value = RA.SPACING_TYPES[0]
+        boundary_gap = arcpy.Parameter(
+            displayName="Minimum distance between the arrays and the "
+                        "area boundary (applies to every array point; "
+                        "optional, and only when the array must fit)",
+            name="boundary_gap", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        linear_units = arcpy.Parameter(
+            displayName="Units for the distances above (point "
+                        "spacing, radius, and the two minimum "
+                        "distances)",
+            name="linear_units", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        linear_units.filter.type = "ValueList"
+        linear_units.filter.list = RA.LINEAR_UNITS
+        linear_units.value = "Meters"
+        random_seed = arcpy.Parameter(
+            displayName="Random seed (optional -- same seed, same "
+                        "arrays)",
+            name="random_seed", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        max_attempts = arcpy.Parameter(
+            displayName="Placement attempts per array before giving "
+                        "up (containment rejections and spacing "
+                        "conflicts both consume attempts)",
+            name="max_attempts", datatype="GPLong",
+            parameterType="Optional", direction="Input",
+            category="Advanced")
+        max_attempts.value = 1000
+        out_fc = arcpy.Parameter(
+            displayName="Output point feature class",
+            name="out_fc", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        return [boundary, extent, strata_method, strata_field,
+                alloc_method, n_arrays, n_per_stratum,
+                population_field, density, density_units, array_shape,
+                n_rows, n_cols, array_points, point_spacing, radius,
+                orientation_mode, orientation_angle, randomize_start,
+                include_center, must_fit, min_spacing, spacing_type,
+                boundary_gap, linear_units, random_seed, max_attempts,
+                out_fc]
+
+    def isLicensed(self):
+        return True
+
+    @staticmethod
+    def _aoi_kind(b):
+        """polygon / polyline / raster / None for the boundary param."""
+        if not b.valueAsText:
+            return None
+        try:
+            d = arcpy.Describe(b.value or b.valueAsText)
+            dt = getattr(d, "dataType", "")
+            if dt in ("RasterLayer", "RasterDataset", "RasterBand",
+                      "MosaicLayer", "MosaicDataset"):
+                return "raster"
+            return {"Polygon": "polygon",
+                    "Polyline": "polyline"}.get(
+                        getattr(d, "shapeType", ""), None)
+        except Exception:
+            return None
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        RA = random_arrays
+        kind = self._aoi_kind(P["boundary"])
+        slists = {"polygon": RA.STRATA_POLYGON,
+                  "polyline": RA.STRATA_POLYLINE,
+                  "raster": RA.STRATA_RASTER,
+                  None: RA.STRATA_EXTENT}
+        slist = slists.get(kind, RA.STRATA_POLYGON)
+        sm = P["strata_method"]
+        s_canon = RA.canon_strata(sm.valueAsText)
+        try:
+            if sm.filter.list != slist:
+                sm.filter.list = slist
+        except Exception:
+            pass
+        if sm.valueAsText not in slist:
+            match = [x for x in slist
+                     if RA.canon_strata(x) == s_canon]
+            sm.value = match[0] if match else slist[0]
+        strata = RA.canon_strata(sm.valueAsText) \
+            or random_points.STRATA_NONE
+        RP = random_points
+        if strata == RP.STRATA_NONE:
+            alist = RA.ALLOC_UNSTRAT_LINE if kind == "polyline" \
+                else RA.ALLOC_UNSTRAT
+        else:
+            alist = RA.ALLOC_STRAT_LINE if kind == "polyline" \
+                else RA.ALLOC_STRAT
+        am = P["alloc_method"]
+        a_canon = RA.canon_alloc(am.valueAsText)
+        try:
+            if am.filter.list != alist:
+                am.filter.list = alist
+        except Exception:
+            pass
+        if am.valueAsText not in alist:
+            match = [x for x in alist if RA.canon_alloc(x) == a_canon]
+            if not match and a_canon in (RP.ALLOC_TOTAL,
+                                         RP.ALLOC_PROP_AREA):
+                match = [x for x in alist if RA.canon_alloc(x) in
+                         (RP.ALLOC_TOTAL, RP.ALLOC_PROP_AREA)]
+            am.value = match[0] if match else alist[0]
+        alloc = RA.canon_alloc(am.valueAsText) or RP.ALLOC_TOTAL
+        du = P["density_units"]
+        ulist = RA.DENSITY_UNITS_LINE if kind == "polyline" \
+            else RA.DENSITY_UNITS
+        try:
+            if du.filter.list != ulist:
+                du.filter.list = ulist
+        except Exception:
+            pass
+        if du.valueAsText not in ulist:
+            du.value = "Meter" if kind == "polyline" else "Hectare"
+        # array shape: polylines add the one-dimensional array
+        shlist = RA.SHAPES_LINE if kind == "polyline" \
+            else RA.SHAPES_AREA
+        shp_p = P["array_shape"]
+        sh_canon = RA.canon_shape(shp_p.valueAsText)
+        try:
+            if shp_p.filter.list != shlist:
+                shp_p.filter.list = shlist
+        except Exception:
+            pass
+        if shp_p.valueAsText not in shlist:
+            match = [x for x in shlist
+                     if RA.canon_shape(x) == sh_canon]
+            shp_p.value = match[0] if match else shlist[0]
+        shape = RA.canon_shape(shp_p.valueAsText) or RA.SHAPE_GRID
+        # orientation: polylines add align-to-line
+        olist = RA.ORIENT_MODES if kind == "polyline" \
+            else RA.ORIENT_MODES_AREA
+        om = P["orientation_mode"]
+        o_canon = RA.canon_orient(om.valueAsText)
+        try:
+            if om.filter.list != olist:
+                om.filter.list = olist
+        except Exception:
+            pass
+        if om.valueAsText not in olist:
+            match = [x for x in olist
+                     if RA.canon_orient(x) == o_canon]
+            om.value = match[0] if match else olist[0]
+        orient = RA.canon_orient(om.valueAsText) or RA.ORIENT_FIXED
+
+        P["strata_field"].enabled = strata == RP.STRATA_IDFIELD
+        P["n_arrays"].enabled = alloc in (RP.ALLOC_TOTAL,
+                                          RP.ALLOC_PROP_AREA,
+                                          RP.ALLOC_PROP_FIELD)
+        P["n_per_stratum"].enabled = alloc == RP.ALLOC_EQUAL
+        P["population_field"].enabled = alloc in (
+            RP.ALLOC_EQUAL_FIELD, RP.ALLOC_PROP_FIELD)
+        P["density"].enabled = alloc == RP.ALLOC_DENSITY
+        P["density_units"].enabled = alloc == RP.ALLOC_DENSITY
+        P["n_rows"].enabled = shape == RA.SHAPE_GRID
+        P["n_cols"].enabled = shape == RA.SHAPE_GRID
+        P["array_points"].enabled = shape != RA.SHAPE_GRID
+        P["point_spacing"].enabled = shape != RA.SHAPE_CIRCLE
+        P["radius"].enabled = shape == RA.SHAPE_CIRCLE
+        P["orientation_mode"].enabled = shape in (RA.SHAPE_GRID,
+                                                  RA.SHAPE_TRI)
+        P["orientation_angle"].enabled = \
+            P["orientation_mode"].enabled and orient == RA.ORIENT_FIXED
+        P["randomize_start"].enabled = shape == RA.SHAPE_CIRCLE
+        P["include_center"].enabled = shape == RA.SHAPE_CIRCLE
+        must_fit = P["must_fit"].value
+        must_fit = True if must_fit is None else bool(must_fit)
+        P["boundary_gap"].enabled = must_fit
+        P["spacing_type"].enabled = kind == "polyline" \
+            and P["min_spacing"].value is not None
+        # always offered: containment rejections (must fit) and
+        # spacing conflicts both consume attempts, and hiding the
+        # budget helps no one
+        P["max_attempts"].enabled = True
+        # disabled Field params are hidden yet stale values still fail
+        # dependency validation -- empty them unconditionally
+        for nm in ("strata_field", "population_field"):
+            if not P[nm].enabled and P[nm].valueAsText:
+                P[nm].value = None
+
+        b, outp = P["boundary"], P["out_fc"]
+        if b.valueAsText and not b.hasBeenValidated:
+            if not outp.altered or outp.valueAsText == self._auto_out:
+                try:
+                    src = arcpy.Describe(b.value
+                                         or b.valueAsText).catalogPath
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(src))[0] + "_Arrays")
+                    ws = arcpy.env.workspace or os.path.dirname(src)
+                    sug = _unique_name(base, ws)
+                    outp.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        RA = random_arrays
+        RP = random_points
+        strata = RA.canon_strata(P["strata_method"].valueAsText) \
+            or RP.STRATA_NONE
+        alloc = RA.canon_alloc(P["alloc_method"].valueAsText) \
+            or RP.ALLOC_TOTAL
+        shape = RA.canon_shape(P["array_shape"].valueAsText) \
+            or RA.SHAPE_GRID
+        kind = self._aoi_kind(P["boundary"])
+        if strata != RP.STRATA_NONE and not P["boundary"].valueAsText:
+            P["strata_method"].setErrorMessage(
+                "Stratified sampling needs an area-of-interest input "
+                "(an extent has no strata).")
+        if strata == RP.STRATA_IDFIELD and P["strata_field"].enabled \
+                and not P["strata_field"].valueAsText:
+            P["strata_field"].setErrorMessage(
+                "Give the strata ID field.")
+        for nm, msg in (("n_arrays", "Give a number of arrays "
+                         "greater than zero."),
+                        ("n_per_stratum", "Give a number of arrays "
+                         "per stratum greater than zero.")):
+            if P[nm].enabled and P[nm].value is not None \
+                    and int(P[nm].value) <= 0:
+                P[nm].setErrorMessage(msg)
+        if P["population_field"].enabled \
+                and not P["population_field"].valueAsText:
+            P["population_field"].setErrorMessage(
+                "Give the population field.")
+        if alloc == RP.ALLOC_DENSITY and P["density"].enabled \
+                and P["density"].value is not None \
+                and float(P["density"].value) <= 0:
+            P["density"].setErrorMessage(
+                "Give a density greater than zero.")
+        if shape == RA.SHAPE_GRID:
+            for nm in ("n_rows", "n_cols"):
+                if P[nm].value is not None and int(P[nm].value) < 1:
+                    P[nm].setErrorMessage("Give at least 1.")
+        else:
+            n = P["array_points"].value
+            if n is not None and int(n) < 1:
+                P["array_points"].setErrorMessage(
+                    "Give at least one point per array.")
+            if shape == RA.SHAPE_CIRCLE and n is not None \
+                    and P["include_center"].value \
+                    and int(n) < 2:
+                P["array_points"].setErrorMessage(
+                    "With the center point included, a circular "
+                    "array needs at least 2 points (the center plus "
+                    "one on the circle).")
+        if P["point_spacing"].enabled \
+                and P["point_spacing"].value is not None \
+                and float(P["point_spacing"].value) <= 0:
+            P["point_spacing"].setErrorMessage(
+                "Give a point spacing greater than zero.")
+        if P["radius"].enabled and P["radius"].value is not None \
+                and float(P["radius"].value) <= 0:
+            P["radius"].setErrorMessage(
+                "Give a radius greater than zero.")
+        for nm in ("min_spacing", "boundary_gap"):
+            if P[nm].value is not None and float(P[nm].value) < 0:
+                P[nm].setErrorMessage("Distances cannot be negative.")
+        if P["max_attempts"].value is not None \
+                and int(P["max_attempts"].value) < 1:
+            P["max_attempts"].setErrorMessage(
+                "Give at least 1 placement attempt per array.")
+        if shape == RA.SHAPE_LINE and kind not in (None, "polyline"):
+            P["array_shape"].setErrorMessage(
+                "The along-the-polyline array needs a polyline area "
+                "of interest.")
+        b = P["boundary"]
+        if b.valueAsText:
+            if kind is None:
+                b.setErrorMessage(
+                    "The area of interest must be polygons, "
+                    "polylines, or an integer raster with an "
+                    "attribute table.")
+            elif kind == "raster":
+                try:
+                    rp = arcpy.Describe(b.value
+                                        or b.valueAsText).catalogPath
+                    rr = arcpy.Raster(rp)
+                    if not rr.isInteger:
+                        b.setErrorMessage(
+                            "The raster must be an INTEGER raster "
+                            "(this one is floating-point).")
+                    elif not rr.hasRAT:
+                        b.setErrorMessage(
+                            "The raster has no attribute table -- "
+                            "run Build Raster Attribute Table on it "
+                            "first.")
+                except Exception:
+                    pass
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(random_points)
+            importlib.reload(random_arrays)
+            P = {p.name: p for p in parameters}
+            random_arrays.run_random_arrays(
+                out_fc=P["out_fc"].valueAsText,
+                boundary=P["boundary"].value
+                    or P["boundary"].valueAsText,
+                extent=P["extent"].value or P["extent"].valueAsText,
+                strata_method=P["strata_method"].valueAsText,
+                strata_field=P["strata_field"].valueAsText,
+                alloc_method=P["alloc_method"].valueAsText,
+                n_arrays=P["n_arrays"].value,
+                n_per_stratum=P["n_per_stratum"].value,
+                population_field=P["population_field"].valueAsText,
+                density=P["density"].value,
+                density_units=P["density_units"].valueAsText
+                    or "Hectare",
+                array_shape=P["array_shape"].valueAsText,
+                n_rows=P["n_rows"].value,
+                n_cols=P["n_cols"].value,
+                array_points=P["array_points"].value,
+                point_spacing=P["point_spacing"].value,
+                radius=P["radius"].value,
+                orientation_mode=P["orientation_mode"].valueAsText,
+                orientation_angle=P["orientation_angle"].value,
+                randomize_start=P["randomize_start"].value,
+                include_center=P["include_center"].value,
+                must_fit=P["must_fit"].value,
+                min_spacing=P["min_spacing"].value,
+                spacing_type=P["spacing_type"].valueAsText,
+                boundary_gap=P["boundary_gap"].value,
+                linear_units=P["linear_units"].valueAsText or "Meters",
+                random_seed=P["random_seed"].value,
+                max_attempts=P["max_attempts"].value or 1000,
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
 class SelectRandomRecords(object):
     """Select Random Records -- random / systematic selection of
     features or table rows. See
