@@ -200,12 +200,16 @@ def run_fill_corridor_holes(in_features_list, threshold_value, threshold_units,
             path = arcpy.Describe(item).catalogPath
         except Exception:                                          # noqa: BLE001
             path = str(item)
-        resolved.append((item, path))
+        # pin every input's selection UP FRONT: a later input's live
+        # selection can be dropped while the earlier inputs are being
+        # processed (standing rule, see mahalanobis.pin_selection)
+        resolved.append((item, path, _mh.pin_selection(item)))
 
-    _mh.begin_phases([(os.path.basename(p), 4) for _item, p in resolved])
+    _mh.begin_phases([(os.path.basename(p), 4)
+                      for _item, p, _pin in resolved])
 
     out_paths = []
-    for item, src in resolved:
+    for item, src, pin in resolved:
         _mh.phase_advance()
         desc = arcpy.Describe(item)
         if desc.shapeType != "Polygon":
@@ -217,16 +221,25 @@ def run_fill_corridor_holes(in_features_list, threshold_value, threshold_units,
         out_name = base + suffix
         out_path = _resolve_fc_output(out_workspace, out_name)
 
-        # CopyFeatures on ``item`` (the ORIGINAL parameter value -- a layer
-        # name/reference when the input came from the map, not the resolved
-        # catalog path in ``src``) so an active selection on that layer is
-        # honored: only the selected features are copied. A layer with no
-        # selection, or a bare dataset path, copies everything, same as
-        # before. Resolving to ``src`` up front (as this used to do)
-        # silently discarded every selection -- a catalog PATH has no
-        # concept of "selected features" at all.
+        # The selection was PINNED at run entry (a live layer's
+        # selection can be dropped while earlier inputs are processed);
+        # copy from an explicit OID scratch layer when one exists, so
+        # exactly the pinned features are used. A layer with no
+        # selection, or a bare dataset path, copies everything.
         n_total_src, n_selected_src, has_selection = _mh.selection_info(item, src)
-        arcpy.management.CopyFeatures(item, out_path)
+        if pin:
+            has_selection = True
+            n_selected_src = len(pin)
+            plyr = _mh.pinned_layer(src, pin, "fch_pin")
+            try:
+                arcpy.management.CopyFeatures(plyr, out_path)
+            finally:
+                try:
+                    arcpy.management.Delete(plyr)
+                except Exception:                                  # noqa: BLE001
+                    pass
+        else:
+            arcpy.management.CopyFeatures(item, out_path)
 
         total_rows = int(arcpy.management.GetCount(out_path)[0])
         if has_selection:

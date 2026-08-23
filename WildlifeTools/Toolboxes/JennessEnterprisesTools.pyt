@@ -71,6 +71,7 @@ import voronoi_tools  # noqa: E402
 import adaptive_voronoi  # noqa: E402
 import repeating_shapes  # noqa: E402
 import random_points  # noqa: E402
+import select_random  # noqa: E402
 import weighted_stats  # noqa: E402
 import raster_extremes  # noqa: E402
 import tool_metadata  # noqa: E402
@@ -337,7 +338,8 @@ class Toolbox(object):
                       BottleneckAnalysis, WeightedSummaryStatistics,
                       CumulativeSurface, FindRasterExtremeValues,
                       VoronoiPolygons, AdaptiveVoronoiPolygons,
-                      RepeatingShapes, RandomPointGenerator]
+                      RepeatingShapes, RandomPointGenerator,
+                      SelectRandomRecords]
 
 
 class LoCoHStandard(object):
@@ -5096,7 +5098,7 @@ class ExtractAspectValuesToPoints(object):
             "Copies the input point features and adds a field holding the "
             "aspect value at each point, extracted from an aspect raster -- "
             "like Esri's Extract Values to Points, but built for aspect: the "
-            "optional interpolation is a bilinear WEIGHTED MEAN DIRECTION "
+            "optional interpolation is a bilinear weighted mean direction "
             "(circular), never a linear average (which would put ~180 between "
             "359 and 1). Flat cells (aspect -1) carry no direction and are "
             "excluded from interpolation; an all-flat set of neighbors gives "
@@ -5236,7 +5238,7 @@ class AspectZonalStatisticsAsTable(object):
     def __init__(self):
         self.label = "Aspect Zonal Statistics as Table"
         self.description = (
-            "Summarizes an aspect raster per zone into a table of CIRCULAR "
+            "Summarizes an aspect raster per zone into a table of circular "
             "statistics (mean direction, mean resultant length, circular "
             "variance/SD, median direction, circular range, von Mises "
             "concentration, Rayleigh test, and the 95% confidence interval "
@@ -5244,12 +5246,12 @@ class AspectZonalStatisticsAsTable(object):
             "as Table, but targeted at aspect: a circular variable where 0 "
             "and 360 degrees are the same direction, so the ordinary zonal "
             "MEAN/STD are wrong. Requires no Spatial Analyst or Image "
-            "Analyst extension. Zones come from an INTEGER raster or from "
+            "Analyst extension. Zones come from an integer raster or from "
             "point / polyline / polygon features; overlapping features in "
             "different zones are each analyzed in full (each zone is "
             "processed independently -- the historic rasterize-first overlap "
-            "problem cannot occur). Point zones use a bilinear WEIGHTED MEAN "
-            "DIRECTION interpolated at each point; polygons use every cell "
+            "problem cannot occur). Point zones use a bilinear weighted mean "
+            "direction interpolated at each point; polygons use every cell "
             "whose center falls inside; polylines use every cell the line "
             "passes through. Flat cells (aspect = -1) carry no direction and "
             "are excluded from the statistics but counted per zone "
@@ -5455,7 +5457,7 @@ class SlopeZonalStatisticsAsTable(object):
             "median, standard deviation, minimum, maximum, range, 5th/95th "
             "percentiles, and the 95% confidence interval of the mean. Very "
             "similar to Esri's Zonal Statistics as Table, but targeted at "
-            "slope: the mean, SD and CI are computed on the slope ANGLES "
+            "slope: the mean, SD and CI are computed on the slope angles "
             "(percent slope is the tangent of the angle -- a convex "
             "transform -- so averaging raw percent values biases steepness "
             "statistics high) and converted back to the raster's unit for "
@@ -5465,7 +5467,7 @@ class SlopeZonalStatisticsAsTable(object):
             "geoprocessing history. Negative slopes can be treated as "
             "positive (absolute steepness, the default) or keep their sign "
             "so downhill balances uphill; the per-zone count of negative "
-            "source values is always reported. Zones come from an INTEGER "
+            "source values is always reported. Zones come from an integer "
             "raster or point / polyline / polygon features; overlapping "
             "features in different zones are each analyzed in full. Point "
             "zones use bilinear interpolation computed on the slope angles. "
@@ -7679,7 +7681,7 @@ class LandFacetDensity(object):
         self.description = (
             "For every land facet in a land facet raster, the proportion of the "
             "surrounding neighborhood composed of that facet (0 to 1) -- "
-            "written as ONE multi-band raster with a band per facet, computed "
+            "written as one multi-band raster with a band per facet, computed "
             "in a single pass. The original ArcMap Calculate Density Surface "
             "tool produced one single-band raster per facet, one run at a time. "
             "The density surface places corridor termini inside the Wildland "
@@ -7936,7 +7938,7 @@ class LandFacetMahalanobis(object):
             "how far every cell on the landscape departs, in multivariate "
             "standard deviations, from the conditions typical of that facet. "
             "The mean vector and covariance matrix are built only from the "
-            "facet's cells INSIDE the Wildland Blocks -- the training data -- "
+            "facet's cells inside the Wildland Blocks -- the training data -- "
             "while the surface itself covers the whole analysis area. Each "
             "facet gets its own single-band raster, ready to use directly as "
             "the resistance surface in least-cost corridor modelling. If a Land "
@@ -8156,7 +8158,7 @@ class IdentifyTerminiPolygons(object):
             "at a corner form one region, keeping regions at least a given "
             "percentage (default 50%) of the size of the largest region in "
             "their block. Fed this suite's multi-band Land Facet Density "
-            "raster it processes every category in one run and writes ONE "
+            "raster it processes every category in one run and writes one "
             "polygon feature class with a Category field; any number of "
             "Wildland Block features is allowed (each feature is one "
             "block). The threshold is a fixed value (use 0 for density: any "
@@ -8611,8 +8613,8 @@ class FillCorridorHoles(object):
             "on any polygon dataset. Every hole (interior ring) smaller "
             "than the given size threshold is filled; holes at or above "
             "the threshold are left as real, meaningful gaps (a lake, a "
-            "genuinely excluded area). Hole size is measured as TRUE "
-            "GEODESIC area, correct on any coordinate system including a "
+            "genuinely excluded area). Hole size is measured as true "
+            "geodesic area, correct on any coordinate system including a "
             "geographic one -- Esri's own Eliminate Polygon Part tool was "
             "tested and rejected for this because its area threshold is "
             "planar only and silently misbehaves on unprojected data. "
@@ -8620,7 +8622,7 @@ class FillCorridorHoles(object):
             "geometry is edited. Each output is named "
             "<input><name suffix> in the output workspace. When an input "
             "already carries a Land Facet linkage record (most commonly a "
-            "Least-Cost Corridor output), the SAME record is kept on the "
+            "Least-Cost Corridor output), the same record is kept on the "
             "output with this step noted, so the Corridor Analysis Data Report "
             "keeps describing it as the same analysis product.")
         self.category = "Corridor Designer Tools\\Corridor Designer"
@@ -8717,29 +8719,30 @@ class UnionCorridors(object):
     def __init__(self):
         self.label = "Union Corridors"
         self.description = (
-            "Combines every input polygon feature class into ONE seamless "
+            "Combines every input polygon feature class into one seamless "
             "combined shape: unions them together (arcpy Union, keeping "
             "every overlap distinct) then dissolves the result into a "
             "single multipart polygon with no dissolve field -- per-input "
-            "attributes are deliberately NOT preserved, matching the "
+            "attributes are deliberately not preserved, matching the "
             "original tool and its purpose: a single combined shape "
-            "answering \"is this ground part of ANY corridor\", not which "
+            "answering \"is this ground part of any corridor\", not which "
             "one. A modernized port of the CorridorDesigner \"Create union "
             "of all corridors\" tool. "
-            "SELECT BEFORE YOU RUN. A corridor feature class typically "
-            "holds many percentile-width bands as separate features (the "
+            "Make any selection before you run. A corridor feature class "
+            "typically holds many percentile-width bands as separate "
+            "features (the "
             "Percentile field) -- to union just the 5% bands across "
-            "several species, SELECT Percentile = 5 on each input's layer "
+            "several species, select Percentile = 5 on each input's layer "
             "in the map before running this tool; an input with no active "
             "selection contributes all of its features, same as always. "
-            "HONORING A SELECTION ONLY WORKS FOR INPUTS ALREADY IN THE "
-            "MAP -- the tool itself happily accepts datasets added via "
+            "Honoring a selection only works for inputs already in the "
+            "map -- the tool itself happily accepts datasets added via "
             "the Browse button (all of their features are used), but a "
             "browsed dataset is a bare path with no concept of a "
             "selection at all; to use a subset of a feature class, load "
             "it into the map and select there first, then pick that "
             "layer here instead of browsing to the dataset. "
-            "Warns when the inputs carry DIFFERENT Land Facet analysis "
+            "Warns when the inputs carry different Land Facet analysis "
             "ids -- combining genuinely unrelated analyses, not just "
             "different categories within one. Needs no Spatial Analyst.")
         self.category = "Corridor Designer Tools\\Corridor Designer"
@@ -8811,7 +8814,7 @@ class PatchAnalysis(object):
             "termini, and reports the critical (longest) gap for every "
             "pair of termini -- the largest expanse of unsuitable habitat "
             "the species must cross in one push. Patches of good habitat "
-            "(optional) serve as stepping stones. Distances are EXACT "
+            "(optional) serve as stepping stones. Distances are exact "
             "shortest paths inside the corridor polygon, computed with a "
             "visibility graph -- no Spatial Analyst, no raster "
             "approximation, no 45-degree bias -- and reported as geodesic "
@@ -8984,7 +8987,7 @@ class BottleneckAnalysis(object):
         self.label = "Bottleneck Analysis"
         self.description = (
             "Finds the route through a corridor polygon between two "
-            "wildland blocks that MAXIMIZES THE MINIMUM corridor width "
+            "wildland blocks that maximizes the minimum corridor width "
             "encountered -- the route with the widest bottleneck, chosen "
             "over every strand and branch of the corridor at once -- and "
             "measures the corridor width at ~1000 stations along it. "
@@ -8998,7 +9001,7 @@ class BottleneckAnalysis(object):
             "segments, each stamped with the analysis record. The "
             "interactive Bottleneck Analysis window (Evaluate Corridors "
             "menu) offers the same analysis with a live width graph and "
-            "adjustable threshold; THIS tool is the scripting and batch "
+            "adjustable threshold; this tool is the scripting and batch "
             "surface -- iterate it in ModelBuilder to reproduce the "
             "original's Batch Bottleneck runs. A modernized port of the "
             "CorridorDesigner Evaluation Tools' Bottleneck Analysis.")
@@ -9218,11 +9221,11 @@ class WeightedSummaryStatistics(object):
     def __init__(self):
         self.label = "Weighted Summary Statistics"
         self.description = (
-            "Summarizes numeric attribute fields of a POLYLINE or POLYGON "
+            "Summarizes numeric attribute fields of a polyline or polygon "
             "feature class two ways, side by side: ordinary record "
             "statistics (each record one equal vote: count, min, max, "
             "range, sum, mean, standard deviation, variance, median) and "
-            "GEOMETRY-WEIGHTED statistics, where each record is weighted "
+            "geometry-weighted statistics, where each record is weighted "
             "by its geodesic length (polylines) or area (polygons): "
             "weighted mean, standard deviation, variance and median. For "
             "attributes that describe a per-unit-landscape property -- "
@@ -9338,7 +9341,7 @@ class FindRasterExtremeValues(object):
     def __init__(self):
         self.label = "Find Raster Extreme Values"
         self.description = (
-            "Finds the regional extremes of ANY raster surface and writes one "
+            "Finds the regional extremes of any raster surface and writes one "
             "point per extreme. On a DEM those are summits and sinks -- a low "
             "point is a cell (or connected flat) with no lower neighbor, a "
             "peak the same on the inverted surface -- but the tool works "
@@ -9347,7 +9350,7 @@ class FindRasterExtremeValues(object):
             "suitability surface gives the locations of best and worst "
             "habitat, and the same goes for temperature, wetness, or any "
             "other modeled value. Flat tops and flat-bottomed basins yield "
-            "ONE point each; flats that drain (benches) are excluded. Each "
+            "one point each; flats that drain (benches) are excluded. Each "
             "point carries the source raster name and workspace, its value, "
             "X and Y (in the output's coordinate system -- the raster's, "
             "unless the Output Coordinates environment overrides it, which "
@@ -9468,16 +9471,16 @@ class InvertRaster(object):
         self.label = "Invert Raster"
         self.description = (
             "Numerically inverts a raster -- each output cell is 1/(x + c) -- "
-            "so a surface in which HIGH values mean good habitat (a diversity "
+            "so a surface in which high values mean good habitat (a diversity "
             "index, a Land Facet Density raster) becomes a least-cost surface "
-            "in which that good ground is CHEAP to cross. A single-band input "
+            "in which that good ground is cheap to cross. A single-band input "
             "produces one output raster; a multi-band Land Facet Density "
             "raster produces one single-band cost raster per facet, named from "
             "its own records, with the stored integer scaling converted back "
             "to 0-1 proportions first so the constant keeps its intended "
             "meaning. The small constant c (default 0.1, strongly recommended "
             "by the Land Facet manual) prevents zero cells from dividing to "
-            "NoData. An alternative LINEAR method (100 - x) reproduces the "
+            "NoData. An alternative linear method (100 - x) reproduces the "
             "ArcMap CorridorDesigner CorridorModel tool's internal "
             "suitability-to-cost conversion for 0-100 habitat suitability "
             "models, with a cost of exactly 0 bumped to 1 as that tool did. "
@@ -9811,9 +9814,9 @@ class HabitatSuitabilityModel(object):
             "either with the Create HSM Remap Table button on the ribbon, "
             "which writes the kind matching where your raster lives. The "
             "factors are then combined "
-            "by weighted GEOMETRIC mean (recommended: a 0 score in any "
+            "by weighted geometric mean (recommended: a 0 score in any "
             "factor zeroes the cell -- Liebig's Law of the Minimum) or "
-            "weighted ADDITIVE mean (equivalent to Weighted Overlay). "
+            "weighted additive mean (equivalent to Weighted Overlay). "
             "Weights are numbers summing to 100. The first factor defines "
             "the output grid; others are resampled onto it if needed. "
             "Optionally saves each reclassified factor (as <name>_r) for "
@@ -9943,7 +9946,7 @@ class CombineHabitatFactors(object):
     def __init__(self):
         self.label = "Combine Habitat Factors"
         self.description = (
-            "Combines habitat factor rasters that are ALREADY scored on the "
+            "Combines habitat factor rasters that are already scored on the "
             "0-100 suitability scale into one habitat suitability model, by "
             "weighted geometric mean (recommended) or weighted additive "
             "mean, with weights summing to 100. Use this to "
@@ -10023,13 +10026,13 @@ class NormalizeExistingHSM(object):
     def __init__(self):
         self.label = "Normalize Existing HSM"
         self.description = (
-            "Linearly stretches a habitat suitability model built OUTSIDE "
+            "Linearly stretches a habitat suitability model built outside "
             "CorridorDesigner (a logistic-regression surface, an expert "
             "model on some other scale...) onto the 0-100 suitability scale "
-            "the HSM chain expects: you name the value meaning WORST "
-            "habitat (becomes 0) and BEST habitat (becomes 100), and the "
+            "the HSM chain expects: you name the value meaning worst "
+            "habitat (becomes 0) and best habitat (becomes 100), and the "
             "stretch is ((x - worst) / (best - worst)) * 100. A model where "
-            "LOW values mean good habitat inverts naturally (give worst > "
+            "low values mean good habitat inverts naturally (give worst > "
             "best). Values beyond the anchors are clamped to 0-100 by "
             "default (uncheck to write them as-is, as the original did). A "
             "modernized port of the CorridorDesigner Normalize Existing "
@@ -10229,10 +10232,10 @@ class CriticalHabitatFeature(object):
     def __init__(self):
         self.label = "Critical Habitat Feature"
         self.description = (
-            "Rescales a habitat suitability model by DISTANCE from a "
+            "Rescales a habitat suitability model by distance from a "
             "critical habitat feature -- a resource the species must stay "
             "near (or a hazard it must stay away from). You provide "
-            "distance bands in METERS (converted to the raster's "
+            "distance bands in meters (converted to the raster's "
             "coordinate system automatically, including true spheroidal "
             "cell sizes for geographic rasters) with a percentage "
             "for each; every cell's suitability is multiplied by the "
@@ -10379,13 +10382,13 @@ class HabitatPatches(object):
     def __init__(self):
         self.label = "Create Habitat Patches"
         self.description = (
-            "Turns a habitat suitability model into habitat PATCH polygons "
+            "Turns a habitat suitability model into habitat patch polygons "
             "classified by whether each is large enough to matter. "
             "The HSM is averaged over a circular moving window (so small "
             "inclusions and gaps do not fragment the patches), cells whose "
             "average meets your quality threshold become suitable habitat, "
             "touching suitable cells (edges or corners) are grouped into "
-            "patches, and each patch is classified by its GEODESIC area in "
+            "patches, and each patch is classified by its geodesic area in "
             "hectares: below the minimum breeding size = 'Too small', at "
             "least breeding size = 'Breeding patch' (supports at least one "
             "breeding event), at least population size = 'Population "
@@ -10513,11 +10516,11 @@ class ClipDataToAnalysisArea(object):
     def __init__(self):
         self.label = "Clip Data to Analysis Area"
         self.description = (
-            "Clips any mix of RASTERS and FEATURE CLASSES to an analysis "
+            "Clips any mix of rasters and feature classes to an analysis "
             "area polygon in one run -- drag layers in from the map, or "
             "browse and multi-select datasets from disk. The output format "
-            "follows the workspace you pick: a FOLDER gets shapefiles and "
-            "GeoTIFFs, a GEODATABASE gets native feature classes and "
+            "follows the workspace you pick: a folder gets shapefiles and "
+            "GeoTIFFs, a geodatabase gets native feature classes and "
             "rasters. Optionally projects every output to a chosen "
             "coordinate system; when datums differ, the dialog suggests "
             "geographic transformations the same way the Project tool "
@@ -10704,12 +10707,12 @@ class CumulativeSurface(object):
     def __init__(self):
         self.label = "Cumulative Surface"
         self.description = (
-            "Combines any mix of POLYGON layers and RASTERS into one "
+            "Combines any mix of polygon layers and rasters into one "
             "integer raster whose cell value counts how many of those "
             "layers occur on that cell -- a way of estimating the relative "
             "importance (or the number of species served) of preserving "
             "that ground. Drag several layers in from the map at once, or "
-            "browse and multi-select datasets from disk. Each LAYER counts "
+            "browse and multi-select datasets from disk. Each layer counts "
             "at most once per cell no matter how many of its polygons "
             "overlap there; a raster counts where its value is neither "
             "NoData nor 0 (a corridor raster's background never counts). "
@@ -11193,7 +11196,7 @@ class RepeatingShapes(object):
             "triangles or rectangles (brick courses with an adjustable "
             "offset), or lays out sampling points or circles in a square "
             "or triangular arrangement -- with a free orientation angle. "
-            "Sizes are given in REAL units (hectares, feet, miles, ...) "
+            "Sizes are given in real units (hectares, feet, miles, ...) "
             "and converted to the output coordinate system "
             "automatically; typing any one measure fills the others "
             "(enter a square area of 4 square miles and the edge length "
@@ -11511,11 +11514,11 @@ class RandomPointGenerator(object):
         self.label = "Random Point Generator"
         self.description = (
             "Generates uniform random points inside polygon features "
-            "(selection honored, holes respected), ALONG polyline "
+            "(selection honored, holes respected), along polyline "
             "features, within the data cells of an integer raster with "
             "an attribute table (NoData excluded), or in a plain "
             "extent -- a modernized port of Jeff Jenness's classic "
-            "Random Point Generator extension. STRATIFIED sampling "
+            "Random Point Generator extension. Stratified sampling "
             "replicates Esri's Create Spatial Sampling Locations "
             "model: strata are individual polygons/polylines, raster "
             "categories, contiguous raster regions, or groups sharing "
@@ -11862,6 +11865,274 @@ class RandomPointGenerator(object):
                 random_seed=P["random_seed"].value,
                 max_attempts=P["max_attempts"].value or 1000,
                 messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+class SelectRandomRecords(object):
+    """Select Random Records -- random / systematic selection of
+    features or table rows. See
+    ``select_random.run_select_random``."""
+
+    def __init__(self):
+        self.label = "Select Random Records"
+        self.description = (
+            "Randomly or systematically selects features or table "
+            "rows -- a replication of Esri's Data Reviewer 'Select "
+            "Random Sample' tool that needs no extension and adds "
+            "more designs. Sample sizes: a fixed number, a "
+            "percentage, Auto Calculate (the statistical sample size "
+            "for a chosen confidence level and margin of error, "
+            "finite-population corrected), a fixed number with "
+            "selection probability proportional to geodesic area or "
+            "length, or systematic selection (every Xth record with "
+            "an optional random start, or all odd- or even-numbered "
+            "records, walked in a sort-field order defaulting to the "
+            "ObjectID). The four standard selection methods are "
+            "offered; 'Add to the current selection' draws only from "
+            "the currently unselected records, while 'Remove from' "
+            "and 'Select subset from the current selection' treat "
+            "the current selection as the population -- in every "
+            "case before any calculation. An optional analysis "
+            "extent restricts feature populations to features "
+            "intersecting or entirely within it; an optional seed "
+            "makes draws exactly reproducible. Works on feature "
+            "layers and standalone tables at every license level.")
+        self.category = "Data Tools"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        SR = select_random
+        in_layer = arcpy.Parameter(
+            displayName="Input layer or table view (a selection is "
+                        "applied to it)",
+            name="in_layer",
+            datatype=["GPFeatureLayer", "GPTableView"],
+            parameterType="Required", direction="Input")
+        sample_method = arcpy.Parameter(
+            displayName="Sampling method",
+            name="sample_method", datatype="GPString",
+            parameterType="Required", direction="Input")
+        sample_method.filter.type = "ValueList"
+        sample_method.filter.list = SR.SAMPLE_METHODS
+        sample_method.value = SR.SAMPLE_METHODS[0]
+        n_records = arcpy.Parameter(
+            displayName="Number of records",
+            name="n_records", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        percent = arcpy.Parameter(
+            displayName="Percentage of records (0-100)",
+            name="percent", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        confidence = arcpy.Parameter(
+            displayName="Confidence level, percent (Auto Calculate)",
+            name="confidence", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        confidence.value = 95.0
+        margin = arcpy.Parameter(
+            displayName="Margin of error, percent (Auto Calculate)",
+            name="margin", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        margin.value = 5.0
+        interval = arcpy.Parameter(
+            displayName="Interval X (every Xth record)",
+            name="interval", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        sort_field = arcpy.Parameter(
+            displayName="Sort field (systematic methods walk this "
+                        "order; defaults to the ObjectID field)",
+            name="sort_field", datatype="Field",
+            parameterType="Optional", direction="Input")
+        sort_field.parameterDependencies = ["in_layer"]
+        try:
+            sort_field.filter.list = ["Short", "Long", "BigInteger",
+                                      "OID", "Float", "Double",
+                                      "Text", "Date"]
+        except Exception:
+            pass
+        random_start = arcpy.Parameter(
+            displayName="Random starting record (the first sample "
+                        "falls within the first X records)",
+            name="random_start", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        random_start.value = True
+        selection_method = arcpy.Parameter(
+            displayName="Selection method",
+            name="selection_method", datatype="GPString",
+            parameterType="Required", direction="Input")
+        selection_method.filter.type = "ValueList"
+        selection_method.filter.list = SR.SELECTION_METHODS
+        selection_method.value = SR.SELECTION_METHODS[0]
+        extent = arcpy.Parameter(
+            displayName="Analysis extent (optional -- only features "
+                        "in this area are considered)",
+            name="extent", datatype="GPExtent",
+            parameterType="Optional", direction="Input")
+        boundary = arcpy.Parameter(
+            displayName="Polygon analysis boundary (optional -- only "
+                        "features in these polygons are considered; "
+                        "a selection on the layer is honored)",
+            name="boundary",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Optional", direction="Input")
+        try:
+            boundary.filter.list = ["Polygon"]
+        except Exception:
+            pass
+        extent_relation = arcpy.Parameter(
+            displayName="Features qualify when",
+            name="extent_relation", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        extent_relation.filter.type = "ValueList"
+        extent_relation.filter.list = SR.EXTENT_RELATIONS
+        extent_relation.value = SR.EXTENT_RELATIONS[0]
+        random_seed = arcpy.Parameter(
+            displayName="Random seed (optional -- same seed, same "
+                        "draw)",
+            name="random_seed", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        out_layer = arcpy.Parameter(
+            displayName="Updated input (with the selection applied)",
+            name="out_layer",
+            datatype=["GPFeatureLayer", "GPTableView"],
+            parameterType="Derived", direction="Output")
+        return [in_layer, sample_method, n_records, percent,
+                confidence, margin, interval, sort_field,
+                random_start, selection_method, extent, boundary,
+                extent_relation, random_seed, out_layer]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        SR = select_random
+        method = SR.canon_sample(P["sample_method"].valueAsText) \
+            or SR.METHOD_FIXED
+        systematic = method in (SR.METHOD_EVERY_X, SR.METHOD_ODD,
+                                SR.METHOD_EVEN)
+        P["n_records"].enabled = method in (SR.METHOD_FIXED,
+                                            SR.METHOD_PPS)
+        P["percent"].enabled = method == SR.METHOD_PERCENT
+        P["confidence"].enabled = method == SR.METHOD_AUTO
+        P["margin"].enabled = method == SR.METHOD_AUTO
+        P["interval"].enabled = method == SR.METHOD_EVERY_X
+        P["random_start"].enabled = method == SR.METHOD_EVERY_X
+        P["sort_field"].enabled = systematic
+        is_features = True
+        if P["in_layer"].valueAsText:
+            try:
+                is_features = bool(getattr(
+                    arcpy.Describe(P["in_layer"].value
+                                   or P["in_layer"].valueAsText),
+                    "shapeType", ""))
+            except Exception:
+                pass
+        # tables have no geography: the whole spatial-restriction
+        # section disappears rather than warning it will be ignored
+        P["extent"].enabled = is_features
+        P["boundary"].enabled = is_features
+        P["extent_relation"].enabled = is_features \
+            and (P["extent"].valueAsText not in (None, "")
+                 or P["boundary"].valueAsText not in (None, ""))
+        # default the sort field to the input's ObjectID field the
+        # moment the systematic methods can use it
+        if systematic and not P["sort_field"].valueAsText \
+                and P["in_layer"].valueAsText:
+            try:
+                P["sort_field"].value = arcpy.Describe(
+                    P["in_layer"].value
+                    or P["in_layer"].valueAsText).oidFieldName
+            except Exception:
+                pass
+        # a DISABLED Field param is HIDDEN by Pro yet its stale value
+        # still fails dependency validation -- empty it (standing rule)
+        if not P["sort_field"].enabled and P["sort_field"].valueAsText:
+            P["sort_field"].value = None
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        SR = select_random
+        method = SR.canon_sample(P["sample_method"].valueAsText) \
+            or SR.METHOD_FIXED
+        if P["n_records"].enabled and P["n_records"].value is not None \
+                and int(P["n_records"].value) <= 0:
+            P["n_records"].setErrorMessage(
+                "Give a number of records greater than zero.")
+        if P["percent"].enabled and P["percent"].value is not None \
+                and not 0 < float(P["percent"].value) <= 100:
+            P["percent"].setErrorMessage(
+                "Give a percentage between 0 and 100.")
+        for nm in ("confidence", "margin"):
+            if P[nm].enabled and P[nm].value is not None \
+                    and not 0 < float(P[nm].value) < 100:
+                P[nm].setErrorMessage(
+                    "Give a percentage between 0 and 100 "
+                    "(exclusive).")
+        if P["interval"].enabled and P["interval"].value is not None \
+                and int(P["interval"].value) <= 0:
+            P["interval"].setErrorMessage(
+                "Give an interval greater than zero.")
+        v = P["in_layer"]
+        if v.valueAsText:
+            try:
+                d = arcpy.Describe(v.value or v.valueAsText)
+                dt = getattr(d, "dataType", "")
+                if dt not in ("FeatureLayer", "TableView", "Layer"):
+                    v.setWarningMessage(
+                        "This input is a dataset path, not a layer -- "
+                        "the selection would not be visible anywhere. "
+                        "Add it to the map and pick the layer.")
+                if method == SR.METHOD_PPS and getattr(
+                        d, "shapeType", "") not in ("Polygon",
+                                                    "Polyline"):
+                    P["sample_method"].setErrorMessage(
+                        "Probability proportional to area / length "
+                        "needs a polygon or polyline layer.")
+            except Exception:
+                pass
+        b = P["boundary"]
+        if b.enabled and b.valueAsText:
+            try:
+                st = arcpy.Describe(b.value or b.valueAsText).shapeType
+                if st != "Polygon":
+                    b.setErrorMessage(
+                        "The analysis boundary must be a POLYGON "
+                        "feature class (this input is {}).".format(st))
+            except Exception:
+                pass
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(select_random)
+            P = {p.name: p for p in parameters}
+            select_random.run_select_random(
+                in_layer=P["in_layer"].value
+                    or P["in_layer"].valueAsText,
+                sample_method=P["sample_method"].valueAsText,
+                n_records=P["n_records"].value,
+                percent=P["percent"].value,
+                confidence=P["confidence"].value
+                    if P["confidence"].value is not None else 95.0,
+                margin=P["margin"].value
+                    if P["margin"].value is not None else 5.0,
+                interval=P["interval"].value,
+                sort_field=P["sort_field"].valueAsText,
+                random_start=bool(P["random_start"].value),
+                selection_method=P["selection_method"].valueAsText,
+                extent=P["extent"].value or P["extent"].valueAsText,
+                boundary=P["boundary"].value
+                    or P["boundary"].valueAsText,
+                extent_relation=P["extent_relation"].valueAsText,
+                random_seed=P["random_seed"].value,
+                messages=messages)
+            P["out_layer"].value = P["in_layer"].valueAsText
         except arcpy.ExecuteError:
             raise
         except Exception:

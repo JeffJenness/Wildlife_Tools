@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Select Random Records: a table of rows with a random subset
+       highlighted (selection cyan, Pro's selection color). -->
+  <rect x="1.5" y="1.5" width="29" height="29" rx="1.5"
+        fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.8"/>
+  <g stroke="#9A9A9A" stroke-width="1.0">
+    <rect x="5" y="5.0" width="22" height="3.4" fill="#EDEDED"/>
+    <rect x="5" y="9.4" width="22" height="3.4" fill="#00FFFF"/>
+    <rect x="5" y="13.8" width="22" height="3.4" fill="#EDEDED"/>
+    <rect x="5" y="18.2" width="22" height="3.4" fill="#EDEDED"/>
+    <rect x="5" y="22.6" width="22" height="3.4" fill="#00FFFF"/>
+  </g>
+  <line x1="12" y1="5" x2="12" y2="26" stroke="#9A9A9A"
+        stroke-width="1.0"/>
+  <!-- a die face marking the randomness -->
+  <rect x="19.5" y="17.5" width="10.5" height="10.5" rx="2"
+        fill="#FFFFFF" stroke="#B0500F" stroke-width="1.6"/>
+  <g fill="#B0500F">
+    <circle cx="22.4" cy="20.4" r="1.15"/>
+    <circle cx="27.1" cy="20.4" r="1.15"/>
+    <circle cx="24.75" cy="22.75" r="1.15"/>
+    <circle cx="22.4" cy="25.1" r="1.15"/>
+    <circle cx="27.1" cy="25.1" r="1.15"/>
+  </g>
+</svg>

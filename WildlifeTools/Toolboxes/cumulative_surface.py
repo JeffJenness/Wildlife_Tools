@@ -305,16 +305,23 @@ def _raster_presence(counts, src, path, gt, width, height, messages):
 
 
 def _polygon_geoms(ds, path, name, use_selected, out_sr, densify_step,
-                   messages):
+                   messages, pin=None):
     """One polygon input's geometries, projected to ``out_sr`` and
-    true-curve densified. With ``use_selected`` the map layer's selection is
-    honored (an empty selection falls back to ALL polygons, the original's
-    rule); without it the full feature class is always used. Returns
-    ``(geoms, n_total, n_selected, selected_used)``."""
+    true-curve densified. With ``use_selected`` the map layer's selection
+    is honored via ``pin`` -- its selected OIDs, captured at RUN ENTRY (a
+    live layer's selection can be dropped while earlier inputs are
+    processed; standing rule, see ``mahalanobis.pin_selection``). An
+    absent/empty selection falls back to ALL polygons, the original's
+    rule. Returns ``(geoms, n_total, n_selected, selected_used)``."""
     import arcpy
 
-    n_total, n_selected, has_sel = _mh.selection_info(ds, path)
-    use_sel = bool(use_selected) and has_sel and (n_selected or 0) > 0
+    try:
+        n_total = int(arcpy.management.GetCount(path)[0])
+    except Exception:                                            # noqa: BLE001
+        n_total = None
+    has_sel = pin is not None
+    n_selected = len(pin) if pin else n_total
+    use_sel = bool(use_selected) and has_sel and bool(pin)
     if bool(use_selected) and has_sel and not use_sel:
         _say(messages,
              "  {}: the selection selects nothing; all polygons are used "
@@ -324,17 +331,14 @@ def _polygon_geoms(ds, path, name, use_selected, out_sr, densify_step,
              "  {}: no selection is active; all {} polygons are "
              "used.".format(name, n_total))
 
-    # The map layer honors its selection in a cursor; the catalog path
-    # never has one -- exactly the two behaviors needed.
-    if use_sel:
-        sources = [ds, str(ds), path]
-    else:
-        sources = [path, ds, str(ds)]
+    # the PINNED OIDs filter a plain path cursor -- nothing depends on
+    # the live selection surviving this long
+    cols = ["OID@", "SHAPE@"]
     cur = None
     last = None
-    for s in sources:
+    for s in ([path, ds, str(ds)] if not use_sel else [path]):
         try:
-            cur = arcpy.da.SearchCursor(s, ["SHAPE@"])
+            cur = arcpy.da.SearchCursor(s, cols)
             break
         except Exception as e:                                   # noqa: BLE001
             last = e
@@ -344,8 +348,10 @@ def _polygon_geoms(ds, path, name, use_selected, out_sr, densify_step,
     geoms = []
     n_curved = 0
     with cur:
-        for (g,) in cur:
+        for oid, g in cur:
             if g is None:
+                continue
+            if use_sel and oid not in pin:
                 continue
             gsr = g.spatialReference
             if gsr is not None and not _kd._same_cs(gsr, out_sr):
@@ -465,6 +471,12 @@ def run_cumulative_surface(datasets, out_raster, use_selected=False,
     inputs = _classify_inputs(datasets, messages)
     n_rasters = sum(1 for k, *_ in inputs if k == "raster")
     n_polys = len(inputs) - n_rasters
+    # pin every polygon layer's selection UP FRONT: a later input's
+    # live selection can be dropped while earlier inputs are being
+    # processed (standing rule, see mahalanobis.pin_selection)
+    pins = [(_mh.pin_selection(ds) if kind != "raster" and use_selected
+             else None)
+            for kind, ds, _d, _path, _name in inputs]
 
     # Output coordinate system: the first raster's, else the first layer's.
     out_sr = None
@@ -525,7 +537,8 @@ def run_cumulative_surface(datasets, out_raster, use_selected=False,
                                                      n_present))
             else:
                 geoms, n_total, n_selected, sel_used = _polygon_geoms(
-                    ds, path, name, use_selected, out_sr, densify_step, messages)
+                    ds, path, name, use_selected, out_sr, densify_step,
+                    messages, pin=pins[i - 1])
                 entry.update({"n_total": n_total, "n_selected": n_selected,
                               "selected": sel_used})
                 if geoms:

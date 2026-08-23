@@ -233,6 +233,11 @@ def run_clip_data(datasets, area, workspace, out_cs=None,
     """
     if not datasets:
         raise arcpy.ExecuteError("Supply at least one dataset to clip.")
+    # pin every selection FIRST: a live layer's selection can be
+    # dropped by unrelated arcpy calls later in the run (standing
+    # rule, see mahalanobis.pin_selection). Rasters pin to None.
+    area_pin = _mh.pin_selection(area)
+    ds_pins = [_mh.pin_selection(ds) for ds in datasets]
     workspace = str(workspace).rstrip("\\/")
     if not arcpy.Exists(workspace):
         raise arcpy.ExecuteError(
@@ -256,6 +261,18 @@ def run_clip_data(datasets, area, workspace, out_cs=None,
 
     area_desc, area_path, area_name = _describe(area)
     scratch = arcpy.env.scratchGDB
+    # the clip area: the PINNED selection when one exists, else the
+    # original value (every per-dataset Clip reuses this)
+    area_use = area
+    area_pin_lyr = None
+    if area_pin:
+        area_pin_lyr = _mh.pinned_layer(area_path, area_pin,
+                                        "clip_area_pin")
+        area_use = area_pin_lyr
+        _say(messages,
+             "The analysis area layer has an active selection: {:,} "
+             "polygon{} form the clip area.".format(
+                 len(area_pin), "" if len(area_pin) == 1 else "s"))
 
     # The same dataset listed twice -- as a map layer and again from disk,
     # say -- is almost always a mistake; compare resolved catalog paths.
@@ -288,8 +305,9 @@ def run_clip_data(datasets, area, workspace, out_cs=None,
     fc_out, ras_out, details = [], [], []
     produced = set()          # outputs written THIS run (casefolded paths)
     n_fail = 0
-    for ds in datasets:
+    for ds, ds_pin in zip(datasets, ds_pins):
         _mh.phase_advance()
+        ds_pin_lyr = None
         try:
             d, path, name = _describe(ds)
             raster = _is_raster(d)
@@ -331,7 +349,16 @@ def run_clip_data(datasets, area, workspace, out_cs=None,
                       "earlier output survives.".format(
                           name, os.path.basename(target)))
                 target = arcpy.CreateUniqueName(safe, workspace)
-            cands = _input_candidates(ds, name, path)
+            # a pinned selection replaces the fallback chain: an
+            # explicit OID scratch layer is deterministic AND always a
+            # valid tool argument
+            ds_pin_lyr = None
+            if ds_pin and not raster:
+                ds_pin_lyr = _mh.pinned_layer(path, ds_pin,
+                                              "clip_ds_pin")
+                cands = [ds_pin_lyr]
+            else:
+                cands = _input_candidates(ds, name, path)
             if raster:
                 def make(dest, _c=cands, _tr=tr, _n=name):
                     step1 = (arcpy.CreateUniqueName(
@@ -340,7 +367,7 @@ def run_clip_data(datasets, area, workspace, out_cs=None,
                     _first_that_works(
                         _c,
                         lambda c: arcpy.management.Clip(
-                            c, "#", step1, in_template_dataset=area,
+                            c, "#", step1, in_template_dataset=area_use,
                             clipping_geometry="ClippingGeometry",
                             maintain_clipping_extent="NO_MAINTAIN_EXTENT"),
                         _n, messages)
@@ -372,7 +399,8 @@ def run_clip_data(datasets, area, workspace, out_cs=None,
                              if project else dest)
                     _first_that_works(
                         _c,
-                        lambda c: arcpy.analysis.Clip(c, area, step1),
+                        lambda c: arcpy.analysis.Clip(c, area_use,
+                                                      step1),
                         _n, messages)
                     if project:
                         arcpy.management.Project(
@@ -418,7 +446,18 @@ def run_clip_data(datasets, area, workspace, out_cs=None,
         except Exception as e:                                   # noqa: BLE001
             n_fail += 1
             _warn(messages, "Could not clip {}: {}".format(str(ds), e))
+        finally:
+            if ds_pin_lyr is not None:
+                try:
+                    arcpy.management.Delete(ds_pin_lyr)
+                except Exception:                                # noqa: BLE001
+                    pass
 
+    if area_pin_lyr is not None:
+        try:
+            arcpy.management.Delete(area_pin_lyr)
+        except Exception:                                        # noqa: BLE001
+            pass
     _say(messages,
          "Clipped {} dataset{} ({} feature, {} raster){}.".format(
              len(fc_out) + len(ras_out),

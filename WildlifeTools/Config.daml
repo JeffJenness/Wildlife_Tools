@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.73.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.74.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -112,6 +112,7 @@
 
           <button refID="WildlifeTools_FavoriteDatasets" size="large" />
           <button refID="WildlifeTools_AttributeSummary" size="large" />
+          <button refID="WildlifeTools_SelectRandom" size="large" />
         </subgroup>
         <subgroup id="WildlifeTools_SubGeometric" size="LargeThenMediumWhenMedium">
           <button refID="WildlifeTools_Voronoi" size="large" />
@@ -1034,6 +1035,17 @@
                 keytip="FD">
           <tooltip heading="Load Favorite Datasets">
             Opens the Load Favorite Datasets window: keep your most-used datasets in four groups you name yourself, then check any combination and add them all to the active map with one click -- no more hunting through folders and web servers. Any dataset a browse dialog can reach can be saved: feature classes, rasters, tables, and online services alike. Add items, remove them, and edit their descriptions; the lists are saved with your user profile and shared across projects. Datasets that appear to be unavailable (a missing path or an unreachable server) show in RED. A modernized recreation of the Load Favorite Datasets tool from the ArcMap SSI toolbar.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_SelectRandom"
+                caption="Select Random Records"
+                className="DataTools.SelectRandomButton"
+                loadOnClick="true"
+                smallImage="Images\SelectRandom_16.png"
+                largeImage="Images\SelectRandom_32.png"
+                keytip="SX">
+          <tooltip heading="Select Random Records">
+            Randomly or systematically select features or table rows: a fixed number, a percentage, a statistically derived sample size (Auto Calculate from a confidence level and margin of error, finite-population corrected), a fixed number with selection probability proportional to geodesic area or length, or systematic designs (every Xth record with an optional random start, or all odd- or even-numbered records, walked in a sort-field order). Offers the four standard selection methods -- Add-to draws only from the currently unselected records, while Remove-from and Subset-of treat the current selection as the population -- plus an analysis extent (intersecting or entirely within), standalone tables, and a reproducibility seed. A no-extension replication and extension of Esri's Data Reviewer Select Random Sample tool. Works at every license level.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_AttributeSummary"

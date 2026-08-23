@@ -311,6 +311,8 @@
     <Content Include="Images\RepeatingShapes_32.png" />
     <Content Include="Images\RandomPoints_16.png" />
     <Content Include="Images\RandomPoints_32.png" />
+    <Content Include="Images\SelectRandom_16.png" />
+    <Content Include="Images\SelectRandom_32.png" />
     <!-- embedded copy of the Jenness logo: window icons load it by pack
          URI, immune to Assembly.Location quirks in the add-in context -->
     <Resource Include="Corridor\JennessLogoRes.png" />
@@ -398,13 +400,24 @@
     </Content>
   </ItemGroup>
   <!-- Deploy the Jenness Enterprises Python toolbox (the .pyt, helper modules,
-       metadata sidecars, and layer templates) next to the add-in assembly so the
-       ribbon buttons can locate and run it. __pycache__ is excluded. -->
+       metadata sidecars, and layer templates) into BOTH archive trees.
+       (1) Plain Content packs at the archive ROOT (like Images), which
+       triggers ArcGIS Pro's automatic toolbox deployment: Pro copies a
+       root-level Toolboxes folder to AppData\Local\ESRI\ArcGISPro\Toolboxes\
+       (add-in guid) at startup and lists its toolboxes automatically in the
+       Geoprocessing pane. (2) The None items with CopyToOutputDirectory land
+       in the build output, which the packaging step zips under Install/;
+       Install/ is what Pro EXTRACTS into the add-in's AssemblyCache folder,
+       the copy the ribbon buttons and tool help read. Root-level content does
+       NOT reach the AssemblyCache, so both trees are required and must stay
+       in sync (a stale Install/Toolboxes silently reverts the AssemblyCache
+       help on every reinstall). -->
   <ItemGroup>
     <None Remove="Toolboxes\**\*.pyt;Toolboxes\**\*.py;Toolboxes\**\*.lyrx;Toolboxes\**\*.xml;Toolboxes\**\*.html;Toolboxes\**\*.css;Toolboxes\**\*.png;Toolboxes\**\*.json" />
-    <Content Include="Toolboxes\**\*.pyt;Toolboxes\**\*.py;Toolboxes\**\*.lyrx;Toolboxes\**\*.xml;Toolboxes\**\*.html;Toolboxes\**\*.css;Toolboxes\**\*.png;Toolboxes\**\*.json">
+    <Content Include="Toolboxes\**\*.pyt;Toolboxes\**\*.py;Toolboxes\**\*.lyrx;Toolboxes\**\*.xml;Toolboxes\**\*.html;Toolboxes\**\*.css;Toolboxes\**\*.png;Toolboxes\**\*.json" />
+    <None Include="Toolboxes\**\*.pyt;Toolboxes\**\*.py;Toolboxes\**\*.lyrx;Toolboxes\**\*.xml;Toolboxes\**\*.html;Toolboxes\**\*.css;Toolboxes\**\*.png;Toolboxes\**\*.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Reference Include="ArcGIS.Desktop.Framework">
@@ -510,5 +523,15 @@
           SkipUnchangedFiles="true" />
     <Message Importance="high"
              Text="SyncQuotesFromMaster: bundled quotes refreshed from the SSI master list." />
+  </Target>
+  <!-- Guard against toolbox-packaging drift: the archive carries the
+       Toolboxes twice (root = Pro's auto-deploy listing; Install/ = the
+       AssemblyCache copy the ribbon buttons and help read). Incremental
+       staging under obj\ can silently ship a stale tree, reverting the
+       installed toolbox on reinstall. This fails the build if either tree
+       differs from the source Toolboxes folder. -->
+  <Target Name="VerifyAddinToolboxes" AfterTargets="Build"
+          Condition="Exists('$(TargetDir)$(AssemblyName).esriAddinX')">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\build\verify_addin_toolboxes.ps1&quot; -ArchivePath &quot;$(TargetDir)$(AssemblyName).esriAddinX&quot; -SourceToolboxes &quot;$(MSBuildProjectDirectory)\Toolboxes&quot;" />
   </Target>
 </Project>

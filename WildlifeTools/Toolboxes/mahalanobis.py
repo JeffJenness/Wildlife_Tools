@@ -1098,6 +1098,38 @@ def resolve_raster_output(path, messages=None):
     return p
 
 
+def pin_selection(item):
+    """The item's CURRENT selection as a set of OIDs, captured NOW, or
+    None when there is no selection (or the item is a bare path).
+
+    STANDING RULE (2026-08-23, found in Select Random Records): a live
+    layer OBJECT's selection can be silently DROPPED by unrelated
+    arcpy calls later in the run (headless Pro 3.7; nondeterministic
+    timing). Any tool that consumes an input's selection AFTER other
+    work -- especially sequential multi-input tools -- must pin every
+    input's selection UP FRONT with this helper and consume the pinned
+    OIDs (see ``pinned_layer``) instead of trusting the live layer."""
+    try:
+        fids = getattr(arcpy.Describe(item), "FIDSet", "") or ""
+    except Exception:                                              # noqa: BLE001
+        return None
+    vals = [v for v in str(fids).replace(",", ";").split(";")
+            if str(v).strip()]
+    return {int(v) for v in vals} if vals else None
+
+
+def pinned_layer(path, oids, name):
+    """A scratch feature layer holding exactly ``oids`` of ``path``
+    (an explicit OID definition query -- immune to live-selection
+    loss). The caller deletes it with arcpy.management.Delete."""
+    fld = arcpy.AddFieldDelimiters(path,
+                                   arcpy.Describe(path).oidFieldName)
+    where = "{} IN ({})".format(
+        fld, ",".join(str(v) for v in sorted(oids)))
+    arcpy.management.MakeFeatureLayer(path, name, where)
+    return name
+
+
 def selection_info(item, path):
     """``(n_total, n_selected, has_selection)`` for one Feature Layer GP
     input.

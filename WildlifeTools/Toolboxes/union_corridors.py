@@ -106,6 +106,11 @@ def run_union_corridors(in_features_list, out_features, messages=None):
             continue
 
         n_total, n_selected, has_selection = _mh.selection_info(item, path)
+        # pin the selection NOW: arcpy.analysis.Union consumes the
+        # inputs much later, and a live layer's selection can be
+        # dropped by unrelated arcpy calls in between (standing rule,
+        # see mahalanobis.pin_selection)
+        pin = _mh.pin_selection(item)
         if has_selection:
             _say(messages, "{}: {:,} of {:,} feature{} selected -- "
                            "processing only the selection.".format(
@@ -122,7 +127,7 @@ def run_union_corridors(in_features_list, out_features, messages=None):
             "n_selected": n_selected,
             "selected": bool(has_selection),
         })
-        usable_items.append(item)
+        usable_items.append((item, path, pin))
 
     if not usable_items:
         raise arcpy.ExecuteError(
@@ -168,11 +173,27 @@ def run_union_corridors(in_features_list, out_features, messages=None):
     scratch = os.path.join(out_ws, "_" + base + "_union_scratch" + ext)
     if arcpy.Exists(scratch):
         arcpy.management.Delete(scratch)
+    # feed Union the PINNED selections (explicit OID scratch layers),
+    # never the live layers whose selections may have evaporated
+    feed = []
+    pin_layers = []
+    for k, (item, path, pin) in enumerate(usable_items):
+        if pin:
+            lyr = _mh.pinned_layer(path, pin, "uc_pin_{}".format(k))
+            pin_layers.append(lyr)
+            feed.append(lyr)
+        else:
+            feed.append(item)
     try:
-        arcpy.analysis.Union(usable_items, scratch, "ALL", "", "GAPS")
+        arcpy.analysis.Union(feed, scratch, "ALL", "", "GAPS")
         _mh.phase_advance()
         arcpy.management.Dissolve(scratch, out_features, "", "", "MULTI_PART")
     finally:
+        for lyr in pin_layers:
+            try:
+                arcpy.management.Delete(lyr)
+            except Exception:                                      # noqa: BLE001
+                pass
         if arcpy.Exists(scratch):
             try:
                 arcpy.management.Delete(scratch)
