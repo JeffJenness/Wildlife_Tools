@@ -72,6 +72,10 @@ import adaptive_voronoi  # noqa: E402
 import repeating_shapes  # noqa: E402
 import random_points  # noqa: E402
 import random_arrays  # noqa: E402
+import centerline_width  # noqa: E402
+import longest_line  # noqa: E402
+import radiating_lines  # noqa: E402
+import inscribed_geometry  # noqa: E402
 import select_random  # noqa: E402
 import weighted_stats  # noqa: E402
 import raster_extremes  # noqa: E402
@@ -340,7 +344,9 @@ class Toolbox(object):
                       CumulativeSurface, FindRasterExtremeValues,
                       VoronoiPolygons, AdaptiveVoronoiPolygons,
                       RepeatingShapes, RandomPointGenerator,
-                      RandomSampleArrayGenerator,
+                      RandomSampleArrayGenerator, CenterlineAndWidth,
+                      LongestLineFetch, RadiatingLines,
+                      MaximumInscribedGeometry,
                       SelectRandomRecords]
 
 
@@ -12392,6 +12398,885 @@ class RandomSampleArrayGenerator(object):
                 linear_units=P["linear_units"].valueAsText or "Meters",
                 random_seed=P["random_seed"].value,
                 max_attempts=P["max_attempts"].value or 1000,
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class CenterlineAndWidth(object):
+    """Centerline and Width -- polygon medial-axis centerlines with
+    width attributes. See ``centerline_width.run_centerline``."""
+
+    def __init__(self):
+        self.label = "Centerline and Width"
+        self.description = (
+            "Collapses polygons -- rivers, canals, corridors, valley "
+            "bottoms -- to their centerlines, carrying the local "
+            "polygon width along every result. The centerline is the "
+            "polygon's medial axis (the same construction as the "
+            "Bottleneck Analysis tool): output either the main "
+            "centerline (the skeleton's longest path) or the full "
+            "branched skeleton with tributary branches, short "
+            "boundary-noise spurs pruned by a minimum branch length. "
+            "Every line carries minimum, mean and maximum width in "
+            "meters; optional station points carry the exact width at "
+            "evenly spaced stations (the width profile), and optional "
+            "segments carry width statistics per piece for "
+            "graduated-color width mapping. Holes are handled "
+            "natively (the skeleton routes around islands), any "
+            "attribute fields transfer from the source polygons, and "
+            "line ends can extend to the polygon boundary. A "
+            "license-free replacement for Esri's Polygon To "
+            "Centerline, which requires the Production Mapping "
+            "extension. Works at every license level.")
+        self.category = "Geometric Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        CW = centerline_width
+        in_features = arcpy.Parameter(
+            displayName="Input polygons (selection honored)",
+            name="in_features",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        try:
+            in_features.filter.list = ["Polygon"]
+        except Exception:
+            pass
+        mode = arcpy.Parameter(
+            displayName="Centerline to build",
+            name="mode", datatype="GPString",
+            parameterType="Required", direction="Input")
+        mode.filter.type = "ValueList"
+        mode.filter.list = CW.MODES
+        mode.value = CW.MODES[0]
+        transfer_fields = arcpy.Parameter(
+            displayName="Attribute fields to transfer to every output",
+            name="transfer_fields", datatype="Field",
+            parameterType="Optional", direction="Input",
+            multiValue=True)
+        transfer_fields.parameterDependencies = ["in_features"]
+        try:
+            # no OID (Src_FID already carries the Object ID) and no
+            # geometry; Shape_Length/Shape_Area are Doubles and stay
+            # offered (they transfer as Src_* with source values)
+            transfer_fields.filter.list = [
+                "Short", "Long", "BigInteger", "Float", "Double",
+                "Text", "Date", "GUID"]
+        except Exception:
+            pass
+        min_branch = arcpy.Parameter(
+            displayName="Minimum branch length (skeleton mode: "
+                        "shorter side spurs are pruned; blank = "
+                        "automatic)",
+            name="min_branch", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        extend_ends = arcpy.Parameter(
+            displayName="Extend the line ends to the polygon boundary",
+            name="extend_ends", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        extend_ends.value = True
+        smoothing = arcpy.Parameter(
+            displayName="Smoothing distance (blank = automatic light "
+                        "smoothing; 0 = none)",
+            name="smoothing", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        station_spacing = arcpy.Parameter(
+            displayName="Station spacing for the point and segment "
+                        "outputs (blank = 100 stations along the "
+                        "main centerline; branches share that "
+                        "spacing)",
+            name="station_spacing", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        linear_units = arcpy.Parameter(
+            displayName="Units for the distances above",
+            name="linear_units", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        linear_units.filter.type = "ValueList"
+        linear_units.filter.list = CW.LINEAR_UNITS
+        linear_units.value = "Meters"
+        out_lines = arcpy.Parameter(
+            displayName="Output centerline feature class",
+            name="out_lines", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        out_points = arcpy.Parameter(
+            displayName="Output width station points (optional)",
+            name="out_points", datatype="DEFeatureClass",
+            parameterType="Optional", direction="Output")
+        out_segments = arcpy.Parameter(
+            displayName="Output width segments (optional)",
+            name="out_segments", datatype="DEFeatureClass",
+            parameterType="Optional", direction="Output")
+        boundary_step = arcpy.Parameter(
+            displayName="Detail: boundary sampling distance (blank = "
+                        "automatic; smaller = finer centerline, "
+                        "slower)",
+            name="boundary_step", datatype="GPDouble",
+            parameterType="Optional", direction="Input",
+            category="Advanced")
+        return [in_features, mode, transfer_fields, min_branch,
+                extend_ends, smoothing, station_spacing, linear_units,
+                out_lines, out_points, out_segments, boundary_step]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        CW = centerline_width
+        mode = CW.canon_mode(P["mode"].valueAsText) or CW.MODE_TRUNK
+        P["min_branch"].enabled = mode == CW.MODE_SKELETON
+        P["station_spacing"].enabled = \
+            bool(P["out_points"].valueAsText) \
+            or bool(P["out_segments"].valueAsText)
+
+        b, outp = P["in_features"], P["out_lines"]
+        if b.valueAsText and not b.hasBeenValidated:
+            if not outp.altered or outp.valueAsText == self._auto_out:
+                try:
+                    src = arcpy.Describe(b.value
+                                         or b.valueAsText).catalogPath
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(src))[0] + "_Centerline")
+                    ws = arcpy.env.workspace or os.path.dirname(src)
+                    sug = _unique_name(base, ws)
+                    outp.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        for nm in ("min_branch", "smoothing", "station_spacing",
+                   "boundary_step"):
+            if P[nm].value is not None and float(P[nm].value) < 0:
+                P[nm].setErrorMessage("Distances cannot be negative.")
+        if P["station_spacing"].value is not None \
+                and float(P["station_spacing"].value) == 0:
+            P["station_spacing"].setErrorMessage(
+                "Give a spacing greater than zero, or leave blank "
+                "for 100 stations per line.")
+        b = P["in_features"]
+        if b.valueAsText:
+            try:
+                d = arcpy.Describe(b.value or b.valueAsText)
+                if getattr(d, "shapeType", "") != "Polygon":
+                    b.setErrorMessage(
+                        "The input must be polygon features.")
+            except Exception:
+                pass
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(patch_analysis)
+            importlib.reload(bottleneck_analysis)
+            importlib.reload(centerline_width)
+            P = {p.name: p for p in parameters}
+            fields = None
+            if P["transfer_fields"].valueAsText:
+                fields = [str(v) for v in
+                          (P["transfer_fields"].values or [])]
+            centerline_width.run_centerline(
+                in_features=P["in_features"].value
+                    or P["in_features"].valueAsText,
+                out_lines=P["out_lines"].valueAsText,
+                mode=P["mode"].valueAsText,
+                transfer_fields=fields,
+                min_branch=P["min_branch"].value,
+                boundary_step=P["boundary_step"].value,
+                smoothing=P["smoothing"].value,
+                extend_ends=P["extend_ends"].value,
+                out_points=P["out_points"].valueAsText,
+                station_spacing=P["station_spacing"].value,
+                out_segments=P["out_segments"].valueAsText,
+                linear_units=P["linear_units"].valueAsText or "Meters",
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class LongestLineFetch(object):
+    """Longest Line in Polygon (Fetch) -- longest interior straight
+    line per polygon, or directional fetch rays from station points.
+    See ``longest_line.run_longest_line`` /
+    ``longest_line.run_station_fetch``."""
+
+    def __init__(self):
+        self.label = "Longest Line in Polygon (Fetch)"
+        self.description = (
+            "Finds the longest straight line that fits entirely "
+            "inside each polygon -- the FETCH when the polygon is a "
+            "body of water: the longest straight path over which "
+            "wind can raise waves. Holes block the line, the line "
+            "passes through two polygon vertices (and may extend "
+            "past them to the boundary), and each feature reports "
+            "its line with endpoints, geodesic length and azimuth. "
+            "A second mode casts directional fetch rays from "
+            "station points at a fixed bearing increment, each "
+            "ending at the first shoreline or an optional maximum "
+            "fetch distance, with a per-station summary -- the "
+            "geometric core of the author's 2014 Wave Energy "
+            "extension. A modernized, vectorized port of Jeff "
+            "Jenness's classic ArcView Longest Straight Line "
+            "extension: what once ran overnight now runs in "
+            "seconds. Geographic data is handled in "
+            "azimuthal-equidistant working projections (radial "
+            "distances from each station are true geodesics). "
+            "Works at every license level.")
+        self.category = "Geometric Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        LL = longest_line
+        mode = arcpy.Parameter(
+            displayName="What to compute",
+            name="mode", datatype="GPString",
+            parameterType="Required", direction="Input")
+        mode.filter.type = "ValueList"
+        mode.filter.list = [
+            "Longest line in each polygon (the fetch)",
+            "Directional fetch rays from station points"]
+        mode.value = mode.filter.list[0]
+        in_features = arcpy.Parameter(
+            displayName="Polygons (the water bodies or similar "
+                        "analysis boundaries)",
+            name="in_features",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        try:
+            in_features.filter.list = ["Polygon"]
+        except Exception:
+            pass
+        stations = arcpy.Parameter(
+            displayName="Station points (directional mode)",
+            name="stations",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Optional", direction="Input")
+        try:
+            stations.filter.list = ["Point"]
+        except Exception:
+            pass
+        transfer_fields = arcpy.Parameter(
+            displayName="Attribute fields to transfer (from the "
+                        "polygons, or from the stations in "
+                        "directional mode)",
+            name="transfer_fields", datatype="Field",
+            parameterType="Optional", direction="Input",
+            multiValue=True)
+        transfer_fields.parameterDependencies = ["in_features"]
+        try:
+            transfer_fields.filter.list = [
+                "Short", "Long", "BigInteger", "Float", "Double",
+                "Text", "Date", "GUID"]
+        except Exception:
+            pass
+        bearing_increment = arcpy.Parameter(
+            displayName="Bearing increment between rays (degrees; "
+                        "directional mode)",
+            name="bearing_increment", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        bearing_increment.value = 10.0
+        max_fetch = arcpy.Parameter(
+            displayName="Maximum fetch distance (optional; rays "
+                        "stop here even over open water)",
+            name="max_fetch", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        linear_units = arcpy.Parameter(
+            displayName="Units for the distances (maximum fetch, "
+                        "simplify tolerance)",
+            name="linear_units", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        linear_units.filter.type = "ValueList"
+        linear_units.filter.list = LL.LINEAR_UNITS
+        linear_units.value = "Meters"
+        out_lines = arcpy.Parameter(
+            displayName="Output longest-line feature class "
+                        "(longest-line mode)",
+            name="out_lines", datatype="DEFeatureClass",
+            parameterType="Optional", direction="Output")
+        out_radials = arcpy.Parameter(
+            displayName="Output fetch-ray feature class "
+                        "(directional mode)",
+            name="out_radials", datatype="DEFeatureClass",
+            parameterType="Optional", direction="Output")
+        out_stations = arcpy.Parameter(
+            displayName="Output station summary points (optional; "
+                        "directional mode)",
+            name="out_stations", datatype="DEFeatureClass",
+            parameterType="Optional", direction="Output")
+        simplify_tolerance = arcpy.Parameter(
+            displayName="Simplify tolerance (boundaries simplified "
+                        "before the analysis; blank = use the exact "
+                        "boundary)",
+            name="simplify_tolerance", datatype="GPDouble",
+            parameterType="Optional", direction="Input",
+            category="Advanced")
+        return [mode, in_features, stations, transfer_fields,
+                bearing_increment, max_fetch, linear_units,
+                out_lines, out_radials, out_stations,
+                simplify_tolerance]
+
+    def isLicensed(self):
+        return True
+
+    @staticmethod
+    def _mode(parameters):
+        t = str(parameters[0].valueAsText or "").lower()
+        return "stations" if t.startswith("directional") \
+            else "longest"
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        mode = self._mode(parameters)
+        is_st = mode == "stations"
+        P["stations"].enabled = is_st
+        P["bearing_increment"].enabled = is_st
+        P["max_fetch"].enabled = is_st
+        P["linear_units"].enabled = True   # also the simplify units
+        P["out_lines"].enabled = not is_st
+        P["out_radials"].enabled = is_st
+        P["out_stations"].enabled = is_st
+        try:
+            P["transfer_fields"].parameterDependencies = \
+                ["stations"] if is_st else ["in_features"]
+        except Exception:
+            pass
+        # an output that is disabled but still holds a value gets its
+        # dataset PRE-DELETED by the GP framework on Run -- empty it
+        for nm in ("out_lines", "out_radials", "out_stations"):
+            if not P[nm].enabled and P[nm].valueAsText:
+                P[nm].value = None
+
+        src = P["stations"] if is_st else P["in_features"]
+        outp = P["out_radials"] if is_st else P["out_lines"]
+        if src.valueAsText and not src.hasBeenValidated:
+            if not outp.altered or outp.valueAsText == self._auto_out:
+                try:
+                    cat = arcpy.Describe(src.value
+                                         or src.valueAsText).catalogPath
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(cat))[0]
+                        + ("_FetchRays" if is_st else "_Fetch"))
+                    ws = arcpy.env.workspace or os.path.dirname(cat)
+                    sug = _unique_name(base, ws)
+                    outp.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        mode = self._mode(parameters)
+        if mode == "longest":
+            if not P["out_lines"].valueAsText:
+                P["out_lines"].setErrorMessage(
+                    "Give the output feature class for the longest "
+                    "lines.")
+        else:
+            if not P["stations"].valueAsText:
+                P["stations"].setErrorMessage(
+                    "Directional mode needs the station points.")
+            if not P["out_radials"].valueAsText:
+                P["out_radials"].setErrorMessage(
+                    "Give the output feature class for the fetch "
+                    "rays.")
+            b = P["bearing_increment"].value
+            if b is not None and (float(b) <= 0 or float(b) > 120):
+                P["bearing_increment"].setErrorMessage(
+                    "Give a bearing increment between 0 and 120 "
+                    "degrees.")
+            mf = P["max_fetch"].value
+            if mf is not None and float(mf) <= 0:
+                P["max_fetch"].setErrorMessage(
+                    "The maximum fetch must be greater than zero.")
+        st_ = P["simplify_tolerance"].value
+        if st_ is not None and float(st_) < 0:
+            P["simplify_tolerance"].setErrorMessage(
+                "The simplify tolerance cannot be negative.")
+        b = P["in_features"]
+        if b.valueAsText:
+            try:
+                d = arcpy.Describe(b.value or b.valueAsText)
+                if getattr(d, "shapeType", "") != "Polygon":
+                    b.setErrorMessage(
+                        "The input must be polygon features.")
+            except Exception:
+                pass
+        s = P["stations"]
+        if s.enabled and s.valueAsText:
+            try:
+                d = arcpy.Describe(s.value or s.valueAsText)
+                if getattr(d, "shapeType", "") != "Point":
+                    s.setErrorMessage(
+                        "The stations must be point features.")
+            except Exception:
+                pass
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(patch_analysis)
+            importlib.reload(random_points)
+            importlib.reload(centerline_width)
+            importlib.reload(longest_line)
+            P = {p.name: p for p in parameters}
+            fields = None
+            if P["transfer_fields"].valueAsText:
+                fields = [str(v) for v in
+                          (P["transfer_fields"].values or [])]
+            if self._mode(parameters) == "longest":
+                longest_line.run_longest_line(
+                    in_features=P["in_features"].value
+                        or P["in_features"].valueAsText,
+                    out_lines=P["out_lines"].valueAsText,
+                    transfer_fields=fields,
+                    simplify_tolerance=P["simplify_tolerance"].value,
+                    linear_units=P["linear_units"].valueAsText
+                        or "Meters",
+                    messages=messages)
+            else:
+                longest_line.run_station_fetch(
+                    stations=P["stations"].value
+                        or P["stations"].valueAsText,
+                    in_features=P["in_features"].value
+                        or P["in_features"].valueAsText,
+                    out_radials=P["out_radials"].valueAsText,
+                    out_stations=P["out_stations"].valueAsText,
+                    bearing_increment=P["bearing_increment"].value
+                        or 10.0,
+                    max_fetch=P["max_fetch"].value,
+                    transfer_fields=fields,
+                    simplify_tolerance=P["simplify_tolerance"].value,
+                    linear_units=P["linear_units"].valueAsText
+                        or "Meters",
+                    messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class RadiatingLines(object):
+    """Radiating Lines and Points -- evenly spaced lines from every
+    input point, optionally blocked by barrier features. See
+    ``radiating_lines.run_radiating_lines``."""
+
+    def __init__(self):
+        self.label = "Radiating Lines and Points"
+        self.description = (
+            "Generates evenly spaced lines radiating outward from "
+            "every input point (layer selections honored), and/or a "
+            "point feature class of the origins and line endpoints "
+            "-- regularly spaced sampling locations around points of "
+            "interest. Give the number of lines or the bearing "
+            "interval, and a line length in real units (meters, "
+            "kilometers, feet or miles; geographic points each use "
+            "their own equidistant projection, so distances are true "
+            "geodesics). The first bearing points north or is "
+            "randomized (reproducible with a seed), with the rest "
+            "following clockwise. Lines can be blocked by any number "
+            "of barrier polyline and polygon feature classes "
+            "(selections honored): a line stops at its first "
+            "crossing of a barrier line or polygon boundary, with a "
+            "Blocked flag -- an origin inside a barrier polygon "
+            "still radiates, its lines stopping at the boundary "
+            "from the inside. A modernized port of Jeff Jenness's "
+            "classic ArcView Radiating Lines and Points extension, "
+            "originally written for the study published as Ekebom "
+            "et al. (2003). Works at every license level.")
+        self.category = "Geometric Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        RL = radiating_lines
+        points = arcpy.Parameter(
+            displayName="Input points (selection honored)",
+            name="points",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        try:
+            points.filter.list = ["Point"]
+        except Exception:
+            pass
+        transfer_fields = arcpy.Parameter(
+            displayName="Attribute fields to transfer to every "
+                        "output",
+            name="transfer_fields", datatype="Field",
+            parameterType="Optional", direction="Input",
+            multiValue=True)
+        transfer_fields.parameterDependencies = ["points"]
+        try:
+            transfer_fields.filter.list = [
+                "Short", "Long", "BigInteger", "Float", "Double",
+                "Text", "Date", "GUID"]
+        except Exception:
+            pass
+        n_lines = arcpy.Parameter(
+            displayName="Number of radiating lines (or give the "
+                        "bearing interval below)",
+            name="n_lines", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        bearing_interval = arcpy.Parameter(
+            displayName="Bearing interval between lines (degrees)",
+            name="bearing_interval", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        line_length = arcpy.Parameter(
+            displayName="Line length",
+            name="line_length", datatype="GPDouble",
+            parameterType="Required", direction="Input")
+        linear_units = arcpy.Parameter(
+            displayName="Units for the line length",
+            name="linear_units", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        linear_units.filter.type = "ValueList"
+        linear_units.filter.list = RL.LINEAR_UNITS
+        linear_units.value = "Meters"
+        randomize_first = arcpy.Parameter(
+            displayName="Randomize the first bearing (otherwise the "
+                        "first line points north)",
+            name="randomize_first", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        randomize_first.value = False
+        random_seed = arcpy.Parameter(
+            displayName="Random seed (optional -- same seed, same "
+                        "bearings)",
+            name="random_seed", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        block_lines = arcpy.Parameter(
+            displayName="Barrier polylines (optional -- lines stop "
+                        "at the first crossing; selections honored)",
+            name="block_lines",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Optional", direction="Input",
+            multiValue=True)
+        try:
+            block_lines.filter.list = ["Polyline"]
+        except Exception:
+            pass
+        block_polygons = arcpy.Parameter(
+            displayName="Barrier polygons (optional -- lines stop "
+                        "at the polygon boundaries; selections "
+                        "honored)",
+            name="block_polygons",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Optional", direction="Input",
+            multiValue=True)
+        try:
+            block_polygons.filter.list = ["Polygon"]
+        except Exception:
+            pass
+        out_lines = arcpy.Parameter(
+            displayName="Output radiating lines (optional -- give "
+                        "this, the points, or both)",
+            name="out_lines", datatype="DEFeatureClass",
+            parameterType="Optional", direction="Output")
+        out_points = arcpy.Parameter(
+            displayName="Output origin and end points (optional)",
+            name="out_points", datatype="DEFeatureClass",
+            parameterType="Optional", direction="Output")
+        return [points, transfer_fields, n_lines, bearing_interval,
+                line_length, linear_units, randomize_first,
+                random_seed, block_lines, block_polygons, out_lines,
+                out_points]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        # the classic two-way sync: typing either the count or the
+        # interval fills the other (hasBeenValidated is False only on
+        # the cycle where that parameter itself just changed)
+        n, itv = P["n_lines"], P["bearing_interval"]
+        try:
+            if n.value and not n.hasBeenValidated:
+                itv.value = round(360.0 / int(n.value), 4)
+            elif itv.value and not itv.hasBeenValidated:
+                k = max(1, int(round(360.0 / float(itv.value))))
+                n.value = k
+        except Exception:
+            pass
+        P["random_seed"].enabled = bool(P["randomize_first"].value)
+
+        src, outp = P["points"], P["out_lines"]
+        if src.valueAsText and not src.hasBeenValidated:
+            if not outp.altered or outp.valueAsText == self._auto_out:
+                try:
+                    cat = arcpy.Describe(src.value
+                                         or src.valueAsText).catalogPath
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(cat))[0] + "_RadLines")
+                    ws = arcpy.env.workspace or os.path.dirname(cat)
+                    sug = _unique_name(base, ws)
+                    outp.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        if not P["n_lines"].value and not P["bearing_interval"].value:
+            P["n_lines"].setErrorMessage(
+                "Give the number of lines or the bearing interval.")
+        if P["n_lines"].value is not None \
+                and int(P["n_lines"].value) < 1:
+            P["n_lines"].setErrorMessage("Give at least one line.")
+        itv = P["bearing_interval"].value
+        if itv is not None and (float(itv) <= 0 or float(itv) > 360):
+            P["bearing_interval"].setErrorMessage(
+                "Give an interval between 0 and 360 degrees.")
+        ln = P["line_length"].value
+        if ln is not None and float(ln) <= 0:
+            P["line_length"].setErrorMessage(
+                "Give a line length greater than zero.")
+        if not P["out_lines"].valueAsText \
+                and not P["out_points"].valueAsText:
+            P["out_lines"].setErrorMessage(
+                "Choose at least one output (lines and/or points).")
+        p = P["points"]
+        if p.valueAsText:
+            try:
+                d = arcpy.Describe(p.value or p.valueAsText)
+                if getattr(d, "shapeType", "") != "Point":
+                    p.setErrorMessage(
+                        "The input must be point features.")
+            except Exception:
+                pass
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(patch_analysis)
+            importlib.reload(random_points)
+            importlib.reload(centerline_width)
+            importlib.reload(longest_line)
+            importlib.reload(radiating_lines)
+            P = {p.name: p for p in parameters}
+            fields = None
+            if P["transfer_fields"].valueAsText:
+                fields = [str(v) for v in
+                          (P["transfer_fields"].values or [])]
+            radiating_lines.run_radiating_lines(
+                points=P["points"].value or P["points"].valueAsText,
+                n_lines=P["n_lines"].value,
+                bearing_interval=P["bearing_interval"].value,
+                line_length=P["line_length"].value,
+                linear_units=P["linear_units"].valueAsText
+                    or "Meters",
+                randomize_first=P["randomize_first"].value,
+                random_seed=P["random_seed"].value,
+                block_lines=(P["block_lines"].values
+                             if P["block_lines"].valueAsText
+                             else None),
+                block_polygons=(P["block_polygons"].values
+                                if P["block_polygons"].valueAsText
+                                else None),
+                transfer_fields=fields,
+                out_lines=P["out_lines"].valueAsText,
+                out_points=P["out_points"].valueAsText,
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class MaximumInscribedGeometry(object):
+    """Maximum Inscribed Geometry -- the largest circle, rectangle,
+    convex polygon (MCP) or ellipse inside each polygon. See
+    ``inscribed_geometry.run_inscribed_geometry``."""
+
+    def __init__(self):
+        self.label = "Maximum Inscribed Geometry"
+        self.description = (
+            "Finds the largest circle, rectangle, convex polygon "
+            "(MCP), ellipse -- or all four -- that fits ENTIRELY "
+            "INSIDE each input polygon, with interior holes acting "
+            "as barriers: the deliberate dual of Esri's Minimum "
+            "Bounding Geometry, which fits shapes around features "
+            "instead. The circle is exact (medial axis); the "
+            "rectangle searches all orientations (or one you fix); "
+            "the convex polygon is the classic potato-peeling "
+            "problem solved on a controllable discretization; the "
+            "ellipse uses conic linearization with warm starts and "
+            "is always genuinely inside. Outputs carry geodesic "
+            "area, center, radius / length / width / axes / azimuth "
+            "and any transferred attribute fields. Geographic "
+            "inputs use per-feature equidistant projections, so all "
+            "measures are true geodesic meters. Layer selections "
+            "are honored; multipart features report the best shape "
+            "over their parts. Works at every license level.")
+        self.category = "Geometric Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        IG = inscribed_geometry
+        in_features = arcpy.Parameter(
+            displayName="Input polygons (selection honored)",
+            name="in_features",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        try:
+            in_features.filter.list = ["Polygon"]
+        except Exception:
+            pass
+        geometry_type = arcpy.Parameter(
+            displayName="Inscribed geometry to find",
+            name="geometry_type", datatype="GPString",
+            parameterType="Required", direction="Input")
+        geometry_type.filter.type = "ValueList"
+        geometry_type.filter.list = IG.GEOM_CHOICES
+        geometry_type.value = IG.GEOM_ALL
+        transfer_fields = arcpy.Parameter(
+            displayName="Attribute fields to transfer to the "
+                        "output",
+            name="transfer_fields", datatype="Field",
+            parameterType="Optional", direction="Input",
+            multiValue=True)
+        transfer_fields.parameterDependencies = ["in_features"]
+        try:
+            transfer_fields.filter.list = [
+                "Short", "Long", "BigInteger", "Float", "Double",
+                "Text", "Date", "GUID"]
+        except Exception:
+            pass
+        out_features = arcpy.Parameter(
+            displayName="Output inscribed shapes",
+            name="out_features", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        adv = "Advanced (resolution and speed)"
+        detail = arcpy.Parameter(
+            displayName="Detail (approximation resolution; blank = "
+                        "automatic)",
+            name="detail", datatype="GPDouble",
+            parameterType="Optional", direction="Input",
+            category=adv)
+        simplify_tolerance = arcpy.Parameter(
+            displayName="Simplify tolerance (pre-simplify the "
+                        "boundaries before fitting)",
+            name="simplify_tolerance", datatype="GPDouble",
+            parameterType="Optional", direction="Input",
+            category=adv)
+        linear_units = arcpy.Parameter(
+            displayName="Units for Detail and the simplify "
+                        "tolerance",
+            name="linear_units", datatype="GPString",
+            parameterType="Optional", direction="Input",
+            category=adv)
+        linear_units.filter.type = "ValueList"
+        linear_units.filter.list = IG.LINEAR_UNITS
+        linear_units.value = "Meters"
+        fixed_azimuth = arcpy.Parameter(
+            displayName="Fixed rectangle azimuth (optional -- "
+                        "blank searches all orientations)",
+            name="fixed_azimuth", datatype="GPDouble",
+            parameterType="Optional", direction="Input",
+            category=adv)
+        return [in_features, geometry_type, transfer_fields,
+                out_features, detail, simplify_tolerance,
+                linear_units, fixed_azimuth]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        gt = P["geometry_type"].valueAsText
+        P["fixed_azimuth"].enabled = gt in (
+            None, inscribed_geometry.GEOM_RECT,
+            inscribed_geometry.GEOM_ALL)
+        src, outp = P["in_features"], P["out_features"]
+        if src.valueAsText and not src.hasBeenValidated:
+            if not outp.altered or outp.valueAsText == self._auto_out:
+                try:
+                    cat = arcpy.Describe(
+                        src.value or src.valueAsText).catalogPath
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(cat))[0] + "_Inscribed")
+                    ws = arcpy.env.workspace or os.path.dirname(cat)
+                    sug = _unique_name(base, ws)
+                    outp.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        p = P["in_features"]
+        if p.valueAsText:
+            try:
+                d = arcpy.Describe(p.value or p.valueAsText)
+                if getattr(d, "shapeType", "") != "Polygon":
+                    p.setErrorMessage(
+                        "The input must be polygon features.")
+            except Exception:
+                pass
+        for name in ("detail", "simplify_tolerance"):
+            v = P[name].value
+            if v is not None and float(v) <= 0:
+                P[name].setErrorMessage(
+                    "Give a value greater than zero, or leave it "
+                    "blank.")
+        az = P["fixed_azimuth"].value
+        if az is not None and not (0.0 <= float(az) < 360.0):
+            P["fixed_azimuth"].setErrorMessage(
+                "Give an azimuth from 0 up to (but not including) "
+                "360 degrees.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(patch_analysis)
+            importlib.reload(centerline_width)
+            importlib.reload(longest_line)
+            importlib.reload(inscribed_geometry)
+            P = {p.name: p for p in parameters}
+            fields = None
+            if P["transfer_fields"].valueAsText:
+                fields = [str(v) for v in
+                          (P["transfer_fields"].values or [])]
+            inscribed_geometry.run_inscribed_geometry(
+                in_features=P["in_features"].value
+                    or P["in_features"].valueAsText,
+                geometry_type=P["geometry_type"].valueAsText,
+                out_features=P["out_features"].valueAsText,
+                transfer_fields=fields,
+                detail=P["detail"].value,
+                simplify_tolerance=P["simplify_tolerance"].value,
+                linear_units=P["linear_units"].valueAsText
+                    or "Meters",
+                fixed_azimuth=(P["fixed_azimuth"].value
+                               if P["fixed_azimuth"].enabled
+                               else None),
                 messages=messages)
         except arcpy.ExecuteError:
             raise

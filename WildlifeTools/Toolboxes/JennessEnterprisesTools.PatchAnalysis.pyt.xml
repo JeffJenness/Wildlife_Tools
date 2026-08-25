@@ -48,4 +48,5 @@ arcpy.jenness.PatchAnalysis(
     None)                                              # simplification: automatic
 </code></scriptExample></scriptExamples>
 	</tool>
+	<dataIdInfo><searchKeys><keyword>corridor</keyword><keyword>wildlife corridor</keyword><keyword>connectivity</keyword><keyword>patch</keyword><keyword>stepping stones</keyword><keyword>critical gap</keyword><keyword>habitat</keyword><keyword>minimum spanning tree</keyword><keyword>minimax</keyword><keyword>visibility graph</keyword><keyword>shortest path</keyword><keyword>termini</keyword><keyword>CorridorDesigner</keyword></searchKeys><idCredit>Jeff Jenness, Jenness Enterprises (http://www.jennessent.com). A modernized port of the author's Patch Analysis tool from the CorridorDesigner Evaluation Tools; please cite Majka, Jenness and Beier (2007), CorridorDesigner: ArcGIS tools for designing and evaluating corridors, http://corridordesign.org. Minimum spanning trees and Kruskal's algorithm after O'Rourke (2000), Computational Geometry in C, 2nd Ed., Cambridge University Press.</idCredit></dataIdInfo>
 </metadata>

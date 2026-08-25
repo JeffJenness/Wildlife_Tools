@@ -55,4 +55,5 @@ arcpy.jenness.LandFacetDensity(
     "Circle", "Cells", 3)
 </code></scriptExample></scriptExamples>
 	</tool>
+	<dataIdInfo><searchKeys><keyword>land facet</keyword><keyword>density</keyword><keyword>neighborhood</keyword><keyword>focal statistics</keyword><keyword>proportion</keyword><keyword>multi-band</keyword><keyword>corridor</keyword><keyword>connectivity</keyword><keyword>climate change</keyword><keyword>terrain</keyword><keyword>wildland block</keyword><keyword>CorridorDesigner</keyword></searchKeys><idCredit>Jeff Jenness, Brian Brost and Paul Beier, from the Land Facet Corridor Tools (corridordesign.org). A modernized port of the Land Facet Corridor Designer's Calculate Density Surface tool (Jenness, Brost and Beier 2013); land facet method after Beier and Brost (2010), Conservation Biology 24:701-710, and Brost and Beier (2012), Ecological Applications 22:87-103.</idCredit></dataIdInfo>
 </metadata>

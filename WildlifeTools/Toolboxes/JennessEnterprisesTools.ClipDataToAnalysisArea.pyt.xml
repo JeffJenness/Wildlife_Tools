@@ -39,4 +39,5 @@ arcpy.jenness.ClipDataToAnalysisArea(
     ["WGS_1984_(ITRF00)_To_NAD_1983", "NAD_1927_To_NAD_1983_NADCON"])
 </code></scriptExample></scriptExamples>
 	</tool>
+	<dataIdInfo><searchKeys><keyword>clip</keyword><keyword>batch</keyword><keyword>analysis area</keyword><keyword>study area</keyword><keyword>project</keyword><keyword>coordinate system</keyword><keyword>geographic transformation</keyword><keyword>raster</keyword><keyword>feature class</keyword><keyword>data preparation</keyword><keyword>extract</keyword><keyword>CorridorDesigner</keyword></searchKeys><idCredit>Jeff Jenness and Dan Majka, from the CorridorDesigner toolkit (corridordesign.org). Please cite: Majka, D., J. Jenness and P. Beier (2007), CorridorDesigner: ArcGIS tools for designing and evaluating corridors, http://corridordesign.org.</idCredit></dataIdInfo>
 </metadata>

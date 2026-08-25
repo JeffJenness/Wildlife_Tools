@@ -12,7 +12,8 @@
 <b>When the unweighted statistics are the right ones.</b> When the <i>record</i> is the biological unit -- one row per animal, per nest site, per discrete habitat patch whose identity matters -- each record deserves an equal vote and the ordinary statistics answer the question ("what is the mean size of a breeding patch?" is a patch-level question, not a per-hectare one). This tool always reports <i>both</i> families side by side, which is itself diagnostic: a large difference between MEAN and W_MEAN means the attribute is correlated with feature size (for example, high suitability concentrated in small patches), a pattern worth knowing about in its own right.
 
 <b>The statistics:</b>
-  •  <b>Unweighted</b> (over all non-null records): count, null count, minimum, maximum, range, sum, mean, standard deviation, variance (both the n-1 sample forms), and median.  •  <b>Weighted</b> (over non-null records with positive size): total length/area used, weighted mean, weighted standard deviation, weighted variance, and weighted median.
+  •  <b>Unweighted</b> (over all non-null records): count, null count, minimum, maximum, range, sum, mean, standard deviation, variance (both the n-1 sample forms), and median.
+  •  <b>Weighted</b> (over non-null records with positive size): total length/area used, weighted mean, weighted standard deviation, weighted variance, and weighted median.
 
 The weighted variance uses the reliability-weights analogue of the n-1 correction -- sum(w*(x-mw)^2) / (W - sum(w^2)/W) -- which reduces exactly to the ordinary sample variance when all weights are equal, so the two families are directly comparable. The weighted median is the value at which the cumulative weight reaches half the total: half the landscape (or line length) lies at or below it.
 
@@ -39,4 +40,5 @@ arcpy.jenness.WeightedSummaryStatistics(
     r"C:\project\Analysis.gdb\habitat_weighted_stats")
 </code></scriptExample></scriptExamples>
 	</tool>
+	<dataIdInfo><searchKeys><keyword>summary statistics</keyword><keyword>weighted statistics</keyword><keyword>weighted mean</keyword><keyword>area-weighted</keyword><keyword>length-weighted</keyword><keyword>geodesic</keyword><keyword>weighted median</keyword><keyword>standard deviation</keyword><keyword>variance</keyword><keyword>MAUP</keyword><keyword>habitat suitability</keyword><keyword>case field</keyword><keyword>CorridorDesigner</keyword></searchKeys><idCredit>Jeff Jenness and Dan Majka, from the CorridorDesigner toolkit (corridordesign.org). A port of the weighted-statistics family (Mean_WBL / Mean_WBA) of the toolkit's Evaluation Tools Summary Statistics tool. On the modifiable areal unit problem see Openshaw (1984), The Modifiable Areal Unit Problem, CATMOG 38.</idCredit></dataIdInfo>
 </metadata>

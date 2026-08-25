@@ -30,4 +30,5 @@ arcpy.jenness.FillCorridorHoles(
     5000, "Square Meters", r"C:\data\out.gdb", "_holes_removed")
 </code></scriptExample></scriptExamples>
 	</tool>
+	<dataIdInfo><searchKeys><keyword>fill holes</keyword><keyword>polygon holes</keyword><keyword>interior rings</keyword><keyword>corridor</keyword><keyword>cleanup</keyword><keyword>sliver</keyword><keyword>geodesic area</keyword><keyword>donut</keyword><keyword>least-cost corridor</keyword><keyword>CorridorDesigner</keyword></searchKeys><idCredit>Jeff Jenness and Dan Majka, from the CorridorDesigner toolkit (corridordesign.org). A modernized port of the CorridorDesigner toolbox's Fill Holes in Corridor tool, replacing its buffer trick with an exact geodesic hole-size threshold.</idCredit></dataIdInfo>
 </metadata>

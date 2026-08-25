@@ -46,4 +46,5 @@ arcpy.jenness.RepeatingShapes(
     edge_policy="Keep whole shapes intersecting the area (original)",
     out_fc=r"D:\data\study.gdb\hex_100ha")</code></scriptExample></scriptExamples>
 	</tool>
+	<dataIdInfo><searchKeys><keyword>tessellation</keyword><keyword>hexagons</keyword><keyword>hexagonal grid</keyword><keyword>squares</keyword><keyword>triangles</keyword><keyword>rectangles</keyword><keyword>fishnet</keyword><keyword>sampling grid</keyword><keyword>sampling points</keyword><keyword>tiling</keyword><keyword>plots</keyword><keyword>sampling design</keyword><keyword>orientation</keyword></searchKeys><idCredit>Jeff Jenness, Jenness Enterprises (http://www.jennessent.com). A modernized port of the author's ArcView 3.x Repeating Shapes extension.</idCredit></dataIdInfo>
 </metadata>

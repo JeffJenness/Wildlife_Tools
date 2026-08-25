@@ -52,4 +52,5 @@ arcpy.jenness.InvertRaster(
     "Linear: 100 - x (ArcMap CorridorModel, for 0-100 HSMs)", None)
 </code></scriptExample></scriptExamples>
 	</tool>
+	<dataIdInfo><searchKeys><keyword>invert</keyword><keyword>cost surface</keyword><keyword>resistance</keyword><keyword>least-cost</keyword><keyword>corridor</keyword><keyword>reciprocal</keyword><keyword>suitability</keyword><keyword>land facet</keyword><keyword>density</keyword><keyword>diversity</keyword><keyword>connectivity</keyword><keyword>CorridorDesigner</keyword></searchKeys><idCredit>Jeff Jenness, Brian Brost and Paul Beier, from the Land Facet Corridor Tools (corridordesign.org). A modernized port of the Land Facet Corridor Designer's Invert Raster tool (Jenness, Brost and Beier 2013); land facet method after Beier and Brost (2010), Conservation Biology 24:701-710, and Brost and Beier (2012), Ecological Applications 22:87-103.</idCredit></dataIdInfo>
 </metadata>

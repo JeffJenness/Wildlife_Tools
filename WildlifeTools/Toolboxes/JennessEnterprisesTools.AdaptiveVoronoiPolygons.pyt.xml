@@ -33,4 +33,5 @@ arcpy.jenness.AdaptiveVoronoiPolygons(
     random_seed=42,
     out_points=r"D:\data\study.gdb\unit_centers")</code></scriptExample></scriptExamples>
 	</tool>
+	<dataIdInfo><searchKeys><keyword>Voronoi</keyword><keyword>Thiessen</keyword><keyword>centroidal Voronoi tessellation</keyword><keyword>Lloyd's algorithm</keyword><keyword>tessellation</keyword><keyword>honeycomb</keyword><keyword>equal area</keyword><keyword>subdivision</keyword><keyword>hexagon</keyword><keyword>seed points</keyword><keyword>polygon</keyword><keyword>management units</keyword></searchKeys><idCredit>Jeff Jenness, Jenness Enterprises (http://www.jennessent.com). Lloyd's algorithm after Lloyd (1982), IEEE Transactions on Information Theory 28:129-137; centroidal Voronoi tessellations after Du, Faber and Gunzburger (1999), SIAM Review 41:637-676.</idCredit></dataIdInfo>
 </metadata>

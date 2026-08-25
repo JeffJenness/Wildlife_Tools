@@ -47,4 +47,5 @@ arcpy.jenness.BottleneckAnalysis(
     r"C:\project\corridors.gdb\Badger_BtlSegments")
 </code></scriptExample></scriptExamples>
 	</tool>
+	<dataIdInfo><searchKeys><keyword>bottleneck</keyword><keyword>corridor</keyword><keyword>corridor width</keyword><keyword>wildlife corridor</keyword><keyword>connectivity</keyword><keyword>medial axis</keyword><keyword>skeleton</keyword><keyword>Voronoi</keyword><keyword>route</keyword><keyword>wildland block</keyword><keyword>width threshold</keyword><keyword>CorridorDesigner</keyword></searchKeys><idCredit>Jeff Jenness and Dan Majka, from the CorridorDesigner toolkit (corridordesign.org). Please cite: Majka, D., J. Jenness and P. Beier (2007), CorridorDesigner: ArcGIS tools for designing and evaluating corridors, http://corridordesign.org.</idCredit></dataIdInfo>
 </metadata>

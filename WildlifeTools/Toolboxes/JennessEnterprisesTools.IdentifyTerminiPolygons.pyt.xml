@@ -55,4 +55,5 @@ arcpy.jenness.IdentifyTerminiPolygons(
     "Treat entire block polygons as Termini polygons", None, None)
 </code></scriptExample></scriptExamples>
 	</tool>
+	<dataIdInfo><searchKeys><keyword>termini</keyword><keyword>corridor</keyword><keyword>wildland block</keyword><keyword>land facet</keyword><keyword>habitat suitability</keyword><keyword>connectivity</keyword><keyword>linkage</keyword><keyword>threshold</keyword><keyword>density</keyword><keyword>diversity</keyword><keyword>wildlife</keyword><keyword>CorridorDesigner</keyword></searchKeys><idCredit>Jeff Jenness, Brian Brost and Paul Beier, from the Land Facet Corridor Tools (corridordesign.org). A modernized, generalized port of the Land Facet Corridor Designer's Identify Termini Polygons tool (Jenness, Brost and Beier 2013). Land facet method after Beier and Brost (2010), Conservation Biology 24:701-710, and Brost and Beier (2012), Ecological Applications 22:87-103.</idCredit></dataIdInfo>
 </metadata>

@@ -70,4 +70,5 @@ arcpy.jenness.LandFacetMahalanobis(
     "Distance (D)", "Standard (inverse)", True)
 </code></scriptExample></scriptExamples>
 	</tool>
+	<dataIdInfo><searchKeys><keyword>Mahalanobis distance</keyword><keyword>land facet</keyword><keyword>cost surface</keyword><keyword>resistance</keyword><keyword>multivariate</keyword><keyword>covariance</keyword><keyword>corridor</keyword><keyword>least-cost</keyword><keyword>wildland block</keyword><keyword>connectivity</keyword><keyword>climate change</keyword><keyword>CorridorDesigner</keyword></searchKeys><idCredit>Jeff Jenness, Brian Brost and Paul Beier, from the Land Facet Corridor Tools (corridordesign.org). A modernized port of the Land Facet Corridor Designer's Mahalanobis tools (Jenness, Brost and Beier 2013). Method after Mahalanobis (1936); Beier and Brost (2010), Conservation Biology 24:701-710; Brost and Beier (2012), Ecological Applications 22:87-103; corridor resistance after Clevenger, Wierzchowski, Chruszcz and Gunson (2002), Conservation Biology 16:503-514.</idCredit></dataIdInfo>
 </metadata>

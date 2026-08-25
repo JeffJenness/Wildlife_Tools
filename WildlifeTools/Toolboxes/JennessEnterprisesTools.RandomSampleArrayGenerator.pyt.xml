@@ -90,4 +90,5 @@ arcpy.jenness.RandomSampleArrayGenerator(
     linear_units="Meters", random_seed=42,
     out_fc=r"D:\data\study.gdb\sample_arrays")</code></scriptExample></scriptExamples>
 	</tool>
+	<dataIdInfo><searchKeys><keyword>sample arrays</keyword><keyword>cluster plot</keyword><keyword>sampling stations</keyword><keyword>plot design</keyword><keyword>random sampling</keyword><keyword>stratified sampling</keyword><keyword>survey design</keyword><keyword>grid plot</keyword><keyword>transect</keyword><keyword>circular plot</keyword><keyword>minimum spacing</keyword><keyword>random seed</keyword><keyword>field plots</keyword></searchKeys><idCredit>Jeff Jenness, Jenness Enterprises (http://www.jennessent.com). A companion to the author's classic Random Point Generator extension, generating arrays of sampling stations with its stratified sampling design.</idCredit></dataIdInfo>
 </metadata>

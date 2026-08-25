@@ -40,4 +40,5 @@ arcpy.jenness.CombineHabitatFactors(
     r"C:\project\hsm\Badger_HSM_w70_add.tif")
 </code></scriptExample></scriptExamples>
 	</tool>
+	<dataIdInfo><searchKeys><keyword>habitat suitability</keyword><keyword>habitat model</keyword><keyword>HSM</keyword><keyword>weighted overlay</keyword><keyword>geometric mean</keyword><keyword>additive mean</keyword><keyword>weights</keyword><keyword>habitat factors</keyword><keyword>suitability</keyword><keyword>Liebig's Law</keyword><keyword>wildlife</keyword><keyword>CorridorDesigner</keyword></searchKeys><idCredit>Jeff Jenness and Dan Majka, from the CorridorDesigner toolkit (corridordesign.org). Please cite: Majka, D., J. Jenness and P. Beier (2007), CorridorDesigner: ArcGIS tools for designing and evaluating corridors, http://corridordesign.org.</idCredit></dataIdInfo>
 </metadata>

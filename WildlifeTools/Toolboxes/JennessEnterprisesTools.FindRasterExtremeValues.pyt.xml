@@ -47,4 +47,5 @@ arcpy.jenness.FindRasterExtremeValues(
 arcpy.env.outputCoordinateSystem = None
 </code></scriptExample></scriptExamples>
 	</tool>
+	<dataIdInfo><searchKeys><keyword>peaks</keyword><keyword>summits</keyword><keyword>low points</keyword><keyword>sinks</keyword><keyword>local extremes</keyword><keyword>prominence</keyword><keyword>topographic prominence</keyword><keyword>depression</keyword><keyword>maxima</keyword><keyword>minima</keyword><keyword>DEM</keyword><keyword>terrain</keyword></searchKeys><idCredit>Jeff Jenness, Jenness Enterprises (http://www.jennessent.com). Prominence and depression depth by the priority-flood algorithm of Barnes, Lehman and Mulla (2014), Computers &amp; Geosciences 62:117-127; sink and drainage definitions after O'Callaghan and Mark (1984), Computer Vision, Graphics, and Image Processing 28:323-344.</idCredit></dataIdInfo>
 </metadata>

@@ -23,6 +23,7 @@ namespace WildlifeTools.Sudoku
         public Color CellBase, CellGiven, CellCross, CellSelected, GridLine;
         // digits
         public Color InkGiven, InkEntry, InkCorrect, InkWrong;
+        public Color InkNote;              // pencil-mark candidates
         // typography (embedded OFL fonts; Georgia fallback baked into each)
         public FontFamily DigitFont, LabelFont, DisplayFont;
         public double DigitSize = 26;
@@ -75,6 +76,7 @@ namespace WildlifeTools.Sudoku
                 CellSelected = C("#FFD88A"), GridLine = C("#4A381E"),
                 InkGiven = C("#2E2313"), InkEntry = C("#3A4A5C"),
                 InkCorrect = C("#0F62C2"), InkWrong = C("#C22718"),
+                InkNote = C("#8E2318"),    // Ganado red on parchment
                 DigitFont = FontGaramond, LabelFont = FontGaramond,
                 DisplayFont = FontCinzel, DigitSize = 27,
             }),
@@ -89,6 +91,7 @@ namespace WildlifeTools.Sudoku
                 CellSelected = C("#8A6420"), GridLine = C("#A8895A"),
                 InkGiven = C("#EFE3C8"), InkEntry = C("#9CC3EE"),
                 InkCorrect = C("#5FB0FF"), InkWrong = C("#FF7A5C"),
+                InkNote = C("#FF9C8A"),    // light red on the dark brass
                 DigitFont = FontOrbitron, LabelFont = FontBebas,
                 DisplayFont = FontBebas, DigitSize = 21,
             }),
@@ -103,6 +106,7 @@ namespace WildlifeTools.Sudoku
                 CellSelected = C("#4E7FB5"), GridLine = C("#9FC3E8"),
                 InkGiven = C("#FFFFFF"), InkEntry = C("#FFD166"),
                 InkCorrect = C("#7BE495"), InkWrong = C("#FF8585"),
+                InkNote = C("#FF9E9E"),    // light red on blueprint blue
                 DigitFont = FontArchitect, LabelFont = FontArchitect,
                 DisplayFont = FontArchitect, DigitSize = 24,
             }),
@@ -213,6 +217,7 @@ namespace WildlifeTools.Sudoku
             _inkEntry.Color = s.InkEntry;
             _inkCorrect.Color = s.InkCorrect;
             _inkWrong.Color = s.InkWrong;
+            _inkNote.Color = s.InkNote;
             _lineBrush.Color = s.GridLine;
 
             // repaint every cell background -- but only once the board exists
