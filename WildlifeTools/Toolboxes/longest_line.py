@@ -147,14 +147,21 @@ def longest_interior_line(rings, messages=None, label="",
                float(np.ptp(verts[:, 1])), 1e-12)
     tol = span * 1e-9
 
+    # center the coordinates before qhull (large absolute offsets --
+    # UTM eastings/northings -- degrade its precision); the returned
+    # indices map straight back into the raw vertex array
+    ctr = verts.mean(axis=0)
     try:
-        hull = ConvexHull(verts)
+        hull = ConvexHull(verts - ctr)
         hv = verts[hull.vertices]
-        hv_idx = np.asarray(hull.vertices, dtype=int)
+        hull_edges = np.column_stack([hv, np.roll(hv, -1, axis=0)])
+        hull_ok = True
     except Exception:                                            # noqa: BLE001
-        hv = verts
-        hv_idx = np.arange(n)
-    hull_edges = np.column_stack([hv, np.roll(hv, -1, axis=0)])
+        # no hull (collinear / degenerate input): fabricated hull
+        # edges would give a WRONG upper bound, so phase 2 runs
+        # without pruning instead
+        hull_edges = None
+        hull_ok = False
 
     def clip(i, j):
         p = verts[i]
@@ -176,94 +183,163 @@ def longest_interior_line(rings, messages=None, label="",
              "quadratic; consider simplifying the polygon if this "
              "runs long.".format(label or "polygon", n))
 
+    # pair blocks: (ii, jj) int32 index arrays covering all vertex
+    # pairs a bounded slab at a time -- materializing every pair at
+    # once costs O(n^2) memory (30k vertices = 450M pairs = many GB)
+    def pair_blocks(target=24_000_000):
+        rows = max(1, int(target // max(n, 1)))
+        for r0 in range(0, n, rows):
+            r1 = min(r0 + rows, n)
+            ii_r = np.repeat(np.arange(r0, r1, dtype=np.int32),
+                             n - 1 - np.arange(r0, r1))
+            jj_r = np.concatenate(
+                [np.arange(i + 1, n, dtype=np.int32)
+                 for i in range(r0, r1)]) if r1 > r0 else \
+                np.zeros(0, dtype=np.int32)
+            if len(ii_r):
+                yield ii_r, jj_r
+
+    def screen_batch(sel_i, sel_j, sel_d, best, best_line):
+        """The phase-1 chord screen over one descending-length
+        batch list; returns the updated (best, best_line)."""
+        B = 2048
+        for b0 in range(0, len(sel_i), B):
+            if sel_d[b0] <= best:
+                break
+            bi = sel_i[b0:b0 + B]
+            bj = sel_j[b0:b0 + B]
+            P = verts[bi]
+            Q = verts[bj]
+            D = Q - P
+            denom = D[:, 0][:, None] * ey_[None, :] \
+                - D[:, 1][:, None] * ex_[None, :]
+            okd = np.abs(denom) > 1e-300
+            tt = ((ax_[None, :] - P[:, 0][:, None]) * ey_[None, :]
+                  - (ay_[None, :] - P[:, 1][:, None]) * ex_[None, :]) \
+                / np.where(okd, denom, 1.0)
+            uu = ((ax_[None, :] - P[:, 0][:, None])
+                  * D[:, 1][:, None]
+                  - (ay_[None, :] - P[:, 1][:, None])
+                  * D[:, 0][:, None]) / np.where(okd, denom, 1.0)
+            crosses = (okd & (tt > 1e-7) & (tt < 1 - 1e-7)
+                       & (uu > 1e-7) & (uu < 1 - 1e-7)).any(axis=1)
+            mids = 0.5 * (P + Q)
+            m_in = _pa.points_inside(mids, edges, bands=bands)
+            good = ~crosses & m_in
+            for k in np.flatnonzero(good):
+                if sel_d[b0 + k] <= best:
+                    break
+                got = clip(int(bi[k]), int(bj[k]))
+                if got is not None and got[2] > best:
+                    best = got[2]
+                    best_line = got
+        return best, best_line
+
     # ---- phase 1: the longest VALID CHORD establishes a strong
     # lower bound fast. Pairs are visited in descending vertex-pair
-    # distance; a vectorized screen drops pairs whose chord strictly
-    # crosses any edge, and survivors get the exact clip (which also
-    # captures any extension past the vertices). Once a batch's
-    # longest pair distance falls below the best exact length, no
+    # distance (in ~3% length bands gathered blockwise, so memory
+    # stays bounded); a vectorized screen drops pairs whose chord
+    # strictly crosses any edge, and survivors get the exact clip.
+    # Once the band ceiling falls below the best exact length, no
     # remaining CHORD can win and phase 2 handles extensions.
     best = 0.0
     best_line = None
-    idx_i, idx_j = np.triu_indices(n, k=1)
-    pd_ = np.hypot(verts[idx_j, 0] - verts[idx_i, 0],
-                   verts[idx_j, 1] - verts[idx_i, 1]) \
-        .astype(np.float32)
-    order = np.argsort(-pd_)
     ax_, ay_ = edges[:, 0], edges[:, 1]
     ex_, ey_ = edges[:, 2] - ax_, edges[:, 3] - ay_
-    B = 2048
-    n_pairs = len(order)
-    for b0 in range(0, n_pairs, B):
-        sel = order[b0:b0 + B]
-        if progress is not None:
-            progress("screening", b0, n_pairs)
-        if pd_[sel[0]] <= best:
-            break
-        P = verts[idx_i[sel]]
-        Q = verts[idx_j[sel]]
-        D = Q - P
-        # strict interior crossings of the chord with any edge
-        denom = D[:, 0][:, None] * ey_[None, :] \
-            - D[:, 1][:, None] * ex_[None, :]
-        okd = np.abs(denom) > 1e-300
-        tt = ((ax_[None, :] - P[:, 0][:, None]) * ey_[None, :]
-              - (ay_[None, :] - P[:, 1][:, None]) * ex_[None, :]) \
-            / np.where(okd, denom, 1.0)
-        uu = ((ax_[None, :] - P[:, 0][:, None]) * D[:, 1][:, None]
-              - (ay_[None, :] - P[:, 1][:, None])
-              * D[:, 0][:, None]) / np.where(okd, denom, 1.0)
-        crosses = (okd & (tt > 1e-7) & (tt < 1 - 1e-7)
-                   & (uu > 1e-7) & (uu < 1 - 1e-7)).any(axis=1)
-        mids = 0.5 * (P + Q)
-        m_in = _pa.points_inside(mids, edges, bands=bands)
-        good = ~crosses & m_in
-        for k in np.flatnonzero(good):
-            if pd_[sel[k]] <= best:
-                break
-            got = clip(int(idx_i[sel[k]]), int(idx_j[sel[k]]))
-            if got is not None and got[2] > best:
-                best = got[2]
-                best_line = got
+    max_len = 0.0
+    for ii, jj in pair_blocks():
+        d = np.hypot(verts[jj, 0] - verts[ii, 0],
+                     verts[jj, 1] - verts[ii, 1])
+        if len(d):
+            max_len = max(max_len, float(d.max()))
+    n_pairs = n * (n - 1) // 2
+    done_pairs = 0
+    hi = max_len
+    while hi > best and hi > tol:
+        lo = hi * 0.97
+        gi, gj, gd = [], [], []
+        for ii, jj in pair_blocks():
+            d = np.hypot(verts[jj, 0] - verts[ii, 0],
+                         verts[jj, 1] - verts[ii, 1]) \
+                .astype(np.float32)
+            m = (d > lo) & (d <= hi * (1 + 1e-12))
+            if m.any():
+                gi.append(ii[m])
+                gj.append(jj[m])
+                gd.append(d[m])
+        if gi:
+            gi = np.concatenate(gi)
+            gj = np.concatenate(gj)
+            gd = np.concatenate(gd)
+            order = np.argsort(-gd)
+            if progress is not None:
+                progress("screening", done_pairs, n_pairs)
+            done_pairs += len(order)
+            best, best_line = screen_batch(
+                gi[order], gj[order], gd[order], best, best_line)
+        hi = lo
 
     # ---- phase 2: extension candidates. Upper bounds for every
-    # pair (the convex-hull chord along the pair's line), keeping
-    # only pairs that can beat phase 1, visited in descending order
-    # with an exact early stop.
+    # pair (the convex-hull chord along the pair's line), computed
+    # blockwise in hull-size-budgeted chunks, keeping only pairs
+    # that can beat phase 1, visited in descending order with an
+    # exact early stop.
+    if not hull_ok:
+        # no certified bound exists -- exhaustively clip every pair
+        # (degenerate inputs only, so n is small in practice)
+        done_pairs = 0
+        for ii_b, jj_b in pair_blocks():
+            for k in range(len(ii_b)):
+                if progress is not None and done_pairs % 512 == 0:
+                    progress("verifying", done_pairs, n_pairs)
+                done_pairs += 1
+                got = clip(int(ii_b[k]), int(jj_b[k]))
+                if got is not None and got[2] > best:
+                    best = got[2]
+                    best_line = got
+        return best_line
     cand_i, cand_j, cand_ub = [], [], []
     hx0, hy0 = hull_edges[:, 0], hull_edges[:, 1]
     hex_, hey = hull_edges[:, 2] - hx0, hull_edges[:, 3] - hy0
-    CH = 200_000
-    for c0 in range(0, len(idx_i), CH):
-        if progress is not None:
-            progress("bounding", c0, len(idx_i))
-        ii = idx_i[c0:c0 + CH]
-        jj = idx_j[c0:c0 + CH]
-        P = verts[ii]
-        D = verts[jj] - P
-        h = np.hypot(D[:, 0], D[:, 1])
-        good = h > tol
-        Dn = D / np.maximum(h, tol)[:, None]
-        # intersect each line with every hull edge
-        denom = Dn[:, 0][:, None] * hey[None, :] \
-            - Dn[:, 1][:, None] * hex_[None, :]
-        okd = np.abs(denom) > 1e-300
-        tt = ((hx0[None, :] - P[:, 0][:, None]) * hey[None, :]
-              - (hy0[None, :] - P[:, 1][:, None]) * hex_[None, :]) \
-            / np.where(okd, denom, 1.0)
-        uu = ((hx0[None, :] - P[:, 0][:, None]) * Dn[:, 1][:, None]
-              - (hy0[None, :] - P[:, 1][:, None])
-              * Dn[:, 0][:, None]) / np.where(okd, denom, 1.0)
-        hit = okd & (uu >= -1e-9) & (uu <= 1.0 + 1e-9)
-        tmax = np.where(hit, tt, -np.inf).max(axis=1)
-        tmin = np.where(hit, tt, np.inf).min(axis=1)
-        ub = np.where(np.isfinite(tmax) & np.isfinite(tmin),
-                      tmax - tmin, 0.0)
-        keep = good & (ub > best)
-        if keep.any():
-            cand_i.append(ii[keep])
-            cand_j.append(jj[keep])
-            cand_ub.append(ub[keep])
+    # chunk sized so the (CH, H) float64 temporaries stay ~100 MB
+    CH = max(1024, int(6e7 // max(len(hull_edges), 1) // 8))
+    done_pairs = 0
+    for ii_b, jj_b in pair_blocks():
+        for c0 in range(0, len(ii_b), CH):
+            if progress is not None:
+                progress("bounding", done_pairs, n_pairs)
+            ii = ii_b[c0:c0 + CH]
+            jj = jj_b[c0:c0 + CH]
+            done_pairs += len(ii)
+            P = verts[ii]
+            D = verts[jj] - P
+            h = np.hypot(D[:, 0], D[:, 1])
+            good = h > tol
+            Dn = D / np.maximum(h, tol)[:, None]
+            # intersect each line with every hull edge
+            denom = Dn[:, 0][:, None] * hey[None, :] \
+                - Dn[:, 1][:, None] * hex_[None, :]
+            okd = np.abs(denom) > 1e-300
+            tt = ((hx0[None, :] - P[:, 0][:, None]) * hey[None, :]
+                  - (hy0[None, :] - P[:, 1][:, None])
+                  * hex_[None, :]) / np.where(okd, denom, 1.0)
+            uu = ((hx0[None, :] - P[:, 0][:, None])
+                  * Dn[:, 1][:, None]
+                  - (hy0[None, :] - P[:, 1][:, None])
+                  * Dn[:, 0][:, None]) / np.where(okd, denom, 1.0)
+            hit = okd & (uu >= -1e-9) & (uu <= 1.0 + 1e-9)
+            tmax = np.where(hit, tt, -np.inf).max(axis=1)
+            tmin = np.where(hit, tt, np.inf).min(axis=1)
+            ub = np.where(np.isfinite(tmax) & np.isfinite(tmin),
+                          tmax - tmin, 0.0)
+            # pad the bound past float roundoff so it is CERTIFIED
+            # (an under-estimated bound would prune the true optimum)
+            ub = ub * (1.0 + 1e-9) + tol
+            keep = good & (ub > best)
+            if keep.any():
+                cand_i.append(ii[keep])
+                cand_j.append(jj[keep])
+                cand_ub.append(ub[keep])
     if cand_i:
         ci = np.concatenate(cand_i)
         cj = np.concatenate(cand_j)
@@ -316,7 +392,8 @@ def radial_fetch(px, py, bearings_deg, edges, max_dist):
     return d, capped
 
 
-def longest_through_point(px, py, edges, bands, max_reach=None):
+def longest_through_point(px, py, edges, bands, max_reach=None,
+                          verts=None):
     """The EXACT longest chord through the interior point (px, py)
     and the exact longest single ray from it. By the same convexity
     argument as the two-vertex theorem (each reach is p/cos(t-a),
@@ -324,10 +401,15 @@ def longest_through_point(px, py, edges, bands, max_reach=None):
     a polygon VERTEX -- so the candidate directions are simply the
     directions from the point to every vertex (Jeff's observation,
     2026-08-24). Reaches are optionally capped at ``max_reach`` per
-    side. Returns ((chord_len, chord_az, c_lo, c_hi),
+    side. ``verts``, when given, is the precomputed unique boundary
+    vertex array for ``edges`` (callers looping over many stations
+    extract it once instead of per call). Returns
+    ((chord_len, chord_az, c_lo, c_hi),
     (ray_len, ray_az, r_end)) in the local frame."""
-    verts = np.unique(np.round(np.vstack([edges[:, :2],
-                                          edges[:, 2:]]), 9), axis=0)
+    if verts is None:
+        verts = np.unique(np.round(np.vstack([edges[:, :2],
+                                              edges[:, 2:]]), 9),
+                          axis=0)
     span = max(float(np.ptp(edges[:, [0, 2]])),
                float(np.ptp(edges[:, [1, 3]])), 1e-12)
     tol = span * 1e-9
@@ -355,10 +437,13 @@ def longest_through_point(px, py, edges, bands, max_reach=None):
     return best_c, best_r
 
 
-def nudge_inside(px, py, edges, bands, span):
+def nudge_inside(px, py, edges, bands, span, units_per_m=1.0):
     """The nearest interior point to (px, py), for stations that fall
     on land: project to the closest edge, then step a whisker to the
-    interior side. Returns (x, y, shifted)."""
+    interior side. ``units_per_m`` scales the ~1 cm whisker floor
+    into the edges' units (degrees for geographic data -- an
+    absolute 0.01 floor there would be a 1.1 km whisker). Returns
+    (x, y, shifted)."""
     if _pa.points_inside(np.array([[px, py]]), edges,
                          bands=bands)[0]:
         return px, py, False
@@ -372,7 +457,7 @@ def nudge_inside(px, py, edges, bands, span):
     d2 = (px - qx) ** 2 + (py - qy) ** 2
     k = int(np.argmin(d2))
     nx, ny = float(qx[k]), float(qy[k])
-    eps = max(span * 1e-7, 0.01)
+    eps = max(span * 1e-7, 0.01 * units_per_m)
     # try both sides of the edge normal, keep the interior one
     nrm = np.array([-ey[k], ex[k]])
     h = math.hypot(nrm[0], nrm[1])
@@ -428,7 +513,9 @@ def run_longest_line(in_features, out_lines, transfer_fields=None,
     ])
     plan = _cw._transfer_plan(
         in_features, transfer_fields,
-        _is_shp_dest(out_lines), messages)
+        _is_shp_dest(out_lines), messages,
+        fixed_names={"src_fid", "part", "length_m", "azimuth",
+                     "x1", "y1", "x2", "y2"})
     fields = [p[0] for p in plan]
 
     n_total, n_sel, has_sel = _mh.selection_info(in_features,
@@ -644,7 +731,12 @@ def run_station_fetch(stations, in_features, out_radials,
     plan = _cw._transfer_plan(
         stations, transfer_fields,
         _is_shp_dest(out_radials) or _is_shp_dest(out_stations),
-        messages)
+        messages,
+        fixed_names={"src_fid", "kind", "bearing", "fetch_m",
+                     "capped", "fetchmean", "fetchmin", "fetchmax",
+                     "fetchsd", "maxf_brg", "maxray_m", "maxray_brg",
+                     "maxchrd_m", "maxchrdbrg", "shift_dist",
+                     "shift_brg"})
     fields = [p[0] for p in plan]
 
     n_total, n_sel, has_sel = _mh.selection_info(in_features,
@@ -717,6 +809,13 @@ def run_station_fetch(stations, in_features, out_radials,
                          - edges_nat[:, 0].min()),
                    float(edges_nat[:, 1].max()
                          - edges_nat[:, 1].min()), 1e-9)
+    # unique boundary vertices ONCE (longest_through_point's
+    # candidate directions) -- the geographic branch projects this
+    # array per station, the projected branch reuses it (and
+    # bands_nat) directly instead of rebuilding both per station
+    verts_nat = np.unique(np.round(np.vstack([edges_nat[:, :2],
+                                              edges_nat[:, 2:]]), 9),
+                          axis=0)
     bearings = np.arange(0.0, 360.0, inc)
     _mh.phase_advance()
 
@@ -727,8 +826,10 @@ def run_station_fetch(stations, in_features, out_radials,
         # everything happens in the WATER polygons' coordinate system
         pw = pgeom.projectAs(water_sr).firstPoint
         px, py = float(pw.X), float(pw.Y)
-        nx, ny, shifted = nudge_inside(px, py, edges_nat, bands_nat,
-                                       span_nat)
+        nx, ny, shifted = nudge_inside(
+            px, py, edges_nat, bands_nat, span_nat,
+            units_per_m=(1.0 / 111320.0) if geographic
+            else (1.0 / unit_m))
         if geographic:
             # the station's own azimuthal-equidistant projection:
             # radial distances from the center are true geodesics
@@ -737,17 +838,32 @@ def run_station_fetch(stations, in_features, out_radials,
             # filter native edges to the reach of the rays
             if max_m is not None:
                 rlat = max_m / 109000.0
-                rlon = max_m / (109000.0 * max(
-                    math.cos(math.radians(min(abs(ny), 89.0))),
-                    0.05))
-                m = ~((np.maximum(edges_nat[:, 0], edges_nat[:, 2])
-                       < nx - rlon)
-                      | (np.minimum(edges_nat[:, 0],
-                                    edges_nat[:, 2]) > nx + rlon)
-                      | (np.maximum(edges_nat[:, 1],
-                                    edges_nat[:, 3]) < ny - rlat)
+                m = ~((np.maximum(edges_nat[:, 1], edges_nat[:, 3])
+                       < ny - rlat)
                       | (np.minimum(edges_nat[:, 1],
                                     edges_nat[:, 3]) > ny + rlat))
+                # spherical longitude reach of the cap: a geodesic
+                # circle of radius r at latitude lat spans
+                # asin(sin(r/R)/cos(lat)) of longitude; when that
+                # degenerates (the cap reaches poleward) every
+                # longitude is in reach -- skip the lon test
+                rr = max_m / 6371000.0
+                ratio = math.sin(min(rr, math.pi / 2.0)) \
+                    / max(math.cos(math.radians(ny)), 1e-12)
+                if rr < math.pi / 2.0 and ratio < 1.0:
+                    rlon = math.degrees(math.asin(ratio))
+                    e_lo = np.minimum(edges_nat[:, 0],
+                                      edges_nat[:, 2])
+                    e_hi = np.maximum(edges_nat[:, 0],
+                                      edges_nat[:, 2])
+                    hit = (e_hi >= nx - rlon) & (e_lo <= nx + rlon)
+                    # a window crossing the antimeridian also admits
+                    # edges on the far side of the seam
+                    if nx - rlon < -180.0:
+                        hit |= e_hi >= nx - rlon + 360.0
+                    if nx + rlon > 180.0:
+                        hit |= e_lo <= nx + rlon - 360.0
+                    m &= hit
                 e_sub = edges_nat[m]
             else:
                 e_sub = edges_nat
@@ -764,6 +880,8 @@ def run_station_fetch(stations, in_features, out_radials,
                 fa = _rp._project_xy(edges_nat[:, :2], water_sr, wsr)
                 fb = _rp._project_xy(edges_nat[:, 2:], water_sr, wsr)
                 e_full = np.column_stack([fa, fb])
+            v_full = _rp._project_xy(verts_nat, water_sr, wsr)
+            bands_full = _pa.y_bands(e_full)
             sx = sy = 0.0
             cap_loc = max_m
             to_m = 1.0
@@ -787,6 +905,8 @@ def run_station_fetch(stations, in_features, out_radials,
                 e_loc = edges_nat
                 cap_loc = None
             e_full = edges_nat
+            v_full = verts_nat
+            bands_full = bands_nat
             sx, sy = nx, ny
             to_m = unit_m
         dists, capped = radial_fetch(sx, sy, bearings, e_loc,
@@ -796,10 +916,9 @@ def run_station_fetch(stations, in_features, out_radials,
         # station: candidates are the directions to every polygon
         # vertex (the optimum must touch a vertex -- the convexity
         # argument behind the two-vertex theorem, per Jeff)
-        bands_full = _pa.y_bands(e_full)
         (chord_len, chord_az, c_lo, c_hi), \
             (ray_len, ray_az, r_end) = longest_through_point(
-                sx, sy, e_full, bands_full, cap_loc)
+                sx, sy, e_full, bands_full, cap_loc, verts=v_full)
         chord_m = chord_len * to_m
         ray_m = ray_len * to_m
         # shift bookkeeping (geodesic meters + azimuth)

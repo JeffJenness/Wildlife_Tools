@@ -400,9 +400,15 @@ class _LineWalker:
         opts.sort()
         return opts
 
-    def advance(self, state, dist):
+    def advance(self, state, dist, visited=None):
         """Move ``dist`` (> 0) along the line from ``state`` = (uid, s,
-        d). Returns (new state, ambiguous, ok)."""
+        d). Returns (new state, ambiguous, ok). ``visited`` -- a dict
+        of part uid -> [(lo, hi), ...] intervals already traversed by
+        the CURRENT walk -- detects the walk wrapping a closed loop
+        (or network cycle) back onto line it has already covered;
+        that is treated as running off the line (ok False), so
+        must-fit placements on short closed loops are rejected
+        instead of silently stacking coincident stations."""
         uid, s, d = state
         ambiguous = False
         crossings = 0
@@ -411,6 +417,14 @@ class _LineWalker:
             _a, cum = self.chains[uid]
             L = float(cum[-1])
             room = (L - s) if d > 0 else s
+            if visited is not None:
+                step = min(remaining, room)
+                if step > 0:
+                    lo, hi = (s, s + step) if d > 0 else (s - step, s)
+                    for lo2, hi2 in visited.get(uid, ()):
+                        if min(hi, hi2) - max(lo, lo2) > self.tol:
+                            return (uid, s, d), ambiguous, False
+                    visited.setdefault(uid, []).append((lo, hi))
             if remaining <= room + 1e-12:
                 return (uid, s + d * remaining, d), ambiguous, True
             remaining -= room
@@ -432,8 +446,12 @@ class _LineWalker:
         the array always passes through it); odd n puts a point on
         the focal location itself, even n straddles it. Returns
         (points [(part, s, x, y)] ordered from one end to the other,
-        ambiguous, ok)."""
+        ambiguous, ok). Both halves (and the gap clearances) share
+        one visited-interval record, so an array that wraps a closed
+        loop -- from either end, or the two halves meeting around the
+        back -- is rejected as running off the line."""
         amb = False
+        visited = {}
 
         def half_walk(direction, offsets):
             nonlocal amb
@@ -441,7 +459,8 @@ class _LineWalker:
             state = (uid, s0, direction)
             prev = 0.0
             for off in offsets:
-                state, a, ok = self.advance(state, off - prev)
+                state, a, ok = self.advance(state, off - prev,
+                                            visited=visited)
                 amb = amb or a
                 if not ok:
                     return None
@@ -449,7 +468,8 @@ class _LineWalker:
                 x, y = self.xy_at(state[0], state[1])
                 out.append((state[0], state[1], x, y))
             if gap and gap > 0:
-                _st, a, ok = self.advance(state, gap)
+                _st, a, ok = self.advance(state, gap,
+                                          visited=visited)
                 amb = amb or a
                 if not ok:
                     return None
@@ -562,6 +582,19 @@ class _ArrayDesign:
         else:                                  # SHAPE_LINE
             self.npp = int(npp)
             self.base = None
+        # attempt-invariant work hoisted out of stamp(): the
+        # fixed-angle rotation and the non-randomized circle never
+        # change between candidate placements
+        self.base_fixed = None
+        if self.base is not None:
+            self.base_fixed = _rotate_cw(self.base, self.angle) \
+                if self.angle else self.base
+        self.circle_static = None
+        if shape == SHAPE_CIRCLE:
+            k = self.npp - (1 if self.include_center else 0)
+            if not (self.randomize_start and k > 0):
+                self.circle_static = _offsets_circle(
+                    self.npp, radius_cs, self.include_center, 0.0)
 
     def max_reach(self):
         """The farthest any point can lie from the focal point."""
@@ -597,24 +630,40 @@ class _ArrayDesign:
     def stamp(self, fx, fy, line_dir=None):
         """(points (k,2), rowcol, bearings) for one candidate array at
         the focal point -- fresh random rotation / start angle drawn
-        per call."""
+        per call; fixed orientations reuse the precomputed base."""
         if self.shape == SHAPE_CIRCLE:
-            k = self.npp - (1 if self.include_center else 0)
-            start = 0.0
-            if self.randomize_start and k > 0:
+            if self.circle_static is not None:
+                offs, brgs = self.circle_static
+            else:
+                k = self.npp - (1 if self.include_center else 0)
                 start = float(self.rng.uniform(0.0, 360.0 / k))
-            offs, brgs = _offsets_circle(self.npp, self.radius_cs,
-                                         self.include_center, start)
+                offs, brgs = _offsets_circle(self.npp, self.radius_cs,
+                                             self.include_center,
+                                             start)
             return offs + (fx, fy), None, brgs
-        offs = self.base
         if self.orient == ORIENT_RANDOM:
-            offs = _rotate_cw(offs, float(self.rng.uniform(0.0,
-                                                           360.0)))
+            offs = _rotate_cw(self.base, float(self.rng.uniform(
+                0.0, 360.0)))
         elif self.orient == ORIENT_ALIGN and line_dir is not None:
-            offs = _rotate_to_dir(offs, line_dir[0], line_dir[1])
-        elif self.angle:
-            offs = _rotate_cw(offs, self.angle)
+            offs = _rotate_to_dir(self.base, line_dir[0], line_dir[1])
+        else:
+            offs = self.base_fixed
         return offs + (fx, fy), self.rowcol, None
+
+    def focal_is_array_point(self):
+        """True when the focal location is itself one of the array's
+        points -- the triangular lattice (point 1), an odd-rows x
+        odd-columns grid (the center cell), a circle including its
+        center, or an odd-count 1-D array -- so in must-fit mode the
+        focal point must satisfy every constraint the array points
+        do."""
+        if self.shape == SHAPE_TRI:
+            return True
+        if self.shape == SHAPE_GRID:
+            return self.n_rows % 2 == 1 and self.n_cols % 2 == 1
+        if self.shape == SHAPE_CIRCLE:
+            return self.include_center
+        return self.npp % 2 == 1               # SHAPE_LINE
 
     def describe(self, linear_units):
         u = linear_units.lower()
@@ -825,7 +874,8 @@ def run_random_arrays(out_fc, boundary=None, extent=None,
             point_spacing, radius, orient, orientation_angle,
             randomize_start, include_center, must_fit, min_spacing,
             boundary_gap, linear_units, rng, attempts, random_seed,
-            messages)
+            messages, strata_txt=strata_method or strata,
+            alloc_txt=alloc_method or alloc)
 
     # ---- vector / extent: coordinate system + working projection ---------
     src_sr = None
@@ -1119,13 +1169,13 @@ def _arrays_in_polygons_core(boundary, extent, desc, work_sr, out_sr,
                               if gap_cs else ""))
                     starved_any = True
                     continue
-            got = _place_arrays_polygon(
+            got, dry = _place_arrays_polygon(
                 prep_focal, prep_fit, design, spacing, mneed, rng,
                 attempts)
             if len(got) < mneed:
                 starved_any = True
                 _starve_arrays(messages, mlabel, len(got), mneed,
-                               attempts, must_fit)
+                               attempts, must_fit, sampler_dry=dry)
             if got:
                 rows.append({"arrays": got, "src_fid": oid,
                              "stratum": strat_label})
@@ -1138,19 +1188,28 @@ def _place_arrays_polygon(prep_focal, prep_fit, design, spacing, need,
                           rng, attempts):
     """Admit up to ``need`` arrays in one polygon. Each candidate
     focal point is drawn uniformly in the polygon; in must-fit mode
-    the whole array must land inside the (gap-inset) polygon."""
+    the whole array must land inside the (gap-inset) polygon -- and
+    when the focal location is itself an array point, candidates are
+    drawn from the gap-inset polygon directly (a focal point in the
+    excluded band could never be admitted). Returns (arrays,
+    sampler_dry): the ``dry`` counter tracks CONSECUTIVE EMPTY
+    candidate batches only (sampler starvation) -- batches with real
+    candidates are bounded by the attempts budget alone, so
+    max_attempts genuinely governs hard placements."""
     got = []
     tried = 0
     budget = attempts * need
     dry = 0
+    prep_draw = prep_fit if prep_fit is not None \
+        and design.focal_is_array_point() else prep_focal
     while len(got) < need and tried < budget and dry < 60:
         m = int(min(4096, max(16, 2 * (need - len(got)))))
-        cand, _starved = _rp._sample_in(prep_focal, m, rng, None,
+        cand, _starved = _rp._sample_in(prep_draw, m, rng, None,
                                         max_draws=200 * m)
         if not len(cand):
             dry += 1
             continue
-        admitted_any = False
+        dry = 0
         for fx, fy in cand:
             if tried >= budget or len(got) >= need:
                 break
@@ -1163,9 +1222,7 @@ def _place_arrays_polygon(prep_focal, prep_fit, design, spacing, need,
                 continue
             got.append({"pts": pts, "rowcol": rowcol, "brgs": brgs,
                         "values": None})
-            admitted_any = True
-        dry = 0 if admitted_any else dry + 1
-    return got
+    return got, dry >= 60
 
 
 # ---------------------------------------------------------------------------
@@ -1406,8 +1463,14 @@ def _arrays_on_raster(out_fc, boundary, desc, strata, strata_field,
                       radius, orient, orientation_angle,
                       randomize_start, include_center, must_fit,
                       min_spacing, boundary_gap, linear_units, rng,
-                      attempts, random_seed, messages):
+                      attempts, random_seed, messages,
+                      strata_txt=None, alloc_txt=None):
     import arcpy
+
+    # user-facing display strings for the provenance stamp (like the
+    # vector path); fall back to the canonical codes
+    strata_txt = strata_txt or strata
+    alloc_txt = alloc_txt or alloc
 
     path = getattr(desc, "catalogPath", str(boundary))
     r = arcpy.Raster(path)
@@ -1557,10 +1620,10 @@ def _arrays_on_raster(out_fc, boundary, desc, strata, strata_field,
                 strat_field=strata != _rp.STRATA_NONE,
                 messages=messages, starved_any=True,
                 want_total=want_total)
-            _stamp_arrays(out_path, "raster", strata, alloc, design,
-                          linear_units, 0, want_total, boundary,
-                          min_spacing, boundary_gap, must_fit,
-                          random_seed)
+            _stamp_arrays(out_path, "raster", strata_txt, alloc_txt,
+                          design, linear_units, 0, want_total,
+                          boundary, min_spacing, boundary_gap,
+                          must_fit, random_seed)
             _mh.end_phases()
             return out_path
     for si, st in enumerate(pool.strata):
@@ -1575,13 +1638,13 @@ def _arrays_on_raster(out_fc, boundary, desc, strata, strata_field,
                   "the boundary separation).".format(label))
             starved_any = True
             continue
-        got = _place_arrays_raster(
+        got, dry = _place_arrays_raster(
             pool, si, design, spacing, need, rng, attempts, must_fit,
             geographic, metric_sr)
         if len(got) < need:
             starved_any = True
             _starve_arrays(messages, label, len(got), need, attempts,
-                           must_fit)
+                           must_fit, sampler_dry=dry)
         if got:
             rows.append({"arrays": got, "src_fid": None,
                          "stratum": st[0]
@@ -1595,7 +1658,7 @@ def _arrays_on_raster(out_fc, boundary, desc, strata, strata_field,
         design, src_field=False, cat_field=True,
         strat_field=strata != _rp.STRATA_NONE, messages=messages,
         starved_any=starved_any, want_total=want_total)
-    _stamp_arrays(out_path, "raster", strata, alloc, design,
+    _stamp_arrays(out_path, "raster", strata_txt, alloc_txt, design,
                   linear_units, placed, want_total, boundary,
                   min_spacing, boundary_gap, must_fit, random_seed)
     _mh.end_phases()
@@ -1607,7 +1670,12 @@ def _place_arrays_raster(pool, si, design, spacing, need, rng,
     """Admit up to ``need`` arrays for one raster stratum. Arrays are
     built in metric space (LAEA for geographic rasters) and their
     points carried back to the raster CS for the containment test and
-    the output."""
+    the output -- ONE batched projection each way per candidate
+    batch, not one per candidate. Returns (arrays, sampler_dry): the
+    ``dry`` counter tracks CONSECUTIVE EMPTY candidate batches only
+    (sampler starvation) -- batches with real candidates are bounded
+    by the attempts budget alone, so max_attempts genuinely governs
+    hard placements."""
     got = []
     tried = 0
     budget = attempts * need
@@ -1618,18 +1686,30 @@ def _place_arrays_raster(pool, si, design, spacing, need, rng,
         if not len(xy):
             dry += 1
             continue
-        focal_metric = _rp._project_xy(xy, pool.sr, metric_sr) \
-            if geographic else xy
-        admitted_any = False
-        for k in range(len(xy)):
-            if tried >= budget or len(got) >= need:
+        dry = 0
+        n_take = int(min(len(xy), budget - tried))
+        if geographic:
+            focal_metric = _rp._project_xy(xy[:n_take], pool.sr,
+                                           metric_sr)
+            # stamp the whole batch, then carry every stamped point
+            # back to the raster CS in a single projection call
+            stamps = [design.stamp(float(focal_metric[k, 0]),
+                                   float(focal_metric[k, 1]))
+                      for k in range(n_take)]
+            back = _rp._project_xy(
+                np.concatenate([st[0] for st in stamps]),
+                metric_sr, pool.sr).reshape(n_take, -1, 2)
+        for k in range(n_take):
+            if len(got) >= need:
                 break
             tried += 1
-            fx, fy = float(focal_metric[k, 0]), \
-                float(focal_metric[k, 1])
-            pts_m, rowcol, brgs = design.stamp(fx, fy)
-            pts_r = _rp._project_xy(pts_m, metric_sr, pool.sr) \
-                if geographic else pts_m
+            if geographic:
+                pts_m, rowcol, brgs = stamps[k]
+                pts_r = back[k]
+            else:
+                pts_m, rowcol, brgs = design.stamp(
+                    float(xy[k, 0]), float(xy[k, 1]))
+                pts_r = pts_m
             vals = []
             ok = True
             for x, y in pts_r:
@@ -1644,16 +1724,23 @@ def _place_arrays_raster(pool, si, design, spacing, need, rng,
                 continue
             got.append({"pts": pts_r, "rowcol": rowcol, "brgs": brgs,
                         "values": vals})
-            admitted_any = True
-        dry = 0 if admitted_any else dry + 1
-    return got
+    return got, dry >= 60
 
 
 # ---------------------------------------------------------------------------
 #  shared write / warn / stamp
 # ---------------------------------------------------------------------------
-def _starve_arrays(messages, label, got, need, attempts, must_fit):
+def _starve_arrays(messages, label, got, need, attempts, must_fit,
+                   sampler_dry=False):
     extra = " with the whole array required to fit" if must_fit else ""
+    if sampler_dry:
+        _warn(messages,
+              "{}: only {:,} of {:,} arrays could be placed{} -- the "
+              "random focal-point sampler repeatedly found no "
+              "candidate locations at all (a degenerate or "
+              "vanishingly small area), so more attempts would not "
+              "help.".format(label, got, need, extra))
+        return
     _warn(messages,
           "{}: only {:,} of {:,} arrays could be placed{} within "
           "{:,} placement attempts per array -- raise the attempts "
@@ -1708,8 +1795,15 @@ def _write_arrays(out_fc, out_sr, work_sr, reproject, rows, design,
     n_written = 0
     total = sum(len(a["pts"]) for row in rows
                 for a in row["arrays"])
-    cols = ["SHAPE@" if reproject else "SHAPE@XY", "Array_ID",
-            "Point_ID"]
+    proj = None
+    if reproject and total:
+        # ONE batched projection for every point of every array
+        # instead of a PointGeometry.projectAs per point
+        proj = _rp._project_xy(
+            np.concatenate([np.asarray(a["pts"], dtype=np.float64)
+                            for row in rows for a in row["arrays"]]),
+            work_sr, out_sr)
+    cols = ["SHAPE@XY", "Array_ID", "Point_ID"]
     if design.shape == SHAPE_GRID:
         cols += ["Row", "Col"]
     if design.shape == SHAPE_CIRCLE:
@@ -1720,6 +1814,7 @@ def _write_arrays(out_fc, out_sr, work_sr, reproject, rows, design,
         cols.append("Src_FID")
     if cat_field:
         cols.append("Category")
+    pi = 0
     with arcpy.da.InsertCursor(out_path, cols) as ins:
         for row in rows:
             for a in row["arrays"]:
@@ -1727,17 +1822,20 @@ def _write_arrays(out_fc, out_sr, work_sr, reproject, rows, design,
                 pts = a["pts"]
                 for k in range(len(pts)):
                     n_written += 1
-                    x, y = float(pts[k, 0]), float(pts[k, 1])
-                    shp = arcpy.PointGeometry(
-                        arcpy.Point(x, y), work_sr).projectAs(out_sr) \
-                        if reproject else (x, y)
-                    rec = [shp, n_arrays_written, k + 1]
+                    if proj is not None:
+                        x, y = float(proj[pi, 0]), float(proj[pi, 1])
+                    else:
+                        x, y = float(pts[k, 0]), float(pts[k, 1])
+                    pi += 1
+                    rec = [(x, y), n_arrays_written, k + 1]
                     if design.shape == SHAPE_GRID:
                         rc = a["rowcol"][k]
                         rec += [int(rc[0]), int(rc[1])]
                     if design.shape == SHAPE_CIRCLE:
+                        # shapefiles cannot store nulls: the house
+                        # -999 convention marks the center's bearing
                         b = float(a["brgs"][k])
-                        rec.append(-1.0 if (is_shp and math.isnan(b))
+                        rec.append(-999.0 if (is_shp and math.isnan(b))
                                    else (None if math.isnan(b)
                                          else b))
                     if strat_field:
@@ -1747,9 +1845,10 @@ def _write_arrays(out_fc, out_sr, work_sr, reproject, rows, design,
                     if src_field:
                         rec.append(row["src_fid"])
                     if cat_field:
+                        # house -999 convention for a null category
                         v = a["values"][k] \
                             if a["values"] is not None else None
-                        rec.append(-9999 if (is_shp and v is None)
+                        rec.append(-999 if (is_shp and v is None)
                                    else v)
                     ins.insertRow(rec)
                     if n_written % 2000 == 0:

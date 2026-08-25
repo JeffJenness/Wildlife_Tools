@@ -179,7 +179,36 @@ def _hole_seeds(rings):
                 got = True
                 break
         if not got:
-            seeds.append(c)
+            # last resort (C-shaped and other strongly nonconvex
+            # holes): step a small distance into the hole -- left of
+            # each CCW hole edge -- from the edge midpoints and keep
+            # the first offset that verifies inside
+            nxt = np.roll(ring, -1, axis=0)
+            d = nxt - ring
+            ln = np.hypot(d[:, 0], d[:, 1])
+            keep = ln > 0
+            if n > 64:
+                pick = np.zeros(n, dtype=bool)
+                pick[np.linspace(0, n - 1, 64).astype(int)] = True
+                keep &= pick
+            if keep.any():
+                mids = 0.5 * (ring + nxt)[keep]
+                nrm = np.column_stack(
+                    [-d[keep, 1], d[keep, 0]]) / ln[keep][:, None]
+                diam = float(max(np.ptp(ring[:, 0]),
+                                 np.ptp(ring[:, 1]), 1e-300))
+                for frac in (1e-7, 1e-5, 1e-3):
+                    cand = mids + (diam * frac) * nrm
+                    hit = _pa.points_inside(cand, e)
+                    if hit.any():
+                        seeds.append(cand[int(np.argmax(hit))])
+                        got = True
+                        break
+            # still nothing: SKIP this hole's seed. A missed seed
+            # only risks a shape swallowing a degenerate hairline
+            # hole; appending a point that FAILED the inside test
+            # would plant a phantom hole in free space and suppress
+            # valid shapes -- the greater harm.
     if not seeds:
         return np.zeros((0, 2))
     return np.vstack(seeds)
@@ -201,14 +230,13 @@ def _seg_interior(segs, edges, bands, eps):
     proper-crossing test alone cannot see."""
     segs = np.atleast_2d(segs)
     ok = ~_segs_cross(segs, edges)
-    if ok.any():
-        a = segs[:, :2]
-        d = segs[:, 2:] - a
-        for t in (0.11, 0.31, 0.5, 0.69, 0.89):
-            pts = a + t * d
-            ok &= _points_in_free(pts, edges, bands, eps)
-            if not ok.any():
-                break
+    for t in (0.11, 0.31, 0.5, 0.69, 0.89):
+        live = np.flatnonzero(ok)       # failed rows stop paying
+        if len(live) == 0:
+            break
+        a = segs[live, :2]
+        d = segs[live, 2:] - a
+        ok[live] = _points_in_free(a + t * d, edges, bands, eps)
     return ok
 
 
@@ -270,11 +298,15 @@ def max_inscribed_circle(rings, spacing):
     samples = _sample_boundary(rings, spacing)
     if len(samples) < 4:
         return None
+    # center before qhull: at map-scale coordinate offsets the
+    # lifted-paraboloid arithmetic silently merges/drops Voronoi
+    # vertices (dense boundary rings lose ~40% of them)
+    mid = samples.mean(axis=0)
     try:
-        vor = Voronoi(samples)
+        vor = Voronoi(samples - mid)
     except Exception:                                            # noqa: BLE001
         return None
-    cand = vor.vertices
+    cand = vor.vertices + mid
     if len(cand) == 0:
         return None
     inside = _pa.points_inside(cand, edges, bands=bands)
@@ -331,11 +363,18 @@ def _largest_rect_grid(free):
     return best
 
 
-def _rect_free_grid(rings, theta, cell):
+def _rect_free_grid(rings, theta, cell, samples=None, notes=None):
     """Boolean grid of cells fully inside the free space at rotation
     ``theta`` (cell centers must be interior with clearance covering
-    the half-diagonal). Returns (free, x0, y0, rot) in rotated space,
-    where p_world = p_rot @ rot."""
+    the half-diagonal). ``samples`` are optional precomputed boundary
+    samples in WORLD coordinates (spacing <= cell / 2), shared across
+    orientations and rotated here (rotation is rigid, so sampling
+    then rotating equals rotating then sampling). When the grid would
+    blow past the cell cap, the cell size is CLAMPED UP so the grid
+    fits -- a coarser sweep, never a silently skipped orientation --
+    and a note is appended once to ``notes``. Returns
+    (free, x0, y0, rot, cell_used) in rotated space, where
+    p_world = p_rot @ rot."""
     from scipy.spatial import cKDTree
 
     ct, st = math.cos(-theta), math.sin(-theta)
@@ -347,7 +386,15 @@ def _rect_free_grid(rings, theta, cell):
     nc = max(2, int(math.ceil((x1 - x0) / cell)))
     nr = max(2, int(math.ceil((y1 - y0) / cell)))
     if nr * nc > 4e6:
-        return None, None, None, None
+        cell = cell * math.sqrt(nr * nc / 4e6)
+        nc = max(2, int(math.ceil((x1 - x0) / cell)))
+        nr = max(2, int(math.ceil((y1 - y0) / cell)))
+        if notes is not None and not notes:
+            notes.append(
+                "the requested detail would need more than 4 "
+                "million rectangle-search grid cells; the search "
+                "grid was coarsened to fit (the final expansion "
+                "against the true boundary still applies).")
     cxs = x0 + (np.arange(nc) + 0.5) * cell
     cys = y0 + (np.arange(nr) + 0.5) * cell
     gx, gy = np.meshgrid(cxs, cys)
@@ -355,15 +402,20 @@ def _rect_free_grid(rings, theta, cell):
     r_edges = _pa.edges_of(rpts)
     r_bands = _pa.y_bands(r_edges)
     inside = _pa.points_inside(centers, r_edges, bands=r_bands)
-    boundary = _sample_boundary(rpts, cell * 0.5)
+    if samples is None:
+        boundary = _sample_boundary(rpts, cell * 0.5)
+    else:
+        boundary = samples @ rotm.T
     tree = cKDTree(boundary)
     d, _i = tree.query(centers, k=1)
     halfdiag = cell * math.sqrt(0.5)
     # KD distance to samples overestimates true edge distance by at
-    # most half the sample spacing -- subtract that margin
+    # most half the sample spacing -- subtract that margin (samples
+    # are spaced <= cell / 2 even when the cell was clamped up, so
+    # the margin stays conservative)
     free = (inside & (d - cell * 0.25 >= halfdiag)).reshape(nr, nc)
     # world = rotated @ inv(rotm.T) = rotated @ rotm (rotm orthogonal)
-    return free, x0, y0, rotm
+    return free, x0, y0, rotm, cell
 
 
 def _rect_corners(cx, cy, w, h, theta):
@@ -438,7 +490,7 @@ def _expand_rect(cx, cy, w, h, theta, edges, bands, seeds, eps,
 
 
 def max_inscribed_rect(rings, spacing, fixed_azimuth=None,
-                       progress=None):
+                       progress=None, notes=None):
     """(cx, cy, length, width, azimuth_deg): the (approximately)
     largest inscribed rectangle; ``length`` runs along the azimuth.
     Exact on each orientation's grid, then refined on finer grids
@@ -462,20 +514,24 @@ def max_inscribed_rect(rings, spacing, fixed_azimuth=None,
     ri = 0
     while ri < len(rounds):
         thetas, cell = rounds[ri]
+        # boundary samples are rotation-invariant: build them once
+        # per cell size and let _rect_free_grid rotate them
+        samples = _sample_boundary(rings, cell * 0.5)
         for ti, theta in enumerate(thetas):
             if progress is not None:
                 progress("sweeping orientation", ti + 1, len(thetas))
-            free, x0, y0, rotm = _rect_free_grid(rings, theta, cell)
+            free, x0, y0, rotm, cella = _rect_free_grid(
+                rings, theta, cell, samples=samples, notes=notes)
             if free is None or not free.any():
                 continue
             got = _largest_rect_grid(free)
             if got is None or got[0] <= 0:
                 continue
             _ac, r0, c0, r1, c1 = got
-            w = (c1 - c0) * cell
-            h = (r1 - r0) * cell
-            rc = np.array([x0 + 0.5 * (c0 + c1) * cell,
-                           y0 + 0.5 * (r0 + r1) * cell])
+            w = (c1 - c0) * cella
+            h = (r1 - r0) * cella
+            rc = np.array([x0 + 0.5 * (c0 + c1) * cella,
+                           y0 + 0.5 * (r0 + r1) * cella])
             cxy = rc @ rotm
             area = w * h
             if best is None or area > best[0]:
@@ -547,6 +603,12 @@ def _potato_dp(cand, F, seeds, progress=None):
     Returns (area, [candidate indices of the chain]) or (0, None)."""
     m = len(cand)
     order = np.lexsort((cand[:, 0], cand[:, 1]))
+    # the DP consults directions and per-row feasibility O(m^2) times
+    # per root: precompute the (m, m) direction matrix
+    # DIR[i, j] = angle of cand[j] - cand[i], and F.any once
+    diff = cand[None, :, :] - cand[:, None, :]
+    DIR = np.arctan2(diff[:, :, 1], diff[:, :, 0]) % _TWO_PI
+    F_any = F.any(axis=1)
     best_area = 0.0
     best_chain = None
     for oi in range(m):
@@ -556,11 +618,10 @@ def _potato_dp(cand, F, seeds, progress=None):
         o = cand[o_idx]
         ids_above = order[oi + 1:]
         feas_above = ids_above[F[o_idx, ids_above]
-                               | F[ids_above].any(axis=1)]
+                               | F_any[ids_above]]
         if len(feas_above) < 2:
             continue
-        rel = cand[feas_above] - o
-        ang = np.arctan2(rel[:, 1], rel[:, 0]) % _TWO_PI
+        ang = DIR[o_idx, feas_above]
         srt = np.argsort(ang, kind="stable")
         A = feas_above[srt]              # vertex ids, angular order
         k = len(A)
@@ -578,10 +639,8 @@ def _potato_dp(cand, F, seeds, progress=None):
             pc = pts[qc]
             ids = list(in_ids[qc])
             if F[o_idx, c_id]:
-                psi0 = math.atan2(pc[1] - o[1],
-                                  pc[0] - o[0]) % _TWO_PI
                 e_end.append(qc)
-                e_psi.append(psi0)
+                e_psi.append(float(DIR[o_idx, c_id]))
                 e_dp.append(0.0)
                 e_par.append(-1)
                 ids.append(len(e_psi) - 1)
@@ -590,16 +649,15 @@ def _potato_dp(cand, F, seeds, progress=None):
             ids.sort(key=lambda e: e_psi[e])
             ipsi = [e_psi[e] for e in ids]
             # outgoing candidates in increasing direction
-            outs = []
-            for qb in range(qc + 1, k):
-                if F[c_id, int(A[qb])]:
-                    pb = pts[qb]
-                    psi = math.atan2(pb[1] - pc[1],
-                                     pb[0] - pc[0]) % _TWO_PI
-                    outs.append((psi, qb))
-            if not outs:
+            tail = A[qc + 1:]
+            feas_out = F[c_id, tail]
+            if not feas_out.any():
                 continue
-            outs.sort()
+            qb_arr = np.flatnonzero(feas_out) + qc + 1
+            psi_arr = DIR[c_id, tail[feas_out]]
+            srt2 = np.argsort(psi_arr, kind="stable")
+            outs = list(zip(psi_arr[srt2].tolist(),
+                            qb_arr[srt2].tolist()))
             lo_ptr = hi_ptr = 0
             window = deque()             # positions, decreasing dp
             n_in = len(ids)
@@ -633,8 +691,7 @@ def _potato_dp(cand, F, seeds, progress=None):
                 new_id = len(e_psi) - 1
                 in_ids[qb].append(new_id)
                 if total > close_best and F[o_idx, int(A[qb])]:
-                    psi_close = math.atan2(o[1] - pb[1],
-                                           o[0] - pb[0]) % _TWO_PI
+                    psi_close = float(DIR[int(A[qb]), o_idx])
                     if (psi_close - psi) % _TWO_PI \
                             <= math.pi + 1e-12:
                         close_best = total
@@ -800,16 +857,24 @@ def max_inscribed_potato(rings, spacing, cap=110, progress=None):
 # ---------------------------------------------------------------------------
 def _ellipse_from_conic(coefs):
     """(cx, cy, a, b, theta) from conic [A, B, C, D, E] with
-    A x^2 + 2 B x y + C y^2 + D x + E y + 1 = 0, or None if it is not
-    a real ellipse."""
+    A x^2 + 2 B x y + C y^2 + D x + E y + F = 0 for F = +/-1, or
+    None if it is not a real ellipse. The 5-point solve fixes F at
+    +1, so any ellipse CONTAINING the origin arrives with a
+    negative-definite quadratic form (the unit circle solves as
+    (-1, 0, -1, 0, 0)); sign-normalize instead of rejecting it --
+    those origin-containing conics ARE the inscribed-ellipse
+    candidates the R^5 lift exists to produce."""
     A, B, C, D, E = [float(v) for v in coefs]
+    F = 1.0
+    if A + C < 0:
+        A, B, C, D, E, F = -A, -B, -C, -D, -E, -F
     det = A * C - B * B
     if det <= 0 or A <= 0:
         return None
     cx = (-D / 2.0 * C + E / 2.0 * B) / det
     cy = (-E / 2.0 * A + D / 2.0 * B) / det
     val = (A * cx * cx + 2 * B * cx * cy + C * cy * cy
-           + D * cx + E * cy + 1.0)
+           + D * cx + E * cy + F)
     if val >= 0:
         return None
     kq = -val
@@ -1046,13 +1111,9 @@ def max_inscribed_ellipse(rings, spacing, circle=None, rect=None,
     for p in cands:
         if len(screened) >= 6:
             break
-        if _ellipse_valid(_shrink_to_fit(p, edges), edges, bands,
-                          seeds, eps):
-            screened.append(_shrink_to_fit(p, edges))
-        elif _ellipse_map_dists(p, edges).min() > 0.6:
-            q = _shrink_to_fit(p, edges)
-            if _ellipse_valid(q, edges, bands, seeds, eps):
-                screened.append(q)
+        q = _shrink_to_fit(p, edges)
+        if _ellipse_valid(q, edges, bands, seeds, eps):
+            screened.append(q)
     # warm starts
     if circle is not None:
         screened.append((circle[0], circle[1], circle[2] * 0.999,
@@ -1149,7 +1210,11 @@ def run_inscribed_geometry(in_features, geometry_type, out_features,
     ])
     plan = _cw._transfer_plan(
         in_features, transfer_fields,
-        _ll._is_shp_dest(out_features), messages)
+        _ll._is_shp_dest(out_features), messages,
+        fixed_names={"src_fid", "part", "shape_kind", "area_m2",
+                     "centerx", "centery", "radius_m", "length_m",
+                     "width_m", "majaxis_m", "minaxis_m", "azimuth",
+                     "numverts"})
     fields = [p[0] for p in plan]
 
     n_total, n_sel, has_sel = _mh.selection_info(in_features,
@@ -1178,6 +1243,7 @@ def run_inscribed_geometry(in_features, geometry_type, out_features,
 
     results = []
     warned_big = False
+    rect_notes = []                      # one-shot clamp note
     for fi, (oid, geom, attrs) in enumerate(feats):
         working_sr, is_custom = _pa._working_sr(geom)
         try:
@@ -1243,7 +1309,7 @@ def run_inscribed_geometry(in_features, geometry_type, out_features,
             if GEOM_RECT in wanted or GEOM_ELLIPSE in wanted:
                 rect = max_inscribed_rect(
                     rings, spacing, fixed_azimuth=fixed_azimuth,
-                    progress=_prog)
+                    progress=_prog, notes=rect_notes)
             if GEOM_MCP in wanted or GEOM_ELLIPSE in wanted:
                 potato = max_inscribed_potato(rings, spacing,
                                               progress=_prog)
@@ -1286,6 +1352,8 @@ def run_inscribed_geometry(in_features, geometry_type, out_features,
             continue
         results.append((oid, attrs, best))
         _mh.phase_step(fi + 1, len(feats))
+    if rect_notes:
+        _warn(messages, "Rectangle search: " + rect_notes[0])
     if not results:
         raise arcpy.ExecuteError("No inscribed shapes could be built.")
     _mh.phase_advance()

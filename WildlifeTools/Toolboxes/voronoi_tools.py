@@ -56,6 +56,7 @@ import numpy as np
 
 import mahalanobis as _mh
 import clip_tools as _ct
+import patch_analysis as _pa
 
 _CITATION = (
     "Voronoi/Thiessen tessellation; spherical case via the convex-hull "
@@ -150,13 +151,19 @@ def _xy_tolerance(out_sr):
             t = float(parts[0])
             # the env carries its own linear unit; convert to CS units
             # only for the meters-vs-feet-vs-degrees cases we can see
-            if len(parts) > 1 and out_sr.type == "Projected":
+            if len(parts) > 1:
                 unit = parts[1].lower()
                 per_m = {"meters": 1.0, "meter": 1.0,
                          "feet": 0.3048, "foot": 0.3048,
                          "us-feet": 1200.0 / 3937.0}.get(unit)
                 if per_m:
-                    t = t * per_m / (out_sr.metersPerUnit or 1.0)
+                    if out_sr.type == "Projected":
+                        t = t * per_m / (out_sr.metersPerUnit or 1.0)
+                    elif out_sr.type == "Geographic":
+                        # a LINEAR env tolerance on a geographic output:
+                        # meters -> degrees (raw meters read as degrees
+                        # would dedupe ~111 km circles of points)
+                        t = t * per_m / 111320.0
             return t
         except Exception:                                        # noqa: BLE001
             pass
@@ -185,32 +192,75 @@ def _read_points(in_points, out_sr, fields, messages):
         _say(messages, "The point layer has an active selection: {} of {} "
                        "features are used.".format(n_sel, n_total))
 
-    xs, ys, oids, rows = [], [], [], []
-    n_multi = 0
     cur_fields = ["OID@", "SHAPE@"] + list(fields or [])
-    with arcpy.da.SearchCursor(in_points, cur_fields) as cur:
-        for row in cur:
-            geom = row[1]
-            if geom is None:
-                continue
-            attrs = tuple(row[2:])
-            gsr = geom.spatialReference
-            if gsr is not None and not _same_cs(gsr, out_sr):
-                geom = _project_geom(geom, out_sr)
+
+    # Datum handling ONCE, not per feature: same datum -> the cursor
+    # projects every geometry in bulk (spatial_reference=); different
+    # datum -> resolve the transformation once and projectAs per
+    # feature with it (ListTransformations per feature took minutes on
+    # 50 k points).
+    try:
+        src_sr = arcpy.Describe(in_points).spatialReference
+    except Exception:                                            # noqa: BLE001
+        src_sr = None
+    cur_kwargs = {}
+    tfm = None
+    if src_sr is not None \
+            and getattr(src_sr, "name", "Unknown") not in (None, "",
+                                                           "Unknown") \
+            and not _same_cs(src_sr, out_sr):
+        ga = getattr(src_sr, "GCS", None)
+        gb = getattr(out_sr, "GCS", None)
+        if ga is not None and gb is not None and _same_cs(ga, gb):
+            cur_kwargs = {"spatial_reference": out_sr}
+        else:
+            env_t = [t for t in str(arcpy.env.geographicTransformations
+                                    or "").split(";") if t]
             try:
-                parts = [p for p in geom.getPart()] \
-                    if geom.isMultipart else [geom.getPart(0)]
+                tfm, _fb = _ct.transformation_for(src_sr, out_sr, env_t)
             except Exception:                                    # noqa: BLE001
-                parts = [geom.centroid]
-            if len(parts) > 1:
-                n_multi += 1
-            for p in parts:
-                if p is None:
+                tfm = None
+            if tfm is None:
+                cur_kwargs = {"spatial_reference": out_sr}
+
+    def _harvest(kwargs, transform):
+        xs, ys, oids, rows = [], [], [], []
+        n_multi = 0
+        with arcpy.da.SearchCursor(in_points, cur_fields, **kwargs) as cur:
+            for row in cur:
+                geom = row[1]
+                if geom is None:
                     continue
-                xs.append(p.X)
-                ys.append(p.Y)
-                oids.append(row[0])
-                rows.append(attrs)
+                attrs = tuple(row[2:])
+                gsr = geom.spatialReference
+                if gsr is not None and not _same_cs(gsr, out_sr):
+                    if transform == "AUTO":
+                        geom = _project_geom(geom, out_sr)
+                    elif transform is not None:
+                        geom = geom.projectAs(out_sr, transform)
+                    else:
+                        geom = geom.projectAs(out_sr)
+                try:
+                    parts = [p for p in geom.getPart()] \
+                        if geom.isMultipart else [geom.getPart(0)]
+                except Exception:                                # noqa: BLE001
+                    parts = [geom.centroid]
+                if len(parts) > 1:
+                    n_multi += 1
+                for p in parts:
+                    if p is None:
+                        continue
+                    xs.append(p.X)
+                    ys.append(p.Y)
+                    oids.append(row[0])
+                    rows.append(attrs)
+        return xs, ys, oids, rows, n_multi
+
+    try:
+        xs, ys, oids, rows, n_multi = _harvest(cur_kwargs, tfm)
+    except Exception:                                            # noqa: BLE001
+        # fall back to the transformation-aware per-feature path
+        xs, ys, oids, rows, n_multi = _harvest({}, "AUTO")
     if n_multi:
         _warn(messages,
               "{:,} multipoint feature{} exploded -- each part generates "
@@ -286,7 +336,7 @@ def _read_boundary(boundary, out_sr, messages):
 # ---------------------------------------------------------------------------
 #  frames
 # ---------------------------------------------------------------------------
-def _frame(coords, bnd_geom, out_sr, messages):
+def _frame(coords, bnd_geom, out_sr, messages, tol=0.0):
     """(xmin, ymin, xmax, ymax): the Extent environment when set (Esri
     parity: it REPLACES the automatic frame), else union(boundary extent,
     points extent expanded 10% per axis)."""
@@ -309,8 +359,20 @@ def _frame(coords, bnd_geom, out_sr, messages):
             pass
     xmin, ymin = coords[:, 0].min(), coords[:, 1].min()
     xmax, ymax = coords[:, 0].max(), coords[:, 1].max()
-    padx = 0.10 * max(xmax - xmin, 1e-9)
-    pady = 0.10 * max(ymax - ymin, 1e-9)
+    # Data-scaled pad floors: one point or a collinear set must still get
+    # a usable frame (an absolute 1e-9 floor collapses it to a sliver at
+    # map-scale coordinates). Degenerate on BOTH axes -> pad by ~1 meter
+    # equivalent or 1000x the XY tolerance, whichever is larger; one
+    # degenerate axis -> borrow 10% of the other axis's range.
+    xrng, yrng = xmax - xmin, ymax - ymin
+    span = max(abs(xmin), abs(xmax), abs(ymin), abs(ymax), 1.0)
+    eps = 1e-9 * span
+    one_unit = (1.0 / 111320.0) if out_sr.type == "Geographic" else 1.0
+    if xrng <= eps and yrng <= eps:
+        padx = pady = max(one_unit, (tol or 0.0) * 1000.0)
+    else:
+        padx = 0.10 * (xrng if xrng > eps else max(yrng, one_unit))
+        pady = 0.10 * (yrng if yrng > eps else max(xrng, one_unit))
     xmin, xmax = xmin - padx, xmax + padx
     ymin, ymax = ymin - pady, ymax + pady
     if bnd_geom is not None:
@@ -330,21 +392,31 @@ def _planar_cells(coords, frame, messages):
     from scipy.spatial import Voronoi
 
     xmin, ymin, xmax, ymax = frame
-    pad = _PHANTOM_PAD * max(xmax - xmin, ymax - ymin, 1e-9)
+    # floor scaled to the coordinates, not absolute -- 1e-9 at UTM
+    # offsets would put the phantoms coincident with the frame
+    pad = _PHANTOM_PAD * max(xmax - xmin, ymax - ymin,
+                             1e-6 * max(abs(xmin), abs(ymin),
+                                        abs(xmax), abs(ymax), 1.0))
     cx, cy = 0.5 * (xmin + xmax), 0.5 * (ymin + ymax)
     phantoms = [(cx - pad, cy - pad), (cx, cy - pad), (cx + pad, cy - pad),
                 (cx - pad, cy), (cx + pad, cy),
                 (cx - pad, cy + pad), (cx, cy + pad), (cx + pad, cy + pad)]
     pts = np.vstack([coords, np.asarray(phantoms)])
-    vor = Voronoi(pts)
+    # center before qhull: at map-scale offsets (UTM false eastings /
+    # northings ~1e6) the lifted-paraboloid arithmetic silently merges
+    # or drops Voronoi vertices; Voronoi is translation-equivariant,
+    # so solve about the centroid and shift the vertices back
+    mid = pts.mean(axis=0)
+    vor = Voronoi(pts - mid)
+    vverts = vor.vertices + mid
     rings = []
     for i in range(len(coords)):
         reg = vor.regions[vor.point_region[i]]
         if not reg or -1 in reg:
             rings.append(None)       # cannot happen with sane phantoms
             continue
-        rings.append([(float(vor.vertices[k, 0]),
-                       float(vor.vertices[k, 1])) for k in reg])
+        rings.append([(float(vverts[k, 0]),
+                       float(vverts[k, 1])) for k in reg])
     return rings
 
 
@@ -370,6 +442,65 @@ def _unwrap_lon(lon, lon0):
     data assembles into contiguous polygons."""
     return lon0 + (np.asarray(lon, dtype=np.float64) - lon0 + 180.0) \
         % 360.0 - 180.0
+
+
+def _densify_if_curved(geom):
+    """Densified copy when the polygon holds true curves (gdb buffer
+    circles serialize as curveRings that vertex walks cannot see), else
+    the polygon unchanged -- the standing curve rule."""
+    if getattr(geom, "hasCurves", False):
+        try:
+            e = geom.extent
+            d = max(math.hypot(e.width, e.height) / 500.0, 1e-9)
+            return geom.densify("DISTANCE", d, d)
+        except Exception:                                        # noqa: BLE001
+            pass
+    return geom
+
+
+def _unwrap_polygon(poly, lon0, out_sr):
+    """Rebuild a lon/lat polygon with every vertex longitude unwrapped
+    into the lon0 window (dateline safety: unwrapped points against a
+    RAW-longitude boundary made every cell east of the seam vanish).
+    Returns the polygon unchanged when no vertex needs to move."""
+    import arcpy
+
+    try:
+        g = _densify_if_curved(poly)
+        rings = _pa.rings_of(g)
+        if not rings:
+            return poly
+        if all(np.abs(_unwrap_lon(r[:, 0], lon0) - r[:, 0]).max() < 1e-12
+               for r in rings):
+            return poly
+        arrs = []
+        for r in rings:
+            lon = _unwrap_lon(r[:, 0], lon0)
+            arrs.append(arcpy.Array(
+                [arcpy.Point(float(x), float(y))
+                 for x, y in zip(lon, r[:, 1])]
+                + [arcpy.Point(float(lon[0]), float(r[0, 1]))]))
+        return arcpy.Polygon(arcpy.Array(arrs), out_sr)
+    except Exception:                                            # noqa: BLE001
+        return poly
+
+
+def _points_in_boundary(coords, bnd, out_sr):
+    """Boolean mask: which of the (N, 2) coords fall inside ``bnd``.
+    Vectorized even-odd test over the boundary's edges (curves densified
+    first); per-point arcpy ``disjoint`` only as a fallback."""
+    import arcpy
+
+    try:
+        edges = _pa.edges_of(_pa.rings_of(_densify_if_curved(bnd)))
+        if not len(edges):
+            raise ValueError("boundary yielded no rings")
+        return _pa.points_inside(coords, edges,
+                                 bands=_pa.y_bands(edges))
+    except Exception:                                            # noqa: BLE001
+        return np.array([not bnd.disjoint(
+            arcpy.PointGeometry(arcpy.Point(x, y), out_sr))
+            for x, y in coords])
 
 
 def _slerp(a, b, n):
@@ -438,9 +569,28 @@ def _spherical_cells(coords, lon0, refine, out_sr, messages, frame):
               "cells of outermost points may be torn at the "
               "antimeridian opposite the data.")
     pts = np.vstack([xyz, np.asarray(phantoms)])
+    if len(pts) < 4:
+        # SphericalVoronoi needs at least four generators in general
+        # position; a globe-spanning frame adds only the antipode
+        # phantom, so 1-2 real points would feed it 2-3. Add the full
+        # phantom ring anyway.
+        ring = [math.cos(math.radians(80.0)) * c
+                + math.sin(math.radians(80.0))
+                * (math.cos(a) * u + math.sin(a) * v)
+                for a in np.linspace(0, 2 * math.pi, 12, endpoint=False)]
+        pts = np.vstack([pts, np.asarray([r / np.linalg.norm(r)
+                                          for r in ring])])
 
-    sv = SphericalVoronoi(pts, radius=1.0)
-    sv.sort_vertices_of_regions()
+    try:
+        sv = SphericalVoronoi(pts, radius=1.0)
+        sv.sort_vertices_of_regions()
+    except Exception as e:                                       # noqa: BLE001
+        import arcpy
+
+        raise arcpy.ExecuteError(
+            "The spherical Voronoi tessellation failed ({}). This "
+            "usually means too few distinct points, or a degenerate "
+            "arrangement (all points coincident).".format(e))
 
     # edge (vertex-id pair) -> generator indices sharing it, for the
     # refinement step
@@ -454,6 +604,14 @@ def _spherical_cells(coords, lon0, refine, out_sr, messages, frame):
                 key = tuple(sorted((reg[k], reg[(k + 1) % len(reg)])))
                 edge_gens.setdefault(key, []).append(gi)
 
+    # Each shared edge is densified (and refined) ONCE, cached by its
+    # sorted vertex-id pair and reversed for the neighboring cell; each
+    # shared CORNER vertex is refined once globally (first touch wins),
+    # so both incident cells carry the identical corner coordinate --
+    # per-cell refinement diverged by centimeters and left sliver gaps
+    # at the three-cell junctions.
+    edge_cache = {}
+    corner_cache = {}
     rings = []
     for i in range(n_real):
         reg = sv.regions[i]
@@ -462,26 +620,35 @@ def _spherical_cells(coords, lon0, refine, out_sr, messages, frame):
             continue
         ring_pts = []
         for k in range(len(reg)):
-            a = sv.vertices[reg[k]]
-            b = sv.vertices[reg[(k + 1) % len(reg)]]
-            dot = float(np.clip(np.dot(a, b), -1.0, 1.0))
-            n_mid = int(math.acos(dot) / _ARC_STEP_RAD)
-            seg = np.vstack([a[None, :], _slerp(a, b, n_mid)])
-            if geod is not None:
-                key = tuple(sorted((reg[k], reg[(k + 1) % len(reg)])))
-                gens = edge_gens.get(key) or []
-                gens = [g for g in gens if g < n_real]
-                if len(gens) == 2:
-                    seg = _refine_arc(seg, coords[gens[0]],
-                                      coords[gens[1]], lon0, geod)
-            ring_pts.append(seg)
+            va, vb = reg[k], reg[(k + 1) % len(reg)]
+            key = (va, vb) if va < vb else (vb, va)
+            seg = edge_cache.get(key)
+            if seg is None:
+                lo, hi = key
+                a, b = sv.vertices[lo], sv.vertices[hi]
+                dot = float(np.clip(np.dot(a, b), -1.0, 1.0))
+                n_mid = int(math.acos(dot) / _ARC_STEP_RAD)
+                seg = np.vstack([a[None, :], _slerp(a, b, n_mid),
+                                 b[None, :]])
+                if geod is not None:
+                    gens = [g for g in (edge_gens.get(key) or [])
+                            if g < n_real]
+                    if len(gens) == 2:
+                        seg = _refine_arc(seg, coords[gens[0]],
+                                          coords[gens[1]], lon0, geod)
+                        for vid, row in ((lo, 0), (hi, len(seg) - 1)):
+                            cached = corner_cache.get(vid)
+                            if cached is None:
+                                corner_cache[vid] = seg[row].copy()
+                            else:
+                                seg[row] = cached
+                edge_cache[key] = seg
+            use = seg if va == key[0] else seg[::-1]
+            ring_pts.append(use[:-1])       # next edge supplies its end
         allv = np.vstack(ring_pts)
-        if isinstance(allv[0], np.ndarray) and allv.shape[1] == 3:
-            lon, lat = _xyz_to_lonlat(allv)
-            lon = _unwrap_lon(lon, lon0)
-            rings.append(list(zip(lon.tolist(), lat.tolist())))
-        else:
-            rings.append([(float(p[0]), float(p[1])) for p in allv])
+        lon, lat = _xyz_to_lonlat(allv)
+        lon = _unwrap_lon(lon, lon0)
+        rings.append(list(zip(lon.tolist(), lat.tolist())))
     return rings
 
 
@@ -497,6 +664,14 @@ class _ArcGeod(object):
     def inv(self, lon1, lat1, lon2, lat2):
         import arcpy
 
+        if np.ndim(lon1):                    # array form, pyproj-style
+            az = np.empty(len(lon1), dtype=np.float64)
+            dist = np.empty(len(lon1), dtype=np.float64)
+            for i in range(len(lon1)):
+                az[i], _r, dist[i] = self.inv(
+                    float(lon1[i]), float(lat1[i]),
+                    float(lon2[i]), float(lat2[i]))
+            return az, None, dist
         pg = arcpy.PointGeometry(arcpy.Point(lon1, lat1), self._sr)
         ang, dist = pg.angleAndDistanceTo(
             arcpy.PointGeometry(arcpy.Point(lon2, lat2), self._sr),
@@ -506,6 +681,14 @@ class _ArcGeod(object):
     def fwd(self, lon, lat, az, s):
         import arcpy
 
+        if np.ndim(lon):                     # array form, pyproj-style
+            ox = np.empty(len(lon), dtype=np.float64)
+            oy = np.empty(len(lon), dtype=np.float64)
+            for i in range(len(lon)):
+                ox[i], oy[i], _b = self.fwd(
+                    float(lon[i]), float(lat[i]),
+                    float(az[i]), float(s[i]))
+            return ox, oy, None
         pg = arcpy.PointGeometry(arcpy.Point(lon, lat), self._sr)
         out = pg.pointFromAngleAndDistance(az, s, "GEODESIC")
         p = out.firstPoint
@@ -545,38 +728,47 @@ def _refine_arc(seg_xyz, gen_a, gen_b, lon0, geod):
     the local bisector normal; returns refined lon/lat pairs re-encoded
     as xyz so the caller's pipeline is unchanged."""
     lon, lat = _xyz_to_lonlat(seg_xyz)
-    lon = _unwrap_lon(lon, lon0)
-    la, pa = float(gen_a[0]), float(gen_a[1])
-    lb, pb = float(gen_b[0]), float(gen_b[1])
-    out_lon, out_lat = [], []
-    for x, y in zip(lon.tolist(), lat.tolist()):
-        px, py = x, y
-        # Newton with a FRESH gradient each iteration: f = d(v,a)-d(v,b);
-        # along the unit direction u = (t_a - t_b)/|t_a - t_b| (t_* = the
-        # unit tangent from v toward each generator), df/ds = -|t_a-t_b|,
-        # so the Newton step is s = f/|t_a - t_b|. A stale-direction
-        # secant left ~25 m residuals; this converges to <1 cm in a few
-        # iterations.
-        for _ in range(8):
-            az_a, _r1, d_a = geod.inv(px, py, la, pa)
-            az_b, _r2, d_b = geod.inv(px, py, lb, pb)
-            f = d_a - d_b
-            if abs(f) < 0.01:                   # 1 cm is plenty
-                break
-            ta = np.array([math.sin(math.radians(az_a)),
-                           math.cos(math.radians(az_a))])
-            tb = np.array([math.sin(math.radians(az_b)),
-                           math.cos(math.radians(az_b))])
-            dvec = ta - tb
-            nd = float(np.linalg.norm(dvec))
-            if nd < 1e-9:
-                break
-            az_move = math.degrees(math.atan2(dvec[0], dvec[1]))
-            px, py, _az = geod.fwd(px, py, az_move, f / nd)
-        out_lon.append(px)
-        out_lat.append(py)
-    out_lon = _unwrap_lon(np.asarray(out_lon), lon0)
-    return _lonlat_to_xyz(out_lon, np.asarray(out_lat))
+    px = _unwrap_lon(lon, lon0).astype(np.float64)
+    py = np.asarray(lat, dtype=np.float64).copy()
+    n = len(px)
+    la = np.full(n, float(gen_a[0]))
+    pa = np.full(n, float(gen_a[1]))
+    lb = np.full(n, float(gen_b[0]))
+    pb = np.full(n, float(gen_b[1]))
+    # Newton with a FRESH gradient each iteration: f = d(v,a)-d(v,b);
+    # along the unit direction u = (t_a - t_b)/|t_a - t_b| (t_* = the
+    # unit tangent from v toward each generator), df/ds = -|t_a-t_b|,
+    # so the Newton step is s = f/|t_a - t_b|. A stale-direction
+    # secant left ~25 m residuals; this converges to <1 cm in a few
+    # iterations. All vertices of the segment iterate together through
+    # ARRAY-form geod calls (scalar per-vertex solves dominated the
+    # refinement's runtime), dropping out as they converge.
+    active = np.ones(n, dtype=bool)
+    for _ in range(8):
+        idx = np.flatnonzero(active)
+        if idx.size == 0:
+            break
+        az_a, _r1, d_a = geod.inv(px[idx], py[idx], la[idx], pa[idx])
+        az_b, _r2, d_b = geod.inv(px[idx], py[idx], lb[idx], pb[idx])
+        f = np.asarray(d_a, dtype=np.float64) \
+            - np.asarray(d_b, dtype=np.float64)
+        ra = np.radians(np.asarray(az_a, dtype=np.float64))
+        rb = np.radians(np.asarray(az_b, dtype=np.float64))
+        dvx = np.sin(ra) - np.sin(rb)
+        dvy = np.cos(ra) - np.cos(rb)
+        nd = np.hypot(dvx, dvy)
+        move = (np.abs(f) >= 0.01) & (nd >= 1e-9)   # 1 cm is plenty
+        active[idx] = move
+        if not move.any():
+            break
+        mi = idx[move]
+        az_move = np.degrees(np.arctan2(dvx[move], dvy[move]))
+        nx, ny, _az = geod.fwd(px[mi], py[mi], az_move,
+                               f[move] / nd[move])
+        px[mi] = np.asarray(nx, dtype=np.float64)
+        py[mi] = np.asarray(ny, dtype=np.float64)
+    px = _unwrap_lon(px, lon0)
+    return _lonlat_to_xyz(px, py)
 
 
 # ---------------------------------------------------------------------------
@@ -626,15 +818,20 @@ def run_voronoi(in_points, out_fc, boundary=None, fields=None,
             np.sin(np.radians(coords[:, 0])).mean(),
             np.cos(np.radians(coords[:, 0])).mean()))
         coords[:, 0] = _unwrap_lon(coords[:, 0], lon0)
+        if bnd is not None:
+            # the boundary must live in the same lon0 window as the
+            # points, or the membership tests and the clip both miss
+            # everything east of the seam
+            bnd = _unwrap_polygon(bnd, lon0, out_sr)
 
+    inside_mask = (_points_in_boundary(coords, bnd, out_sr)
+                   if bnd is not None else None)
     if only_inside:
         if bnd is None:
             _warn(messages, "'Use only points inside the boundary' is set "
                             "but no boundary was given; ignored.")
         else:
-            keep = np.array([not bnd.disjoint(
-                arcpy.PointGeometry(arcpy.Point(x, y), out_sr))
-                for x, y in coords])
+            keep = inside_mask
             n_out = int((~keep).sum())
             if n_out == len(coords):
                 raise arcpy.ExecuteError(
@@ -648,8 +845,7 @@ def run_voronoi(in_points, out_fc, boundary=None, fields=None,
                 oids = oids[keep]
                 rows = [r for r, k in zip(rows, keep) if k]
     elif bnd is not None:
-        n_out = sum(1 for x, y in coords if bnd.disjoint(
-            arcpy.PointGeometry(arcpy.Point(x, y), out_sr)))
+        n_out = int((~inside_mask).sum())
         if n_out:
             _say(messages,
                  "{:,} point{} outside the boundary still shape the "
@@ -657,7 +853,7 @@ def run_voronoi(in_points, out_fc, boundary=None, fields=None,
                  "'use only points inside the boundary' to exclude "
                  "them).".format(n_out, " lies" if n_out == 1 else "s lie"))
 
-    frame = _frame(coords, bnd, out_sr, messages)
+    frame = _frame(coords, bnd, out_sr, messages, tol=tol)
     _say(messages, "{:,} generating point{}; frame {:.6g}, {:.6g} to "
                    "{:.6g}, {:.6g}.".format(
                        len(coords), "" if len(coords) == 1 else "s",
@@ -676,8 +872,9 @@ def run_voronoi(in_points, out_fc, boundary=None, fields=None,
     _mh.phase_advance()
 
     # ---- output fc ------------------------------------------------------
-    out_path = _create_output(in_points, out_fc, out_sr, field_names,
-                              add_area, messages)
+    out_path, out_names, out_types = _create_output(
+        in_points, out_fc, out_sr, field_names, add_area, messages)
+    is_shp = out_path.lower().endswith(".shp")
     clipper = _rect_polygon(*frame, out_sr)
     if bnd is not None:
         clipper = clipper.intersect(bnd, 4)
@@ -686,7 +883,7 @@ def run_voronoi(in_points, out_fc, boundary=None, fields=None,
                 "The boundary polygon does not overlap the processing "
                 "frame at all.")
 
-    ins_fields = ["SHAPE@", "Point_FID"] + list(field_names)
+    ins_fields = ["SHAPE@", "Point_FID"] + list(out_names)
     if add_area:
         ins_fields.append("Area_Ha")
     n_written = 0
@@ -706,12 +903,20 @@ def run_voronoi(in_points, out_fc, boundary=None, fields=None,
             if clipped is None or clipped.area == 0:
                 n_empty += 1
                 continue
-            vals = [clipped, int(oids[i])] + list(rows[i])
+            attrs = list(rows[i])
+            if is_shp:
+                # shapefiles cannot store nulls: -999 for numbers,
+                # empty string for text (dates pass through)
+                attrs = [("" if t == "TEXT" else
+                          v if t == "DATE" else -999)
+                         if v is None else v
+                         for v, t in zip(attrs, out_types)]
+            vals = [clipped, int(oids[i])] + attrs
             if add_area:
                 try:
                     vals.append(clipped.getArea("GEODESIC", "HECTARES"))
                 except Exception:                                # noqa: BLE001
-                    vals.append(None)
+                    vals.append(-999 if is_shp else None)
             ins.insertRow(vals)
             n_written += 1
     if n_empty:
@@ -754,30 +959,53 @@ _TYPE_MAP = {
 def _create_output(in_points, out_fc, out_sr, field_names, add_area,
                    messages):
     """Create the polygon FC (folder -> .shp per the standing rule) and
-    add every field in ONE AddFields call."""
+    add every field in ONE AddFields call. Returns (path, OUTPUT names of
+    the transfer fields, AddFields type per transfer field) -- shapefiles
+    truncate names to 10 characters, so the insert cursor must use the
+    names the output actually holds, not the source names."""
     import arcpy
 
     out_fc = str(out_fc).replace("/", "\\").rstrip("\\")
     ws, name = os.path.split(out_fc)
-    if ws and not _mh.in_gdb_container(out_fc) \
-            and not name.lower().endswith(".shp"):
+    is_shp = ws and not _mh.in_gdb_container(out_fc)
+    if is_shp and not name.lower().endswith(".shp"):
         name += ".shp"
     res = arcpy.management.CreateFeatureclass(
         ws, name, "POLYGON", spatial_reference=out_sr)
     out_path = res.getOutput(0)
 
     src = {f.name: f for f in arcpy.ListFields(in_points)}
+    used = {"fid", "shape", "oid", "objectid", "point_fid", "area_ha"}
     rows = [["Point_FID", "LONG", "Point FID", "", "", ""]]
+    out_names, out_types = [], []
     for fn in field_names:
         f = src[fn]
         ftype = _TYPE_MAP.get(f.type, "TEXT")
-        rows.append([f.name, ftype, f.aliasName or f.name,
+        oname = f.name
+        if is_shp and (len(oname) > 10 or oname.lower() in used):
+            oname = oname[:10]
+            k = 0
+            while oname.lower() in used:
+                k += 1
+                tag = "_{}".format(k)
+                oname = f.name[:10 - len(tag)] + tag
+            _warn(messages,
+                  "Shapefile field-name limit: '{}' is written as "
+                  "'{}'.".format(f.name, oname))
+        used.add(oname.lower())
+        rows.append([oname, ftype, f.aliasName or f.name,
                      f.length if ftype == "TEXT" else "", "", ""])
+        out_names.append(oname)
+        out_types.append(ftype)
     if add_area:
         rows.append(["Area_Ha", "DOUBLE", "Area (geodesic hectares)",
                      "", "", ""])
     arcpy.management.AddFields(out_path, rows)
-    return out_path
+    # belt-and-suspenders: address the fields by the names the output
+    # dataset ACTUALLY holds after any driver-side renaming
+    have = {f.name.lower(): f.name for f in arcpy.ListFields(out_path)}
+    out_names = [have.get(n.lower(), n) for n in out_names]
+    return out_path, out_names, out_types
 
 
 def _stamp(out_path, in_points, boundary, geographic, refined, n_cells):

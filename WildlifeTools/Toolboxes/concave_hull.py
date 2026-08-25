@@ -109,16 +109,31 @@ def _circumradii(pts, s):
     lb = np.hypot(a[:, 0] - c[:, 0], a[:, 1] - c[:, 1])
     lc = np.hypot(a[:, 0] - b[:, 0], a[:, 1] - b[:, 1])
     area = _tri_areas(pts, s)
-    area = np.where(area <= 0, 1e-300, area)
+    # floor the area at a scale-relative epsilon: collinear triangles
+    # then give LARGE-BUT-FINITE radii (a 1e-300 floor overflowed the
+    # division to inf, and inf rode into Param_m at Concavity 0)
+    span = max(float(np.ptp(pts[:, 0])), float(np.ptp(pts[:, 1])))
+    area = np.maximum(area, max(1e-12 * span * span, 1e-300))
     return (la * lb * lc) / (4.0 * area)
+
+
+def _alpha_precomp(pts):
+    """(tri, s, radii) computed once per point set -- the alpha
+    functions all accept it, so one Delaunay serves parameter
+    selection AND the final shape."""
+    tri = _delaunay(pts)
+    s = _ccw_simplices(pts, tri)
+    return tri, s, _circumradii(pts, s)
 
 
 def _rings_from_kept(pts, s, kept):
     """Boundary rings of the union of the kept (CCW) triangles,
     walked with the interior on the left -- exterior rings come out
     counter-clockwise, holes clockwise. Pinch vertices are resolved
-    by taking the most-counterclockwise outgoing edge. Returns a
-    list of (m, 2) arrays (no closing duplicate)."""
+    by taking the outgoing edge that closes the CURRENT fan (the
+    largest CCW rotation from the reversed incoming direction), so
+    point-touching components come out as separate simple rings.
+    Returns a list of (m, 2) arrays (no closing duplicate)."""
     kept_idx = np.flatnonzero(kept)
     if len(kept_idx) == 0:
         return []
@@ -153,7 +168,10 @@ def _rings_from_kept(pts, s, kept):
             if len(outs) == 1:
                 nxt = outs[0]
             else:
-                # most-counterclockwise turn from the incoming edge
+                # pinch vertex: stay in the CURRENT fan -- take the
+                # LARGEST CCW rotation from the reversed incoming
+                # direction (the minimum would wander into the
+                # touching fan and weld the parts into a figure-eight)
                 din = math.atan2(pts[b][1] - pts[a][1],
                                  pts[b][0] - pts[a][0])
                 best, best_ang = None, None
@@ -161,7 +179,7 @@ def _rings_from_kept(pts, s, kept):
                     dv = math.atan2(pts[v][1] - pts[b][1],
                                     pts[v][0] - pts[b][0])
                     ang = (dv - din - math.pi) % (2 * math.pi)
-                    if best is None or ang < best_ang:
+                    if best is None or ang > best_ang:
                         best, best_ang = v, ang
                 nxt = best
             a, b = b, nxt
@@ -300,17 +318,17 @@ def chi_auto_threshold(pts):
 # ---------------------------------------------------------------------------
 #  alpha shapes (Edelsbrunner et al. 1983)
 # ---------------------------------------------------------------------------
-def alpha_shape(pts, alpha):
+def alpha_shape(pts, alpha, precomp=None):
     """The (regularized) alpha shape: the union of Delaunay
     triangles with circumradius <= alpha. Returns (rings, area):
     rings is a list of (m, 2) arrays -- exterior rings CCW, holes CW
-    -- and may describe several disjoint parts."""
+    -- and may describe several disjoint parts. ``precomp`` is an
+    optional (tri, s, radii) from :func:`_alpha_precomp`."""
     n = len(pts)
     if n < 3:
         return [], 0.0
-    tri = _delaunay(pts)
-    s = _ccw_simplices(pts, tri)
-    radii = _circumradii(pts, s)
+    _tri, s, radii = precomp if precomp is not None \
+        else _alpha_precomp(pts)
     kept = radii <= alpha
     if not kept.any():
         return [], 0.0
@@ -318,7 +336,8 @@ def alpha_shape(pts, alpha):
     return _rings_from_kept(pts, s, kept), area
 
 
-def alpha_spectrum_auto(pts, allow_parts, margin=1.5):
+def alpha_spectrum_auto(pts, allow_parts, margin=1.5,
+                        precomp=None):
     """The automatic alpha: the smallest circumradius in the
     Delaunay spectrum such that every point is covered by a kept
     triangle and (unless ``allow_parts``) the kept triangles form a
@@ -328,9 +347,8 @@ def alpha_spectrum_auto(pts, allow_parts, margin=1.5):
     fragments), so the automatic default sits 50% above it;
     Concavity 100 requests it exactly (margin = 1)."""
     n = len(pts)
-    tri = _delaunay(pts)
-    s = _ccw_simplices(pts, tri)
-    radii = _circumradii(pts, s)
+    tri, s, radii = precomp if precomp is not None \
+        else _alpha_precomp(pts)
     spectrum = np.unique(radii)
 
     def ok(alpha):
@@ -370,20 +388,30 @@ def alpha_spectrum_auto(pts, allow_parts, margin=1.5):
             hi = mid
         else:
             lo = mid + 1
+    # connectivity is not perfectly monotone in alpha: the bisection
+    # can land on the top of a non-monotone pocket, so scan downward
+    # while ok() still holds (cheap union-find probes) to reach the
+    # true minimum of the contiguous valid run
+    while lo > 0 and ok(spectrum[lo - 1]):
+        lo -= 1
     a = float(spectrum[lo])
     if margin and margin > 1.0:
         a = min(a * float(margin), float(spectrum[-1]))
     return a
 
 
-def alpha_from_concavity(pts, concavity, allow_parts):
+def alpha_from_concavity(pts, concavity, allow_parts,
+                         precomp=None):
     """Map a 0-100 concavity onto the alpha spectrum: 0 = the
     maximum circumradius (the convex hull), 100 = the exactly
-    optimal (smallest valid) alpha, with no stability margin."""
-    tri = _delaunay(pts)
-    s = _ccw_simplices(pts, tri)
-    radii = _circumradii(pts, s)
-    a_min = alpha_spectrum_auto(pts, allow_parts, margin=1.0)
+    optimal (smallest valid) alpha, with no stability margin.
+    ``precomp`` is an optional (tri, s, radii) from
+    :func:`_alpha_precomp`."""
+    if precomp is None:
+        precomp = _alpha_precomp(pts)
+    _tri, _s, radii = precomp
+    a_min = alpha_spectrum_auto(pts, allow_parts, margin=1.0,
+                                precomp=precomp)
     a_max = float(radii.max())
     if concavity <= 0:
         return a_max
@@ -412,6 +440,11 @@ def _knn_walk(pts, k, kd):
     used[start] = True
     cur = start
     prev_ang = math.pi                   # incoming from the east
+    # placed hull edges as coordinates (row j = hull[j] -> hull[j+1]),
+    # grown one row per placed vertex and sliced per candidate
+    # instead of rebuilt
+    edge_arr = np.empty((n + 1, 4))
+    n_edges = 0
     for _step in range(6 * n):
         kk = min(k + 1, n)
         _d, idx = kd.query(pts[cur], k=kk)
@@ -439,18 +472,18 @@ def _knn_walk(pts, k, kd):
             seg = np.array([[pts[cur][0], pts[cur][1],
                              pts[v][0], pts[v][1]]])
             if len(hull) >= 2:
-                m = len(hull)
+                # skip the edge sharing the walk's current vertex,
+                # and (when closing) the one sharing the start
                 e0 = 1 if v == start else 0
-                prior = np.array(
-                    [[pts[hull[j]][0], pts[hull[j]][1],
-                      pts[hull[j + 1]][0], pts[hull[j + 1]][1]]
-                     for j in range(e0, m - 2)])
+                prior = edge_arr[e0:n_edges - 1]
                 if len(prior) and _ig._segs_cross(seg, prior)[0]:
                     continue
             if v == start:
                 return hull
             hull.append(v)
             used[v] = True
+            edge_arr[n_edges] = seg[0]
+            n_edges += 1
             prev_ang = math.atan2(pts[cur][1] - pts[v][1],
                                   pts[cur][0] - pts[v][0])
             cur = v
@@ -462,10 +495,12 @@ def _knn_walk(pts, k, kd):
 
 
 def knn_hull(pts, k_start, messages=None, label=""):
-    """The Moreira-Santos hull, settled on the SMALLEST k at or
-    above ``k_start`` whose walk closes around every point: a fast
-    exponential probe upward on failure, then a binary search back
-    down between the last failure and the first success. (A plain
+    """The Moreira-Santos hull, settled on the smallest k FOUND at
+    or above ``k_start`` whose walk closes around every point: a
+    fast exponential probe upward on failure, then a binary search
+    back down between the last failure and the first success
+    (closure is not perfectly monotone in k, so skipped values are
+    not re-proven). (A plain
     multiplicative retry ladder overshoots, making the final k
     depend on the starting point -- a k = 3 start could end LESS
     concave than a larger start.) Falls back to the convex hull at
@@ -531,9 +566,12 @@ def knn_hull(pts, k_start, messages=None, label=""):
         else:
             lo = mid
     if messages is not None and hi != k0:
+        # "found": closure is not perfectly monotone in k and the
+        # probe can jump values, so this is the smallest k the
+        # search visited that closed -- not a proven global minimum
         _say(messages,
-             "{}closed at k = {} (the smallest workable k at or "
-             "above {}).".format(
+             "{}closed at k = {} (the smallest workable k found at "
+             "or above {}).".format(
                  (label + ": ") if label else "", hi, k0))
     return ring_hi, hi
 
@@ -592,8 +630,10 @@ def run_concave_hull(in_features, method, out_features,
     is_shp = _ll._is_shp_dest(out_features)
     case_plan = None
     if case_field not in (None, ""):
-        case_plan = _cw._transfer_plan(in_features, [case_field],
-                                       is_shp, messages)
+        case_plan = _cw._transfer_plan(
+            in_features, [case_field], is_shp, messages,
+            fixed_names={"method", "npoints", "param_m", "k_used",
+                         "parts", "holes", "area_m2", "perim_m"})
         if not case_plan:
             case_field = None
 
@@ -633,9 +673,15 @@ def run_concave_hull(in_features, method, out_features,
                   "needed; skipped.".format(
                       label, len(raw), "" if len(raw) == 1 else "s"))
             continue
-        # working projection: per-group AEQD for geographic inputs
+        # working projection: per-group AEQD for geographic inputs.
+        # The center longitude is a CIRCULAR mean (atan2 of summed
+        # unit vectors), so a group straddling the antimeridian gets
+        # a center near +/-180, not a bogus one near 0
         if geographic:
-            cen = raw.mean(axis=0)
+            lam = np.radians(raw[:, 0])
+            lon0 = math.degrees(math.atan2(
+                float(np.sin(lam).sum()), float(np.cos(lam).sum())))
+            cen = (lon0, float(raw[:, 1].mean()))
             wsr, _c = _pa._working_sr(arcpy.PointGeometry(
                 arcpy.Point(float(cen[0]), float(cen[1])), out_sr))
             import random_points as _rp
@@ -670,6 +716,8 @@ def run_concave_hull(in_features, method, out_features,
         rings = []
         param_m = None
         k_used = None
+        alpha_pre = None
+        a_work = None
         if method == METHOD_CHI:
             if chi_length not in (None, "", 0):
                 l_work = float(chi_length) * _LIN_M[linear_units] \
@@ -692,14 +740,18 @@ def run_concave_hull(in_features, method, out_features,
                 rings = [ring]
             param_m = l_work * unit_m
         elif method == METHOD_ALPHA:
+            alpha_pre = _alpha_precomp(pts)
             if alpha_radius not in (None, "", 0):
                 a_work = float(alpha_radius) * _LIN_M[linear_units] \
                     / unit_m
             elif conc is not None:
-                a_work = alpha_from_concavity(pts, conc, allow_parts)
+                a_work = alpha_from_concavity(pts, conc, allow_parts,
+                                              precomp=alpha_pre)
             else:
-                a_work = alpha_spectrum_auto(pts, allow_parts)
-            rings, _area = alpha_shape(pts, a_work)
+                a_work = alpha_spectrum_auto(pts, allow_parts,
+                                             precomp=alpha_pre)
+            rings, _area = alpha_shape(pts, a_work,
+                                       precomp=alpha_pre)
             param_m = a_work * unit_m
         else:
             if k_neighbors not in (None, "", 0):
@@ -715,9 +767,23 @@ def run_concave_hull(in_features, method, out_features,
             if ring is not None:
                 rings = [ring]
         if not rings:
-            _warn(messages,
-                  "{}: no hull could be built (degenerate or "
-                  "collinear points) -- skipped.".format(label))
+            r_min = (float(alpha_pre[2].min())
+                     if alpha_pre is not None and len(alpha_pre[2])
+                     else None)
+            if (method == METHOD_ALPHA and a_work is not None
+                    and r_min is not None and a_work < r_min):
+                # the radius kept no triangles -- that is a parameter
+                # problem, not degenerate points
+                _warn(messages,
+                      "{}: alpha {:g} m is smaller than the "
+                      "smallest triangle circumradius ({:g} m) -- "
+                      "no triangle qualifies; increase the "
+                      "radius. Skipped.".format(
+                          label, a_work * unit_m, r_min * unit_m))
+            else:
+                _warn(messages,
+                      "{}: no hull could be built (degenerate or "
+                      "collinear points) -- skipped.".format(label))
             continue
         results.append((key, [r + c0 for r in rings], wsr, unit_m,
                         len(raw), param_m, k_used))

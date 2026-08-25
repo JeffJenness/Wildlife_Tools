@@ -351,19 +351,27 @@ _FIXED_OUT = {"line_id", "src_fid", "part", "istrunk", "length_m",
               "seg_id", "from_m", "to_m"}
 
 
-def _transfer_plan(in_features, requested, any_shp, messages):
+def _transfer_plan(in_features, requested, any_shp, messages,
+                   fixed_names=None):
     """[(source name, output name, esri type, text length)] for the
     requested transfer fields, in order. OID fields transfer as LONG;
     reserved names (OBJECTID, Shape_Length, ...) and names colliding
-    with the tool's own output fields are renamed Src_<name>
+    with the CALLING tool's own output fields are renamed Src_<name>
     (truncated and uniquified for shapefiles' 10-character limit);
-    geometry/blob/raster fields cannot transfer and are reported."""
+    geometry/blob/raster fields cannot transfer and are reported.
+    ``fixed_names`` is the calling tool's own output-field set
+    (lower-case); it defaults to the centerline tool's for
+    backward compatibility -- every borrowing tool must pass its
+    own, or transferred fields named like its outputs collide at
+    AddFields time."""
     import arcpy
 
     if not requested:
         return []
+    fixed = {str(n).lower() for n in fixed_names} \
+        if fixed_names is not None else set(_FIXED_OUT)
     have = {f.name.lower(): f for f in arcpy.ListFields(in_features)}
-    used = set(_FIXED_OUT) | _RESERVED_OUT
+    used = fixed | _RESERVED_OUT
     plan = []
     for name in requested:
         f = have.get(str(name).lower())
@@ -379,7 +387,7 @@ def _transfer_plan(in_features, requested, any_shp, messages):
             else _vt._TYPE_MAP.get(f.type, "TEXT")
         out = f.name
         if out.lower() in _RESERVED_OUT \
-                or out.lower() in _FIXED_OUT:
+                or out.lower() in fixed:
             out = "Src_" + f.name
         if any_shp:
             out = out[:10]
@@ -582,6 +590,17 @@ def run_centerline(in_features, out_lines, mode=None,
                              for a, b in zip(ch[:-1], ch[1:])}
                     trunk_flags.append(bool(pairs & te_set))
 
+            # vertex degrees ONCE per part, from the edge set the
+            # chains were actually built from -- in skeleton mode the
+            # PRUNED set, so branch tips exposed by spur pruning
+            # count as free tips (degree 1) and extend properly
+            deg_end = None
+            if extend_ends:
+                deg_src = edges if mode == MODE_TRUNK else pruned
+                deg_end = np.bincount(
+                    np.asarray(deg_src, dtype=np.int64).ravel(),
+                    minlength=len(verts))
+
             for ch, is_trunk in zip(chain_list, trunk_flags):
                 if len(ch) < 2:
                     continue
@@ -595,15 +614,11 @@ def run_centerline(in_features, out_lines, mode=None,
                     xy = smooth_chain(xy, sm, poly_edges, bands)
                 ext0 = ext1 = 0.0
                 if extend_ends and not closed:
-                    deg_end = {}
                     # only free tips (chain ends that are skeleton
                     # leaves) get extended -- junction ends stay put
-                    for k2, (u, v) in enumerate(edges):
-                        for w2 in (int(u), int(v)):
-                            deg_end[w2] = deg_end.get(w2, 0) + 1
                     for at_start, vidx in ((True, int(ch[0])),
                                            (False, int(ch[-1]))):
-                        if deg_end.get(vidx, 0) != 1:
+                        if deg_end[vidx] != 1:
                             continue
                         tip = extend_to_boundary(
                             xy, poly_edges, float(clearance[vidx]),

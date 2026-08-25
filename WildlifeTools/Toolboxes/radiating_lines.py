@@ -66,12 +66,18 @@ def _layer_list(spec):
     return [spec]
 
 
-def _blocker_edges(layers, densify_len, out_sr, messages):
+def _blocker_edges(layers, densify_m, out_sr, messages):
     """One (E, 4) edge array from the barrier layers (polylines and
     polygons; layer selections honored; true curves densified), with
     every edge's coordinates brought into ``out_sr`` -- each layer is
     projected individually, so the barriers may live in any mix of
-    coordinate systems."""
+    coordinate systems. ``densify_m`` is the densify floor in
+    METERS; it is converted into each layer's own units before the
+    densify call (densify runs BEFORE reprojection, so a floor
+    expressed in another CS's units would collapse curves in a
+    mixed-CS layer -- e.g. 10 "meters" applied as 10 degrees turns a
+    circular lake into its 2-3 arc endpoints and it stops
+    blocking)."""
     import arcpy
     import json
 
@@ -86,6 +92,17 @@ def _blocker_edges(layers, densify_len, out_sr, messages):
                  "Barrier layer {}: an active selection limits it to "
                  "{} of {} features.".format(
                      os.path.basename(str(lyr)), n_sel, n_total))
+        lsr0 = arcpy.Describe(lyr).spatialReference
+        if lsr0 is not None and lsr0.type == "Geographic":
+            lyr_units_per_m = 1.0 / 111320.0
+        else:
+            try:
+                mpu = float(getattr(lsr0, "metersPerUnit", 1.0)
+                            or 1.0)
+            except Exception:                                    # noqa: BLE001
+                mpu = 1.0
+            lyr_units_per_m = 1.0 / mpu
+        floor_lyr = densify_m * lyr_units_per_m
         segs = []
         with arcpy.da.SearchCursor(lyr, ["SHAPE@"]) as cur:
             for (g,) in cur:
@@ -93,7 +110,7 @@ def _blocker_edges(layers, densify_len, out_sr, messages):
                     continue
                 n_feat += 1
                 if getattr(g, "hasCurves", False):
-                    d = max(g.length / 500.0, densify_len)
+                    d = max(g.length / 500.0, floor_lyr)
                     try:
                         g = g.densify("DISTANCE", d, d)
                     except Exception:                            # noqa: BLE001
@@ -184,7 +201,10 @@ def run_radiating_lines(points, n_lines=None, bearing_interval=None,
     plan = _cw._transfer_plan(
         points, transfer_fields,
         _ll._is_shp_dest(out_lines) or _ll._is_shp_dest(out_points),
-        messages)
+        messages,
+        fixed_names={"src_fid", "origin_n", "bearing", "length_m",
+                     "blocked", "org_x", "org_y", "end_x", "end_y",
+                     "location", "x_coord", "y_coord"})
     fields = [p[0] for p in plan]
 
     n_total, n_sel, has_sel = _mh.selection_info(points, str(points))
@@ -203,11 +223,9 @@ def run_radiating_lines(points, n_lines=None, bearing_interval=None,
             "The points input has no features (empty dataset, or an "
             "active selection selecting nothing).")
 
-    densify_len = (length_m / 500.0) / (111000.0 if geographic
-                                        else unit_m)
     blockers = _layer_list(block_lines) + _layer_list(block_polygons)
     edges_nat, n_barrier = _blocker_edges(
-        blockers, densify_len, out_sr, messages)
+        blockers, length_m / 500.0, out_sr, messages)
     blocking = len(edges_nat) > 0
     if blocking:
         _say(messages,
@@ -223,177 +241,229 @@ def run_radiating_lines(points, n_lines=None, bearing_interval=None,
     _mh.phase_advance()
 
     import random_points as _rp
-    line_rows = []
-    point_rows = []
-    for si, (oid, pgeom, attrs) in enumerate(pts):
-        p0 = pgeom.firstPoint
-        px, py = float(p0.X), float(p0.Y)
-        start = float(rng.uniform(0.0, interval)) \
-            if randomize_first else 0.0
-        bearings = (start + interval * np.arange(k)) % 360.0
-        if geographic:
-            wsr, _c = _pa._working_sr(
-                arcpy.PointGeometry(arcpy.Point(px, py), out_sr))
-            sx = sy = 0.0
-            cap = length_m
-            to_m = 1.0
-            if blocking:
-                rlat = length_m / 109000.0
-                rlon = length_m / (109000.0 * max(
-                    math.cos(math.radians(min(abs(py), 89.0))),
-                    0.05))
-                m = ~((np.maximum(edges_nat[:, 0], edges_nat[:, 2])
-                       < px - rlon)
-                      | (np.minimum(edges_nat[:, 0],
-                                    edges_nat[:, 2]) > px + rlon)
-                      | (np.maximum(edges_nat[:, 1],
-                                    edges_nat[:, 3]) < py - rlat)
-                      | (np.minimum(edges_nat[:, 1],
-                                    edges_nat[:, 3]) > py + rlat))
-                e_sub = edges_nat[m]
-                if len(e_sub):
-                    a = _rp._project_xy(e_sub[:, :2], out_sr, wsr)
-                    b = _rp._project_xy(e_sub[:, 2:], out_sr, wsr)
-                    e_loc = np.column_stack([a, b])
-                else:
-                    e_loc = np.zeros((0, 4))
-            else:
-                e_loc = np.zeros((0, 4))
-        else:
-            wsr = out_sr
-            sx, sy = px, py
-            cap = length_m / unit_m
-            to_m = unit_m
-            if blocking:
-                r_nat = cap
-                m = ~((np.maximum(edges_nat[:, 0], edges_nat[:, 2])
-                       < px - r_nat)
-                      | (np.minimum(edges_nat[:, 0],
-                                    edges_nat[:, 2]) > px + r_nat)
-                      | (np.maximum(edges_nat[:, 1],
-                                    edges_nat[:, 3]) < py - r_nat)
-                      | (np.minimum(edges_nat[:, 1],
-                                    edges_nat[:, 3]) > py + r_nat))
-                e_loc = edges_nat[m]
-            else:
-                e_loc = np.zeros((0, 4))
-        if len(e_loc):
-            dists, capped = _ll.radial_fetch(sx, sy, bearings, e_loc,
-                                             cap)
-            blocked = dists < cap - 1e-9
-        else:
-            dists = np.full(k, cap)
-            blocked = np.zeros(k, dtype=bool)
-        dists_m = dists * to_m
+    if blocking:
+        # the barrier edges never change from origin to origin:
+        # hoist their per-edge extremes out of the point loop
+        e_xmin = np.minimum(edges_nat[:, 0], edges_nat[:, 2])
+        e_xmax = np.maximum(edges_nat[:, 0], edges_nat[:, 2])
+        e_ymin = np.minimum(edges_nat[:, 1], edges_nat[:, 3])
+        e_ymax = np.maximum(edges_nat[:, 1], edges_nat[:, 3])
 
-        brad = np.radians(bearings)
-        exs = sx + dists * np.sin(brad)
-        eys = sy + dists * np.cos(brad)
-        # endpoint coordinates in the OUTPUT coordinate system
-        if geographic:
-            ends = _rp._project_xy(np.column_stack([exs, eys]), wsr,
-                                   out_sr)
-        else:
-            ends = np.column_stack([exs, eys])
-        for j in range(k):
-            ex, ey = float(ends[j, 0]), float(ends[j, 1])
-            if out_lines:
-                shp = arcpy.Polyline(arcpy.Array(
-                    [arcpy.Point(px, py), arcpy.Point(ex, ey)]),
-                    out_sr)
-                line_rows.append(tuple(
-                    [shp, oid, j + 1, float(bearings[j]),
-                     float(dists_m[j]), int(bool(blocked[j])),
-                     px, py, ex, ey] + list(attrs)))
-            if out_points:
-                point_rows.append(tuple(
-                    [arcpy.PointGeometry(arcpy.Point(ex, ey),
-                                         out_sr),
-                     oid, j + 1, "End Point", float(dists_m[j]),
-                     float(bearings[j]), ex, ey] + list(attrs)))
-        if out_points:
-            point_rows.append(tuple(
-                [arcpy.PointGeometry(arcpy.Point(px, py), out_sr),
-                 oid, 0, "Origin", None, None, px, py]
-                + list(attrs)))
-        _mh.phase_step(si + 1, len(pts))
-    _mh.phase_advance()
-
+    # the outputs are created and their insert cursors opened up
+    # front so each point's rows stream straight to disk -- a big run
+    # once accumulated every arcpy geometry in RAM before the first
+    # insert
     out_names = [p[1] for p in plan]
     xfer_rows = [[out, ftype,
                   ("Source field " + src) if out != src else src,
                   flen, "", ""] for src, out, ftype, flen in plan]
+    def _ws_of(path):
+        """The dataset's WORKSPACE (the geodatabase itself for a
+        feature-dataset path, else the parent folder/gdb)."""
+        ws = os.path.dirname(str(path))
+        while ws and _mh.in_gdb_container(ws) \
+                and not _mh.is_gdb_workspace(ws):
+            ws = os.path.dirname(ws)
+        return os.path.normcase(ws)
+
     primary = None
-    if out_lines:
-        out_lines = _ll._make_fc(out_lines, "POLYLINE", out_sr)
-        arcpy.management.AddFields(out_lines, [
-            ["Src_FID", "LONG", "Origin point Object ID", "", "", ""],
-            ["Origin_N", "LONG", "Line number around its origin",
-             "", "", ""],
-            ["Bearing", "DOUBLE", "Azimuth (degrees)", "", "", ""],
-            ["Length_m", "DOUBLE", "Line length (m)", "", "", ""],
-            ["Blocked", "SHORT", "1 = stopped at a barrier",
-             "", "", ""],
-            ["Org_X", "DOUBLE", "Origin X", "", "", ""],
-            ["Org_Y", "DOUBLE", "Origin Y", "", "", ""],
-            ["End_X", "DOUBLE", "End X", "", "", ""],
-            ["End_Y", "DOUBLE", "End Y", "", "", ""]] + xfer_rows)
-        with arcpy.da.InsertCursor(
+    ins_l = ins_p = edit = None
+    is_shp_p = False
+    n_l = n_p = n_blocked = 0
+    try:
+        if out_lines:
+            out_lines = _ll._make_fc(out_lines, "POLYLINE", out_sr)
+            arcpy.management.AddFields(out_lines, [
+                ["Src_FID", "LONG", "Origin point Object ID",
+                 "", "", ""],
+                ["Origin_N", "LONG", "Line number around its origin",
+                 "", "", ""],
+                ["Bearing", "DOUBLE", "Azimuth (degrees)",
+                 "", "", ""],
+                ["Length_m", "DOUBLE", "Line length (m)", "", "", ""],
+                ["Blocked", "SHORT", "1 = stopped at a barrier",
+                 "", "", ""],
+                ["Org_X", "DOUBLE", "Origin X", "", "", ""],
+                ["Org_Y", "DOUBLE", "Origin Y", "", "", ""],
+                ["End_X", "DOUBLE", "End X", "", "", ""],
+                ["End_Y", "DOUBLE", "End Y", "", "", ""]] + xfer_rows)
+            primary = out_lines
+        if out_points:
+            out_points = _ll._make_fc(out_points, "POINT", out_sr)
+            arcpy.management.AddFields(out_points, [
+                ["Src_FID", "LONG", "Origin point Object ID",
+                 "", "", ""],
+                ["Origin_N", "LONG",
+                 "Point number around its origin (0 = the origin)",
+                 "", "", ""],
+                ["Location", "TEXT", "Origin / End Point",
+                 10, "", ""],
+                ["Length_m", "DOUBLE",
+                 "Distance from the origin (m)", "", "", ""],
+                ["Bearing", "DOUBLE",
+                 "Azimuth from the origin (degrees)", "", "", ""],
+                ["X_Coord", "DOUBLE", "X", "", "", ""],
+                ["Y_Coord", "DOUBLE", "Y", "", "", ""]] + xfer_rows)
+            is_shp_p = str(out_points).lower().endswith(".shp")
+            if primary is None:
+                primary = out_points
+        if out_lines and out_points \
+                and _ws_of(out_lines) == _ws_of(out_points):
+            # two simultaneous insert cursors on ONE workspace need
+            # an edit session (a file geodatabase allows a single
+            # write transaction at a time -- the second cursor's
+            # first insert raises "workspace already in transaction
+            # mode"); workspaces that refuse an edit session take
+            # concurrent cursors as they are
+            try:
+                edit = arcpy.da.Editor(_ws_of(out_lines))
+                edit.startEditing(False, False)
+                edit.startOperation()
+            except Exception:                                    # noqa: BLE001
+                edit = None
+        if out_lines:
+            ins_l = arcpy.da.InsertCursor(
                 out_lines,
                 ["SHAPE@", "Src_FID", "Origin_N", "Bearing",
                  "Length_m", "Blocked", "Org_X", "Org_Y", "End_X",
-                 "End_Y"] + out_names) as ins:
-            for row in line_rows:
-                ins.insertRow(row)
-        primary = out_lines
-    if out_points:
-        out_points = _ll._make_fc(out_points, "POINT", out_sr)
-        arcpy.management.AddFields(out_points, [
-            ["Src_FID", "LONG", "Origin point Object ID", "", "", ""],
-            ["Origin_N", "LONG",
-             "Point number around its origin (0 = the origin)",
-             "", "", ""],
-            ["Location", "TEXT", "Origin / End Point", 10, "", ""],
-            ["Length_m", "DOUBLE", "Distance from the origin (m)",
-             "", "", ""],
-            ["Bearing", "DOUBLE", "Azimuth from the origin (degrees)",
-             "", "", ""],
-            ["X_Coord", "DOUBLE", "X", "", "", ""],
-            ["Y_Coord", "DOUBLE", "Y", "", "", ""]] + xfer_rows)
-        is_shp = str(out_points).lower().endswith(".shp")
-        with arcpy.da.InsertCursor(
+                 "End_Y"] + out_names)
+        if out_points:
+            ins_p = arcpy.da.InsertCursor(
                 out_points,
                 ["SHAPE@", "Src_FID", "Origin_N", "Location",
                  "Length_m", "Bearing", "X_Coord",
-                 "Y_Coord"] + out_names) as ins:
-            for row in point_rows:
-                row = list(row)
-                if is_shp:
-                    # the classic extension wrote -999 for the
-                    # origin's distance/bearing; shapefiles cannot
-                    # hold nulls, so the convention lives on there
-                    if row[4] is None:
-                        row[4] = -999.0
-                    if row[5] is None:
-                        row[5] = -999.0
-                ins.insertRow(tuple(row))
-        if primary is None:
-            primary = out_points
+                 "Y_Coord"] + out_names)
 
-    n_l = len(line_rows)
-    n_p = len(point_rows)
+        for si, (oid, pgeom, attrs) in enumerate(pts):
+            p0 = pgeom.firstPoint
+            px, py = float(p0.X), float(p0.Y)
+            start = float(rng.uniform(0.0, interval)) \
+                if randomize_first else 0.0
+            bearings = (start + interval * np.arange(k)) % 360.0
+            if geographic:
+                wsr, _c = _pa._working_sr(
+                    arcpy.PointGeometry(arcpy.Point(px, py), out_sr))
+                sx = sy = 0.0
+                cap = length_m
+                to_m = 1.0
+                if blocking:
+                    rlat = length_m / 109000.0
+                    rlon = length_m / (109000.0 * max(
+                        math.cos(math.radians(min(abs(py), 89.0))),
+                        0.05))
+                    lat_ok = ~((e_ymax < py - rlat)
+                               | (e_ymin > py + rlat))
+                    # the cosine clamps UNDER-cover the true
+                    # longitude reach near the poles, and near the
+                    # antimeridian the window would have to wrap
+                    # across the 180 seam: in either case fall back
+                    # to the latitude band alone for this point
+                    need = length_m / (111320.0 * max(
+                        math.cos(math.radians(abs(py))), 1e-12))
+                    if (abs(py) > 87.0 or need > rlon
+                            or px + rlon > 180.0
+                            or px - rlon < -180.0):
+                        m = lat_ok
+                    else:
+                        m = lat_ok & ~((e_xmax < px - rlon)
+                                       | (e_xmin > px + rlon))
+                    e_sub = edges_nat[m]
+                    if len(e_sub):
+                        a = _rp._project_xy(e_sub[:, :2], out_sr,
+                                            wsr)
+                        b = _rp._project_xy(e_sub[:, 2:], out_sr,
+                                            wsr)
+                        e_loc = np.column_stack([a, b])
+                    else:
+                        e_loc = np.zeros((0, 4))
+                else:
+                    e_loc = np.zeros((0, 4))
+            else:
+                wsr = out_sr
+                sx, sy = px, py
+                cap = length_m / unit_m
+                to_m = unit_m
+                if blocking:
+                    r_nat = cap
+                    m = ~((e_xmax < px - r_nat)
+                          | (e_xmin > px + r_nat)
+                          | (e_ymax < py - r_nat)
+                          | (e_ymin > py + r_nat))
+                    e_loc = edges_nat[m]
+                else:
+                    e_loc = np.zeros((0, 4))
+            if len(e_loc):
+                dists, capped = _ll.radial_fetch(sx, sy, bearings,
+                                                 e_loc, cap)
+                blocked = dists < cap - 1e-9
+            else:
+                dists = np.full(k, cap)
+                blocked = np.zeros(k, dtype=bool)
+            dists_m = dists * to_m
+
+            brad = np.radians(bearings)
+            exs = sx + dists * np.sin(brad)
+            eys = sy + dists * np.cos(brad)
+            # endpoint coordinates in the OUTPUT coordinate system
+            if geographic:
+                ends = _rp._project_xy(np.column_stack([exs, eys]),
+                                       wsr, out_sr)
+            else:
+                ends = np.column_stack([exs, eys])
+            for j in range(k):
+                ex, ey = float(ends[j, 0]), float(ends[j, 1])
+                if ins_l is not None:
+                    shp = arcpy.Polyline(arcpy.Array(
+                        [arcpy.Point(px, py), arcpy.Point(ex, ey)]),
+                        out_sr)
+                    ins_l.insertRow(tuple(
+                        [shp, oid, j + 1, float(bearings[j]),
+                         float(dists_m[j]), int(bool(blocked[j])),
+                         px, py, ex, ey] + list(attrs)))
+                    n_l += 1
+                    if blocked[j]:
+                        n_blocked += 1
+                if ins_p is not None:
+                    ins_p.insertRow(tuple(
+                        [arcpy.PointGeometry(arcpy.Point(ex, ey),
+                                             out_sr),
+                         oid, j + 1, "End Point", float(dists_m[j]),
+                         float(bearings[j]), ex, ey] + list(attrs)))
+                    n_p += 1
+            if ins_p is not None:
+                # the classic extension wrote -999 for the origin's
+                # distance/bearing; shapefiles cannot hold nulls, so
+                # the convention lives on there
+                miss = -999.0 if is_shp_p else None
+                ins_p.insertRow(tuple(
+                    [arcpy.PointGeometry(arcpy.Point(px, py),
+                                         out_sr),
+                     oid, 0, "Origin", miss, miss, px, py]
+                    + list(attrs)))
+                n_p += 1
+            _mh.phase_step(si + 1, len(pts))
+    finally:
+        if ins_l is not None:
+            del ins_l
+        if ins_p is not None:
+            del ins_p
+        if edit is not None:
+            try:
+                edit.stopOperation()
+                edit.stopEditing(True)
+            except Exception:                                    # noqa: BLE001
+                pass
+    _mh.phase_advance()
+
     _say(messages, "{}{}{} written.".format(
         "{:,} radiating lines".format(n_l) if out_lines else "",
         " and " if (out_lines and out_points) else "",
         "{:,} points ({:,} origins + {:,} end points)".format(
             n_p, len(pts), n_p - len(pts)) if out_points else ""))
-    if blocking:
-        n_b = sum(1 for r in line_rows if r[5] == 1) if out_lines \
-            else None
-        if n_b is not None:
-            _say(messages,
-                 "{:,} of the lines stopped at a barrier.".format(
-                     n_b))
+    if blocking and out_lines:
+        _say(messages,
+             "{:,} of the lines stopped at a barrier.".format(
+                 n_blocked))
 
     for path, what in ((out_lines if out_lines else None,
                         "radiating lines"),

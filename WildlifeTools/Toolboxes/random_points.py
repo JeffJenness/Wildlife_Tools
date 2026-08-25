@@ -54,6 +54,7 @@ import os
 
 import numpy as np
 
+import clip_tools as _ct
 import mahalanobis as _mh
 import patch_analysis as _pa
 import repeating_shapes as _rs
@@ -369,19 +370,40 @@ class _NetworkSpacing:
             clusters = {}
             for i in range(len(eps)):
                 clusters.setdefault(find(i), []).append(i)
+            cl = []
             for idxs in clusters.values():
-                locs = [(eps[i][0], eps[i][1]) for i in idxs]
-                cx = float(np.mean([eps[i][2] for i in idxs]))
-                cy = float(np.mean([eps[i][3] for i in idxs]))
+                cl.append(([(eps[i][0], eps[i][1]) for i in idxs],
+                           float(np.mean([eps[i][2] for i in idxs])),
+                           float(np.mean([eps[i][3] for i in idxs]))))
+            # T/Y junction candidates from a KD-tree over the cluster
+            # centers, queried once per part with that part's own bbox
+            # half-diagonal (a point inside a bbox is always within
+            # the half-diagonal of its center) -- instead of testing
+            # every cluster against every part, O(parts^2) on big
+            # networks where nearly every endpoint is a cluster
+            cand = [[] for _ in cl]
+            if cl:
+                ctree = cKDTree(np.array([(cx, cy)
+                                          for _l, cx, cy in cl]))
+                for uid in info:
+                    b = bboxes[uid]
+                    hx = 0.5 * (b[2] - b[0])
+                    hy = 0.5 * (b[3] - b[1])
+                    for k in ctree.query_ball_point(
+                            (b[0] + hx, b[1] + hy),
+                            math.hypot(hx, hy)):
+                        cand[k].append(uid)
+            for (locs, cx, cy), near in zip(cl, cand):
                 on = {u for u, _s in locs}
                 # T/Y junctions: this point touching another part's
                 # interior
-                for uid, (a, cum) in info.items():
+                for uid in near:
                     if uid in on:
                         continue
                     b = bboxes[uid]
                     if not (b[0] <= cx <= b[2] and b[1] <= cy <= b[3]):
                         continue
+                    a, cum = info[uid]
                     d, s_pr = self._project(a, cum, cx, cy)
                     if d <= tol:
                         locs.append((uid, s_pr))
@@ -703,6 +725,8 @@ class _RasterPool:
                               max(1, int(6.0e7 // max(self.ncols, 1))))
         self.nblocks = math.ceil(self.nrows / self.block_rows)
         self._cache = {}
+        self._cells = {}     # (block, stratum) -> flat candidates
+        self._cells_n = 0    # total cached candidate cells
         self._gap_m = gap_m
         if gap_m and self.nblocks > 1:
             raise arcpy.ExecuteError(
@@ -797,6 +821,8 @@ class _RasterPool:
         import arcpy
 
         if bidx in self._cache:
+            if self.nblocks > 1:           # LRU: refresh recency
+                self._cache[bidx] = self._cache.pop(bidx)
             return self._cache[bidx]
         r0 = bidx * self.block_rows
         nr = min(self.block_rows, self.nrows - r0)
@@ -830,13 +856,51 @@ class _RasterPool:
             allowed = allowed & (dist >= self._gap_m)
         rw = self._row_areas(r0, nr)
         out = (arr, allowed, rw)
-        if self.nblocks == 1 or self.nrows * self.ncols <= 6.0e7:
-            self._cache[bidx] = out
+        self._cache[bidx] = out
+        if self.nblocks > 1 and self.nrows * self.ncols > 6.0e7:
+            # small LRU of recently read blocks -- the multinomial
+            # tends to revisit the same blocks batch after batch
+            while len(self._cache) > 3:
+                self._cache.pop(next(iter(self._cache)))
         return out
+
+    def _stratum_cells(self, bidx, si):
+        """Cached flat candidates for one (block, stratum): (rows,
+        cols, cell values, normalized cumulative area weights). Built
+        once -- ``allowed`` never changes after __init__ -- so the
+        min-spacing rejection loop stops rebuilding the mask/nonzero/
+        normalize over the whole block for every batch. Bounded by
+        total candidate count, oldest entries evicted first."""
+        key = (bidx, si)
+        hit = self._cells.get(key)
+        if hit is not None:
+            self._cells[key] = self._cells.pop(key)    # LRU refresh
+            return hit
+        arr, allowed, rw = self._block(bidx)
+        m2 = allowed & self._member(arr, bidx, self.strata[si])
+        rows, cols = np.nonzero(m2)
+        if len(rows):
+            p = rw[rows]
+            p = p / p.sum()
+            cdf = p.cumsum()
+            cdf /= cdf[-1]
+        else:
+            cdf = np.empty(0)
+        hit = (rows.astype(np.int32), cols.astype(np.int32),
+               arr[rows, cols], cdf)
+        self._cells[key] = hit
+        self._cells_n += len(rows)
+        while self._cells_n > 1.2e8 and len(self._cells) > 1:
+            old = next(iter(self._cells))
+            self._cells_n -= len(self._cells.pop(old)[0])
+        return hit
 
     def draw(self, si, m, rng):
         """m candidate points for stratum index si: (xy in raster CS,
-        cell Value per point)."""
+        cell Value per point). Cells are picked by searchsorted over
+        the cached CDF with one uniform draw each -- numpy's own
+        weighted replace=True ``Generator.choice`` algorithm, so the
+        picks (and the RNG stream) are identical to it."""
         w = self.W[:, si]
         tot = w.sum()
         if tot <= 0 or m <= 0:
@@ -845,29 +909,48 @@ class _RasterPool:
         XY, VAL = [], []
         for bidx in np.flatnonzero(per_block):
             k = int(per_block[bidx])
-            arr, allowed, rw = self._block(bidx)
-            m2 = allowed & self._member(arr, bidx, self.strata[si])
-            rows, cols = np.nonzero(m2)
+            rows, cols, vals, cdf = self._stratum_cells(bidx, si)
             if not len(rows):
                 continue
-            p = rw[rows]
-            p = p / p.sum()
-            pick = rng.choice(len(rows), size=k, replace=True, p=p)
-            rr = rows[pick] + bidx * self.block_rows
-            cc = cols[pick]
+            pick = np.minimum(
+                cdf.searchsorted(rng.random(k), side="right"),
+                len(rows) - 1)
+            rr = rows[pick].astype(np.int64) + bidx * self.block_rows
+            cc = cols[pick].astype(np.int64)
             x = self.xmin + (cc + rng.random(k)) * self.cw
             y = self.ymax - (rr + rng.random(k)) * self.ch
             XY.append(np.column_stack([x, y]))
-            VAL.append(arr[rows[pick], cols[pick]].astype(np.int64))
+            VAL.append(vals[pick].astype(np.int64))
         if not XY:
             return np.empty((0, 2)), np.empty(0, dtype=np.int64)
         return np.vstack(XY), np.concatenate(VAL)
 
 
-def _project_xy(xy, from_sr, to_sr):
+def _geo_transformation(from_sr, to_sr):
+    """The geographic transformation for this datum pair -- the first
+    valid choice from the Geographic Transformations environment, else
+    Esri's own best suggestion -- or None when the datums already
+    match. Resolve ONCE and pass to ``_project_xy``: a bare projectAs
+    between different datums silently skips the datum shift (a NAD27
+    raster written to WGS84 lands ~100-200 m off)."""
+    import arcpy
+
+    try:
+        env_t = [t for t in
+                 str(arcpy.env.geographicTransformations or "")
+                 .split(";") if t]
+        tfm, _fb = _ct.transformation_for(from_sr, to_sr, env_t)
+        return tfm
+    except Exception:                                            # noqa: BLE001
+        return None
+
+
+def _project_xy(xy, from_sr, to_sr, transformation=None):
     """Batch-project (N, 2) coordinates via one multipoint (order is
     preserved; used to test raster candidates' separation in the
-    equal-area working projection)."""
+    equal-area working projection and to write reprojected outputs).
+    ``transformation`` is the datum shift from ``_geo_transformation``
+    (resolved once by the caller), or None when none is needed."""
     import json
 
     import arcpy
@@ -877,13 +960,19 @@ def _project_xy(xy, from_sr, to_sr):
     mp = arcpy.Multipoint(
         arcpy.Array([arcpy.Point(float(x), float(y)) for x, y in xy]),
         from_sr)
-    out = np.asarray(json.loads(mp.projectAs(to_sr).JSON)["points"],
+    prj = mp.projectAs(to_sr, transformation) if transformation \
+        else mp.projectAs(to_sr)
+    out = np.asarray(json.loads(prj.JSON)["points"],
                      dtype=np.float64)[:, :2]
     if len(out) != len(xy):                       # paranoid fallback
         out = np.array([[p.firstPoint.X, p.firstPoint.Y] for p in
-                        (arcpy.PointGeometry(
+                        ((arcpy.PointGeometry(
                             arcpy.Point(float(x), float(y)),
-                            from_sr).projectAs(to_sr)
+                            from_sr).projectAs(to_sr, transformation)
+                          if transformation else
+                          arcpy.PointGeometry(
+                              arcpy.Point(float(x), float(y)),
+                              from_sr).projectAs(to_sr))
                          for x, y in xy)])
     return out
 
@@ -901,6 +990,8 @@ def _sample_raster(pool, ci, need, rng, spacing_grid, attempt_budget,
     n_got = 0
     tried = 0
     dry = 0
+    tfm = _geo_transformation(pool.sr, metric_sr) \
+        if metric_sr is not None else None
     while n_got < need and dry < 30:
         if attempt_budget is not None and tried >= attempt_budget:
             break
@@ -909,7 +1000,8 @@ def _sample_raster(pool, ci, need, rng, spacing_grid, attempt_budget,
         if not len(xy):
             dry += 1
             continue
-        metric = _project_xy(xy, pool.sr, metric_sr) \
+        metric = _project_xy(xy, pool.sr, metric_sr,
+                             transformation=tfm) \
             if metric_sr is not None else xy
         n_got, tried, admitted_any = _admit_batch(
             xy, metric, spacing_grid, got, vals, ex, need, n_got,
@@ -1013,10 +1105,15 @@ def run_random_points(out_fc, boundary=None, extent=None,
                       ("Writing the points...", 2)])
 
     if kind == "raster":
-        if canon_spacing(spacing_type) == SPACING_ALONG \
+        smode = canon_spacing(spacing_type)
+        if smode is None:
+            raise arcpy.ExecuteError(
+                "Unknown spacing-measurement choice: {}".format(
+                    spacing_type))
+        if smode in (SPACING_ALONG, SPACING_NETWORK) \
                 and min_spacing not in (None, "", 0):
             _warn(messages,
-                  "Distance measured along the polyline applies to "
+                  "Along-the-line and network spacing apply to "
                   "polyline areas of interest only -- using absolute "
                   "spatial distance.")
         return _run_raster(out_fc, boundary, desc, strata,
@@ -1374,6 +1471,17 @@ def _run_lines_core(boundary, extent, desc, work_sr, out_sr, strata,
     if has_sel:
         _say(messages, "The line layer has an active selection: {} of "
                        "{} polylines are used.".format(n_sel, n_total))
+    # honor the Extent environment exactly as the polygon and raster
+    # paths do: polylines are clipped to it before their geodesic
+    # lengths enter the allocation weights
+    env_rect = _env_rect(work_sr, out_sr)
+    if env_rect is not None:
+        _say(messages, "Extent environment: the polylines are "
+                       "clipped to it.")
+    try:
+        work_m = float(getattr(work_sr, "metersPerUnit", 1.0) or 1.0)
+    except Exception:                                            # noqa: BLE001
+        work_m = 1.0
     cols = ["OID@", "SHAPE@"]
     if strata == STRATA_IDFIELD:
         cols.append(strata_field)
@@ -1395,12 +1503,20 @@ def _run_lines_core(boundary, extent, desc, work_sr, out_sr, strata,
             pop = 0.0
             if len(cols) > ci:
                 pop = _check_pop(row[ci], population_field)
+            gw = _vt._project_geom(g, work_sr)
+            if env_rect is not None:
+                try:
+                    gw = gw.intersect(env_rect, 2)
+                except Exception:                                # noqa: BLE001
+                    gw = None
+                if gw is None or gw.length <= 0:
+                    continue
             try:
-                lg = abs(g.getLength("GEODESIC", "METERS"))
+                lg = abs(gw.getLength("GEODESIC", "METERS"))
             except Exception:                                    # noqa: BLE001
-                lg = abs(g.length) * m_per_cs
+                lg = abs(gw.length) * work_m
             parts = [(next(_PART_UID), a) for a in
-                     _line_parts(_vt._project_geom(g, work_sr))]
+                     _line_parts(gw)]
             if not parts:
                 continue
             if key not in groups:
@@ -1721,7 +1837,11 @@ def _write_points(out_fc, out_sr, work_sr, reproject, rows, src_field,
 
     total = sum(len(x[0]) for x in rows)
     n_written = 0
-    cols = ["SHAPE@" if reproject else "SHAPE@XY", "Point_ID"]
+    # batch-project each row's coordinates in one call (chunked so a
+    # multipoint never carries millions of vertices), datum shift
+    # resolved once -- not one PointGeometry.projectAs per point
+    tfm = _geo_transformation(work_sr, out_sr) if reproject else None
+    cols = ["SHAPE@XY", "Point_ID"]
     if strat_field:
         cols.append("Stratum")
     if src_field:
@@ -1730,24 +1850,26 @@ def _write_points(out_fc, out_sr, work_sr, reproject, rows, src_field,
         cols.append("Category")
     with arcpy.da.InsertCursor(out_path, cols) as ins:
         for xy, fid, vals, strat in rows:
-            for k in range(len(xy)):
-                n_written += 1
-                x, y = float(xy[k, 0]), float(xy[k, 1])
-                shp = arcpy.PointGeometry(
-                    arcpy.Point(x, y), work_sr).projectAs(out_sr) \
-                    if reproject else (x, y)
-                row = [shp, n_written]
-                if strat_field:
-                    row.append(str(strat)[:64]
-                               if strat is not None else None)
-                if src_field:
-                    row.append(fid)
-                if cat_field:
-                    row.append(int(vals[k]) if vals is not None
-                               else None)
-                ins.insertRow(row)
-                if n_written % 2000 == 0:
-                    _mh.phase_step(n_written, total)
+            for j0 in range(0, len(xy), 100_000):
+                chunk = xy[j0:j0 + 100_000]
+                pts = _project_xy(chunk, work_sr, out_sr,
+                                  transformation=tfm) \
+                    if reproject else chunk
+                for k in range(len(pts)):
+                    n_written += 1
+                    row = [(float(pts[k, 0]), float(pts[k, 1])),
+                           n_written]
+                    if strat_field:
+                        row.append(str(strat)[:64]
+                                   if strat is not None else None)
+                    if src_field:
+                        row.append(fid)
+                    if cat_field:
+                        row.append(int(vals[j0 + k])
+                                   if vals is not None else None)
+                    ins.insertRow(row)
+                    if n_written % 2000 == 0:
+                        _mh.phase_step(n_written, total)
     _say(messages, "{:,} random point{} written{}.".format(
         n_written, "" if n_written == 1 else "s",
         "" if not starved_any

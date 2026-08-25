@@ -132,10 +132,21 @@ def derive_measures(shape_type, measure, value):
     square area e^2; circle radius r -> diameter 2 r, circumference
     2 pi r, area pi r^2. Spacing is independent of circle size and is
     left untouched (returned only when it IS the driving measure).
+
+    A measure the shape does not have raises a clean ValueError naming
+    the valid ones (a square once quietly read ``width`` as an AREA).
     """
     v = float(value)
     if v <= 0:
         raise ValueError("Measures must be positive.")
+    valid = MEASURES_FOR.get(shape_type)
+    if valid is None:
+        raise ValueError("Unknown shape type: {}".format(shape_type))
+    if measure not in valid:
+        raise ValueError(
+            "'{}' is not a size measure of {} -- give one of: "
+            "{}.".format(measure, shape_type.lower(),
+                         ", ".join(valid)))
     if shape_type == HEXAGONS:
         e = {"edge": v, "width": v / math.sqrt(3.0), "diameter": v / 2.0,
              "area": math.sqrt(v / (3.0 * math.sqrt(3.0) / 2.0)),
@@ -182,13 +193,18 @@ def resolve_size(shape_type, area=None, edge=None, height=None,
         return None
 
     if shape_type in (HEXAGONS, SQUARES, TRIANGLES):
-        d = first(("edge", edge), ("width", width),
-                  ("diameter", diameter), ("height", height),
-                  ("area", area))
+        # forward only the measures this shape actually HAS -- a
+        # square given width= must fall through to the clean error
+        # below, not have the value read as some other measure
+        valid = MEASURES_FOR[shape_type]
+        d = first(*[(name, val) for name, val in
+                    (("edge", edge), ("width", width),
+                     ("diameter", diameter), ("height", height),
+                     ("area", area)) if name in valid])
         if d is None or "edge" not in d:
             raise ValueError(
-                "Give any one size measure for the {} (area, edge, "
-                "...).".format(shape_type.lower().rstrip("s")))
+                "Give any one size measure for the {} ({}).".format(
+                    shape_type.lower().rstrip("s"), ", ".join(valid)))
         return {"edge": d["edge"]}
     if shape_type == RECTANGLES:
         if not (width and height):
@@ -264,10 +280,13 @@ def build_lattice(shape_type, size, corners_l):
         w, h = size["width"], size["height"]
         off = size.get("offset", 50.0) / 100.0
         i0, i1, j0, j1 = _index_ranges(corners_l, w, h)
-        # a cumulative offset needs extra columns on the staggered side
-        jmax_abs = max(abs(j0), abs(j1))
-        pad = int(math.ceil(jmax_abs * off)) + 2
-        ii, jj = _grid(i0 - pad, i1 + pad, j0, j1)
+        # the cumulative stagger below is wrapped into [0, w) by the
+        # modulo, so each course shifts right by LESS than one brick:
+        # a fixed two-column margin covers the frame. (A pad derived
+        # from the ABSOLUTE row index j -- which is the raw northing
+        # divided by the brick height, ~39,000 at UTM scale -- once
+        # inflated the candidate grid ~380-fold for nothing.)
+        ii, jj = _grid(i0 - 2, i1 + 2, j0, j1)
         # CUMULATIVE stagger, as the original: each course shifts by
         # offset% of Edge 1 relative to the course below (50 = running
         # bond, 33 = staircase)
@@ -334,7 +353,7 @@ def _rotate(xy, deg, about):
 # ---------------------------------------------------------------------------
 #  vectorized keep tests
 # ---------------------------------------------------------------------------
-def _keep_mask(centers, verts, bnd_edges, bands, policy):
+def _keep_mask(centers, verts, bnd_edges, bands, policy, rings=None):
     n = len(centers)
     e_xmin = np.minimum(bnd_edges[:, 0], bnd_edges[:, 2])
     e_xmax = np.maximum(bnd_edges[:, 0], bnd_edges[:, 2])
@@ -380,9 +399,15 @@ def _keep_mask(centers, verts, bnd_edges, bands, policy):
             touch2[np.isin(idx, todo[cross])] = True
             still = todo[~cross]
             if len(still):
-                b0 = bnd_edges[:1, :2]
+                # no vertex inside and no edge crossed: the shape
+                # either misses the area entirely or SWALLOWS a whole
+                # ring of it -- test one representative vertex PER
+                # RING (an island of a multipart area can lie
+                # entirely inside one big shape)
+                reps = np.array([r[0] for r in rings]) if rings \
+                    else bnd_edges[:1, :2]
                 for si in still:
-                    if _point_in_convex(b0[0], verts[si]):
+                    if _pts_in_convex(reps, verts[si]).any():
                         touch2[np.flatnonzero(idx == si)[0]] = True
             touch = touch | touch2
         keep_b = np.zeros(n, dtype=bool)
@@ -782,8 +807,11 @@ def run_repeating_shapes(shape_type, out_fc, boundary=None, extent=None,
         # arcs) before vertex-walking -- ``rings_of`` walks JSON vertices,
         # so an undensified circle collapses to its arc endpoints
         if getattr(bnd, "hasCurves", False):
+            # only the LINEAR measures set the step: "area" is squared
+            # units and the brick "offset" is a percent, not a length
             dstep = 0.5 * min([v for k, v in size.items()
-                               if k != "area" and v] or [1.0])
+                               if k not in ("area", "offset") and v]
+                              or [1.0])
             try:
                 bnd = bnd.densify("DISTANCE", dstep, dstep)
             except Exception:                                    # noqa: BLE001
@@ -844,7 +872,7 @@ def run_repeating_shapes(shape_type, out_fc, boundary=None, extent=None,
         policy = edge_policy if not is_points else KEEP_CENTER
         keep, border = _keep_mask(centers, verts, bnd_edges, bands,
                                   policy if policy in EDGE_POLICIES
-                                  else KEEP_INTERSECT)
+                                  else KEEP_INTERSECT, rings=rings)
         kept = np.flatnonzero(keep)
         do_clip = (policy == CLIP) and verts is not None
 
@@ -866,22 +894,20 @@ def run_repeating_shapes(shape_type, out_fc, boundary=None, extent=None,
 
     n = 0
     if is_points:
-        pt_field = "SHAPE@" if geographic else "SHAPE@XY"
+        xy = centers[kept]
+        if geographic and len(xy):
+            # one batched projection back to the output CS instead of
+            # a PointGeometry .projectAs round-trip per lattice point
+            import random_points as _rp
+            xy = _rp._project_xy(xy, work_sr, out_sr)
         with arcpy.da.InsertCursor(out_path,
-                                   [pt_field, "Cell_ID"]) as ins:
-            for i in kept:
+                                   ["SHAPE@XY", "Cell_ID"]) as ins:
+            for x, y in xy:
                 n += 1
-                if geographic:
-                    pg = arcpy.PointGeometry(
-                        arcpy.Point(float(centers[i, 0]),
-                                    float(centers[i, 1])),
-                        work_sr).projectAs(out_sr)
-                    ins.insertRow([pg, n])
-                else:
-                    ins.insertRow([(float(centers[i, 0]),
-                                    float(centers[i, 1])), n])
+                ins.insertRow([(float(x), float(y)), n])
     else:
         n_clipped = 0
+        is_shp = str(out_path).lower().endswith(".shp")
         with arcpy.da.InsertCursor(
                 out_path, ["SHAPE@", "Cell_ID", "Area_Ha"]) as ins:
             for j, i in enumerate(kept):
@@ -903,7 +929,9 @@ def run_repeating_shapes(shape_type, out_fc, boundary=None, extent=None,
                 try:
                     ha = geom.getArea("GEODESIC", "HECTARES")
                 except Exception:                                # noqa: BLE001
-                    ha = None
+                    # shapefiles cannot hold nulls (a None insert
+                    # raises), so the classic -999 stands in
+                    ha = -999.0 if is_shp else None
                 ins.insertRow([geom, n, ha])
         if do_clip and n_clipped:
             _say(messages, "{:,} border shape{} clipped to the "

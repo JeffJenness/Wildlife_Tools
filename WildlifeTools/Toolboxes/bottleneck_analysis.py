@@ -157,8 +157,14 @@ def build_medial_graph(rings, boundary_step):
     sites = sample_rings(rings, boundary_step)
     if len(sites) < 8:
         raise ValueError("The corridor boundary is too small to sample.")
-    vor = Voronoi(sites)
-    verts = vor.vertices
+    # center before qhull: at map-scale offsets (UTM false eastings /
+    # northings ~1e6) the lifted-paraboloid arithmetic silently merges
+    # or drops Voronoi vertices (measured: dense boundary rings lose
+    # ~40% of their vertices); Voronoi is translation-equivariant, so
+    # solve about the centroid and shift back
+    mid = sites.mean(axis=0)
+    vor = Voronoi(sites - mid)
+    verts = vor.vertices + mid
     poly_edges = _pa.edges_of(rings)
     bands = _pa.y_bands(poly_edges)
     inside = _pa.points_inside(verts, poly_edges, bands=bands)

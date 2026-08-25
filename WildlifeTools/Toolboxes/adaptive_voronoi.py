@@ -182,6 +182,18 @@ def run_adaptive_voronoi(boundary, out_fc, in_points=None, n_random=None,
              "exact-sphere" if geographic else "planar"))
 
     bnd = _vt._read_boundary(boundary, out_sr, messages)
+    # true-curve boundaries (gdb buffer circles, arcs) serialize as
+    # curveRings, which rings_of cannot parse -- a pure-curve
+    # boundary would come back as ZERO rings and crash below, and a
+    # partly-curved one would silently drop its curved rings.
+    # Densify first, per the standing curve rule.
+    if getattr(bnd, "hasCurves", False):
+        be0 = bnd.extent
+        d = max(math.hypot(be0.width, be0.height) / 500.0, 1e-9)
+        try:
+            bnd = bnd.densify("DISTANCE", d, d)
+        except Exception:                                        # noqa: BLE001
+            pass
 
     # seeds ---------------------------------------------------------------
     seed_fids = None
@@ -196,11 +208,22 @@ def run_adaptive_voronoi(boundary, out_fc, in_points=None, n_random=None,
             "Give either a point feature class or a number of random "
             "points.")
 
-    # geographic: one unwrap window for everything (see voronoi_tools)
+    # geographic: one unwrap window for everything (see voronoi_tools).
+    # lon0 is the CIRCULAR mean of the boundary vertices (an extent
+    # midpoint is meaningless for a dateline-straddling boundary), and
+    # the boundary itself is unwrapped into the same window so the numpy
+    # rings/edges below and the arcpy clip all agree with the points.
     lon0 = 0.0
     if geographic:
-        be = bnd.extent
-        lon0 = 0.5 * (be.XMin + be.XMax)
+        vr = _pa.rings_of(bnd)
+        if vr:
+            lam = np.radians(np.concatenate([r[:, 0] for r in vr]))
+            lon0 = math.degrees(math.atan2(np.sin(lam).mean(),
+                                           np.cos(lam).mean()))
+        else:
+            be = bnd.extent
+            lon0 = 0.5 * (be.XMin + be.XMax)
+        bnd = _vt._unwrap_polygon(bnd, lon0, out_sr)
         if coords is not None:
             coords[:, 0] = _vt._unwrap_lon(coords[:, 0], lon0)
 
@@ -217,6 +240,15 @@ def run_adaptive_voronoi(boundary, out_fc, in_points=None, n_random=None,
     e_xmax = np.maximum(bnd_edges[:, 0], bnd_edges[:, 2])
     e_ymin = np.minimum(bnd_edges[:, 1], bnd_edges[:, 3])
     e_ymax = np.maximum(bnd_edges[:, 1], bnd_edges[:, 3])
+    # ... bucketed by y-band ONCE, so each cell's bbox test sweeps only
+    # the edges of the bands its y-range overlaps instead of all of them
+    bb_bounds = bb_idx = None
+    if len(bnd_edges) >= 64 and bymax > bymin:
+        nbb = int(np.clip(len(bnd_edges) // 24, 8, 256))
+        bb_bounds = np.linspace(bymin, bymax, nbb + 1)
+        bb_idx = [np.flatnonzero((e_ymax >= bb_bounds[b])
+                                 & (e_ymin <= bb_bounds[b + 1]))
+                  for b in range(nbb)]
 
     rng = np.random.default_rng(
         int(random_seed) if random_seed not in (None, "") else None)
@@ -265,9 +297,24 @@ def run_adaptive_voronoi(boundary, out_fc, in_points=None, n_random=None,
         r = np.asarray(ring_pts)
         cxmin, cymin = r[:, 0].min(), r[:, 1].min()
         cxmax, cymax = r[:, 0].max(), r[:, 1].max()
-        hit = ((e_xmin <= cxmax) & (e_xmax >= cxmin)
-               & (e_ymin <= cymax) & (e_ymax >= cymin))
-        if hit.any():
+        hit = False
+        if bb_bounds is None:
+            hit = ((e_xmin <= cxmax) & (e_xmax >= cxmin)
+                   & (e_ymin <= cymax) & (e_ymax >= cymin)).any()
+        elif cymax >= bb_bounds[0] and cymin <= bb_bounds[-1]:
+            b0 = int(np.clip(np.searchsorted(bb_bounds, cymin) - 1,
+                             0, len(bb_idx) - 1))
+            b1 = int(np.clip(np.searchsorted(bb_bounds, cymax) - 1,
+                             0, len(bb_idx) - 1))
+            for b in range(b0, b1 + 1):
+                ii = bb_idx[b]
+                if len(ii) and ((e_xmin[ii] <= cxmax)
+                                & (e_xmax[ii] >= cxmin)
+                                & (e_ymin[ii] <= cymax)
+                                & (e_ymax[ii] >= cymin)).any():
+                    hit = True
+                    break
+        if hit:
             return "border"
         return ("inside"
                 if _pa.points_inside(r[:1], bnd_edges, bands=bands)[0]
@@ -401,12 +448,13 @@ def run_adaptive_voronoi(boundary, out_fc, in_points=None, n_random=None,
                            stop=stop_reason))
 
     rings = _tessellate(coords)
-    out_path = _write_output(out_fc, out_sr, rings, coords, seed_fids,
-                             bnd, bnd_edges, bands,
-                             (e_xmin, e_xmax, e_ymin, e_ymax),
-                             geographic, provenance, messages)
+    out_path, kept = _write_output(out_fc, out_sr, rings, coords,
+                                   seed_fids, bnd, bnd_edges, bands,
+                                   (e_xmin, e_xmax, e_ymin, e_ymax),
+                                   geographic, provenance, messages)
     if out_points:
-        _write_points_fc(out_points, out_sr, coords, seed_fids, messages)
+        _write_points_fc(out_points, out_sr, coords, seed_fids, messages,
+                         kept=kept)
 
     areas_final = []
     with arcpy.da.SearchCursor(out_path, ["Area_Ha"]) as cur:
@@ -454,7 +502,11 @@ def _write_output(out_fc, out_sr, rings, coords, seed_fids, bnd,
 
     fields = ["SHAPE@", "Cell_ID"] \
         + (["Seed_FID"] if seed_fids is not None else []) + ["Area_Ha"]
+    is_shp = out_path.lower().endswith(".shp")
     n = 0
+    kept = []            # indices into rings/coords that got a cell --
+    #                      the points output numbers from THIS list so
+    #                      Cell_ID never desyncs when a cell drops
     with arcpy.da.InsertCursor(out_path, fields) as ins:
         for i, ring in enumerate(rings):
             if not ring:
@@ -476,14 +528,18 @@ def _write_output(out_fc, out_sr, rings, coords, seed_fids, bnd,
                                        bands=bands)[0]:
                 continue
             n += 1
+            kept.append(i)
             vals = [cell, n]
             if seed_fids is not None:
-                vals.append(int(seed_fids[i]) if i < len(seed_fids)
-                            else None)
+                if i < len(seed_fids):
+                    vals.append(int(seed_fids[i]))
+                else:
+                    vals.append(-999 if is_shp else None)
             try:
                 vals.append(cell.getArea("GEODESIC", "HECTARES"))
             except Exception:                                    # noqa: BLE001
-                vals.append(None)
+                # shapefiles cannot store nulls
+                vals.append(-999 if is_shp else None)
             ins.insertRow(vals)
     _say(messages, "{:,} adaptive Voronoi cell{} written.".format(
         n, "" if n == 1 else "s"))
@@ -509,10 +565,14 @@ def _write_output(out_fc, out_sr, rings, coords, seed_fids, bnd,
         md.save()
     except Exception:                                            # noqa: BLE001
         pass
-    return out_path
+    return out_path, kept
 
 
-def _write_points_fc(out_points, out_sr, coords, seed_fids, messages):
+def _write_points_fc(out_points, out_sr, coords, seed_fids, messages,
+                     kept=None):
+    """``kept``: the cell-writer's kept indices into ``coords`` -- the
+    two outputs share IDENTICAL Cell_ID numbering (a clipped-away cell
+    would otherwise desync every later ID and orphan its point)."""
     import arcpy
 
     out_points = str(out_points).replace("/", "\\").rstrip("\\")
@@ -523,18 +583,23 @@ def _write_points_fc(out_points, out_sr, coords, seed_fids, messages):
     res = arcpy.management.CreateFeatureclass(
         ws, name, "POINT", spatial_reference=out_sr)
     path = res.getOutput(0)
+    is_shp = path.lower().endswith(".shp")
     rows = [["Cell_ID", "LONG", "Cell ID", "", "", ""]]
     if seed_fids is not None:
         rows.append(["Seed_FID", "LONG", "Seed point FID", "", "", ""])
     arcpy.management.AddFields(path, rows)
     fields = ["SHAPE@XY", "Cell_ID"] \
         + (["Seed_FID"] if seed_fids is not None else [])
+    idx = list(kept) if kept is not None else list(range(len(coords)))
     with arcpy.da.InsertCursor(path, fields) as ins:
-        for i, (x, y) in enumerate(coords):
-            vals = [(float(x), float(y)), i + 1]
+        for cell_id, i in enumerate(idx, 1):
+            x, y = coords[i]
+            vals = [(float(x), float(y)), cell_id]
             if seed_fids is not None:
-                vals.append(int(seed_fids[i]) if i < len(seed_fids)
-                            else None)
+                if i < len(seed_fids):
+                    vals.append(int(seed_fids[i]))
+                else:
+                    vals.append(-999 if is_shp else None)
             ins.insertRow(vals)
     _say(messages, "Final center points written: {}".format(path))
     return path
