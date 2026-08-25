@@ -76,6 +76,7 @@ import centerline_width  # noqa: E402
 import longest_line  # noqa: E402
 import radiating_lines  # noqa: E402
 import inscribed_geometry  # noqa: E402
+import concave_hull  # noqa: E402
 import select_random  # noqa: E402
 import weighted_stats  # noqa: E402
 import raster_extremes  # noqa: E402
@@ -346,7 +347,7 @@ class Toolbox(object):
                       RepeatingShapes, RandomPointGenerator,
                       RandomSampleArrayGenerator, CenterlineAndWidth,
                       LongestLineFetch, RadiatingLines,
-                      MaximumInscribedGeometry,
+                      MaximumInscribedGeometry, ConcaveHull,
                       SelectRandomRecords]
 
 
@@ -13277,6 +13278,209 @@ class MaximumInscribedGeometry(object):
                 fixed_azimuth=(P["fixed_azimuth"].value
                                if P["fixed_azimuth"].enabled
                                else None),
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class ConcaveHull(object):
+    """Concave Hull -- the shape of a cloud of points by chi shapes,
+    alpha shapes or k-nearest-neighbours hulls. See
+    ``concave_hull.run_concave_hull``."""
+
+    def __init__(self):
+        self.label = "Concave Hull"
+        self.description = (
+            "Builds a concave hull -- the shape of a cloud of "
+            "points -- by one of the three classic methods: chi "
+            "(characteristic) shapes, which always return one "
+            "simple polygon containing every point; alpha shapes, "
+            "the only method that can return multiple disjoint "
+            "parts and interior holes; or the k-nearest-neighbours "
+            "hull. A single Concavity setting (0 = the convex "
+            "hull, 100 = maximum detail; blank = automatic) "
+            "controls how tightly the hull follows the points, "
+            "with exact per-method parameters available under "
+            "Advanced. An optional case field builds one hull per "
+            "group (per animal, per survey, per cluster). "
+            "Geographic inputs use per-group equidistant "
+            "projections; areas and perimeters are geodesic. Layer "
+            "selections are honored. Works at every license level.")
+        self.category = "Geometric Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        CH = concave_hull
+        in_features = arcpy.Parameter(
+            displayName="Input points (selection honored)",
+            name="in_features",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        try:
+            in_features.filter.list = ["Point"]
+        except Exception:
+            pass
+        method = arcpy.Parameter(
+            displayName="Method",
+            name="method", datatype="GPString",
+            parameterType="Required", direction="Input")
+        method.filter.type = "ValueList"
+        method.filter.list = CH.METHODS
+        method.value = CH.METHOD_CHI
+        case_field = arcpy.Parameter(
+            displayName="Case field (optional -- one hull per "
+                        "value)",
+            name="case_field", datatype="Field",
+            parameterType="Optional", direction="Input")
+        case_field.parameterDependencies = ["in_features"]
+        try:
+            case_field.filter.list = [
+                "Short", "Long", "BigInteger", "Text", "GUID",
+                "Date"]
+        except Exception:
+            pass
+        concavity = arcpy.Parameter(
+            displayName="Concavity (0 = convex hull, 100 = maximum "
+                        "detail; blank = automatic)",
+            name="concavity", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        allow_parts = arcpy.Parameter(
+            displayName="Allow multiple parts and interior holes "
+                        "(Alpha shape only)",
+            name="allow_parts", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        allow_parts.value = False
+        out_features = arcpy.Parameter(
+            displayName="Output concave hulls",
+            name="out_features", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        adv = "Advanced (exact method parameters)"
+        alpha_radius = arcpy.Parameter(
+            displayName="Alpha radius (Alpha shape -- overrides "
+                        "Concavity)",
+            name="alpha_radius", datatype="GPDouble",
+            parameterType="Optional", direction="Input",
+            category=adv)
+        chi_length = arcpy.Parameter(
+            displayName="Edge length threshold (Chi shape -- "
+                        "overrides Concavity)",
+            name="chi_length", datatype="GPDouble",
+            parameterType="Optional", direction="Input",
+            category=adv)
+        k_neighbors = arcpy.Parameter(
+            displayName="Number of neighbours k (k-NN hull -- "
+                        "overrides Concavity)",
+            name="k_neighbors", datatype="GPLong",
+            parameterType="Optional", direction="Input",
+            category=adv)
+        linear_units = arcpy.Parameter(
+            displayName="Units for the alpha radius and edge "
+                        "length",
+            name="linear_units", datatype="GPString",
+            parameterType="Optional", direction="Input",
+            category=adv)
+        linear_units.filter.type = "ValueList"
+        linear_units.filter.list = CH.LINEAR_UNITS
+        linear_units.value = "Meters"
+        return [in_features, method, case_field, concavity,
+                allow_parts, out_features, alpha_radius, chi_length,
+                k_neighbors, linear_units]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        m = P["method"].valueAsText
+        P["allow_parts"].enabled = m in (
+            None, concave_hull.METHOD_ALPHA)
+        P["alpha_radius"].enabled = m in (
+            None, concave_hull.METHOD_ALPHA)
+        P["chi_length"].enabled = m in (
+            None, concave_hull.METHOD_CHI)
+        P["k_neighbors"].enabled = m in (
+            None, concave_hull.METHOD_KNN)
+        src, outp = P["in_features"], P["out_features"]
+        if src.valueAsText and not src.hasBeenValidated:
+            if not outp.altered or outp.valueAsText == self._auto_out:
+                try:
+                    cat = arcpy.Describe(
+                        src.value or src.valueAsText).catalogPath
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(cat))[0] + "_ConcaveHull")
+                    ws = arcpy.env.workspace or os.path.dirname(cat)
+                    sug = _unique_name(base, ws)
+                    outp.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        p = P["in_features"]
+        if p.valueAsText:
+            try:
+                d = arcpy.Describe(p.value or p.valueAsText)
+                if getattr(d, "shapeType", "") != "Point":
+                    p.setErrorMessage(
+                        "The input must be point features.")
+            except Exception:
+                pass
+        c = P["concavity"].value
+        if c is not None and not (0.0 <= float(c) <= 100.0):
+            P["concavity"].setErrorMessage(
+                "Give a concavity from 0 (the convex hull) to 100 "
+                "(maximum detail), or leave it blank for "
+                "automatic.")
+        for name in ("alpha_radius", "chi_length"):
+            v = P[name].value
+            if v is not None and float(v) <= 0:
+                P[name].setErrorMessage(
+                    "Give a value greater than zero, or leave it "
+                    "blank.")
+        k = P["k_neighbors"].value
+        if k is not None and int(k) < 3:
+            P["k_neighbors"].setErrorMessage(
+                "k must be at least 3.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(patch_analysis)
+            importlib.reload(random_points)
+            importlib.reload(centerline_width)
+            importlib.reload(longest_line)
+            importlib.reload(inscribed_geometry)
+            importlib.reload(concave_hull)
+            P = {p.name: p for p in parameters}
+            m = P["method"].valueAsText
+            concave_hull.run_concave_hull(
+                in_features=P["in_features"].value
+                    or P["in_features"].valueAsText,
+                method=m,
+                out_features=P["out_features"].valueAsText,
+                case_field=P["case_field"].valueAsText,
+                concavity=P["concavity"].value,
+                alpha_radius=(P["alpha_radius"].value
+                              if P["alpha_radius"].enabled
+                              else None),
+                chi_length=(P["chi_length"].value
+                            if P["chi_length"].enabled else None),
+                k_neighbors=(P["k_neighbors"].value
+                             if P["k_neighbors"].enabled
+                             else None),
+                linear_units=P["linear_units"].valueAsText
+                    or "Meters",
+                allow_parts=bool(P["allow_parts"].value)
+                    if P["allow_parts"].enabled else False,
                 messages=messages)
         except arcpy.ExecuteError:
             raise

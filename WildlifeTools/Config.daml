@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.79.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.80.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -124,6 +124,7 @@
           <button refID="WildlifeTools_LongestLine" size="large" />
           <button refID="WildlifeTools_RadiatingLines" size="large" />
           <button refID="WildlifeTools_InscribedGeometry" size="large" />
+          <button refID="WildlifeTools_ConcaveHull" size="large" />
         </subgroup>
         <subgroup id="WildlifeTools_SubBreak" size="LargeThenMediumWhenMedium">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
@@ -963,6 +964,17 @@
                 keytip="MI">
           <tooltip heading="Maximum Inscribed Geometry">
             Find the largest circle, rectangle, convex polygon (MCP) or ellipse -- or all four -- that fits entirely inside each polygon, with interior holes acting as barriers: the deliberate dual of Esri's Minimum Bounding Geometry, which fits shapes around features instead. The circle is exact (it sits on the polygon's medial axis); the rectangle searches every orientation or one you fix; the convex polygon solves the classic potato-peeling problem on a controllable discretization; the ellipse is always genuinely inside, and exact for convex inputs. Each shape carries its geodesic area, center, and dimensions (radius; length, width and azimuth; axes; vertex count) plus any transferred attribute fields. An Advanced simplify tolerance pre-simplifies raster-traced boundaries for speed, as in the Fetch tool. Geographic inputs use per-feature equidistant projections, so all measures are true geodesic meters. Works at every license level.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_ConcaveHull"
+                caption="Concave Hull"
+                className="Geometric.ConcaveHullButton"
+                loadOnClick="true"
+                smallImage="Images\ConcaveHull_16.png"
+                largeImage="Images\ConcaveHull_32.png"
+                keytip="CV">
+          <tooltip heading="Concave Hull">
+            Build a concave hull -- the shape of a cloud of points -- where the convex hull would bridge straight across every bay and gap. Three classic methods: chi (characteristic) shapes, always one simple polygon containing every point; alpha shapes, the only method that can return multiple disjoint parts and interior holes (two herds, telemetry ringing a lake); and the k-nearest-neighbours hull. One Concavity setting runs from 0 (the convex hull) to 100 (maximum detail), or blank for each method's automatic choice; exact per-method parameters live under Advanced. An optional case field builds one hull per group (per animal, per survey), each with point count, the parameter used, part and hole counts, and geodesic area and perimeter. The same methods behind the concave-hull tools of PostGIS, CGAL and QGIS; Esri's closest analog (Aggregate Points) needs an Advanced license. Also consider the Local Convex Hull (LoCoH) tools, which capture shape while also identifying areas of higher point density. Works at every license level.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_LandFacetDescribe"
