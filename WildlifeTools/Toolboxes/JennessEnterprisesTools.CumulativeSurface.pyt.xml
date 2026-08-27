@@ -33,5 +33,5 @@ arcpy.jenness.CumulativeSurface(
     legend_label="Species",
     zero_to_nodata=True)</code></scriptExample></scriptExamples>
 	</tool>
-	<dataIdInfo><searchKeys><keyword>cumulative surface</keyword><keyword>overlap</keyword><keyword>overlay</keyword><keyword>count</keyword><keyword>species richness</keyword><keyword>corridor</keyword><keyword>habitat</keyword><keyword>conservation planning</keyword><keyword>polygon</keyword><keyword>raster</keyword><keyword>combine</keyword><keyword>CorridorDesigner</keyword></searchKeys><idCredit>Jeff Jenness and Dan Majka, from the CorridorDesigner toolkit (corridordesign.org). A modernized port of the CorridorDesigner Evaluation Tools' Cumulative Surface Tool.</idCredit></dataIdInfo>
+	<dataIdInfo><searchKeys><keyword>cumulative surface</keyword><keyword>overlap</keyword><keyword>overlay</keyword><keyword>count</keyword><keyword>species richness</keyword><keyword>corridor</keyword><keyword>habitat</keyword><keyword>conservation planning</keyword><keyword>polygon</keyword><keyword>raster</keyword><keyword>combine</keyword><keyword>CorridorDesigner</keyword></searchKeys><idCredit>Jeff Jenness, Dan Majka and Paul Beier, from the CorridorDesigner toolkit (corridordesign.org). A modernized port of the CorridorDesigner Evaluation Tools' Cumulative Surface Tool.</idCredit></dataIdInfo>
 </metadata>

@@ -75,7 +75,7 @@ namespace WildlifeTools.DataTools
     }
 
     /// <summary>
-    /// Opens the Accuracy Sample Size tool (Congalton-Green /
+    /// Opens the Estimate Sample Size tool (Congalton-Green /
     /// Tortora and Olofsson sample-size estimation).
     /// </summary>
     internal class AccuracySampleSizeButton : Button
@@ -100,7 +100,7 @@ namespace WildlifeTools.DataTools
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    "Unable to open the Accuracy Sample Size tool:"
+                    "Unable to open the Estimate Sample Size tool:"
                     + Environment.NewLine + ex.Message,
                     "Wildlife Tools");
             }

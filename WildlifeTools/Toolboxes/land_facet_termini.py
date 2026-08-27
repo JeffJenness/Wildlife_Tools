@@ -793,9 +793,8 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
                 "termini (the Category field). A modernized, generalized "
                 "port of the Land Facet Corridor Designer's Identify "
                 "Termini Polygons tool. " + _CD_CITATION)
-            m.credits = ("Tool by Jeff Jenness, Jenness Enterprises "
-                         "(http://www.jennessent.com). Method: " +
-                         _CD_CITATION)
+            m.credits = ("Tool by Jeff Jenness, Brian Brost and "
+                         "Paul Beier. Method: " + _CD_CITATION)
             m.save()
         except Exception as e:                                   # noqa: BLE001
             _warn(messages, "Could not write output metadata: {}".format(e))

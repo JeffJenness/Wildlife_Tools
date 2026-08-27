@@ -9,8 +9,9 @@ namespace WildlifeTools.Corridor
     /// The five CorridorDesigner habitat-suitability-model (HSM) chain
     /// buttons, each opening its geoprocessing tool from the bundled Jenness
     /// Enterprises Python toolbox. Original CorridorDesigner tools by Dan
-    /// Majka (primary author); these ArcGIS Pro versions by Jeff Jenness and
-    /// Dan Majka. The tools live in the .pyt so the same logic is available
+    /// Majka (primary author); these ArcGIS Pro versions by Jeff Jenness,
+    /// Dan Majka and Paul Beier. The tools live in the .pyt so the same
+    /// logic is available
     /// in ModelBuilder and the Geoprocessing pane, with no Spatial Analyst.
     /// </summary>
     internal abstract class HsmToolButtonBase : Button

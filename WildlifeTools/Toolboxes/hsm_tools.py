@@ -105,7 +105,7 @@ _PATCH_COLORS = {                    # Class_Name -> (fill RGB, stroke RGB)
 _CD_CITATION = (
     "CorridorDesigner: Majka, D., J. Jenness, and P. Beier. 2007. "
     "http://corridordesign.org. Original CorridorDesigner HSM tools by Dan "
-    "Majka; ArcGIS Pro versions by Jeff Jenness and Dan Majka.")
+    "Majka; ArcGIS Pro versions by Jeff Jenness, Dan Majka and Paul Beier.")
 
 _TAGS = ("habitat suitability, HSM, habitat model, factor, weighted overlay, "
          "geometric mean, corridor, connectivity, CorridorDesigner, "
@@ -1736,7 +1736,8 @@ def run_patch_map(in_hsm, out_fc, radius, radius_units, threshold,
                 "connect), and classified by geodesic area in hectares. A "
                 "modernized port of the CorridorDesigner Patch "
                 "Configuration tool. " + _CD_CITATION)
-            m.credits = ("Tool by Jeff Jenness and Dan Majka. Method: "
+            m.credits = ("Tool by Jeff Jenness, Dan Majka and Paul "
+                         "Beier. Method: "
                          + _CD_CITATION)
             m.save()
         except Exception as e:                                   # noqa: BLE001

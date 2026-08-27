@@ -789,8 +789,8 @@ def run_least_cost_corridor(in_termini, cost_raster=None, cost_workspace=None,
             "CorridorModel tool -- built for species habitat-suitability "
             "surfaces (its traditional use) and equally for Land Facet "
             "Corridor Designer surfaces. " + _CD_CITATION)
-        m.credits = ("Tool by Jeff Jenness, Jenness Enterprises "
-                     "(http://www.jennessent.com). Method: " + _CD_CITATION)
+        m.credits = ("Tool by Jeff Jenness, Dan Majka and Paul Beier. "
+                     "Method: " + _CD_CITATION)
         m.save()
     except Exception as e:                                       # noqa: BLE001
         _warn(messages, "Could not write output metadata: {}".format(e))

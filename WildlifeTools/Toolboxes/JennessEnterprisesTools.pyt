@@ -3852,8 +3852,14 @@ class TopographyAlongLines(object):
         slope_unit.filter.list = line_surface_tools.SLOPE_UNITS
         slope_unit.value = "Degrees"
 
+        out_lines = arcpy.Parameter(
+            displayName="Updated input features (derived)",
+            name="out_lines", datatype="GPFeatureLayer",
+            parameterType="Derived", direction="Output")
+        out_lines.parameterDependencies = [in_lines.name]
+        out_lines.schema.clone = True
         params = [in_lines, elev_source, in_dem, elev_units, attrs,
-                  use_aliases, length_unit, slope_unit]
+                  use_aliases, length_unit, slope_unit, out_lines]
         saved = _load_tool_defaults("TopographyAlongLines")
         for p in (length_unit, slope_unit):
             if p.name in saved:
@@ -4249,6 +4255,7 @@ class TopographyAlongLines(object):
             mahalanobis.end_phases()
             _save_tool_defaults("TopographyAlongLines", {
                 "length_unit": length_unit, "slope_unit": slope_unit})
+            P["out_lines"].value = P["in_lines"].valueAsText
         except arcpy.ExecuteError:
             raise
         except Exception:
@@ -8015,8 +8022,18 @@ class LandFacetMahalanobis(object):
             name="save_tables", datatype="GPBoolean",
             parameterType="Optional", direction="Input", category="Advanced")
         save_tables.value = False
+        d_ws = arcpy.Parameter(
+            displayName="Output workspace (derived)",
+            name="derived_workspace", datatype="DEWorkspace",
+            parameterType="Derived", direction="Output")
+        d_rasters = arcpy.Parameter(
+            displayName="Cost-surface rasters created (derived)",
+            name="out_rasters", datatype="DERasterDataset",
+            parameterType="Derived", direction="Output",
+            multiValue=True)
         params = [in_raster, blocks, variables, density, facets, out_ws,
-                  out_prefix, out_type, inversion, save_tables]
+                  out_prefix, out_type, inversion, save_tables,
+                  d_ws, d_rasters]
         saved = _load_tool_defaults("LandFacetMahalanobis")
         for p in (out_type, inversion):
             if p.name in saved:
@@ -8125,7 +8142,7 @@ class LandFacetMahalanobis(object):
                                 for t in picked.split(";") if t.strip()]
             dens = (_resolve_raster_path(P["density_raster"])
                     or P["density_raster"].valueAsText) or None
-            land_facet_mahalanobis.run_facet_mahalanobis(
+            written = land_facet_mahalanobis.run_facet_mahalanobis(
                 in_raster=in_path,
                 blocks=P["blocks"].valueAsText,
                 variables=variables,
@@ -8137,6 +8154,10 @@ class LandFacetMahalanobis(object):
                 inversion=P["inversion"].valueAsText,
                 save_tables=bool(P["save_tables"].value),
                 messages=messages)
+            P["derived_workspace"].value = \
+                P["out_workspace"].valueAsText
+            if written:
+                P["out_rasters"].value = [str(w) for w in written]
             _save_tool_defaults("LandFacetMahalanobis", {
                 "out_type": P["out_type"].valueAsText,
                 "inversion": P["inversion"].valueAsText,
@@ -10606,8 +10627,17 @@ class ClipDataToAnalysisArea(object):
             name="add_to_map", datatype="GPBoolean",
             parameterType="Optional", direction="Input")
         add_to_map.value = True
+        d_ws = arcpy.Parameter(
+            displayName="Output workspace (derived)",
+            name="derived_workspace", datatype="DEWorkspace",
+            parameterType="Derived", direction="Output")
+        d_out = arcpy.Parameter(
+            displayName="Clipped datasets created (derived)",
+            name="out_datasets", datatype="DEType",
+            parameterType="Derived", direction="Output",
+            multiValue=True)
         return [datasets, area, workspace, prefix, suffix, out_cs,
-                transformations, add_to_map]
+                transformations, add_to_map, d_ws, d_out]
 
     def isLicensed(self):
         return True
@@ -10701,6 +10731,10 @@ class ClipDataToAnalysisArea(object):
             # was a MAP LAYER can inherit that layer's symbology.
             if bool(P["add_to_map"].value):
                 clip_tools.add_outputs_to_map(details, messages)
+            P["derived_workspace"].value = P["workspace"].valueAsText
+            created = [str(p) for p in list(fcs) + list(ras)]
+            if created:
+                P["out_datasets"].value = created
         except arcpy.ExecuteError:
             raise
         except Exception:
@@ -13628,7 +13662,7 @@ class ClassificationAccuracy(object):
         weighting.filter.list = AA.WEIGHTINGS
         weighting.value = AA.WEIGHTING_NONE
         confidence = arcpy.Parameter(
-            displayName="Confidence level (percent)",
+            displayName="Confidence level (percent, 0 - 100)",
             name="confidence", datatype="GPDouble",
             parameterType="Optional", direction="Input",
             category=opt)
@@ -13707,15 +13741,22 @@ class ClassificationAccuracy(object):
 
     def updateParameters(self, parameters):
         P = {p.name: p for p in parameters}
+        # Assign .enabled ONLY on a real change -- re-assigning it
+        # every validation cycle makes Pro refresh the control and
+        # a value-table row being typed loses its uncommitted
+        # cells (the Estimate Sample Size tables hit this).
         for side in ("predicted", "observed"):
             lyr = P[side + "_layer"]
             cf = P[side + "_class_field"]
             # enabled for ANY layer: required class field for
             # polygons, optional attribute-table field for rasters
-            cf.enabled = bool(lyr.valueAsText)
+            want = bool(lyr.valueAsText)
+            if bool(cf.enabled) != want:
+                cf.enabled = want
         on = bool(P["weight_by_map"].value)
         for name in ("design", "map_props", "map_area_ha"):
-            P[name].enabled = on
+            if bool(P[name].enabled) != on:
+                P[name].enabled = on
         return
 
     def updateMessages(self, parameters):
@@ -13843,7 +13884,7 @@ class CompareAccuracyAnalyses(object):
                             ["GPDouble", "Kappa"],
                             ["GPDouble", "Variance"]]
         confidence = arcpy.Parameter(
-            displayName="Confidence level (percent)",
+            displayName="Confidence level (percent, 0 - 100)",
             name="confidence", datatype="GPDouble",
             parameterType="Optional", direction="Input")
         confidence.value = 95.0
@@ -13852,7 +13893,17 @@ class CompareAccuracyAnalyses(object):
             name="out_report", datatype="DEFile",
             parameterType="Optional", direction="Output")
         out_report.filter.list = ["txt"]
-        return [analyses, confidence, out_report]
+        out_kappa = arcpy.Parameter(
+            displayName="Common kappa, Fleiss (derived)",
+            name="out_kappa", datatype="GPDouble",
+            parameterType="Derived", direction="Output")
+        out_p = arcpy.Parameter(
+            displayName="P-value that all kappas are equal "
+                        "(derived)",
+            name="out_p", datatype="GPDouble",
+            parameterType="Derived", direction="Output")
+        return [analyses, confidence, out_report, out_kappa,
+                out_p]
 
     def isLicensed(self):
         return True
@@ -13877,11 +13928,15 @@ class CompareAccuracyAnalyses(object):
             P = {p.name: p for p in parameters}
             entries = [(str(r[0]), float(r[1]), float(r[2]))
                        for r in (P["analyses"].values or [])]
-            accuracy_assessment.run_compare_analyses(
-                entries,
-                out_report=P["out_report"].valueAsText,
-                conf=float(P["confidence"].value or 95.0) / 100.0,
-                messages=messages)
+            _lines, ck, pe = \
+                accuracy_assessment.run_compare_analyses(
+                    entries,
+                    out_report=P["out_report"].valueAsText,
+                    conf=float(P["confidence"].value or 95.0)
+                        / 100.0,
+                    messages=messages)
+            P["out_kappa"].value = float(ck)
+            P["out_p"].value = float(pe)
         except arcpy.ExecuteError:
             raise
         except Exception:
@@ -13892,67 +13947,95 @@ class CompareAccuracyAnalyses(object):
 
 
 class AccuracySampleSize(object):
-    """Accuracy Sample Size -- Congalton-Green / Tortora and
+    """Estimate Sample Size -- Congalton-Green / Tortora and
     Olofsson sample-size estimation. See
     ``accuracy_assessment.run_sample_size``."""
 
+    _M_WORST = ("Worst case (no class proportions known)")
+    _M_MAXPROP = ("Largest class proportion known")
+    _M_PERCLASS = ("Per-class proportions and precisions")
+    _M_TARGETSE = ("Target standard error of overall accuracy "
+                   "(Olofsson et al. 2014)")
+
     def __init__(self):
-        self.label = "Accuracy Sample Size"
+        self.label = "Estimate Sample Size"
         self.description = (
             "Estimates the reference sample size needed for a "
-            "statistically defensible accuracy assessment, per "
-            "Congalton and Green's multinomial approach (Tortora "
-            "1978): the worst case with no map proportions known, "
-            "the refinement using the largest class proportion, "
-            "and per-class proportions with individual precision "
-            "requirements -- each with or without the finite "
-            "population correction. Optionally also the Olofsson "
-            "et al. (2014) sample size for a target standard "
-            "error of overall accuracy from conjectured user's "
-            "accuracies. A port of the classic extension's Sample "
-            "Size tool; pair it with the Random Point Generator "
-            "and Select Random Records tools to draw the design. "
-            "Works at every license level.")
+            "statistically defensible accuracy assessment. Pick "
+            "one of four methods: Congalton and Green's "
+            "multinomial approach (Tortora 1978) as the worst "
+            "case with no map proportions known, refined by the "
+            "largest class proportion, or from per-class "
+            "proportions with individual precision requirements "
+            "-- each with the optional finite population "
+            "correction -- or the Olofsson et al. (2014) sample "
+            "size for a target standard error of overall "
+            "accuracy from conjectured user's accuracies. "
+            "Returns the recommended sample size as a derived "
+            "output for ModelBuilder. A port of the classic "
+            "extension's Sample Size tool; pair it with the "
+            "Random Point Generator and Select Random Records "
+            "tools to draw the design. Works at every license "
+            "level.")
         self.category = "Data Tools"
         self.canRunInBackground = False
 
     def getParameterInfo(self):
+        method = arcpy.Parameter(
+            displayName="Estimation method",
+            name="method", datatype="GPString",
+            parameterType="Required", direction="Input")
+        method.filter.type = "ValueList"
+        method.filter.list = [
+            self._M_WORST, self._M_MAXPROP, self._M_PERCLASS,
+            self._M_TARGETSE]
+        method.value = self._M_WORST
         n_classes = arcpy.Parameter(
             displayName="Number of map classes",
             name="n_classes", datatype="GPLong",
-            parameterType="Required", direction="Input")
+            parameterType="Optional", direction="Input")
         confidence = arcpy.Parameter(
-            displayName="Confidence level (percent)",
+            displayName="Confidence level (percent, 0 - 100)",
             name="confidence", datatype="GPDouble",
             parameterType="Optional", direction="Input")
         confidence.value = 95.0
         precision = arcpy.Parameter(
-            displayName="Desired precision (percent)",
+            displayName="Desired precision (percent, 0 - 100)",
             name="precision", datatype="GPDouble",
             parameterType="Optional", direction="Input")
         precision.value = 10.0
         max_prop = arcpy.Parameter(
-            displayName="Largest class proportion, percent "
-                        "(optional -- Option 2)",
+            displayName="Largest class proportion (percent, "
+                        "0 - 100)",
             name="max_prop", datatype="GPDouble",
             parameterType="Optional", direction="Input")
         class_table = arcpy.Parameter(
-            displayName="Per-class values (optional -- Option 3 "
-                        "and the Olofsson method)",
+            displayName="Per-class proportions and required "
+                        "precisions (one row per class)",
             name="class_table", datatype="GPValueTable",
             parameterType="Optional", direction="Input")
         class_table.columns = [
             ["GPString", "Class"],
-            ["GPDouble", "Proportion (percent)"],
-            ["GPDouble", "Precision OR conjectured user's "
-                         "accuracy (percent)"]]
+            ["GPDouble", "Proportion (percent, 0 - 100)"],
+            ["GPDouble", "Required precision (percent, "
+                         "0 - 100)"]]
+        ua_table = arcpy.Parameter(
+            displayName="Per-class proportions and conjectured "
+                        "user's accuracies (one row per class)",
+            name="ua_table", datatype="GPValueTable",
+            parameterType="Optional", direction="Input")
+        ua_table.columns = [
+            ["GPString", "Class"],
+            ["GPDouble", "Proportion (percent, 0 - 100)"],
+            ["GPDouble", "Conjectured user's accuracy "
+                         "(percent, 0 - 100)"]]
         population = arcpy.Parameter(
             displayName="Finite population size (optional)",
             name="population", datatype="GPDouble",
             parameterType="Optional", direction="Input")
         target_se = arcpy.Parameter(
-            displayName="Olofsson target standard error of "
-                        "overall accuracy (optional, e.g. 0.01)",
+            displayName="Target standard error of overall "
+                        "accuracy (percent, 0 - 100; e.g. 1)",
             name="target_se", datatype="GPDouble",
             parameterType="Optional", direction="Input")
         out_report = arcpy.Parameter(
@@ -13960,49 +14043,110 @@ class AccuracySampleSize(object):
             name="out_report", datatype="DEFile",
             parameterType="Optional", direction="Output")
         out_report.filter.list = ["txt"]
-        return [n_classes, confidence, precision, max_prop,
-                class_table, population, target_se, out_report]
+        out_n = arcpy.Parameter(
+            displayName="Recommended sample size (derived)",
+            name="out_n", datatype="GPLong",
+            parameterType="Derived", direction="Output")
+        return [method, n_classes, confidence, precision,
+                max_prop, class_table, ua_table, population,
+                target_se, out_report, out_n]
 
     def isLicensed(self):
         return True
 
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        m = P["method"].valueAsText or self._M_WORST
+        per_class = m in (self._M_PERCLASS, self._M_TARGETSE)
+        # Assign .enabled ONLY on a real change: re-assigning it on
+        # every validation cycle makes Pro refresh the control, and
+        # a value-table row being typed loses its uncommitted cells
+        # (Jeff hit this tabbing through Options 3/4 rows).
+        want = {"n_classes": not per_class,
+                "confidence": m != self._M_TARGETSE,
+                "precision": m in (self._M_WORST,
+                                   self._M_MAXPROP),
+                "max_prop": m == self._M_MAXPROP,
+                "class_table": m == self._M_PERCLASS,
+                "ua_table": m == self._M_TARGETSE,
+                "population": m != self._M_TARGETSE,
+                "target_se": m == self._M_TARGETSE}
+        for name, w in want.items():
+            if bool(P[name].enabled) != w:
+                P[name].enabled = w
+        return
+
     def updateMessages(self, parameters):
         P = {p.name: p for p in parameters}
+        m = P["method"].valueAsText or self._M_WORST
+        per_class = m in (self._M_PERCLASS, self._M_TARGETSE)
         n = P["n_classes"].value
+        if not per_class and n is None:
+            P["n_classes"].setErrorMessage(
+                "This method needs the number of classes.")
         if n is not None and int(n) < 2:
             P["n_classes"].setErrorMessage(
                 "Give at least two classes.")
-        for name in ("confidence", "precision", "max_prop"):
+        if m == self._M_MAXPROP and P["max_prop"].value is None:
+            P["max_prop"].setErrorMessage(
+                "This method needs the largest class proportion.")
+        if m == self._M_PERCLASS and not P["class_table"].values:
+            P["class_table"].setErrorMessage(
+                "This method needs one row per class.")
+        if m == self._M_TARGETSE and not P["ua_table"].values:
+            P["ua_table"].setErrorMessage(
+                "This method needs one row per class.")
+        if m == self._M_TARGETSE and P["target_se"].value is None:
+            P["target_se"].setErrorMessage(
+                "This method needs the target standard error.")
+        for name in ("confidence", "precision", "max_prop",
+                     "target_se"):
             v = P[name].value
-            if v is not None and not (0.0 < float(v) < 100.0):
+            if (P[name].enabled and v is not None
+                    and not (0.0 < float(v) < 100.0)):
                 P[name].setErrorMessage(
                     "Give a percentage between 0 and 100 "
                     "(exclusive).")
         return
 
     def execute(self, parameters, messages):
+        AA = accuracy_assessment
         try:
             _scripting_hint(messages, type(self).__name__)
             importlib.reload(accuracy_assessment)
             P = {p.name: p for p in parameters}
+            m = P["method"].valueAsText or self._M_WORST
+            method = {
+                self._M_WORST: AA.SIZE_WORST,
+                self._M_MAXPROP: AA.SIZE_MAXPROP,
+                self._M_PERCLASS: AA.SIZE_PERCLASS,
+                self._M_TARGETSE: AA.SIZE_TARGETSE,
+            }.get(m, AA.SIZE_WORST)
+            src = ("ua_table" if method == AA.SIZE_TARGETSE
+                   else "class_table")
             ct = None
-            if P["class_table"].values:
+            if P[src].values:
                 ct = [(str(r[0]), float(r[1]) / 100.0,
                        float(r[2]) / 100.0)
-                      for r in P["class_table"].values]
-            accuracy_assessment.run_sample_size(
-                int(P["n_classes"].value),
+                      for r in P[src].values]
+            _lines, n_rec = accuracy_assessment.run_sample_size(
+                (int(P["n_classes"].value)
+                 if P["n_classes"].value is not None else None),
                 conf=float(P["confidence"].value or 95.0) / 100.0,
                 precision=float(P["precision"].value or 10.0)
                     / 100.0,
+                method=method,
                 max_prop=(float(P["max_prop"].value) / 100.0
                           if P["max_prop"].value is not None
                           else None),
                 class_table=ct,
                 population=P["population"].value,
-                target_se=P["target_se"].value,
+                target_se=(float(P["target_se"].value) / 100.0
+                           if P["target_se"].value is not None
+                           else None),
                 out_report=P["out_report"].valueAsText,
                 messages=messages)
+            P["out_n"].value = int(n_rec)
         except arcpy.ExecuteError:
             raise
         except Exception:

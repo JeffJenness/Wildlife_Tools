@@ -3,7 +3,8 @@
 
 A modernized port of the CorridorDesigner ClipAnalysisLayers tool
 (``util_clipLayers.py``, Dan Majka, 2007; these ArcGIS Pro versions are by
-Jeff Jenness and Dan Majka). The original looped Clip_analysis over feature
+Jeff Jenness, Dan Majka and Paul Beier). The original looped Clip_analysis
+over feature
 classes and ExtractByMask over rasters (Spatial Analyst), warning and
 continuing on each failure. This version keeps the one-tool-clips-everything
 shape and the per-dataset warn-and-continue resilience, and adds:
@@ -33,7 +34,7 @@ import mahalanobis as _mh
 _CD_CITATION = (
     "CorridorDesigner: Majka, D., J. Jenness, and P. Beier. 2007. "
     "http://corridordesign.org. Original ClipAnalysisLayers tool by Dan "
-    "Majka; ArcGIS Pro version by Jeff Jenness and Dan Majka.")
+    "Majka; ArcGIS Pro version by Jeff Jenness, Dan Majka and Paul Beier.")
 
 
 def _say(messages, text):
@@ -209,7 +210,8 @@ def _stamp(out_path, src_name, area_name, cs_note, raster):
             "classes together and writes formats matching the output "
             "workspace. {}".format(
                 "Raster" if raster else "Feature class", _CD_CITATION))
-        md.credits = ("Tool by Jeff Jenness and Dan Majka. Method: "
+        md.credits = ("Tool by Jeff Jenness, Dan Majka and Paul "
+                      "Beier. Method: "
                       + _CD_CITATION)
         md.save()
     except Exception:                                            # noqa: BLE001

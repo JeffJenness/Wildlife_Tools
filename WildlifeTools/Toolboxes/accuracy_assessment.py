@@ -1755,68 +1755,110 @@ def run_compare_analyses(entries, out_report=None, conf=0.95,
             out_report += ".txt"
         with open(out_report, "w", encoding="utf-8") as f:
             f.write("\n".join(L) + "\n")
-    return L
+    return L, cmpres["common_kappa"], cmpres["p_equal"]
 
 
-def run_sample_size(n_classes, conf=0.95, precision=0.10,
-                    max_prop=None, class_table=None,
-                    population=None, target_se=None,
-                    out_report=None, messages=None):
-    """The Sample Size tool: Congalton-Green / Tortora multinomial
-    sample sizes (Options 1-3, with the finite population
-    correction), plus the Olofsson et al. (2014) target-standard-
-    error method when ``target_se`` is given. ``class_table`` is a
-    list of (label, proportion, precision_or_conjectured_UA)."""
+SIZE_WORST = "worst"
+SIZE_MAXPROP = "maxprop"
+SIZE_PERCLASS = "perclass"
+SIZE_TARGETSE = "target_se"
+
+
+def run_sample_size(n_classes=None, conf=0.95, precision=0.10,
+                    method=SIZE_WORST, max_prop=None,
+                    class_table=None, population=None,
+                    target_se=None, out_report=None,
+                    messages=None):
+    """The Estimate Sample Size tool. ``method`` picks ONE
+    estimator: the Congalton-Green / Tortora multinomial sizes --
+    SIZE_WORST (no proportions known), SIZE_MAXPROP (largest class
+    proportion known), SIZE_PERCLASS (per-class proportions and
+    precisions from ``class_table``) -- or SIZE_TARGETSE, the
+    Olofsson et al. (2014) size for a target standard error of
+    overall accuracy from conjectured user's accuracies.
+    ``class_table`` is a list of (label, proportion,
+    precision_or_conjectured_UA); for the per-class methods the
+    class count comes from the table. Returns
+    ``(lines, n_recommended)`` -- the recommended n carries the
+    finite population correction when ``population`` is given."""
     import arcpy
 
-    n_classes = int(n_classes)
-    if n_classes < 2:
-        raise arcpy.ExecuteError("Give at least two classes.")
-    L = ["Accuracy-assessment sample size "
-         "({} classes, {:.0f}% confidence):".format(
-             n_classes, conf * 100)]
-    n1 = sample_size_tortora(n_classes, conf, precision)
-    L.append("  Option 1 (no proportions known, worst case, "
-             "precision {:.0f}%): n = {}".format(precision * 100,
-                                                 n1))
-    if max_prop not in (None, "", 0):
-        n2 = sample_size_tortora(n_classes, conf, precision,
-                                 max_prop=float(max_prop))
-        L.append("  Option 2 (largest proportion {:.1f}%): "
-                 "n = {}".format(float(max_prop) * 100, n2))
+    method = str(method or SIZE_WORST)
+    props = third = None
     if class_table:
         props = [float(r[1]) for r in class_table]
-        precs = [float(r[2]) for r in class_table]
-        n3 = sample_size_tortora(n_classes, conf,
-                                 props=props, precisions=precs)
-        L.append("  Option 3 (per-class proportions and "
-                 "precisions): n = {}".format(n3))
-    if population not in (None, "", 0):
-        big_n = float(population)
-        L.append("  With the finite population correction "
-                 "(N = {:,.0f}):".format(big_n))
-        L.append("    Option 1: n = {}".format(
-            sample_size_tortora(n_classes, conf, precision,
-                                population=big_n)))
-        if max_prop not in (None, "", 0):
-            L.append("    Option 2: n = {}".format(
-                sample_size_tortora(n_classes, conf, precision,
-                                    max_prop=float(max_prop),
-                                    population=big_n)))
-        if class_table:
-            L.append("    Option 3: n = {}".format(
-                sample_size_tortora(n_classes, conf, props=props,
-                                    precisions=precs,
-                                    population=big_n)))
-    if target_se not in (None, "", 0) and class_table:
-        props = [float(r[1]) for r in class_table]
-        uas = [float(r[2]) for r in class_table]
-        n_o = sample_size_olofsson(float(target_se), uas, props)
-        L.append("  Olofsson et al. (2014) target SE of overall "
-                 "accuracy {:.3f} (third column = conjectured "
-                 "user's accuracies): n = {}".format(
-                     float(target_se), n_o))
+        third = [float(r[2]) for r in class_table]
+    if method in (SIZE_PERCLASS, SIZE_TARGETSE):
+        if not class_table:
+            raise arcpy.ExecuteError(
+                "This method needs the per-class table (one row "
+                "per class).")
+        n_classes = len(class_table)
+    n_classes = int(n_classes or 0)
+    if n_classes < 2:
+        raise arcpy.ExecuteError("Give at least two classes.")
+
+    big_n = (float(population)
+             if population not in (None, "", 0) else None)
+    if method == SIZE_TARGETSE:
+        if target_se in (None, "", 0):
+            raise arcpy.ExecuteError(
+                "This method needs the target standard error.")
+        L = ["Accuracy-assessment sample size ({} classes):"
+             .format(n_classes)]
+        n_rec = sample_size_olofsson(float(target_se), third,
+                                     props)
+        L.append("  Target standard error of overall accuracy "
+                 "{:.3g}% ({:.4f} as a proportion), from the "
+                 "conjectured user's accuracies (Olofsson et al. "
+                 "2014, eq. 13): n = {}".format(
+                     float(target_se) * 100.0, float(target_se),
+                     n_rec))
+        L.append("  Olofsson et al. also recommend allocating "
+                 "50-100 samples to rare but important classes "
+                 "and distributing the rest proportionally.")
+    else:
+        L = ["Accuracy-assessment sample size "
+             "({} classes, {:.0f}% confidence):".format(
+                 n_classes, conf * 100)]
+        if method == SIZE_MAXPROP:
+            if max_prop in (None, "", 0):
+                raise arcpy.ExecuteError(
+                    "This method needs the largest class "
+                    "proportion.")
+            n_rec = sample_size_tortora(
+                n_classes, conf, precision,
+                max_prop=float(max_prop))
+            L.append("  Largest class proportion {:.1f}%, "
+                     "precision {:.0f}%: n = {}".format(
+                         float(max_prop) * 100, precision * 100,
+                         n_rec))
+        elif method == SIZE_PERCLASS:
+            n_rec = sample_size_tortora(n_classes, conf,
+                                        props=props,
+                                        precisions=third)
+            L.append("  Per-class proportions and precisions "
+                     "(the most demanding class governs): "
+                     "n = {}".format(n_rec))
+        else:
+            n_rec = sample_size_tortora(n_classes, conf,
+                                        precision)
+            L.append("  No class proportions known -- the worst "
+                     "case (a class at exactly 50%) is assumed, "
+                     "precision {:.0f}%: n = {}".format(
+                         precision * 100, n_rec))
+        if big_n is not None:
+            kw = {"precision": precision}
+            if method == SIZE_MAXPROP:
+                kw["max_prop"] = float(max_prop)
+            elif method == SIZE_PERCLASS:
+                kw = {"props": props, "precisions": third}
+            n_rec = sample_size_tortora(n_classes, conf,
+                                        population=big_n, **kw)
+            L.append("  With the finite population correction "
+                     "(N = {:,.0f}): n = {}".format(big_n, n_rec))
     L.append("")
+    L.append("Recommended sample size: {}".format(n_rec))
     L.append("Congalton and Green recommend a minimum of ~50 "
              "samples per class (75-100 with many classes), and "
              "never leaving a class unsampled. See the Random "
@@ -1830,4 +1872,4 @@ def run_sample_size(n_classes, conf=0.95, precision=0.10,
             out_report += ".txt"
         with open(out_report, "w", encoding="utf-8") as f:
             f.write("\n".join(L) + "\n")
-    return L
+    return L, n_rec

@@ -1157,14 +1157,14 @@
           </tooltip>
         </button>
         <button id="WildlifeTools_AccSampleSize"
-                caption="Accuracy Sample Size"
+                caption="Estimate Sample Size"
                 className="DataTools.AccuracySampleSizeButton"
                 loadOnClick="true"
                 smallImage="Images\AccuracySampleSize_16.png"
                 largeImage="Images\AccuracySampleSize_32.png"
                 keytip="KS">
-          <tooltip heading="Accuracy Sample Size">
-            Estimate the reference sample size needed for a statistically defensible accuracy assessment, per Congalton and Green's multinomial approach (Tortora 1978): the worst case with no map proportions known, the refinement from the largest class proportion, and per-class proportions with individual precision requirements -- each with or without the finite population correction -- plus the Olofsson et al. (2014) sample size for a target standard error of overall accuracy. Reproduces the classic Kappa extension's published sample-size table exactly. Pair it with the Random Point Generator and Select Random Records tools to draw the design, then assess with Classification Accuracy (Kappa). Works at every license level.<disabledText />
+          <tooltip heading="Estimate Sample Size">
+            Estimate the reference sample size needed for a statistically defensible accuracy assessment. Pick one of four methods: Congalton and Green's multinomial approach (Tortora 1978) as the worst case with no map proportions known, refined by the largest class proportion, or from per-class proportions with individual precision requirements -- each with the optional finite population correction -- or the Olofsson et al. (2014) sample size for a target standard error of overall accuracy. Reproduces the classic Kappa extension's published sample-size table exactly, and returns the recommended size as a derived output for ModelBuilder. Pair it with the Random Point Generator and Select Random Records tools to draw the design, then assess with Classification Accuracy (Kappa). Works at every license level.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_Sudoku"
