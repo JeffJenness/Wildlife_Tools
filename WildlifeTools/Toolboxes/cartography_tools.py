@@ -125,7 +125,10 @@ def _write_layer_file(out_fc, name, messages):
     # Normalized before the suffix test (trailing separators / forward slashes
     # defeat a bare endswith), and .sde counts as a geodatabase too -- this
     # mirrors mahalanobis.is_gdb_workspace inline (no mahalanobis import here).
-    is_gdb = ws.lower().replace("/", "\\").rstrip("\\").endswith((".gdb", ".sde"))
+    ws_norm = ws.lower().replace("/", "\\").rstrip("\\")
+    if ws_norm.split("\\", 1)[0] in ("memory", "in_memory"):
+        return None                    # no on-disk home for a side .lyrx
+    is_gdb = ws_norm.endswith((".gdb", ".sde"))
     lyr_dir = os.path.dirname(ws) if is_gdb else ws
     lyrx = os.path.join(lyr_dir, name + ".lyrx")
 

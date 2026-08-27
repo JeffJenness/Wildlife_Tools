@@ -77,6 +77,7 @@ import longest_line  # noqa: E402
 import radiating_lines  # noqa: E402
 import inscribed_geometry  # noqa: E402
 import concave_hull  # noqa: E402
+import accuracy_assessment  # noqa: E402
 import select_random  # noqa: E402
 import weighted_stats  # noqa: E402
 import raster_extremes  # noqa: E402
@@ -348,6 +349,8 @@ class Toolbox(object):
                       RandomSampleArrayGenerator, CenterlineAndWidth,
                       LongestLineFetch, RadiatingLines,
                       MaximumInscribedGeometry, ConcaveHull,
+                      ClassificationAccuracy,
+                      CompareAccuracyAnalyses, AccuracySampleSize,
                       SelectRandomRecords]
 
 
@@ -13481,6 +13484,524 @@ class ConcaveHull(object):
                     or "Meters",
                 allow_parts=bool(P["allow_parts"].value)
                     if P["allow_parts"].enabled else False,
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class ClassificationAccuracy(object):
+    """Classification Accuracy (Kappa) -- accuracy assessment of
+    categorical maps and models. See
+    ``accuracy_assessment.run_classification_accuracy``."""
+
+    def __init__(self):
+        self.label = "Classification Accuracy (Kappa)"
+        self.description = (
+            "Assesses the accuracy of a categorical map or model "
+            "against reference (field-verified) classes: the error "
+            "matrix, Cohen's Kappa with variance, Z test and "
+            "confidence interval, weighted kappa for ordinal "
+            "classes, per-class conditional kappa, user's and "
+            "producer's accuracies, sensitivity / specificity / "
+            "omission / commission / predictive power, F1, Gwet's "
+            "AC1, Pontius-Millones quantity and allocation "
+            "disagreement, and -- with map proportions -- the "
+            "Olofsson et al. (2014) area-weighted accuracies and "
+            "error-adjusted area estimates with confidence "
+            "intervals. Predicted and observed values each come "
+            "from an attribute field of the sample points or are "
+            "extracted from a classified raster or polygon "
+            "feature class, optionally "
+            "as the majority value in a circle around each sample "
+            "(locational uncertainty). An analysis field splits "
+            "the samples into several analyses (per observer, per "
+            "model) that are compared automatically. The report "
+            "ends with a ready-to-run R snippet reproducing the "
+            "analysis. A modernized port of Jenness and Wynne's "
+            "classic Kappa analysis extension. Works at every "
+            "license level.")
+        self.category = "Data Tools"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        AA = accuracy_assessment
+        in_features = arcpy.Parameter(
+            displayName="Sample points or table (selection "
+                        "honored)",
+            name="in_features",
+            datatype=["GPFeatureLayer", "GPTableView",
+                      "DEFeatureClass", "DETable"],
+            parameterType="Required", direction="Input")
+        predicted_field = arcpy.Parameter(
+            displayName="Classification (predicted) data source "
+                        "attribute field",
+            name="predicted_field", datatype="Field",
+            parameterType="Optional", direction="Input")
+        predicted_field.parameterDependencies = ["in_features"]
+        predicted_layer = arcpy.Parameter(
+            displayName="Classification (predicted) raster or "
+                        "polygon feature class",
+            name="predicted_layer",
+            datatype=["GPRasterLayer", "DERasterDataset",
+                      "GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Optional", direction="Input")
+        predicted_class_field = arcpy.Parameter(
+            displayName="Class field of the classification "
+                        "(predicted) dataset (polygon field, or "
+                        "raster attribute-table field; blank = "
+                        "cell values)",
+            name="predicted_class_field", datatype="Field",
+            parameterType="Optional", direction="Input")
+        predicted_class_field.parameterDependencies = [
+            "predicted_layer"]
+        observed_field = arcpy.Parameter(
+            displayName="Observed (reference) data source "
+                        "attribute field",
+            name="observed_field", datatype="Field",
+            parameterType="Optional", direction="Input")
+        observed_field.parameterDependencies = ["in_features"]
+        observed_layer = arcpy.Parameter(
+            displayName="Observed (reference) classified raster "
+                        "or polygon feature class",
+            name="observed_layer",
+            datatype=["GPRasterLayer", "DERasterDataset",
+                      "GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Optional", direction="Input")
+        observed_class_field = arcpy.Parameter(
+            displayName="Class field of the observed (reference) "
+                        "dataset (polygon field, or raster "
+                        "attribute-table field; blank = cell "
+                        "values)",
+            name="observed_class_field", datatype="Field",
+            parameterType="Optional", direction="Input")
+        observed_class_field.parameterDependencies = [
+            "observed_layer"]
+        out_report = arcpy.Parameter(
+            displayName="Output report file (optional -- the full "
+                        "report also prints in the messages)",
+            name="out_report", datatype="DEFile",
+            parameterType="Optional", direction="Output")
+        out_report.filter.list = ["txt"]
+        out_class_table = arcpy.Parameter(
+            displayName="Output per-class statistics table "
+                        "(optional)",
+            name="out_class_table", datatype="DETable",
+            parameterType="Optional", direction="Output")
+        out_matrix_table = arcpy.Parameter(
+            displayName="Output error-matrix table (optional)",
+            name="out_matrix_table", datatype="DETable",
+            parameterType="Optional", direction="Output")
+        opt = "Options"
+        analysis_field = arcpy.Parameter(
+            displayName="Analysis field (optional -- one analysis "
+                        "per value, compared automatically)",
+            name="analysis_field", datatype="Field",
+            parameterType="Optional", direction="Input",
+            category=opt)
+        analysis_field.parameterDependencies = ["in_features"]
+        circle_radius = arcpy.Parameter(
+            displayName="Circle radius for locational uncertainty "
+                        "(optional -- majority value near each "
+                        "sample)",
+            name="circle_radius", datatype="GPDouble",
+            parameterType="Optional", direction="Input",
+            category=opt)
+        linear_units = arcpy.Parameter(
+            displayName="Units for the circle radius",
+            name="linear_units", datatype="GPString",
+            parameterType="Optional", direction="Input",
+            category=opt)
+        linear_units.filter.type = "ValueList"
+        linear_units.filter.list = AA.LINEAR_UNITS
+        linear_units.value = "Meters"
+        weighting = arcpy.Parameter(
+            displayName="Ordinal weighting for weighted kappa",
+            name="weighting", datatype="GPString",
+            parameterType="Optional", direction="Input",
+            category=opt)
+        weighting.filter.type = "ValueList"
+        weighting.filter.list = AA.WEIGHTINGS
+        weighting.value = AA.WEIGHTING_NONE
+        confidence = arcpy.Parameter(
+            displayName="Confidence level (percent)",
+            name="confidence", datatype="GPDouble",
+            parameterType="Optional", direction="Input",
+            category=opt)
+        confidence.value = 95.0
+        aw = "Area weighting (Card 1982 / Olofsson et al. 2014)"
+        weight_by_map = arcpy.Parameter(
+            displayName="Weight the analysis by map class "
+                        "proportions",
+            name="weight_by_map", datatype="GPBoolean",
+            parameterType="Optional", direction="Input",
+            category=aw)
+        weight_by_map.value = False
+        design = arcpy.Parameter(
+            displayName="Sampling design of the reference samples",
+            name="design", datatype="GPString",
+            parameterType="Optional", direction="Input",
+            category=aw)
+        design.filter.type = "ValueList"
+        design.filter.list = AA.DESIGNS
+        design.value = AA.DESIGN_STRAT
+        map_props = arcpy.Parameter(
+            displayName="Map class proportions (optional override "
+                        "-- else computed from the predicted "
+                        "layer)",
+            name="map_props", datatype="GPValueTable",
+            parameterType="Optional", direction="Input",
+            category=aw)
+        map_props.columns = [["GPString", "Class"],
+                             ["GPDouble", "Proportion or area"]]
+        map_area_ha = arcpy.Parameter(
+            displayName="Total map area in hectares (optional "
+                        "override -- else measured from the "
+                        "classification dataset)",
+            name="map_area_ha", datatype="GPDouble",
+            parameterType="Optional", direction="Input",
+            category=aw)
+        adv = "Advanced"
+        boot_reps = arcpy.Parameter(
+            displayName="Bootstrap replicates (optional -- adds "
+                        "percentile CIs for kappa and overall "
+                        "accuracy)",
+            name="boot_reps", datatype="GPLong",
+            parameterType="Optional", direction="Input",
+            category=adv)
+        random_seed = arcpy.Parameter(
+            displayName="Random seed (bootstrap)",
+            name="random_seed", datatype="GPLong",
+            parameterType="Optional", direction="Input",
+            category=adv)
+        # derived scalar outputs for ModelBuilder chains (invisible
+        # in the dialog): branch on kappa or accuracy, feed Compare
+        # Accuracy Analyses, collect across model runs
+        out_kappa = arcpy.Parameter(
+            displayName="Kappa (derived)", name="out_kappa",
+            datatype="GPDouble", parameterType="Derived",
+            direction="Output")
+        out_kappa_var = arcpy.Parameter(
+            displayName="Kappa variance (derived)",
+            name="out_kappa_var", datatype="GPDouble",
+            parameterType="Derived", direction="Output")
+        out_overall = arcpy.Parameter(
+            displayName="Overall accuracy (derived)",
+            name="out_overall", datatype="GPDouble",
+            parameterType="Derived", direction="Output")
+        return [in_features, predicted_field, predicted_layer,
+                predicted_class_field, observed_field,
+                observed_layer, observed_class_field, out_report,
+                out_class_table, out_matrix_table, analysis_field,
+                circle_radius, linear_units, weighting,
+                confidence, weight_by_map, design, map_props,
+                map_area_ha, boot_reps, random_seed, out_kappa,
+                out_kappa_var, out_overall]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        for side in ("predicted", "observed"):
+            lyr = P[side + "_layer"]
+            cf = P[side + "_class_field"]
+            # enabled for ANY layer: required class field for
+            # polygons, optional attribute-table field for rasters
+            cf.enabled = bool(lyr.valueAsText)
+        on = bool(P["weight_by_map"].value)
+        for name in ("design", "map_props", "map_area_ha"):
+            P[name].enabled = on
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        for side in ("predicted", "observed"):
+            f = P[side + "_field"].valueAsText
+            ly = P[side + "_layer"].valueAsText
+            if bool(f) == bool(ly):
+                P[side + "_field"].setErrorMessage(
+                    "Give the {} classes as EITHER a field or a "
+                    "layer (exactly one).".format(side))
+        c = P["confidence"].value
+        if c is not None and not (50.0 < float(c) < 100.0):
+            P["confidence"].setErrorMessage(
+                "Give a confidence level between 50 and 100 "
+                "percent (exclusive).")
+        r = P["circle_radius"].value
+        if r is not None and float(r) <= 0:
+            P["circle_radius"].setErrorMessage(
+                "Give a radius greater than zero, or leave it "
+                "blank.")
+        b = P["boot_reps"].value
+        if b is not None and int(b) < 2:
+            P["boot_reps"].setErrorMessage(
+                "Give at least 2 bootstrap replicates, or leave "
+                "it blank.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(patch_analysis)
+            importlib.reload(random_points)
+            importlib.reload(accuracy_assessment)
+            P = {p.name: p for p in parameters}
+            props = None
+            if P["map_props"].values:
+                props = [(str(r[0]), float(r[1]))
+                         for r in P["map_props"].values]
+            _lines, results = \
+                accuracy_assessment.run_classification_accuracy(
+                in_features=P["in_features"].value
+                    or P["in_features"].valueAsText,
+                predicted_field=P["predicted_field"].valueAsText,
+                predicted_layer=P["predicted_layer"].value
+                    or P["predicted_layer"].valueAsText,
+                predicted_class_field=P[
+                    "predicted_class_field"].valueAsText
+                    if P["predicted_class_field"].enabled
+                    else None,
+                observed_field=P["observed_field"].valueAsText,
+                observed_layer=P["observed_layer"].value
+                    or P["observed_layer"].valueAsText,
+                observed_class_field=P[
+                    "observed_class_field"].valueAsText
+                    if P["observed_class_field"].enabled
+                    else None,
+                analysis_field=P["analysis_field"].valueAsText,
+                circle_radius=P["circle_radius"].value,
+                linear_units=P["linear_units"].valueAsText
+                    or "Meters",
+                weight_by_map=bool(P["weight_by_map"].value),
+                design=P["design"].valueAsText
+                    or accuracy_assessment.DESIGN_STRAT,
+                map_area_ha=P["map_area_ha"].value,
+                map_props_override=props,
+                weighting=P["weighting"].valueAsText
+                    or accuracy_assessment.WEIGHTING_NONE,
+                conf=float(P["confidence"].value or 95.0) / 100.0,
+                boot_reps=P["boot_reps"].value or 0,
+                random_seed=P["random_seed"].value,
+                out_report=P["out_report"].valueAsText,
+                out_matrix_table=P["out_matrix_table"].valueAsText,
+                out_class_table=P["out_class_table"].valueAsText,
+                messages=messages)
+            # derived scalars (first analysis when several)
+            k0, v0, _z0, _p0 = results[0]["kappa"]
+            P["out_kappa"].value = float(k0)
+            P["out_kappa_var"].value = float(v0)
+            P["out_overall"].value = float(
+                results[0]["basics"]["overall"])
+            if len(results) > 1:
+                accuracy_assessment._say(
+                    messages,
+                    "Derived kappa/accuracy outputs carry the "
+                    "FIRST analysis ({}).".format(
+                        results[0]["key"]))
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class CompareAccuracyAnalyses(object):
+    """Compare Accuracy Analyses -- pairwise Z tests and the Fleiss
+    common-kappa test. See
+    ``accuracy_assessment.run_compare_analyses``."""
+
+    def __init__(self):
+        self.label = "Compare Accuracy Analyses"
+        self.description = (
+            "Compares the Kappa statistics of two or more "
+            "accuracy analyses -- different models, observers, "
+            "algorithms or imagery dates: a Z test of each kappa "
+            "against chance, pairwise Z tests between analyses, "
+            "and the Fleiss (1981) common-kappa chi-square test "
+            "of overall equality. Enter each analysis's kappa and "
+            "variance (both are printed by the Classification "
+            "Accuracy tool, which also runs these comparisons "
+            "automatically when an analysis field is used). A "
+            "port of the classic extension's Compare Kappa "
+            "Analyses tool. Works at every license level.")
+        self.category = "Data Tools"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        analyses = arcpy.Parameter(
+            displayName="Analyses (label, kappa, variance)",
+            name="analyses", datatype="GPValueTable",
+            parameterType="Required", direction="Input")
+        analyses.columns = [["GPString", "Label"],
+                            ["GPDouble", "Kappa"],
+                            ["GPDouble", "Variance"]]
+        confidence = arcpy.Parameter(
+            displayName="Confidence level (percent)",
+            name="confidence", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        confidence.value = 95.0
+        out_report = arcpy.Parameter(
+            displayName="Output report file (optional)",
+            name="out_report", datatype="DEFile",
+            parameterType="Optional", direction="Output")
+        out_report.filter.list = ["txt"]
+        return [analyses, confidence, out_report]
+
+    def isLicensed(self):
+        return True
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        vals = P["analyses"].values or []
+        if vals and len(vals) < 2:
+            P["analyses"].setErrorMessage(
+                "Give at least two analyses to compare.")
+        for r in vals:
+            if float(r[2]) <= 0:
+                P["analyses"].setErrorMessage(
+                    "Every variance must be greater than zero.")
+                break
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(accuracy_assessment)
+            P = {p.name: p for p in parameters}
+            entries = [(str(r[0]), float(r[1]), float(r[2]))
+                       for r in (P["analyses"].values or [])]
+            accuracy_assessment.run_compare_analyses(
+                entries,
+                out_report=P["out_report"].valueAsText,
+                conf=float(P["confidence"].value or 95.0) / 100.0,
+                messages=messages)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class AccuracySampleSize(object):
+    """Accuracy Sample Size -- Congalton-Green / Tortora and
+    Olofsson sample-size estimation. See
+    ``accuracy_assessment.run_sample_size``."""
+
+    def __init__(self):
+        self.label = "Accuracy Sample Size"
+        self.description = (
+            "Estimates the reference sample size needed for a "
+            "statistically defensible accuracy assessment, per "
+            "Congalton and Green's multinomial approach (Tortora "
+            "1978): the worst case with no map proportions known, "
+            "the refinement using the largest class proportion, "
+            "and per-class proportions with individual precision "
+            "requirements -- each with or without the finite "
+            "population correction. Optionally also the Olofsson "
+            "et al. (2014) sample size for a target standard "
+            "error of overall accuracy from conjectured user's "
+            "accuracies. A port of the classic extension's Sample "
+            "Size tool; pair it with the Random Point Generator "
+            "and Select Random Records tools to draw the design. "
+            "Works at every license level.")
+        self.category = "Data Tools"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        n_classes = arcpy.Parameter(
+            displayName="Number of map classes",
+            name="n_classes", datatype="GPLong",
+            parameterType="Required", direction="Input")
+        confidence = arcpy.Parameter(
+            displayName="Confidence level (percent)",
+            name="confidence", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        confidence.value = 95.0
+        precision = arcpy.Parameter(
+            displayName="Desired precision (percent)",
+            name="precision", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        precision.value = 10.0
+        max_prop = arcpy.Parameter(
+            displayName="Largest class proportion, percent "
+                        "(optional -- Option 2)",
+            name="max_prop", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        class_table = arcpy.Parameter(
+            displayName="Per-class values (optional -- Option 3 "
+                        "and the Olofsson method)",
+            name="class_table", datatype="GPValueTable",
+            parameterType="Optional", direction="Input")
+        class_table.columns = [
+            ["GPString", "Class"],
+            ["GPDouble", "Proportion (percent)"],
+            ["GPDouble", "Precision OR conjectured user's "
+                         "accuracy (percent)"]]
+        population = arcpy.Parameter(
+            displayName="Finite population size (optional)",
+            name="population", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        target_se = arcpy.Parameter(
+            displayName="Olofsson target standard error of "
+                        "overall accuracy (optional, e.g. 0.01)",
+            name="target_se", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        out_report = arcpy.Parameter(
+            displayName="Output report file (optional)",
+            name="out_report", datatype="DEFile",
+            parameterType="Optional", direction="Output")
+        out_report.filter.list = ["txt"]
+        return [n_classes, confidence, precision, max_prop,
+                class_table, population, target_se, out_report]
+
+    def isLicensed(self):
+        return True
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        n = P["n_classes"].value
+        if n is not None and int(n) < 2:
+            P["n_classes"].setErrorMessage(
+                "Give at least two classes.")
+        for name in ("confidence", "precision", "max_prop"):
+            v = P[name].value
+            if v is not None and not (0.0 < float(v) < 100.0):
+                P[name].setErrorMessage(
+                    "Give a percentage between 0 and 100 "
+                    "(exclusive).")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(accuracy_assessment)
+            P = {p.name: p for p in parameters}
+            ct = None
+            if P["class_table"].values:
+                ct = [(str(r[0]), float(r[1]) / 100.0,
+                       float(r[2]) / 100.0)
+                      for r in P["class_table"].values]
+            accuracy_assessment.run_sample_size(
+                int(P["n_classes"].value),
+                conf=float(P["confidence"].value or 95.0) / 100.0,
+                precision=float(P["precision"].value or 10.0)
+                    / 100.0,
+                max_prop=(float(P["max_prop"].value) / 100.0
+                          if P["max_prop"].value is not None
+                          else None),
+                class_table=ct,
+                population=P["population"].value,
+                target_se=P["target_se"].value,
+                out_report=P["out_report"].valueAsText,
                 messages=messages)
         except arcpy.ExecuteError:
             raise

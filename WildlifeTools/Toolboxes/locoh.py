@@ -417,6 +417,8 @@ def write_layer_file(out_fc, messages=None):
     # defeat a bare endswith); locoh deliberately does not import mahalanobis,
     # so this mirrors mahalanobis.is_gdb_workspace inline.
     ws_norm = ws.lower().replace("/", "\\").rstrip("\\")
+    if ws_norm.split("\\", 1)[0] in ("memory", "in_memory"):
+        return None                    # no on-disk home for a side .lyrx
     lyr_dir = os.path.dirname(ws) if ws_norm.endswith((".gdb", ".sde")) else ws
     out_lyrx = os.path.join(lyr_dir, name + ".lyrx")
     prop_field = "Point_Prop" if _is_shapefile(out_fc) else "Point_Proportion"

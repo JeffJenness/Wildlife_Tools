@@ -1042,22 +1042,43 @@ class _RasterStats(object):
                 "std": float(np.sqrt(var)), "count": self.n}
 
 
+def is_memory_workspace(path):
+    """True if ``path`` IS ArcGIS's in-memory workspace (``memory`` or the
+    legacy ``in_memory``) or points at a dataset inside it, e.g. the
+    Geoprocessing pane's auto-suggested ``memory\\Tool_output`` defaults
+    (2026-08-26, the Classification Accuracy memory-output crash). Only a
+    LEADING ``memory``/``in_memory`` element counts -- a disk folder that
+    happens to be named ``memory`` does not. Datasets here behave like
+    geodatabase datasets (extensionless names, nullable fields), so the
+    gdb tests below also return True for them; but the workspace is NOT a
+    folder on disk -- side files (.lyrx and friends) must go to
+    ``arcpy.env.scratchFolder`` instead.
+    """
+    low = str(path or "").lower().replace("/", "\\").rstrip("\\")
+    return low.split("\\", 1)[0] in ("memory", "in_memory")
+
+
 def is_gdb_workspace(path):
-    """True if ``path`` IS a geodatabase-style container (.gdb or .sde).
+    """True if ``path`` IS a geodatabase-style container (.gdb or .sde),
+    or the in-memory workspace, whose datasets follow the same rules
+    (extensionless names, nullable fields).
 
     Normalizes case, slash direction and -- critically -- trailing separators
     first: a workspace typed as ``...\\Data.gdb\\`` otherwise fails a bare
     ``endswith(".gdb")`` test, and the dataset that should have landed in the
     geodatabase is created with the wrong format or in the wrong place
     (2026-08-07, the Land Facet Mahalanobis statistics tables). Use this for
-    every .gdb/.sde suffix decision; never test the raw string.
+    every .gdb/.sde suffix decision; never test the raw string. Where memory
+    must be told apart from a real geodatabase (side files, layer files),
+    test ``is_memory_workspace`` explicitly.
     """
-    return (str(path or "").lower().replace("/", "\\").rstrip("\\")
-            .endswith((".gdb", ".sde")))
+    low = str(path or "").lower().replace("/", "\\").rstrip("\\")
+    return low.endswith((".gdb", ".sde")) or is_memory_workspace(low)
 
 
 def in_gdb_container(path):
-    """True if ``path`` points INTO (or at) a geodatabase, boundary-aware.
+    """True if ``path`` points INTO (or at) a geodatabase or the in-memory
+    workspace, boundary-aware.
 
     Unlike a bare ``".gdb" in path`` substring test, a folder merely NAMED like
     ``My.gdb_exports`` does not count -- its ".gdb" is not followed by a
@@ -1067,7 +1088,18 @@ def in_gdb_container(path):
     for ext in (".gdb", ".sde"):
         if low.endswith(ext) or (ext + "\\") in low:
             return True
-    return False
+    return is_memory_workspace(low)
+
+
+def lyrx_dir_for(ws):
+    """The directory that should receive a dataset's side ``.lyrx`` file:
+    next to the geodatabase for gdb datasets, the folder itself otherwise,
+    and ``None`` for the in-memory workspace, which has no on-disk home --
+    callers skip the side file and the tool's output still works, just
+    without default symbology (2026-08-26, memory-output sweep)."""
+    if is_memory_workspace(ws):
+        return None
+    return os.path.dirname(ws) if is_gdb_workspace(ws) else ws
 
 
 def resolve_raster_output(path, messages=None):
@@ -1197,7 +1229,9 @@ def default_stretch_lyrx(out_raster, colors, messages=None):
             messages.addWarningMessage("Could not create layer file: {}".format(e))
         return None
     ws = os.path.dirname(path)
-    lyr_dir = os.path.dirname(ws) if is_gdb_workspace(ws) else ws
+    lyr_dir = lyrx_dir_for(ws)
+    if lyr_dir is None:
+        return None
     out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
     tmp = "jenness_symb_tmp"
     try:
@@ -1280,7 +1314,9 @@ def default_aspect_lyrx(out_raster, messages=None):
             messages.addWarningMessage("Could not create layer file: {}".format(e))
         return None
     ws = os.path.dirname(path)
-    lyr_dir = os.path.dirname(ws) if is_gdb_workspace(ws) else ws
+    lyr_dir = lyrx_dir_for(ws)
+    if lyr_dir is None:
+        return None
     out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
     tmp = "jenness_aspect_tmp"
     try:
@@ -1372,7 +1408,9 @@ def default_unique_value_lyrx(out_raster, classes, field="Class_Name",
             messages.addWarningMessage("Could not create layer file: {}".format(e))
         return None
     ws = os.path.dirname(path)
-    lyr_dir = os.path.dirname(ws) if is_gdb_workspace(ws) else ws
+    lyr_dir = lyrx_dir_for(ws)
+    if lyr_dir is None:
+        return None
     out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
     tmp = "jenness_uv_tmp"
     try:
@@ -1470,7 +1508,9 @@ def default_unclassed_lyrx(fc, field, colors, messages=None):
             messages.addWarningMessage("Could not create layer file: {}".format(e))
         return None
     ws = os.path.dirname(path)
-    lyr_dir = os.path.dirname(ws) if is_gdb_workspace(ws) else ws
+    lyr_dir = lyrx_dir_for(ws)
+    if lyr_dir is None:
+        return None
     out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
 
     lo = hi = None
@@ -1915,7 +1955,9 @@ def write_raster_layer_file(out_raster, messages, stretch_stats=None, template=N
         ws = desc.path
     except Exception:
         return None
-    lyr_dir = os.path.dirname(ws) if is_gdb_workspace(ws) else ws
+    lyr_dir = lyrx_dir_for(ws)
+    if lyr_dir is None:
+        return None
     out_lyrx = os.path.join(lyr_dir, name + ".lyrx")
     tmp = "mahal_tmp_raster_layer"
 

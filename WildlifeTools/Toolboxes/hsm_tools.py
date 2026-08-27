@@ -1418,6 +1418,8 @@ def _patch_map_lyrx(out_fc, messages):
 
     try:
         ws = os.path.dirname(str(out_fc))
+        if _mh.is_memory_workspace(ws):
+            return None
         name = os.path.splitext(os.path.basename(str(out_fc)))[0]
         # The question is "is out_fc INSIDE a gdb container" (feature
         # datasets count: x.gdb\fds\fc), not "is the immediate parent a

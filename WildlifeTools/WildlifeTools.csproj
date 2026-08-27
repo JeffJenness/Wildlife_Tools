@@ -323,6 +323,12 @@
     <Content Include="Images\InscribedGeometry_32.png" />
     <Content Include="Images\ConcaveHull_16.png" />
     <Content Include="Images\ConcaveHull_32.png" />
+    <Content Include="Images\ClassificationAccuracy_16.png" />
+    <Content Include="Images\ClassificationAccuracy_32.png" />
+    <Content Include="Images\CompareAccuracy_16.png" />
+    <Content Include="Images\CompareAccuracy_32.png" />
+    <Content Include="Images\AccuracySampleSize_16.png" />
+    <Content Include="Images\AccuracySampleSize_32.png" />
     <Content Include="Images\SelectRandom_16.png" />
     <Content Include="Images\SelectRandom_32.png" />
     <!-- embedded copy of the Jenness logo: window icons load it by pack

@@ -284,7 +284,9 @@ def write_layer_file(out_fc, facet_names, messages=None):
     try:
         ws = os.path.dirname(str(out_fc))
         name = os.path.splitext(os.path.basename(str(out_fc)))[0]
-        lyr_dir = os.path.dirname(ws) if _mh.is_gdb_workspace(ws) else ws
+        lyr_dir = _mh.lyrx_dir_for(ws)
+        if lyr_dir is None:
+            return None
         out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
 
         classes = []

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<metadata xml:lang="en"><Esri><CreaDate>20260826</CreaDate><CreaTime>00000000</CreaTime><ArcGISFormat>1.0</ArcGISFormat><SyncOnce>TRUE</SyncOnce></Esri>
+	<tool name="AccuracySampleSize" displayname="Accuracy Sample Size" toolboxalias="jenness">
+		<arcToolboxHelpPath>c:\program files\arcgis\pro\Resources\Help\gp</arcToolboxHelpPath>
+		<summary><para>Estimates the <b>reference sample size</b> needed for a statistically defensible accuracy assessment, per Congalton and Green's multinomial approach (Tortora 1978): the worst case with no map proportions known, the refinement from the largest class proportion, and per-class proportions with individual precision requirements -- each with or without the <b>finite population correction</b> -- plus the <b>Olofsson et al. (2014)</b> sample size for a target standard error of overall accuracy. A port of the classic extension's Sample Size tool. Works at every license level.</para></summary>
+		<usage>Answers "how many reference samples do I need?" <i>before</i> the field work -- the question that determines whether an accuracy assessment will be statistically defensible. The methods follow Congalton and Green's multinomial approach (after Tortora 1978), exactly as in the classic Kappa extension, whose published example table this port reproduces to the sample.
+
+<b>Three options, by how much you know:</b>
+  •  <b>Option 1 -- nothing known.</b> Only the number of classes, the confidence level, and the desired precision. The worst case (a class at exactly 50%) is assumed; this gives the largest safe answer.
+  •  <b>Option 2 -- the largest class proportion known.</b> Enter the map proportion closest to 50%; the estimate tightens accordingly.
+  •  <b>Option 3 -- everything known.</b> Enter each class's proportion and its own required precision; the most demanding class governs. Tightening precision on one critical class raises the total accordingly.
+
+The <b>finite population correction</b> applies when only a limited number of samples is possible (e.g., a photo-interpretation frame of N plots): the required n shrinks as n approaches N.
+
+<b>The Olofsson route.</b> Modern area-weighted assessments (see the Classification Accuracy tool) plan sample size differently: choose a target <b>standard error</b> for overall accuracy, conjecture each class's user's accuracy, and the Olofsson et al. (2014) formula (https://doi.org/10.1016/j.rse.2014.02.015) gives the total n -- fill the per-class table with proportions and conjectured user's accuracies and give the target SE. Olofsson et al. also recommend allocating 50-100 samples to rare-but-important classes and distributing the rest proportionally.
+
+<b>Rules of thumb</b> (Congalton and Green): a minimum of ~50 samples per class, 75-100 with many classes (over 12), and never leave a class unsampled -- accuracy cannot be estimated for a class that was never checked.
+
+Once you have the number, draw the design with the <b>Random Point Generator</b> (stratified by map class, with spacing options) or select from an existing frame with <b>Select Random Records</b>; then run the assessment with the <b>Classification Accuracy (Kappa)</b> tool.</usage>
+		<parameters>
+			<param name="n_classes" displayname="Number of map classes" type="Required" direction="Input" datatype="Long" expression="n_classes"><dialogReference><para>How many classes the map distinguishes. The confidence level is Bonferroni-shared across them, so more classes require more samples.</para></dialogReference></param>
+			<param name="confidence" displayname="Confidence level (percent)" type="Optional" direction="Input" datatype="Double" expression="confidence"><dialogReference><para>The probability the sample will support statistically valid accuracy conclusions (default 95).</para></dialogReference></param>
+			<param name="precision" displayname="Desired precision (percent)" type="Optional" direction="Input" datatype="Double" expression="precision"><dialogReference><para>The acceptable half-width of the accuracy estimates (default 10). Tighter precision raises the sample size quadratically.</para></dialogReference></param>
+			<param name="max_prop" displayname="Largest class proportion, percent (optional -- Option 2)" type="Optional" direction="Input" datatype="Double" expression="max_prop"><dialogReference><para>Optional: the map proportion of the largest class (the one closest to 50%). Read it from the classified raster's attribute table or the polygon areas.</para></dialogReference></param>
+			<param name="class_table" displayname="Per-class values (optional -- Option 3 and the Olofsson method)" type="Optional" direction="Input" datatype="Value Table" expression="class_table"><dialogReference><para>Optional, one row per class: its map proportion (percent) and, in the third column, <i>either</i> its required precision (percent; Option 3) <i>or</i> its conjectured user's accuracy (percent; the Olofsson method, when a target standard error is also given below).</para></dialogReference></param>
+			<param name="population" displayname="Finite population size (optional)" type="Optional" direction="Input" datatype="Double" expression="population"><dialogReference><para>Optional: the total number of possible samples (a fixed plot frame). The finite population correction shrinks the required n.</para></dialogReference></param>
+			<param name="target_se" displayname="Olofsson target standard error of overall accuracy (optional, e.g. 0.01)" type="Optional" direction="Input" datatype="Double" expression="target_se"><dialogReference><para>Optional: a target standard error for overall accuracy (as a proportion, e.g. 0.01). With the per-class table's proportions and conjectured user's accuracies, the Olofsson et al. (2014) sample size is added to the report.</para></dialogReference></param>
+			<param name="out_report" displayname="Output report file (optional)" type="Optional" direction="Output" datatype="File" expression="out_report"><dialogReference><para>A text file holding the sample-size report (it also prints in the messages).</para></dialogReference></param>
+		</parameters>
+		<scriptExamples><scriptExample><title>Accuracy Sample Size example (stand-alone script)</title><para>The classic manual's scenario: four classes at 95% confidence and 10% precision, with a 10,000-plot frame.</para><code>import arcpy
+arcpy.ImportToolbox(r"C:\path\to\JennessEnterprisesTools.pyt")  # your install path
+arcpy.jenness.AccuracySampleSize(
+    n_classes=4, confidence=95, precision=10,
+    max_prop=36.7, population=10000)</code></scriptExample></scriptExamples>
+	</tool>
+	<dataIdInfo><searchKeys><keyword>sample size</keyword><keyword>accuracy assessment</keyword><keyword>sampling design</keyword><keyword>Tortora</keyword><keyword>multinomial</keyword><keyword>finite population correction</keyword><keyword>Olofsson</keyword><keyword>reference samples</keyword><keyword>survey design</keyword></searchKeys><idCredit>Jeff Jenness, Jenness Enterprises (http://www.jennessent.com). A port of the Sample Size tool of Jenness, J. and J. J. Wynne (2007), Cohen's Kappa and classification table metrics 2.1a (kappa_stats.avx), https://www.jennessent.com/arcview/kappa_stats.htm; methods after Congalton and Green (1999), Tortora (1978), The American Statistician 32:100-102, and Olofsson et al. (2014), Remote Sensing of Environment 148:42-57, https://doi.org/10.1016/j.rse.2014.02.015.</idCredit></dataIdInfo>
+</metadata>
