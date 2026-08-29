@@ -1,0 +1,54 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- Gallery item styled after the ribbon's own large buttons: a crisp
+       32x32 icon over a centered two-line caption. Explicit icon sizing
+       neutralizes stray DPI metadata in the PNGs (some icons carry 160
+       DPI and would otherwise render small; 72 DPI ones render fuzzy). -->
+  <!-- Caption: two full lines maximum, then a character ellipsis (the
+       full name shows in the hover tooltip) matching Esri's own Tools
+       gallery. BlockLineHeight keeps 11px glyphs, descenders included,
+       inside 13px line boxes so nothing clips vertically. -->
+  <DataTemplate x:Key="WildlifeToolGalleryItem">
+    <!-- IsEnabled tracks the underlying command's framework wrapper, so a
+         condition-gated button (Remove SLC is layout-only) greys out and
+         ignores clicks in the gallery just as it would on the ribbon. -->
+    <StackPanel Orientation="Vertical" Width="72" Height="60"
+                Margin="0,1,0,1"
+                Background="Transparent"
+                IsEnabled="{Binding Command.Enabled}">
+      <StackPanel.Style>
+        <Style TargetType="StackPanel">
+          <Style.Triggers>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.4" />
+            </Trigger>
+          </Style.Triggers>
+        </Style>
+      </StackPanel.Style>
+      <StackPanel.ToolTip>
+        <!-- A raw string tooltip renders as one monitor-spanning line;
+             wrap it at Pro's usual tooltip width, with the tool name
+             as a bold heading. -->
+        <ToolTip>
+          <StackPanel MaxWidth="320">
+            <TextBlock Text="{Binding Text}" FontWeight="Bold"
+                       TextWrapping="Wrap" Margin="0,0,0,4" />
+            <TextBlock Text="{Binding Tooltip}" TextWrapping="Wrap" />
+          </StackPanel>
+        </ToolTip>
+      </StackPanel.ToolTip>
+      <Image Source="{Binding Icon}" Width="32" Height="32"
+             Stretch="Uniform" UseLayoutRounding="True"
+             SnapsToDevicePixels="True"
+             HorizontalAlignment="Center" Margin="0,1,0,0" />
+      <TextBlock Text="{Binding Text}" TextWrapping="Wrap"
+                 TextTrimming="CharacterEllipsis"
+                 TextAlignment="Center" HorizontalAlignment="Center"
+                 FontSize="11" LineHeight="13"
+                 LineStackingStrategy="BlockLineHeight"
+                 MaxHeight="26" Margin="0,1,0,0" />
+    </StackPanel>
+  </DataTemplate>
+
+</ResourceDictionary>

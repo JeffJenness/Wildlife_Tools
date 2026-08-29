@@ -13559,7 +13559,7 @@ class ClassificationAccuracy(object):
             "analysis. A modernized port of Jenness and Wynne's "
             "classic Kappa analysis extension. Works at every "
             "license level.")
-        self.category = "Data Tools"
+        self.category = "Ecological Analysis Tools"
         self.canRunInBackground = False
 
     def getParameterInfo(self):
@@ -13872,7 +13872,7 @@ class CompareAccuracyAnalyses(object):
             "automatically when an analysis field is used). A "
             "port of the classic extension's Compare Kappa "
             "Analyses tool. Works at every license level.")
-        self.category = "Data Tools"
+        self.category = "Ecological Analysis Tools"
         self.canRunInBackground = False
 
     def getParameterInfo(self):
@@ -13977,7 +13977,7 @@ class AccuracySampleSize(object):
             "Random Point Generator and Select Random Records "
             "tools to draw the design. Works at every license "
             "level.")
-        self.category = "Data Tools"
+        self.category = "Ecological Analysis Tools"
         self.canRunInBackground = False
 
     def getParameterInfo(self):

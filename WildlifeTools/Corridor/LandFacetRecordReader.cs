@@ -263,10 +263,10 @@ namespace WildlifeTools.Corridor
                 {
                     // Tier 3: nothing known.
                     blocks.Add(new Block(BlockKind.Body,
-                        "This dataset carries no Land Facet analysis record and "
+                        "This dataset carries no Corridor Analysis record and "
                         + "does not appear to have been created by the Jenness "
                         + "Enterprises tools. Nothing is known about its role in "
-                        + "a Land Facet Corridor analysis."));
+                        + "a corridor analysis."));
                 }
                 return blocks;
             }
@@ -1758,7 +1758,7 @@ namespace WildlifeTools.Corridor
                 else
                 {
                     blocks.Add(new Block(BlockKind.Note,
-                        "The source exists but carries no Land Facet analysis "
+                        "The source exists but carries no Corridor Analysis "
                         + "record."));
                 }
                 return;

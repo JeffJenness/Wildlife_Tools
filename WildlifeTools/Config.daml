@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.81.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.81.1" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -22,41 +22,50 @@
       <tabs>
         <tab id="WildlifeTools_Tab1" caption="Wildlife">
           <group refID="WildlifeTools_Group1"/>
-          <group refID="WildlifeTools_GroupGraphics"/>
-          <group refID="WildlifeTools_GroupCartography"/>
           <group refID="WildlifeTools_GroupTopo"/>
-          <group refID="WildlifeTools_GroupDirectional"/>
           <group refID="WildlifeTools_GroupCorridor"/>
-          <group refID="WildlifeTools_GroupData"/>
+          <group refID="WildlifeTools_GroupEcological"/>
           <group refID="WildlifeTools_GroupGeometric"/>
+          <group refID="WildlifeTools_GroupData"/>
+          <group refID="WildlifeTools_GroupDirectional"/>
+          <group refID="WildlifeTools_GroupCartography"/>
           <group refID="WildlifeTools_GroupBreak"/>
         </tab>
       </tabs>
 
       <groups>
         <group id="WildlifeTools_Group1" caption="Home Range" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\LoCoH_32.png" smallImage="Images\LoCoH_32.png">
-          <subgroup refID="WildlifeTools_SubHomeRange" />
+          <!-- The gallery sits DIRECTLY in the group with no size attr,
+               mirroring Esri's own Analysis > Tools gallery
+               (esri_geoprocessing_ToolsGallery); placing it in a sized
+               subgroup inflated the whole ribbon row. -->
+          <gallery refID="WildlifeTools_HomeRangeGallery" inline="true" />
         </group>
-        <group id="WildlifeTools_GroupGraphics" caption="Graphics" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\CircleBackground_32.png" smallImage="Images\CircleBackground_32.png">
-          <subgroup refID="WildlifeTools_SubGraphics" />
-        </group>
+        <!-- WildlifeTools_GroupGraphics retired 2026-08-29: merged into the
+             Cartography group (gallery rows + the two placement palettes). -->
         <group id="WildlifeTools_GroupCartography" caption="Cartography" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\CompassRose_32.png" smallImage="Images\CompassRose_32.png">
-          <subgroup refID="WildlifeTools_SubCartography" />
+          <gallery refID="WildlifeTools_CartographyGallery" inline="true" />
+          <toolPalette refID="WildlifeTools_AddGraphicsPalette" size="large" />
+          <toolPalette refID="WildlifeTools_NorthArrowsPalette" size="large" />
+        </group>
+        <group id="WildlifeTools_GroupEcological" caption="Ecological Analysis" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\ClassificationAccuracy_32.png" smallImage="Images\ClassificationAccuracy_32.png">
+          <gallery refID="WildlifeTools_EcologicalGallery" inline="true" />
         </group>
         <group id="WildlifeTools_GroupTopo" caption="Topographic Analysis" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\TRI_32.png" smallImage="Images\TRI_32.png">
-          <subgroup refID="WildlifeTools_SubTopo" />
+          <gallery refID="WildlifeTools_TopographicGallery" inline="true" />
         </group>
         <group id="WildlifeTools_GroupDirectional" caption="Terrain Graphs" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\PolarPlot_32.png" smallImage="Images\PolarPlot_32.png">
           <subgroup refID="WildlifeTools_SubDirectional" />
         </group>
         <group id="WildlifeTools_GroupCorridor" caption="Corridor Designer Tools" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\LandFacet_32.png" smallImage="Images\LandFacet_32.png">
-          <subgroup refID="WildlifeTools_SubCorridor" />
+          <gallery refID="WildlifeTools_CorridorDesignerGallery" inline="true" />
+          <button refID="WildlifeTools_LandFacetDescribe" size="large" />
         </group>
         <group id="WildlifeTools_GroupData" caption="Data Tools" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\FavoriteData_32.png" smallImage="Images\FavoriteData_32.png">
           <subgroup refID="WildlifeTools_SubData" />
         </group>
         <group id="WildlifeTools_GroupGeometric" caption="Geometric Tools" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\Voronoi_32.png" smallImage="Images\Voronoi_32.png">
-          <subgroup refID="WildlifeTools_SubGeometric" />
+          <gallery refID="WildlifeTools_GeometricGallery" inline="true" />
         </group>
         <group id="WildlifeTools_GroupBreak" caption="Take a Break" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\Sudoku_32.png" smallImage="Images\Sudoku_32.png">
           <subgroup refID="WildlifeTools_SubBreak" />
@@ -67,42 +76,13 @@
              -> captioned small icons) as the window narrows, BEFORE the group
              collapses to its single chunk; without subgroups the only shrink
              the framework can perform is the collapse itself. -->
-        <subgroup id="WildlifeTools_SubGraphics" size="LargeThenMediumWhenMedium">
-
-          <toolPalette refID="WildlifeTools_AddGraphicsPalette" size="large" />
-          <toolPalette refID="WildlifeTools_GraphicBackgroundsPalette" size="large" />
-        </subgroup>
-        <subgroup id="WildlifeTools_SubHomeRange" size="LargeThenMediumWhenMedium">
-
-          <menu refID="WildlifeTools_LoCoHMenu" size="large" />
-          <menu refID="WildlifeTools_KernelDensityMenu" size="large" />
-          <menu refID="WildlifeTools_MahalanobisMenu" size="large" />
-        </subgroup>
-        <subgroup id="WildlifeTools_SubCartography" size="LargeThenMediumWhenMedium">
-
-          <toolPalette refID="WildlifeTools_NorthArrowsPalette" size="large" />
-          <button refID="WildlifeTools_RemoveSlc" size="large" />
-          <button refID="WildlifeTools_ShadowPolygons" size="large" />
-          <menu refID="WildlifeTools_HillshadeVariationsMenu" size="large" />
-        </subgroup>
-        <subgroup id="WildlifeTools_SubTopo" size="LargeThenMediumWhenMedium">
-
-          <menu refID="WildlifeTools_TopographicRoughnessMenu" size="large" />
-          <button refID="WildlifeTools_TopographicWetnessIndex" size="large" />
-          <button refID="WildlifeTools_SlopeZonalStatistics" size="large" />
-          <button refID="WildlifeTools_FindRasterExtremes" size="large" />
-          <menu refID="WildlifeTools_TPIMenu" size="large" />
-          <menu refID="WildlifeTools_AspectToolsMenu" size="large" />
-        </subgroup>
-        <subgroup id="WildlifeTools_SubCorridor" size="LargeThenMediumWhenMedium">
-
-          <menu refID="WildlifeTools_HsmMenu" size="large" />
-          <menu refID="WildlifeTools_LandFacetCorridorMenu" size="large" />
-          <menu refID="WildlifeTools_CorridorBuildMenu" size="large" />
-          <menu refID="WildlifeTools_EvaluateCorridorMenu" size="large" />
-          <menu refID="WildlifeTools_AncillaryCorridorMenu" size="large" />
-          <button refID="WildlifeTools_LandFacetDescribe" size="large" />
-        </subgroup>
+        <!-- WildlifeTools_SubHomeRange retired 2026-08-29: the Home Range
+             group now hosts its gallery directly (see the group above). -->
+        <!-- WildlifeTools_SubGraphics and WildlifeTools_SubCartography retired
+             2026-08-29: the merged Cartography group hosts its gallery and the
+             two placement palettes directly. -->
+        <!-- WildlifeTools_SubTopo retired 2026-08-29: the Topographic Analysis group now hosts its gallery directly. -->
+        <!-- WildlifeTools_SubCorridor retired 2026-08-29: the Corridor Designer group now hosts its gallery directly, with the Data Report button beside it. -->
         <subgroup id="WildlifeTools_SubDirectional" size="LargeThenMediumWhenMedium">
 
           <button refID="WildlifeTools_PolarPlots" size="large" />
@@ -113,22 +93,8 @@
           <button refID="WildlifeTools_FavoriteDatasets" size="large" />
           <button refID="WildlifeTools_AttributeSummary" size="large" />
           <button refID="WildlifeTools_SelectRandom" size="large" />
-          <button refID="WildlifeTools_ClassAccuracy" size="large" />
-          <button refID="WildlifeTools_CompareAccuracy" size="large" />
-          <button refID="WildlifeTools_AccSampleSize" size="large" />
         </subgroup>
-        <subgroup id="WildlifeTools_SubGeometric" size="LargeThenMediumWhenMedium">
-          <button refID="WildlifeTools_Voronoi" size="large" />
-          <button refID="WildlifeTools_AdaptiveVoronoi" size="large" />
-          <button refID="WildlifeTools_RepeatingShapes" size="large" />
-          <button refID="WildlifeTools_RandomPoints" size="large" />
-          <button refID="WildlifeTools_RandomArrays" size="large" />
-          <button refID="WildlifeTools_Centerline" size="large" />
-          <button refID="WildlifeTools_LongestLine" size="large" />
-          <button refID="WildlifeTools_RadiatingLines" size="large" />
-          <button refID="WildlifeTools_InscribedGeometry" size="large" />
-          <button refID="WildlifeTools_ConcaveHull" size="large" />
-        </subgroup>
+        <!-- WildlifeTools_SubGeometric retired 2026-08-29: the Geometric Tools group now hosts its gallery directly. -->
         <subgroup id="WildlifeTools_SubBreak" size="LargeThenMediumWhenMedium">
           <button refID="WildlifeTools_ThoughtForTheDay" size="large" />
           <button refID="WildlifeTools_Sudoku" size="large" />
@@ -460,7 +426,7 @@
                 largeImage="Images\SurfaceArea_32.png"
                 keytip="SA">
           <tooltip heading="Surface Area and Ratio">
-            Opens the Surface Area and Ratio tool from the Jenness Enterprises toolbox: the 8-triangle surface-area method of Jenness (2004, Wildlife Society Bulletin 32:829-839). Outputs any combination of 3D surface area, surface ratio (a roughness index), and planimetric cell area; correct on geographic (lat/long) DEMs via per-row spheroidal distances and cell areas. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
+            Opens the Surface Area and Ratio tool from the Jenness Enterprises toolbox: the 8-triangle surface-area method of Jenness (2004, Wildlife Society Bulletin 32:829-839). Outputs any combination of 3D surface area, surface ratio (a roughness index), and planimetric cell area; correct on geographic (lat/long) DEMs via per-row spheroidal distances and cell areas so the cell size appropriately changes with latitude. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_VRM"
@@ -1201,6 +1167,133 @@
           </tooltip>
         </button>
       </controls>
+      <galleries>
+        <!-- In-ribbon gallery for the Home Range group (the control behind
+             Esri's Analysis > Tools group): a few tools show full-size on
+             the ribbon, and the expanded dropdown lists every tool in
+             titled rows matching the classic menu groupings. Items are
+             built at runtime from the existing button definitions. -->
+        <gallery id="WildlifeTools_HomeRangeGallery"
+                 caption="Home Range Tools"
+                 className="HomeRangeGallery"
+                 itemsInRow="4"
+                 itemWidth="76"
+                 itemHeight="62"
+                 showItemCaption="true"
+                 showItemCaptionBelow="true"
+                 showGroup="true"
+                 resizable="true"
+                 loadOnClick="false"
+                 dataTemplateFile="pack://application:,,,/WildlifeTools;component/GalleryTemplates.xaml"
+                 templateID="WildlifeToolGalleryItem"
+                 largeImage="Images\LoCoH_32.png"
+                 smallImage="Images\LoCoH_32.png"
+                 keytip="HO">
+          <tooltip heading="Home Range Tools">
+            Home-range and habitat-analysis tools: Local Convex Hull (LoCoH) home ranges, enhanced kernel density with probability contours and proportion surfaces, and the Mahalanobis habitat-similarity family. Expand the gallery to see all ten tools grouped by family.<disabledText />
+          </tooltip>
+        </gallery>
+        <gallery id="WildlifeTools_TopographicGallery"
+                 caption="Topographic Analysis Tools"
+                 className="TopographicGallery"
+                 itemsInRow="5"
+                 itemWidth="76"
+                 itemHeight="62"
+                 showItemCaption="true"
+                 showItemCaptionBelow="true"
+                 showGroup="true"
+                 resizable="true"
+                 loadOnClick="false"
+                 dataTemplateFile="pack://application:,,,/WildlifeTools;component/GalleryTemplates.xaml"
+                 templateID="WildlifeToolGalleryItem"
+                 largeImage="Images\TRI_32.png"
+                 smallImage="Images\TRI_32.png"
+                 keytip="TA">
+          <tooltip heading="Topographic Analysis Tools">
+            Terrain analysis at every license level: topographic roughness and ruggedness (surface area and ratio, VRM, ACR, TRI, fractal dimension, LSRI, and roughness along lines), the topographic wetness index, slope zonal statistics, raster extreme values, the TPI landform family with the Classification System Builder, and aspect statistics computed correctly in circular space. Expand the gallery to see all 21 tools grouped by family.<disabledText />
+          </tooltip>
+        </gallery>
+        <gallery id="WildlifeTools_CorridorDesignerGallery"
+                 caption="Corridor Designer Tools"
+                 className="CorridorDesignerGallery"
+                 itemsInRow="5"
+                 itemWidth="76"
+                 itemHeight="62"
+                 showItemCaption="true"
+                 showItemCaptionBelow="true"
+                 showGroup="true"
+                 resizable="true"
+                 loadOnClick="false"
+                 dataTemplateFile="pack://application:,,,/WildlifeTools;component/GalleryTemplates.xaml"
+                 templateID="WildlifeToolGalleryItem"
+                 largeImage="Images\LandFacet_32.png"
+                 smallImage="Images\LandFacet_32.png"
+                 keytip="CC">
+          <tooltip heading="Corridor Designer Tools">
+            The complete CorridorDesigner workflow, by Jenness, Majka, Brost and Beier: habitat suitability modeling, land facet corridor modeling, corridor building and modification, corridor evaluation, and the ancillary analysis tools. Expand the gallery to see all 23 tools grouped by workflow stage; the Corridor Analysis Data Report sits beside the gallery.<disabledText />
+          </tooltip>
+        </gallery>
+        <gallery id="WildlifeTools_GeometricGallery"
+                 caption="Geometric Tools"
+                 className="GeometricGallery"
+                 itemsInRow="4"
+                 itemWidth="76"
+                 itemHeight="62"
+                 showItemCaption="true"
+                 showItemCaptionBelow="true"
+                 showGroup="true"
+                 resizable="true"
+                 loadOnClick="false"
+                 dataTemplateFile="pack://application:,,,/WildlifeTools;component/GalleryTemplates.xaml"
+                 templateID="WildlifeToolGalleryItem"
+                 largeImage="Images\Voronoi_32.png"
+                 smallImage="Images\Voronoi_32.png"
+                 keytip="GE">
+          <tooltip heading="Geometric Tools">
+            Tools that build and analyze vector geometry: Voronoi and repeating-shape tessellations, random point and sample-array generators, and tools that derive new geometry from existing features such as centerlines, longest interior lines, radiating lines, maximum inscribed shapes and concave hulls.<disabledText />
+          </tooltip>
+        </gallery>
+        <gallery id="WildlifeTools_EcologicalGallery"
+                 caption="Ecological Analysis"
+                 className="EcologicalGallery"
+                 itemsInRow="3"
+                 itemWidth="76"
+                 itemHeight="62"
+                 showItemCaption="true"
+                 showItemCaptionBelow="true"
+                 showGroup="true"
+                 resizable="true"
+                 loadOnClick="false"
+                 dataTemplateFile="pack://application:,,,/WildlifeTools;component/GalleryTemplates.xaml"
+                 templateID="WildlifeToolGalleryItem"
+                 largeImage="Images\ClassificationAccuracy_32.png"
+                 smallImage="Images\ClassificationAccuracy_32.png"
+                 keytip="EA">
+          <tooltip heading="Ecological Analysis">
+            Statistical tools for ecological analysis, beginning with the Kappa accuracy-assessment suite: assess a classification against reference data, compare accuracy analyses, and estimate the reference sample size a defensible assessment needs.<disabledText />
+          </tooltip>
+        </gallery>
+        <gallery id="WildlifeTools_CartographyGallery"
+                 caption="Cartography Tools"
+                 className="CartographyGallery"
+                 itemsInRow="5"
+                 itemWidth="76"
+                 itemHeight="62"
+                 showItemCaption="true"
+                 showItemCaptionBelow="true"
+                 showGroup="true"
+                 resizable="true"
+                 loadOnClick="false"
+                 dataTemplateFile="pack://application:,,,/WildlifeTools;component/GalleryTemplates.xaml"
+                 templateID="WildlifeToolGalleryItem"
+                 largeImage="Images\EnhancedHillshade_32.png"
+                 smallImage="Images\EnhancedHillshade_32.png"
+                 keytip="CT">
+          <tooltip heading="Cartography Tools">
+            Tools for more attractive maps: the geodesic-correct hillshade variations (including the "Swiss method" strategies), background graphics drawn behind selected elements, and cartographic helpers for soft shadow polygons and for parking Esri's Service Layer Credits text off the printed page.<disabledText />
+          </tooltip>
+        </gallery>
+      </galleries>
       <palettes>
         <!-- Dropdown palettes (same control Esri's Select tool uses): one face button
              on the ribbon, the four compass variants in the dropdown. -->
