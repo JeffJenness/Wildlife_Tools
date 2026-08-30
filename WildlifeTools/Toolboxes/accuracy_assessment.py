@@ -863,9 +863,11 @@ def map_proportions_from_raster(raster, labels, messages,
 
     Returns ``(props, area_m2)``; ``area_m2`` is the total mapped
     area of the ANALYZED classes (NoData and unanalyzed values
-    excluded), or None where it cannot be measured (a geographic
-    raster read through its attribute table, whose counts carry no
-    latitude)."""
+    excluded). On a geographic raster read through its attribute
+    table the counts carry no latitude, so the area is ESTIMATED
+    from a representative cell at the raster's central latitude
+    (exact per-row weighting needs the grid itself, which the
+    attribute-table path deliberately never reads)."""
     import arcpy
 
     if vat_field:
@@ -880,18 +882,31 @@ def map_proportions_from_raster(raster, labels, messages,
         d0 = arcpy.Describe(raster)
         sr0 = d0.spatialReference
         geographic = sr0 is not None and sr0.type == "Geographic"
-        if geographic:
-            _warn(messages,
-                  "Map proportions from the raster attribute "
-                  "table use raw cell counts; on a geographic "
-                  "raster, cell areas shrink with latitude, so "
-                  "consider typing latitude-corrected proportions "
-                  "in the override table.")
         tot = sum(counts.get(lb, 0.0) for lb in labels)
         if tot <= 0:
             return None, None
         area = None
-        if not geographic:
+        if geographic:
+            try:
+                ext = d0.extent
+                lat_c = math.radians(
+                    (float(ext.YMin) + float(ext.YMax)) / 2.0)
+                area = tot * (math.radians(abs(d0.meanCellWidth))
+                              * _AUTHALIC_R * math.cos(lat_c)
+                              * math.radians(abs(d0.meanCellHeight))
+                              * _AUTHALIC_R)
+            except Exception:                                    # noqa: BLE001
+                area = None
+            _warn(messages,
+                  "Geographic raster read through its attribute "
+                  "table: cell areas shrink with latitude but the "
+                  "table's counts carry no latitude, so the map "
+                  "proportions use raw cell counts and the total "
+                  "area is ESTIMATED from the cell area at the "
+                  "raster's central latitude. Type "
+                  "latitude-corrected proportions or a total map "
+                  "area in the overrides to refine either.")
+        else:
             try:
                 mpu = float(sr0.metersPerUnit)
                 area = tot * abs(d0.meanCellWidth

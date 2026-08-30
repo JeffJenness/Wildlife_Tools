@@ -13768,6 +13768,32 @@ class ClassificationAccuracy(object):
                 P[side + "_field"].setErrorMessage(
                     "Give the {} classes as EITHER a field or a "
                     "layer (exactly one).".format(side))
+            if ly:
+                # a raster input must hold CLASSES: integer cell
+                # values (the kind that can carry an attribute
+                # table), not continuous floating-point values
+                try:
+                    p = P[side + "_layer"]
+                    d = arcpy.Describe(p.value)
+                    if "raster" in str(getattr(
+                            d, "dataType", "")).lower():
+                        pt = getattr(d, "pixelType", None)
+                        if pt is None:
+                            pt = getattr(
+                                arcpy.Describe(d.catalogPath),
+                                "pixelType", None)
+                        if pt and str(pt).upper().startswith("F"):
+                            p.setErrorMessage(
+                                "This raster stores floating-point "
+                                "cell values -- continuous "
+                                "measurements, not classes. Give "
+                                "an integer (classified) raster; "
+                                "to classify a continuous raster "
+                                "first, see Reclassify or the "
+                                "General Raster Classification "
+                                "tool.")
+                except Exception:                                # noqa: BLE001
+                    pass
         c = P["confidence"].value
         if c is not None and not (50.0 < float(c) < 100.0):
             P["confidence"].setErrorMessage(

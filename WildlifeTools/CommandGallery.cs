@@ -36,6 +36,12 @@ namespace WildlifeTools
 
         protected CommandGallery((string Group, string[] Ids)[] sections)
         {
+            // Gallery items are COMMANDS, not a persistent choice: without
+            // this, the framework latches the clicked item as "selected"
+            // and a second click on the same item never fires (Jeff hit
+            // this re-running the Rectangle background tool).
+            AlwaysFireOnClick = true;
+
             foreach (var (group, ids) in sections)
             {
                 foreach (string id in ids)
@@ -56,6 +62,7 @@ namespace WildlifeTools
 
         protected override void OnClick(GalleryItem item)
         {
+            ClearSelection();
             if (item is CommandGalleryItem cmdItem
                 && FrameworkApplication.GetPlugInWrapper(cmdItem.CommandId)
                     is ICommand command
