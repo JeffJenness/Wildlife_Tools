@@ -1879,6 +1879,39 @@ def run_sample_size(n_classes=None, conf=0.95, precision=0.10,
              "never leaving a class unsampled. See the Random "
              "Point Generator and Select Random Records tools for "
              "drawing the design.")
+    fmt = lambda v: "{:.10g}".format(float(v))
+    L.append("")
+    L.append("# R cross-check of this estimate (copy-paste "
+             "into R):")
+    if method == SIZE_TARGETSE:
+        L.append("W <- c({})  # class proportions".format(
+            ",".join(fmt(p) for p in props)))
+        L.append("U <- c({})  # conjectured user's "
+                 "accuracies".format(
+                     ",".join(fmt(u) for u in third)))
+        L.append("ceiling((sum(W * sqrt(U * (1 - U))) / {})^2)"
+                 "  # -> {}".format(fmt(target_se), n_rec))
+    else:
+        L.append("B <- qchisq(1 - {} / {}, df = 1)"
+                 "  # Bonferroni share of alpha".format(
+                     fmt(1.0 - conf), n_classes))
+        if method == SIZE_MAXPROP:
+            p_txt = fmt(max_prop)
+            L.append("n <- B * {p} * (1 - {p}) / {b}^2".format(
+                p=p_txt, b=fmt(precision)))
+        elif method == SIZE_PERCLASS:
+            L.append("P <- c({})  # class proportions".format(
+                ",".join(fmt(p) for p in props)))
+            L.append("bi <- c({})  # required precisions".format(
+                ",".join(fmt(b) for b in third)))
+            L.append("n <- max(B * P * (1 - P) / bi^2)")
+        else:
+            L.append("n <- B * 0.25 / {}^2  # worst case, a "
+                     "class at 50%".format(fmt(precision)))
+        if big_n is not None:
+            L.append("n <- n / (1 + (n - 1) / {})  # finite "
+                     "population correction".format(fmt(big_n)))
+        L.append("ceiling(n)  # -> {}".format(n_rec))
     for line in L:
         _say(messages, line)
     if out_report:
