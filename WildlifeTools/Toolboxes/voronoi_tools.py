@@ -156,6 +156,53 @@ def clean_sr(sr):
         return sr
 
 
+def parse_extent(extent):
+    """An ``arcpy.Extent`` carrying its spatial reference, recovered
+    from whatever a GPExtent parameter delivered -- or None when
+    nothing usable was given. The GP pane's extent control (e.g. its
+    Current Display Extent button) reports ``xmin ymin xmax ymax WKT``
+    in the parameter TEXT, but the spatial reference can be missing
+    from the runtime value (2026-09-02, the Random Sample Array
+    Generator extent-only crash: 'No coordinate system' with the full
+    WKT sitting right there in the report). Strings are parsed here,
+    WKT tail and all. An Extent object passes through unchanged;
+    None / '' / 'DEFAULT' return None."""
+    import arcpy
+
+    if extent is None:
+        return None
+    if isinstance(extent, arcpy.Extent):
+        return extent
+    s = str(extent).strip()
+    if not s or s.upper() == "DEFAULT":
+        return None
+    parts = s.split(None, 4)
+    if len(parts) < 4:
+        return None
+    try:
+        xmin, ymin, xmax, ymax = (float(v) for v in parts[:4])
+    except (TypeError, ValueError):
+        return None
+    sr = None
+    if len(parts) == 5:
+        tail = parts[4].strip()
+        if tail and tail.upper() != "NONE":
+            try:
+                sr = arcpy.SpatialReference()
+                sr.loadFromString(tail)
+                if getattr(sr, "name", "Unknown") in ("", "Unknown"):
+                    sr = None
+            except Exception:                                    # noqa: BLE001
+                sr = None
+    if sr is not None:
+        try:
+            return arcpy.Extent(xmin, ymin, xmax, ymax,
+                                spatial_reference=sr)
+        except TypeError:            # older Extent signature: no SR arg
+            pass
+    return arcpy.Extent(xmin, ymin, xmax, ymax)
+
+
 def _rect_polygon(xmin, ymin, xmax, ymax, sr):
     import arcpy
 

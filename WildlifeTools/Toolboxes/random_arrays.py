@@ -726,7 +726,8 @@ def run_random_arrays(out_fc, boundary=None, extent=None,
                       array_points=None, point_spacing=None,
                       radius=None, orientation_mode=None,
                       orientation_angle=None, randomize_start=True,
-                      include_center=False, must_fit=True,
+                      include_center=False, randomize_ids=False,
+                      must_fit=True,
                       min_spacing=None, spacing_type=None,
                       boundary_gap=None, linear_units="Meters",
                       random_seed=None, max_attempts=1000,
@@ -736,6 +737,7 @@ def run_random_arrays(out_fc, boundary=None, extent=None,
     ``array_shape`` and its parameters. Returns the output path."""
     import arcpy
 
+    extent = _vt.parse_extent(extent) or extent
     strata = canon_strata(strata_method)
     if strata is None:
         raise arcpy.ExecuteError(
@@ -875,7 +877,8 @@ def run_random_arrays(out_fc, boundary=None, extent=None,
             randomize_start, include_center, must_fit, min_spacing,
             boundary_gap, linear_units, rng, attempts, random_seed,
             messages, strata_txt=strata_method or strata,
-            alloc_txt=alloc_method or alloc)
+            alloc_txt=alloc_method or alloc,
+            randomize_ids=randomize_ids)
 
     # ---- vector / extent: coordinate system + working projection ---------
     src_sr = None
@@ -998,7 +1001,8 @@ def run_random_arrays(out_fc, boundary=None, extent=None,
         out_fc, out_sr, work_sr, geographic, rows, design,
         src_field=src_field, cat_field=False,
         strat_field=strata != _rp.STRATA_NONE, messages=messages,
-        starved_any=starved_any, want_total=want_total)
+        starved_any=starved_any, want_total=want_total,
+        rng=rng, randomize_ids=randomize_ids)
     _stamp_arrays(out_path, kind, strata_method or strata,
                   alloc_method or alloc, design, linear_units,
                   sum(len(a["arrays"]) for a in rows), want_total,
@@ -1464,7 +1468,8 @@ def _arrays_on_raster(out_fc, boundary, desc, strata, strata_field,
                       randomize_start, include_center, must_fit,
                       min_spacing, boundary_gap, linear_units, rng,
                       attempts, random_seed, messages,
-                      strata_txt=None, alloc_txt=None):
+                      strata_txt=None, alloc_txt=None,
+                      randomize_ids=False):
     import arcpy
 
     # user-facing display strings for the provenance stamp (like the
@@ -1619,7 +1624,8 @@ def _arrays_on_raster(out_fc, boundary, desc, strata, strata_field,
                 [], design, src_field=False, cat_field=True,
                 strat_field=strata != _rp.STRATA_NONE,
                 messages=messages, starved_any=True,
-                want_total=want_total)
+                want_total=want_total,
+                rng=rng, randomize_ids=randomize_ids)
             _stamp_arrays(out_path, "raster", strata_txt, alloc_txt,
                           design, linear_units, 0, want_total,
                           boundary, min_spacing, boundary_gap,
@@ -1657,7 +1663,8 @@ def _arrays_on_raster(out_fc, boundary, desc, strata, strata_field,
         out_fc, out_sr, rsr, not _vt._same_cs(rsr, out_sr), rows,
         design, src_field=False, cat_field=True,
         strat_field=strata != _rp.STRATA_NONE, messages=messages,
-        starved_any=starved_any, want_total=want_total)
+        starved_any=starved_any, want_total=want_total,
+        rng=rng, randomize_ids=randomize_ids)
     _stamp_arrays(out_path, "raster", strata_txt, alloc_txt, design,
                   linear_units, placed, want_total, boundary,
                   min_spacing, boundary_gap, must_fit, random_seed)
@@ -1750,9 +1757,15 @@ def _starve_arrays(messages, label, got, need, attempts, must_fit,
 
 def _write_arrays(out_fc, out_sr, work_sr, reproject, rows, design,
                   src_field, cat_field, strat_field, messages,
-                  starved_any, want_total):
+                  starved_any, want_total, rng=None,
+                  randomize_ids=False):
     """rows: list of {"arrays": [{"pts", "rowcol", "brgs",
-    "values"}], "src_fid", "stratum"}."""
+    "values"}], "src_fid", "stratum"}. With ``randomize_ids`` each
+    array's Point_ID values are a fresh random permutation of
+    1..m (seed-reproducible), so Point_ID can serve as a RANDOMIZED
+    treatment ID -- Row/Col and Bearing stay tied to the geometric
+    position, and Point_ID 1 is then no longer the focal/center
+    point."""
     import os
 
     import arcpy
@@ -1820,6 +1833,9 @@ def _write_arrays(out_fc, out_sr, work_sr, reproject, rows, design,
             for a in row["arrays"]:
                 n_arrays_written += 1
                 pts = a["pts"]
+                ids = None
+                if randomize_ids and rng is not None and len(pts) > 1:
+                    ids = rng.permutation(len(pts)) + 1
                 for k in range(len(pts)):
                     n_written += 1
                     if proj is not None:
@@ -1827,7 +1843,8 @@ def _write_arrays(out_fc, out_sr, work_sr, reproject, rows, design,
                     else:
                         x, y = float(pts[k, 0]), float(pts[k, 1])
                     pi += 1
-                    rec = [(x, y), n_arrays_written, k + 1]
+                    rec = [(x, y), n_arrays_written,
+                           int(ids[k]) if ids is not None else k + 1]
                     if design.shape == SHAPE_GRID:
                         rc = a["rowcol"][k]
                         rec += [int(rc[0]), int(rc[1])]

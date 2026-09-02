@@ -652,6 +652,7 @@ def run_repeating_shapes(shape_type, out_fc, boundary=None, extent=None,
         raise arcpy.ExecuteError(
             "Unknown shape type: {}".format(shape_type))
     orientation = float(orientation or 0.0)
+    extent = _vt.parse_extent(extent) or extent
     is_points = shape_type in (POINTS_SQ, POINTS_TRI)
     if area_units not in _AREA_M2:
         raise arcpy.ExecuteError(

@@ -47,6 +47,7 @@ import os
 import numpy as np
 
 import mahalanobis as _mh
+import voronoi_tools as _vt
 
 METHOD_FIXED = "FIXED"
 METHOD_PERCENT = "PERCENT"
@@ -294,6 +295,7 @@ def run_select_random(in_layer, sample_method=None, n_records=None,
     ``in_layer``. Returns (n_selected_now, n_sampled)."""
     import arcpy
 
+    extent = _vt.parse_extent(extent) or extent
     method = canon_sample(sample_method)
     if method is None:
         raise arcpy.ExecuteError(

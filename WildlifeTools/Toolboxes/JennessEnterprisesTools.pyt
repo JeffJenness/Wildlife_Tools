@@ -24,6 +24,19 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 
+def _extent_arg(param):
+    """The extent argument to pass an engine: prefer the runtime value,
+    but when it arrives without its spatial reference (the extent
+    control's Current Display Extent button does this -- the WKT lives
+    only in the parameter text; 2026-09-02) rebuild the extent, WKT and
+    all, from the text via voronoi_tools.parse_extent."""
+    v = param.value
+    if isinstance(v, arcpy.Extent) and v.spatialReference is not None:
+        return v
+    return voronoi_tools.parse_extent(param.valueAsText) or v \
+        or param.valueAsText
+
+
 def _scripting_hint(messages, tool_name):
     """Print the exact lines needed to run this tool from a script or the Python
     window. An add-in Python toolbox is not on arcpy's path automatically, and
@@ -11528,7 +11541,7 @@ class RepeatingShapes(object):
                 shape_type=P["shape_type"].valueAsText,
                 out_fc=P["out_fc"].valueAsText,
                 boundary=P["boundary"].value or P["boundary"].valueAsText,
-                extent=P["extent"].value or P["extent"].valueAsText,
+                extent=_extent_arg(P["extent"]),
                 area=val("area"), edge=val("edge"), height=val("height"),
                 width=val("width"), diameter=val("diameter"),
                 radius=val("radius"),
@@ -11894,7 +11907,7 @@ class RandomPointGenerator(object):
                 out_fc=P["out_fc"].valueAsText,
                 boundary=P["boundary"].value
                     or P["boundary"].valueAsText,
-                extent=P["extent"].value or P["extent"].valueAsText,
+                extent=_extent_arg(P["extent"]),
                 strata_method=P["strata_method"].valueAsText,
                 strata_field=P["strata_field"].valueAsText,
                 alloc_method=P["alloc_method"].valueAsText,
@@ -12085,6 +12098,14 @@ class RandomSampleArrayGenerator(object):
             name="include_center", datatype="GPBoolean",
             parameterType="Optional", direction="Input")
         include_center.value = False
+        randomize_ids = arcpy.Parameter(
+            displayName="Randomize the point numbering within each "
+                        "array (each array's Point_ID values become "
+                        "a random permutation of 1..n, e.g. for use "
+                        "as a randomized treatment ID)",
+            name="randomize_ids", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        randomize_ids.value = False
         must_fit = arcpy.Parameter(
             displayName="Entire array must fit inside the area of "
                         "interest (uncheck to let arrays extend "
@@ -12143,9 +12164,9 @@ class RandomSampleArrayGenerator(object):
                 population_field, density, density_units, array_shape,
                 n_rows, n_cols, array_points, point_spacing, radius,
                 orientation_mode, orientation_angle, randomize_start,
-                include_center, must_fit, min_spacing, spacing_type,
-                boundary_gap, linear_units, random_seed, max_attempts,
-                out_fc]
+                include_center, randomize_ids, must_fit, min_spacing,
+                spacing_type, boundary_gap, linear_units, random_seed,
+                max_attempts, out_fc]
 
     def isLicensed(self):
         return True
@@ -12409,7 +12430,7 @@ class RandomSampleArrayGenerator(object):
                 out_fc=P["out_fc"].valueAsText,
                 boundary=P["boundary"].value
                     or P["boundary"].valueAsText,
-                extent=P["extent"].value or P["extent"].valueAsText,
+                extent=_extent_arg(P["extent"]),
                 strata_method=P["strata_method"].valueAsText,
                 strata_field=P["strata_field"].valueAsText,
                 alloc_method=P["alloc_method"].valueAsText,
@@ -12429,6 +12450,7 @@ class RandomSampleArrayGenerator(object):
                 orientation_angle=P["orientation_angle"].value,
                 randomize_start=P["randomize_start"].value,
                 include_center=P["include_center"].value,
+                randomize_ids=P["randomize_ids"].value,
                 must_fit=P["must_fit"].value,
                 min_spacing=P["min_spacing"].value,
                 spacing_type=P["spacing_type"].valueAsText,
@@ -14436,7 +14458,7 @@ class SelectRandomRecords(object):
                 sort_field=P["sort_field"].valueAsText,
                 random_start=bool(P["random_start"].value),
                 selection_method=P["selection_method"].valueAsText,
-                extent=P["extent"].value or P["extent"].valueAsText,
+                extent=_extent_arg(P["extent"]),
                 boundary=P["boundary"].value
                     or P["boundary"].valueAsText,
                 extent_relation=P["extent_relation"].valueAsText,

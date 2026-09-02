@@ -1031,6 +1031,7 @@ def run_random_points(out_fc, boundary=None, extent=None,
     unit, or a length unit for polylines). Returns the output path."""
     import arcpy
 
+    extent = _vt.parse_extent(extent) or extent
     strata = canon_strata(strata_method)
     if strata is None:
         raise arcpy.ExecuteError(
