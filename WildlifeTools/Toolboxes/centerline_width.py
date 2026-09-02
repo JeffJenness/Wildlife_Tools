@@ -667,7 +667,7 @@ def run_centerline(in_features, out_lines, mode=None,
                 and not name.lower().endswith(".shp"):
             name += ".shp"
         res = arcpy.management.CreateFeatureclass(
-            ws, name, gtype, spatial_reference=out_sr)
+            ws, name, gtype, spatial_reference=_vt.clean_sr(out_sr))
         return res.getOutput(0)
 
     out_lines = _fc(out_lines, "POLYLINE")

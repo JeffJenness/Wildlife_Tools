@@ -1437,7 +1437,7 @@ def run_patch_analysis(corridor, termini, out_fc, name_field=None,
     ws = out_ws or arcpy.env.workspace or arcpy.env.scratchFolder
     out_fc = os.path.join(ws, out_name)
     arcpy.management.CreateFeatureclass(
-        ws, out_name, "POLYLINE", spatial_reference=sr_out)
+        ws, out_name, "POLYLINE", spatial_reference=_mh.clean_sr(sr_out))
     field_len = {"From_Name": 128, "To_Name": 128,
                  "Used_By": 254, "Crit_For": 254}
     # one AddFields call, not one AddField per field (standing rule)

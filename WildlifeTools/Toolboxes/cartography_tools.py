@@ -21,6 +21,8 @@ import math
 import os
 
 import arcpy
+
+import mahalanobis as _mh
 import tool_metadata
 
 # Size-unit choices for the outermost ring distance.
@@ -272,7 +274,7 @@ def run_shadow_polygons(in_features, out_fc, num_rings=10, size_value=0.25,
     if arcpy.Exists(out_fc):
         arcpy.management.Delete(out_fc)
     arcpy.management.CreateFeatureclass(out_ws, out_name, "POLYGON",
-                                        spatial_reference=sr)
+                                        spatial_reference=_mh.clean_sr(sr))
     arcpy.management.AddFields(out_fc, [
         ["Buffer_Size", "DOUBLE", "", "", "", ""],
         ["Transparency", "DOUBLE", "", "", "", ""]])

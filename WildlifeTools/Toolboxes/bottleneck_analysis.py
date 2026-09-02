@@ -679,8 +679,9 @@ def run_bottleneck(corridor, block_a, block_b,
         if ws and not _is_memory(path) and not _mh.is_gdb_workspace(ws) \
                 and not name.lower().endswith(".shp"):
             name += ".shp"
-        arcpy.management.CreateFeatureclass(ws, name, gtype,
-                                            spatial_reference=out_sr)
+        arcpy.management.CreateFeatureclass(
+            ws, name, gtype,
+            spatial_reference=_mh.clean_sr(out_sr))
         return os.path.join(ws, name)
 
     def _stamp(path):

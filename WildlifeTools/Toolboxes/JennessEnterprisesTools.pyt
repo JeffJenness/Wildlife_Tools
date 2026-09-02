@@ -4542,7 +4542,7 @@ class SplitLinesIntoSegments(object):
             # an elevation vertical CS).
             out_ws, out_name = os.path.split(out_fc)
             arcpy.management.CreateFeatureclass(
-                out_ws, out_name, "POLYLINE", spatial_reference=out_sr,
+                out_ws, out_name, "POLYLINE", spatial_reference=mahalanobis.clean_sr(out_sr),
                 has_z="ENABLED")
             null_ok = (".gdb" in out_fc.lower() or ".sde" in out_fc.lower())
 

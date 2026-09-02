@@ -1763,7 +1763,7 @@ def _write_arrays(out_fc, out_sr, work_sr, reproject, rows, design,
             and not name.lower().endswith(".shp"):
         name += ".shp"
     res = arcpy.management.CreateFeatureclass(
-        ws, name, "POINT", spatial_reference=out_sr)
+        ws, name, "POINT", spatial_reference=_vt.clean_sr(out_sr))
     out_path = res.getOutput(0)
     is_shp = out_path.lower().endswith(".shp")
     field_rows = [["Array_ID", "LONG", "Array ID", "", "", ""],

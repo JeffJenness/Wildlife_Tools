@@ -409,7 +409,7 @@ def _create_corridor_fc(out_ws, out_name, sr):
     import arcpy
 
     arcpy.management.CreateFeatureclass(out_ws, out_name, "POLYGON",
-                                        spatial_reference=sr)
+                                        spatial_reference=_mh.clean_sr(sr))
     out_fc = os.path.join(out_ws, out_name)
     fields = [("Category", "TEXT", 64), ("CategoryID", "LONG", None),
               ("Block_A", "LONG", None), ("Block_B", "LONG", None),

@@ -1042,6 +1042,36 @@ class _RasterStats(object):
                 "std": float(np.sqrt(var)), "count": self.n}
 
 
+def clean_sr(sr):
+    """A copy of ``sr`` stripped of its dataset-specific XY domain,
+    resolution and tolerance, for creating OUTPUT feature classes.
+    A ``Describe(...).spatialReference`` carries its source dataset's
+    XY domain along with it, and some datasets record a domain hugged
+    tightly around their own data -- ``CreateFeatureclass`` then passes
+    that cramped domain to the output, and any geometry reaching past
+    it (shapes kept whole at a boundary, radials, arrays, corridor
+    outlines) fails to insert with ``RuntimeError: The coordinates or
+    measures are out of bounds`` (2026-09-02, the Repeating Shapes
+    Pinalenos crash). Rebuilding from the CS definition alone (the
+    part before the first ';' of ``exportToString``) lets the
+    geodatabase assign its default, effectively unlimited domain.
+    None / plain strings / already-clean SRs pass through unharmed.
+    An identical twin lives in ``voronoi_tools.clean_sr`` for the
+    geometric-family engines, whose tools reload that module (not
+    this one) on every execute.
+    """
+    import arcpy
+
+    try:
+        if sr is None or not hasattr(sr, "exportToString"):
+            return sr
+        s = arcpy.SpatialReference()
+        s.loadFromString(str(sr.exportToString()).split(";")[0])
+        return s
+    except Exception:                                        # noqa: BLE001
+        return sr
+
+
 def is_memory_workspace(path):
     """True if ``path`` IS ArcGIS's in-memory workspace (``memory`` or the
     legacy ``in_memory``) or points at a dataset inside it, e.g. the

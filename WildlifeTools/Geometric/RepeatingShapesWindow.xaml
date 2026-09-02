@@ -50,6 +50,23 @@
                 <UniformGrid Columns="4" x:Name="grdTiles"
                              HorizontalAlignment="Center"/>
             </GroupBox>
+            <!-- online-help icon, GP-pane style (rides the gallery's
+                 top-right gutter, which the centered tiles never reach) -->
+            <Button Grid.Row="0" x:Name="btnHelp"
+                    HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Margin="0,2,6,0" Width="20" Height="20" Padding="0"
+                    Background="Transparent" BorderThickness="0"
+                    Cursor="Hand" Click="OnHelp"
+                    ToolTip="Open the online help page for this tool">
+                <Grid>
+                    <Ellipse Width="18" Height="18" Fill="#0079C1"/>
+                    <TextBlock Text="?" Foreground="White"
+                               FontWeight="Bold" FontSize="12"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Margin="0,-1,0,0"/>
+                </Grid>
+            </Button>
 
             <!-- ============ parameters ============ -->
             <ScrollViewer Grid.Row="1" Margin="0,6,0,0"

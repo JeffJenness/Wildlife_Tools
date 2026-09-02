@@ -401,7 +401,7 @@ def _save_contours(out_fc, ogr_layer, sr, messages):
     if arcpy.Exists(out_fc):
         arcpy.management.Delete(out_fc)
     arcpy.management.CreateFeatureclass(
-        out_dir, out_name, "POLYLINE", spatial_reference=sr)
+        out_dir, out_name, "POLYLINE", spatial_reference=_mh.clean_sr(sr))
     arcpy.management.AddField(out_fc, "Contour", "DOUBLE")
     ogr_layer.ResetReading()
     with arcpy.da.InsertCursor(out_fc, ["SHAPE@", "Contour"]) as ins:

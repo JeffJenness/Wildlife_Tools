@@ -884,7 +884,7 @@ def run_repeating_shapes(shape_type, out_fc, boundary=None, extent=None,
         name += ".shp"
     res = arcpy.management.CreateFeatureclass(
         ws, name, "POINT" if is_points else "POLYGON",
-        spatial_reference=out_sr)
+        spatial_reference=_vt.clean_sr(out_sr))
     out_path = res.getOutput(0)
     rows = [["Cell_ID", "LONG", "Cell ID", "", "", ""]]
     if not is_points:

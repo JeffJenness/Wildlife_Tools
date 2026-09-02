@@ -351,7 +351,7 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
 
     out_ws, out_name = os.path.split(str(out_fc))
     arcpy.management.CreateFeatureclass(out_ws, out_name, "POINT",
-                                        spatial_reference=out_sr)
+                                        spatial_reference=_mh.clean_sr(out_sr))
     fields = [("Type", "TEXT", 12), ("SrcRaster", "TEXT", 128),
               ("SrcPath", "TEXT", 254), ("Elevation", "DOUBLE", None),
               ("Prominence", "DOUBLE", None), ("EdgeOfData", "SHORT", None),

@@ -210,7 +210,7 @@ def _qualify_oids(path, extent, boundary, bnd_sel, relation, out_sr,
             arcpy.Point(extent.XMin, extent.YMin)]), sr)
         rect_fc = arcpy.management.CreateFeatureclass(
             "in_memory", "sel_rect", "POLYGON",
-            spatial_reference=sr).getOutput(0)
+            spatial_reference=_mh.clean_sr(sr)).getOutput(0)
         with arcpy.da.InsertCursor(rect_fc, ["SHAPE@"]) as cur:
             cur.insertRow([rect])
         selectors.append(("the analysis extent", rect_fc))

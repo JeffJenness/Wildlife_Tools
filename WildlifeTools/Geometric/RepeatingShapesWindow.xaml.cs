@@ -658,6 +658,9 @@ namespace WildlifeTools.Geometric
 
         private void OnClose(object sender, RoutedEventArgs e) => Close();
 
+        private void OnHelp(object sender, RoutedEventArgs e)
+            => WebHelp.Open("geometric-tools/repeating-shapes.html");
+
         // =================================================================
         // drag-and-drop from the Contents pane (Bottleneck's proven route)
         // =================================================================

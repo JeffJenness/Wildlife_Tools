@@ -681,8 +681,9 @@ def run_termini(in_raster, blocks, out_fc, threshold_mode=MODE_FIXED,
         # ---- write ----------------------------------------------------------
         kept.sort(key=lambda r: (r["band"], r["block"], -r["area"]))
         out_ws, out_name = os.path.split(str(out_fc))
-        arcpy.management.CreateFeatureclass(out_ws, out_name, "POLYGON",
-                                            spatial_reference=rast_sr)
+        arcpy.management.CreateFeatureclass(
+            out_ws, out_name, "POLYGON",
+            spatial_reference=_mh.clean_sr(rast_sr))
         fields = [("Category", "TEXT", 64), ("CategoryID", "LONG", None),
                   ("Block", "LONG", None), ("Terminus", "LONG", None),
                   ("Area_SqM", "DOUBLE", None), ("Cells", "LONG", None),

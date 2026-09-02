@@ -453,7 +453,7 @@ def _build_contours(kd, out_lines, out_polys, messages):
         sr = arcpy.Describe(tmp_lines).spatialReference
         arcpy.management.CreateFeatureclass(
             os.path.dirname(out_polys), os.path.basename(out_polys),
-            "POLYGON", spatial_reference=sr)
+            "POLYGON", spatial_reference=mh.clean_sr(sr))
         _add_level_fields(out_polys)
         ins_fields = ["SHAPE@", "Density", "Isopleth", "CumProportion", "Label", "Primary"]
         delim = arcpy.AddFieldDelimiters(tmp_lines, "LevelID")

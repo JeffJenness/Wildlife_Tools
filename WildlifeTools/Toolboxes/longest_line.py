@@ -1073,7 +1073,7 @@ def _make_fc(path, gtype, out_sr):
             and not name.lower().endswith(".shp"):
         name += ".shp"
     res = arcpy.management.CreateFeatureclass(
-        ws, name, gtype, spatial_reference=out_sr)
+        ws, name, gtype, spatial_reference=_vt.clean_sr(out_sr))
     return res.getOutput(0)
 
 

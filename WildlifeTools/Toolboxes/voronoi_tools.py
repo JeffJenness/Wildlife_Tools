@@ -130,6 +130,32 @@ def _same_cs(a, b):
         return False
 
 
+def clean_sr(sr):
+    """A copy of ``sr`` stripped of its dataset-specific XY domain,
+    resolution and tolerance, for creating OUTPUT feature classes.
+    A ``Describe(...).spatialReference`` carries its source dataset's
+    XY domain along with it, and some datasets record a domain hugged
+    tightly around their own data -- ``CreateFeatureclass`` then passes
+    that cramped domain to the output, and any geometry reaching past
+    it (shapes kept whole at a boundary, a Voronoi frame beyond the
+    points, radials, arrays) fails to insert with ``RuntimeError: The
+    coordinates or measures are out of bounds``. Rebuilding from the
+    CS definition alone (the part before the first ';' of
+    ``exportToString``) lets the geodatabase assign its default,
+    effectively unlimited domain. None / plain strings / already-clean
+    SRs pass through unharmed."""
+    import arcpy
+
+    try:
+        if sr is None or not hasattr(sr, "exportToString"):
+            return sr
+        s = arcpy.SpatialReference()
+        s.loadFromString(str(sr.exportToString()).split(";")[0])
+        return s
+    except Exception:                                            # noqa: BLE001
+        return sr
+
+
 def _rect_polygon(xmin, ymin, xmax, ymax, sr):
     import arcpy
 
@@ -971,7 +997,7 @@ def _create_output(in_points, out_fc, out_sr, field_names, add_area,
     if is_shp and not name.lower().endswith(".shp"):
         name += ".shp"
     res = arcpy.management.CreateFeatureclass(
-        ws, name, "POLYGON", spatial_reference=out_sr)
+        ws, name, "POLYGON", spatial_reference=clean_sr(out_sr))
     out_path = res.getOutput(0)
 
     src = {f.name: f for f in arcpy.ListFields(in_points)}

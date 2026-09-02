@@ -1822,7 +1822,7 @@ def _write_points(out_fc, out_sr, work_sr, reproject, rows, src_field,
             and not name.lower().endswith(".shp"):
         name += ".shp"
     res = arcpy.management.CreateFeatureclass(
-        ws, name, "POINT", spatial_reference=out_sr)
+        ws, name, "POINT", spatial_reference=_vt.clean_sr(out_sr))
     out_path = res.getOutput(0)
     field_rows = [["Point_ID", "LONG", "Point ID", "", "", ""]]
     if strat_field:

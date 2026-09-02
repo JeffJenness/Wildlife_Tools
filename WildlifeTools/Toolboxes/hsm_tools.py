@@ -1658,8 +1658,9 @@ def run_patch_map(in_hsm, out_fc, radius, radius_units, threshold,
                   "patches.".format(n_patches, len(geoms)))
 
         out_ws, out_name = os.path.split(out_fc)
-        arcpy.management.CreateFeatureclass(out_ws, out_name, "POLYGON",
-                                            spatial_reference=rast_sr)
+        arcpy.management.CreateFeatureclass(
+            out_ws, out_name, "POLYGON",
+            spatial_reference=_mh.clean_sr(rast_sr))
         # one AddFields call, not one AddField per field (standing rule)
         arcpy.management.AddFields(out_fc, [
             [nm, tp, "", ln or "", "", ""]

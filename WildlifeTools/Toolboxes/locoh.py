@@ -247,9 +247,27 @@ def _field_names(out_path, field_defs):
     return [(d[2] if shp else d[0]) for d in field_defs]
 
 
+def _clean_sr(sr):
+    """A copy of ``sr`` without its dataset-specific XY domain, so the
+    output never inherits a cramped domain from the input (hulls can
+    reach past the points' recorded domain -> ``coordinates or
+    measures are out of bounds`` on insert). locoh deliberately does
+    not import mahalanobis, so this mirrors mahalanobis.clean_sr
+    inline."""
+    try:
+        if sr is None or not hasattr(sr, "exportToString"):
+            return sr
+        s = arcpy.SpatialReference()
+        s.loadFromString(str(sr.exportToString()).split(";")[0])
+        return s
+    except Exception:
+        return sr
+
+
 def _create_polygon_fc(out_path, sr, field_defs):
     out_ws, out_name = os.path.split(out_path)
-    arcpy.management.CreateFeatureclass(out_ws, out_name, "POLYGON", spatial_reference=sr)
+    arcpy.management.CreateFeatureclass(out_ws, out_name, "POLYGON",
+                                        spatial_reference=_clean_sr(sr))
     shp = _is_shapefile(out_path)
     # one AddFields call, not one AddField per field (standing rule)
     arcpy.management.AddFields(out_path, [

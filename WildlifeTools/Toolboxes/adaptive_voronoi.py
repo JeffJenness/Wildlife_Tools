@@ -492,7 +492,7 @@ def _write_output(out_fc, out_sr, rings, coords, seed_fids, bnd,
             and not name.lower().endswith(".shp"):
         name += ".shp"
     res = arcpy.management.CreateFeatureclass(
-        ws, name, "POLYGON", spatial_reference=out_sr)
+        ws, name, "POLYGON", spatial_reference=_vt.clean_sr(out_sr))
     out_path = res.getOutput(0)
     rows = [["Cell_ID", "LONG", "Cell ID", "", "", ""],
             ["Area_Ha", "DOUBLE", "Area (geodesic hectares)", "", "", ""]]
@@ -581,7 +581,7 @@ def _write_points_fc(out_points, out_sr, coords, seed_fids, messages,
             and not name.lower().endswith(".shp"):
         name += ".shp"
     res = arcpy.management.CreateFeatureclass(
-        ws, name, "POINT", spatial_reference=out_sr)
+        ws, name, "POINT", spatial_reference=_vt.clean_sr(out_sr))
     path = res.getOutput(0)
     is_shp = path.lower().endswith(".shp")
     rows = [["Cell_ID", "LONG", "Cell ID", "", "", ""]]
