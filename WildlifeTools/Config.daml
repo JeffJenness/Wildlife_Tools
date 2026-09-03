@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.81.5" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.82.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -889,6 +889,17 @@
                 keytip="RA">
           <tooltip heading="Random Sample Array Generator">
             Generate randomly placed ARRAYS of sampling points -- the standard field design of multiple sampling stations per plot -- inside polygon features, along polyline features, within the data cells of an integer raster's categories, or in a plain extent. Each array is built around a randomly placed focal location using the Random Point Generator's stratified sampling design; counts, the minimum distance between arrays, and the minimum distance from the boundary all refer to the arrays themselves (footprints: nearest points, never centers). Array shapes: a grid of rows and columns, a triangular lattice filling a circle, a circle of evenly spaced points (optionally including the center), or a one-dimensional array along a polyline that walks straight through junctions and warns when a Y confluence forces a branch choice. Arrays can be required to fit entirely inside the area (rejected placements are redrawn -- every array complete) or allowed to extend beyond it. Orientation: fixed angle, random per array, or aligned to the line direction. An optional seed makes runs exactly reproducible. Works at every license level.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_GrtsSample"
+                caption="Spatially Balanced Sample (GRTS)"
+                className="Geometric.GrtsButton"
+                loadOnClick="true"
+                smallImage="Images\GrtsSample_16.png"
+                largeImage="Images\GrtsSample_32.png"
+                keytip="SB">
+          <tooltip heading="Spatially Balanced Sample (GRTS)">
+            Select a SPATIALLY BALANCED probability sample from a point, polyline, or polygon frame using the generalized random-tessellation stratified (GRTS) design of Stevens and Olsen (2004) -- the standard of large environmental monitoring programs, as implemented in the spsurvey R package. Every location keeps its full, known inclusion probability (design-based inference intact), but each realized draw spreads over the frame the way pure randomness only promises on average. Options: stratification by a field with proportional or equal allocation; unequal (PPS) inclusion probability from a weight field (point frames); legacy sites guaranteed into the sample; a minimum distance between sites; and REPLACEMENT SITES drawn in the same design -- sites are written in reverse hierarchical order, so any leading run of SiteIDs is itself spatially balanced and replacements are consumed in SiteID order when field sites prove inaccessible. Design weights (1/inclusion probability) ride along for Horvitz-Thompson estimation, and the report scores the draw's spatial balance. Esri's Create Spatially Balanced Points requires the Geostatistical Analyst extension; this tool works at every license level.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_Centerline"

@@ -85,6 +85,8 @@ import adaptive_voronoi  # noqa: E402
 import repeating_shapes  # noqa: E402
 import random_points  # noqa: E402
 import random_arrays  # noqa: E402
+import grts_core  # noqa: E402
+import grts_sampling  # noqa: E402
 import centerline_width  # noqa: E402
 import longest_line  # noqa: E402
 import radiating_lines  # noqa: E402
@@ -359,7 +361,8 @@ class Toolbox(object):
                       CumulativeSurface, FindRasterExtremeValues,
                       VoronoiPolygons, AdaptiveVoronoiPolygons,
                       RepeatingShapes, RandomPointGenerator,
-                      RandomSampleArrayGenerator, CenterlineAndWidth,
+                      RandomSampleArrayGenerator,
+                      SpatiallyBalancedSample, CenterlineAndWidth,
                       LongestLineFetch, RadiatingLines,
                       MaximumInscribedGeometry, ConcaveHull,
                       ClassificationAccuracy,
@@ -14195,6 +14198,238 @@ class AccuracySampleSize(object):
                 out_report=P["out_report"].valueAsText,
                 messages=messages)
             P["out_n"].value = int(n_rec)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class SpatiallyBalancedSample(object):
+    """Spatially Balanced Sample (GRTS) -- Stevens & Olsen (2004)
+    generalized random-tessellation stratified design. See
+    ``grts_sampling.run_grts_sample``."""
+
+    def __init__(self):
+        self.label = "Spatially Balanced Sample (GRTS)"
+        self.description = (
+            "Selects a spatially balanced probability sample from a "
+            "point, polyline, or polygon frame using the generalized "
+            "random-tessellation stratified (GRTS) design of Stevens "
+            "and Olsen (2004), as in the spsurvey R package: every "
+            "location keeps its full, known inclusion probability "
+            "(design-based inference intact), while each realized "
+            "draw spreads over the frame the way pure randomness "
+            "only promises on average. Supports stratification, "
+            "unequal (PPS) probability from a weight field, legacy "
+            "sites, a minimum distance between sites, and ordered "
+            "replacement sites: output sites are written in reverse "
+            "hierarchical order, so any leading run of SiteIDs is "
+            "itself spatially balanced. Design weights ride along "
+            "for Horvitz-Thompson estimation. Works at every "
+            "license level.")
+        self.category = "Geometric Tools"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        in_frame = arcpy.Parameter(
+            displayName="Sampling frame (points, polylines, or "
+                        "polygons; a layer's selection is honored)",
+            name="in_frame", datatype="GPFeatureLayer",
+            parameterType="Required", direction="Input")
+        n_base = arcpy.Parameter(
+            displayName="Number of base sites (the sample size)",
+            name="n_base", datatype="GPLong",
+            parameterType="Required", direction="Input")
+        n_over = arcpy.Parameter(
+            displayName="Number of replacement sites (optional; "
+                        "drawn in the same design and used in "
+                        "SiteID order)",
+            name="n_over", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        stratum_field = arcpy.Parameter(
+            displayName="Stratum field (optional; each stratum is "
+                        "sampled independently)",
+            name="stratum_field", datatype="Field",
+            parameterType="Optional", direction="Input")
+        stratum_field.parameterDependencies = ["in_frame"]
+        stratum_field.filter.list = ["Short", "Long", "Text", "OID",
+                                     "BigInteger"]
+        alloc_method = arcpy.Parameter(
+            displayName="Allocation of sites across the strata",
+            name="alloc_method", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        alloc_method.filter.type = "ValueList"
+        alloc_method.filter.list = grts_sampling.ALLOC_METHODS
+        alloc_method.value = grts_sampling.ALLOC_PROP
+        aux_field = arcpy.Parameter(
+            displayName="Unequal probability (PPS) weight field "
+                        "(point frames only; optional)",
+            name="aux_field", datatype="Field",
+            parameterType="Optional", direction="Input")
+        aux_field.parameterDependencies = ["in_frame"]
+        aux_field.filter.list = ["Short", "Long", "Float", "Double",
+                                 "BigInteger"]
+        legacy_sites = arcpy.Parameter(
+            displayName="Legacy sites (point frames only; existing "
+                        "sites guaranteed into the sample; "
+                        "optional)",
+            name="legacy_sites", datatype="GPFeatureLayer",
+            parameterType="Optional", direction="Input")
+        min_spacing = arcpy.Parameter(
+            displayName="Minimum distance between base sites "
+                        "(optional)",
+            name="min_spacing", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        linear_units = arcpy.Parameter(
+            displayName="Units for the minimum distance",
+            name="linear_units", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        linear_units.filter.type = "ValueList"
+        linear_units.filter.list = ["Meters", "Kilometers", "Feet",
+                                    "Miles"]
+        linear_units.value = "Meters"
+        max_tries = arcpy.Parameter(
+            displayName="Selection retries to satisfy the minimum "
+                        "distance",
+            name="max_tries", datatype="GPLong",
+            parameterType="Optional", direction="Input",
+            category="Advanced")
+        max_tries.value = 10
+        random_seed = arcpy.Parameter(
+            displayName="Random seed (optional -- same seed, same "
+                        "sites)",
+            name="random_seed", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        out_fc = arcpy.Parameter(
+            displayName="Output design sites",
+            name="out_fc", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        out_n = arcpy.Parameter(
+            displayName="Total sites written (derived)",
+            name="out_n", datatype="GPLong",
+            parameterType="Derived", direction="Output")
+        out_var_v = arcpy.Parameter(
+            displayName="Spatial balance Var(v) of the base sites "
+                        "(derived; 0 = perfectly balanced)",
+            name="out_var_v", datatype="GPDouble",
+            parameterType="Derived", direction="Output")
+        out_pielou = arcpy.Parameter(
+            displayName="Pielou evenness loss of the base sites "
+                        "(derived; 0 = perfectly balanced)",
+            name="out_pielou", datatype="GPDouble",
+            parameterType="Derived", direction="Output")
+        return [in_frame, n_base, n_over, stratum_field,
+                alloc_method, aux_field, legacy_sites, min_spacing,
+                linear_units, max_tries, random_seed, out_fc, out_n,
+                out_var_v, out_pielou]
+
+    def isLicensed(self):
+        return True
+
+    def _frame_kind(self, param):
+        try:
+            shp = str(arcpy.Describe(param.value
+                                     or param.valueAsText).shapeType)
+        except Exception:                                # noqa: BLE001
+            return None
+        return shp
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        shp = self._frame_kind(P["in_frame"]) \
+            if P["in_frame"].valueAsText else None
+        is_pt = shp in ("Point", "Multipoint")
+        want = {"aux_field": bool(is_pt),
+                "legacy_sites": bool(is_pt),
+                "alloc_method": P["stratum_field"].valueAsText
+                not in (None, ""),
+                "linear_units": P["min_spacing"].value is not None,
+                "max_tries": P["min_spacing"].value is not None}
+        for name, w in want.items():
+            if bool(P[name].enabled) != w:
+                P[name].enabled = w
+        # suggest-once output name (gated on hasBeenValidated per
+        # the standing dialog rule; a cleared box stays cleared)
+        if P["in_frame"].valueAsText \
+                and not P["in_frame"].hasBeenValidated \
+                and not P["out_fc"].valueAsText:
+            try:
+                base = os.path.splitext(os.path.basename(
+                    arcpy.Describe(P["in_frame"].value
+                                   or P["in_frame"].valueAsText)
+                    .catalogPath))[0]
+                ws = arcpy.env.workspace or arcpy.env.scratchGDB
+                P["out_fc"].value = os.path.join(
+                    ws, arcpy.ValidateTableName(base + "_GRTS", ws))
+            except Exception:                            # noqa: BLE001
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        n = P["n_base"].value
+        if n is not None and int(n) < 1:
+            P["n_base"].setErrorMessage(
+                "Give a base sample size of at least 1.")
+        if P["n_over"].value is not None and int(P["n_over"].value) < 0:
+            P["n_over"].setErrorMessage(
+                "Replacement sites cannot be negative.")
+        shp = self._frame_kind(P["in_frame"]) \
+            if P["in_frame"].valueAsText else None
+        if shp is not None and shp not in ("Point", "Multipoint",
+                                           "Polyline", "Polygon"):
+            P["in_frame"].setErrorMessage(
+                "The sampling frame must be a point, polyline, or "
+                "polygon feature class or layer.")
+        if P["legacy_sites"].valueAsText:
+            try:
+                lshp = str(arcpy.Describe(
+                    P["legacy_sites"].value
+                    or P["legacy_sites"].valueAsText).shapeType)
+                if lshp not in ("Point", "Multipoint"):
+                    P["legacy_sites"].setErrorMessage(
+                        "Legacy sites must be POINTS.")
+            except Exception:                            # noqa: BLE001
+                pass
+        if P["min_spacing"].value is not None \
+                and float(P["min_spacing"].value) <= 0:
+            P["min_spacing"].setErrorMessage(
+                "The minimum distance must be positive.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(grts_core)
+            importlib.reload(grts_sampling)
+            P = {p.name: p for p in parameters}
+            out_path, total, var_v, pielou = \
+                grts_sampling.run_grts_sample(
+                in_frame=P["in_frame"].value
+                or P["in_frame"].valueAsText,
+                out_fc=P["out_fc"].valueAsText,
+                n_base=P["n_base"].value,
+                n_over=P["n_over"].value or 0,
+                stratum_field=P["stratum_field"].valueAsText,
+                alloc_method=P["alloc_method"].valueAsText,
+                aux_field=(P["aux_field"].valueAsText
+                           if P["aux_field"].enabled else None),
+                legacy_sites=(P["legacy_sites"].value
+                              or P["legacy_sites"].valueAsText
+                              if P["legacy_sites"].enabled else None),
+                min_spacing=P["min_spacing"].value,
+                linear_units=P["linear_units"].valueAsText
+                or "Meters",
+                max_tries=P["max_tries"].value or 10,
+                random_seed=P["random_seed"].value,
+                messages=messages)
+            P["out_n"].value = int(total)
+            if var_v is not None:
+                P["out_var_v"].value = float(var_v)
+                P["out_pielou"].value = float(pielou)
         except arcpy.ExecuteError:
             raise
         except Exception:

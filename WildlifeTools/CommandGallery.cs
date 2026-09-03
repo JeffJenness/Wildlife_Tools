@@ -124,6 +124,7 @@ namespace WildlifeTools
             {
                 "WildlifeTools_RandomPoints",
                 "WildlifeTools_RandomArrays",
+                "WildlifeTools_GrtsSample",
             }),
             ("Geometry on Geometry", new[]
             {
