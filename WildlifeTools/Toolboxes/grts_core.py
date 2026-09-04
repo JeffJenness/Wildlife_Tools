@@ -109,11 +109,14 @@ def _interleaved_keys(pts, origin, side, rng, depth=_KEY_DEPTH):
     scale = 0.25
     for lev in range(depth):
         d = digits[lev].astype(np.int64)
-        # one random permutation per prefix group
+        # one random permutation per prefix group, drawn in a single
+        # vectorized call (the per-group Python loop cost ~28 s at
+        # 1M points; note this changes the seed->design stream
+        # relative to versions before 2026-09-04)
         groups, inv = np.unique(prefix, return_inverse=True)
-        perms = np.empty((len(groups), 4), dtype=np.int64)
-        for g in range(len(groups)):
-            perms[g] = rng.permutation(4)
+        perms = rng.permuted(
+            np.tile(np.arange(4, dtype=np.int64),
+                    (len(groups), 1)), axis=1)
         d_rand = perms[inv, d]
         keys += d_rand * scale
         scale *= 0.25
@@ -217,9 +220,15 @@ def grts_finite(pts, n, rng, weights=None, n_over=0, legacy=None):
     w = np.ones(N) if weights is None else np.asarray(
         weights, dtype=np.float64)
 
-    # design inclusion probabilities for the FULL M (base+over draw,
-    # per spsurvey: the over sample is one GRTS draw of size M)
+    # SELECTION uses inclusion probabilities for the full M
+    # (base+over is one GRTS draw of size M, per spsurvey), but the
+    # ANALYSIS weights are the BASE design's pi (spsurvey's ip =
+    # n/N for equal probability), so 1/pi summed over the base
+    # sample estimates the frame total -- the Horvitz-Thompson
+    # invariant.  Using the M-draw pi for weights biased HT totals
+    # low by n/(n+n_over) (found in review, verified against R).
     pi = _inclusion_probs(M, w)
+    pi_base = _inclusion_probs(int(n), w)
     sizes = pi.copy()
 
     if legacy is not None:
@@ -259,7 +268,15 @@ def grts_finite(pts, n, rng, weights=None, n_over=0, legacy=None):
     use[is_leg] = "Legacy"
     free = np.flatnonzero(~is_leg)
     use[free[:int(n) - n_l]] = "Base"
-    return {"index": sel, "use": use, "prob": pi[sel],
+    # write order: Legacy first (spsurvey convention), then Base,
+    # then Over -- each group keeping its reverse hierarchical
+    # order.  Without this a legacy site landing late in RHO order
+    # was written AFTER replacement sites (found in review).
+    rank = np.where(use == "Legacy", 0,
+                    np.where(use == "Base", 1, 2))
+    ro = np.argsort(rank, kind="stable")
+    sel, use = sel[ro], use[ro]
+    return {"index": sel, "use": use, "prob": pi_base[sel],
             "M": M, "n": int(n), "n_over": int(n_over),
             "origin": origin, "side": side}
 
@@ -372,6 +389,17 @@ class ArealMeasure(object):
             y = rng.uniform(ymin, ymax)
             if self.point_in(x, y):
                 return x, y
+        # rejection failed (frame piece under ~1/2000 of the cell:
+        # a sliver).  Probe a fine deterministic grid before falling
+        # back -- the bare cell-center fallback could land OUTSIDE
+        # the polygon entirely (found in review).
+        for g in (16, 48):
+            xs = xmin + (xmax - xmin) * (np.arange(g) + 0.5) / g
+            ys = ymin + (ymax - ymin) * (np.arange(g) + 0.5) / g
+            for y in ys:
+                for x in xs:
+                    if self.point_in(x, y):
+                        return float(x), float(y)
         return 0.5 * (xmin + xmax), 0.5 * (ymin + ymax)
 
 
@@ -479,6 +507,14 @@ def _grts_infinite(measure, n, rng, n_over=0, min_cell_frac=1e-6,
                               & (hits[hit_idx] < acc + m_q)]
                 descend(qx, qy, half, m_q, acc, sel, depth + 1)
                 acc += m_q
+        # child measures sum to the parent's only up to float
+        # rounding; a hit in the residual sliver [acc, lo + m_cell)
+        # would otherwise be left as uninitialized memory (found in
+        # review) -- place it within this cell's frame piece
+        leftover = hit_idx[hits[hit_idx] >= acc]
+        for h in leftover:
+            out[h] = measure.draw_point(x0, y0, x0 + sz, y0 + sz,
+                                        rng)
 
     descend(origin[0], origin[1], side, total, 0.0,
             np.arange(M, dtype=np.int64), 0)
@@ -526,6 +562,8 @@ def balance_metrics(sites, frame_pts, frame_w=None):
     n = len(sites)
     w = np.ones(len(frame_pts)) if frame_w is None \
         else np.asarray(frame_w, dtype=np.float64)
+    if n < 1 or len(frame_pts) == 0 or w.sum() <= 0:
+        return float("nan"), float("nan")
     _, near = cKDTree(sites).query(frame_pts)
     v = np.bincount(near, weights=w, minlength=n)
     v = v * (n / v.sum())

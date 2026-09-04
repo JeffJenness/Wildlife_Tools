@@ -13969,6 +13969,11 @@ class CompareAccuracyAnalyses(object):
             P["analyses"].setErrorMessage(
                 "Give at least two analyses to compare.")
         for r in vals:
+            if r[1] in (None, "") or r[2] in (None, ""):
+                P["analyses"].setErrorMessage(
+                    "Every analysis row needs both a kappa and a "
+                    "variance.")
+                break
             if float(r[2]) <= 0:
                 P["analyses"].setErrorMessage(
                     "Every variance must be greater than zero.")
@@ -13980,6 +13985,11 @@ class CompareAccuracyAnalyses(object):
             _scripting_hint(messages, type(self).__name__)
             importlib.reload(accuracy_assessment)
             P = {p.name: p for p in parameters}
+            for r in (P["analyses"].values or []):
+                if r[1] in (None, "") or r[2] in (None, ""):
+                    raise arcpy.ExecuteError(
+                        "Analysis '{}' is missing its kappa or "
+                        "variance value.".format(r[0]))
             entries = [(str(r[0]), float(r[1]), float(r[2]))
                        for r in (P["analyses"].values or [])]
             _lines, ck, pe = \
@@ -14138,9 +14148,28 @@ class AccuracySampleSize(object):
         if not per_class and n is None:
             P["n_classes"].setErrorMessage(
                 "This method needs the number of classes.")
-        if n is not None and int(n) < 2:
+        if P["n_classes"].enabled and n is not None and int(n) < 2:
             P["n_classes"].setErrorMessage(
                 "Give at least two classes.")
+        for tbl in ("class_table", "ua_table"):
+            if not P[tbl].enabled:
+                continue
+            for r in (P[tbl].values or []):
+                bad = None
+                if r[1] in (None, "") or r[2] in (None, ""):
+                    bad = ("Every row needs a class, a percentage, "
+                           "and a second percentage.")
+                elif not (0.0 < float(r[1]) < 100.0):
+                    bad = ("Class percentages must lie between 0 "
+                           "and 100 (exclusive).")
+                elif not (0.0 < float(r[2]) < 100.0):
+                    bad = ("The per-class precision / accuracy "
+                           "must lie between 0 and 100 "
+                           "(exclusive) -- a precision of 0 would "
+                           "need an infinite sample.")
+                if bad:
+                    P[tbl].setErrorMessage(bad)
+                    break
         if m == self._M_MAXPROP and P["max_prop"].value is None:
             P["max_prop"].setErrorMessage(
                 "This method needs the largest class proportion.")
@@ -14572,6 +14601,12 @@ class EstimatedShortestPath(object):
                 and int(P["attempts"].value) < 0:
             P["attempts"].setErrorMessage(
                 "Extra attempts cannot be negative.")
+        if P["attempts"].value is not None \
+                and int(P["attempts"].value) > 100:
+            P["attempts"].setErrorMessage(
+                "More than 100 extra attempts buys essentially "
+                "nothing and can run for hours -- use 100 or "
+                "fewer.")
         return
 
     def execute(self, parameters, messages):

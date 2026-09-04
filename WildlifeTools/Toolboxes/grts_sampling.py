@@ -219,6 +219,9 @@ def run_grts_sample(in_frame, out_fc, n_base, n_over=0,
     if n_base < 1:
         raise arcpy.ExecuteError("Give a base sample size of at "
                                  "least 1.")
+    if n_over < 0:
+        raise arcpy.ExecuteError("Replacement sites cannot be "
+                                 "negative.")
 
     rng = np.random.default_rng(
         int(random_seed) if random_seed not in (None, "") else None)
@@ -254,8 +257,28 @@ def run_grts_sample(in_frame, out_fc, n_base, n_over=0,
     geographic = out_sr.type == "Geographic"
     if geographic:
         e = desc.extent
-        work_sr = _rs._laea_for(out_sr, 0.5 * (e.XMin + e.XMax),
-                                0.5 * (e.YMin + e.YMax))
+        try:
+            if desc.spatialReference is not None \
+                    and desc.spatialReference.factoryCode \
+                    != out_sr.factoryCode:
+                e = e.projectAs(out_sr)
+        except Exception:                                # noqa: BLE001
+            pass
+        cx = 0.5 * (e.XMin + e.XMax)
+        cy = 0.5 * (e.YMin + e.YMax)
+        if not (math.isfinite(cx) and math.isfinite(cy)
+                and -180 <= cx <= 180 and -90 <= cy <= 90):
+            raise arcpy.ExecuteError(
+                "Could not determine the frame's geographic center "
+                "(the data source reports no usable extent). Copy "
+                "the frame to a geodatabase and try again.")
+        if (e.XMax - e.XMin) > 180:
+            _warn(messages,
+                  "The frame spans more than 180 degrees of "
+                  "longitude -- it may straddle the antimeridian, "
+                  "where the automatic equal-area projection is "
+                  "unreliable. Consider a projected frame.")
+        work_sr = _rs._laea_for(out_sr, cx, cy)
         _say(messages,
              "Geographic data: computing in an automatic EQUAL-AREA "
              "working projection (Lambert azimuthal); the output is "
@@ -295,6 +318,27 @@ def run_grts_sample(in_frame, out_fc, n_base, n_over=0,
                     "report this dataset.".format(k, core_area, ref))
             measure_of[k] = m
         sizes = {k: strata_area.get(k, 0.0) for k in keys}
+        # OVERLAPPING polygons are sampled at double intensity (the
+        # area measure counts overlap twice; found in review) --
+        # detect by comparing the dissolved footprint to the summed
+        # feature areas and warn plainly (never fail the run)
+        try:
+            chk = arcpy.management.Dissolve(
+                in_frame, r"memory\grts_overlap_chk").getOutput(0)
+            diss = 0.0
+            with arcpy.da.SearchCursor(chk, ["SHAPE@AREA"]) as cur:
+                diss = sum(r[0] for r in cur)
+            arcpy.management.Delete(chk)
+            summed = sum(sizes.values())
+            if diss > 0 and summed > diss * 1.005:
+                _warn(messages,
+                      "The frame contains OVERLAPPING polygons "
+                      "(features sum to {:,.6g} but cover only "
+                      "{:,.6g}): overlapping ground is sampled at "
+                      "DOUBLE intensity. Dissolve the frame first "
+                      "for uniform sampling.".format(summed, diss))
+        except Exception:                                # noqa: BLE001
+            pass
     elif kind == "linear":
         strata_segs = _read_lines(in_frame, work_sr, stratum_field)
         keys = list(strata_segs)
@@ -322,26 +366,8 @@ def run_grts_sample(in_frame, out_fc, n_base, n_over=0,
                                      if stratum_field else ""))
     _mh.phase_advance()
 
-    # ---- allocation across strata ---------------------------------------
-    if alloc == ALLOC_EQUAL:
-        n_of = {k: n_base for k in keys}
-        over_of = {k: n_over for k in keys}
-    else:
-        weights = [max(sizes[k], 0.0) for k in keys]
-        counts = _rp._apportion(n_base, weights)
-        overs = _rp._apportion(n_over, weights) if n_over else \
-            np.zeros(len(keys), dtype=np.int64)
-        n_of = {k: int(c) for k, c in zip(keys, counts)}
-        over_of = {k: int(c) for k, c in zip(keys, overs)}
-        dropped = [k for k in keys if n_of[k] < 1]
-        if dropped:
-            _warn(messages,
-                  "{} stratum/strata received no sites under "
-                  "proportional allocation (too small a share of "
-                  "the total size).".format(len(dropped)))
-        keys = [k for k in keys if n_of[k] >= 1]
-
-    # ---- legacy sites (finite frames) -----------------------------------
+    # ---- legacy sites (finite frames; read BEFORE allocation so a
+    # stratum holding legacy sites can never be dropped) ------------------
     legacy_mask = None
     if legacy_sites not in (None, "") and kind == "finite":
         from scipy.spatial import cKDTree
@@ -365,6 +391,63 @@ def run_grts_sample(in_frame, out_fc, n_base, n_over=0,
                         bad, float(d.max())))
             legacy_mask = np.zeros(len(xy_all), dtype=bool)
             legacy_mask[near] = True
+            if aux_field and (w_all[legacy_mask] <= 0).any():
+                raise arcpy.ExecuteError(
+                    "A legacy site has a zero PPS weight: its design "
+                    "inclusion probability would be 0 and its design "
+                    "weight infinite. Give every legacy unit a "
+                    "positive weight.")
+    leg_of = {k: 0 for k in keys}
+    if legacy_mask is not None:
+        leg_of = {k: int(legacy_mask[idx_of[k]].sum()) for k in keys}
+        if sum(leg_of.values()) > n_base:
+            raise arcpy.ExecuteError(
+                "{} legacy sites exceed the base sample size of "
+                "{}.".format(sum(leg_of.values()), n_base))
+
+    # ---- allocation across strata ---------------------------------------
+    if alloc == ALLOC_EQUAL:
+        n_of = {k: n_base for k in keys}
+        over_of = {k: n_over for k in keys}
+        short = [k for k in keys if leg_of[k] > n_base]
+        if short:
+            raise arcpy.ExecuteError(
+                "Stratum {} holds {} legacy sites but the equal "
+                "allocation gives each stratum only {} base "
+                "sites.".format(short[0], leg_of[short[0]], n_base))
+    else:
+        weights = [max(sizes[k], 0.0) for k in keys]
+        counts = _rp._apportion(n_base, weights)
+        overs = _rp._apportion(n_over, weights) if n_over else \
+            np.zeros(len(keys), dtype=np.int64)
+        n_of = {k: int(c) for k, c in zip(keys, counts)}
+        over_of = {k: int(c) for k, c in zip(keys, overs)}
+        # a stratum can never be allocated fewer sites than its
+        # legacy count -- raise it and take the difference from the
+        # largest allocations with slack (guaranteed-in contract)
+        for k in keys:
+            while n_of[k] < leg_of[k]:
+                donors = [j for j in keys
+                          if n_of[j] > max(leg_of[j], 1)]
+                if not donors:
+                    raise arcpy.ExecuteError(
+                        "Legacy sites cannot all be honored within "
+                        "the base sample size -- increase the "
+                        "number of base sites.")
+                big = max(donors, key=lambda j: n_of[j])
+                n_of[big] -= 1
+                n_of[k] += 1
+        dropped = [k for k in keys if n_of[k] < 1]
+        if dropped:
+            _warn(messages,
+                  "{} stratum/strata received no sites under "
+                  "proportional allocation (too small a share of "
+                  "the total size).".format(len(dropped)))
+        keys = [k for k in keys if n_of[k] >= 1]
+        if not keys:
+            raise arcpy.ExecuteError(
+                "No stratum received any sites -- the stratum "
+                "sizes (or PPS weights) are all zero.")
 
     # ---- select, per stratum, with min-distance retries ------------------
     def one_draw(seed_rng):
@@ -526,17 +609,20 @@ def run_grts_sample(in_frame, out_fc, n_base, n_over=0,
             var_v, pei = _gc.balance_metrics(base_xy, tp,
                                              tw if aux_field
                                              else None)
-            _say(messages,
-                 "    spatial balance: Var(v) {:.3f}, Pielou loss "
-                 "{:.4f} (0 = perfectly balanced; simple random "
-                 "samples typically run 2-3x higher)".format(
-                     var_v, pei))
+            if math.isfinite(var_v):
+                _say(messages,
+                     "    spatial balance: Var(v) {:.3f}, Pielou "
+                     "loss {:.4f} (0 = perfectly balanced; simple "
+                     "random samples typically run 2-3x "
+                     "higher)".format(var_v, pei))
     var_v_all = pei_all = None
     if pool_xy and sum(len(x) for x in pool_xy) >= 2:
         var_v_all, pei_all = _gc.balance_metrics(
             np.vstack(pool_xy), np.vstack(pool_tp),
             np.concatenate(pool_tw))
-        if stratum_field and len(keys) > 1:
+        if not math.isfinite(var_v_all):
+            var_v_all = pei_all = None
+        elif stratum_field and len(keys) > 1:
             _say(messages,
                  "  whole sample: Var(v) {:.3f}, Pielou loss "
                  "{:.4f}".format(var_v_all, pei_all))

@@ -26,10 +26,26 @@ _EPS = 1e-9
 
 
 def dist_matrix(pts):
-    """Full Euclidean distance matrix for (N, 2) coordinates."""
+    """Full Euclidean distance matrix for (N, 2) coordinates.
+    Built axis-by-axis (no (N, N, 2) intermediate) so the peak
+    allocation is ~2 matrices, not 3-4 -- at the 8,000-stop ceiling
+    that is the difference between ~1 GB and ~2.5 GB."""
     p = np.asarray(pts, dtype=np.float64)
-    d = p[:, None, :] - p[None, :, :]
-    return np.hypot(d[..., 0], d[..., 1])
+    dx = p[:, None, 0] - p[None, :, 0]
+    dy = p[:, None, 1] - p[None, :, 1]
+    return np.hypot(dx, dy, out=dx)
+
+
+def _normalized(D):
+    """Scale the matrix so its largest distance is 1.  The solver
+    only ever COMPARES lengths (the reported route length is
+    recomputed from raw coordinates), and normalizing keeps float
+    rounding safely below the strictly-improving threshold _EPS at
+    any coordinate magnitude -- at ~1e7-unit coordinates an absolute
+    1e-9 threshold sits BELOW the rounding noise of the move deltas,
+    and zero-gain moves cycle forever (found in review)."""
+    m = float(D.max())
+    return (D / m, m) if m > 0 else (D, 1.0)
 
 
 def route_len(D, order):
@@ -142,14 +158,18 @@ def _or_opt_pass(D, order):
     return improved
 
 
-def polish(D, order):
-    """2-opt + Or-opt sweeps until a full pass finds nothing."""
+def polish(D, order, max_sweeps=500):
+    """2-opt + Or-opt sweeps until a full pass finds nothing.  The
+    sweep cap is pure insurance against float-noise cycling -- with
+    the distance matrix normalized (see ``plan_route``) it is never
+    reached in practice."""
     order = np.asarray(order)
-    while True:
+    for _ in range(max_sweeps):
         any_move = _two_opt_pass(D, order)
         any_move = _or_opt_pass(D, order) or any_move
         if not any_move:
-            return list(int(v) for v in order)
+            break
+    return list(int(v) for v in order)
 
 
 def solve_path(D, n, attempts, rng):
@@ -159,6 +179,10 @@ def solve_path(D, n, attempts, rng):
     if n <= 600:
         cands.append(cheapest_insertion(D, n))
     middles = np.arange(1, n - 1)
+    # randomized restarts add little beyond good constructions at
+    # large n but cost a full polish each -- gate them down
+    if n > 2500:
+        attempts = min(int(attempts or 0), 1)
     for _ in range(max(0, int(attempts))):
         cands.append([0] + [int(v) for v in rng.permutation(middles)]
                      + [n - 1])
@@ -207,7 +231,7 @@ def plan_route(stops, start=None, end=None, round_trip=False,
             nodes = np.vstack([stops[0], stops[1:], stops[0]])
             node_to_stop = {i: i for i in range(1, n_stops)}
             lead = [0]                     # first stop anchors loop
-        D = dist_matrix(nodes)
+        D, _ = _normalized(dist_matrix(nodes))
         _, order = solve_path(D, len(nodes), attempts, rng)
         stop_order = lead + [node_to_stop[o] for o in order[1:-1]]
         path = nodes[np.asarray(order)]
@@ -218,7 +242,7 @@ def plan_route(stops, start=None, end=None, round_trip=False,
         node_n = np.zeros(2) if free_e else \
             np.asarray(end, dtype=np.float64).reshape(2)
         nodes = np.vstack([node0, stops, node_n])
-        D = dist_matrix(nodes)
+        D, _ = _normalized(dist_matrix(nodes))
         if free_s:
             D[0, :] = 0.0
             D[:, 0] = 0.0

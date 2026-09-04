@@ -169,17 +169,23 @@ def conditional_kappa(n):
         denom = tot * row - row * col
         ki = np.where(np.abs(denom) > 0,
                       (tot * diag - row * col) / denom, np.nan)
-        # delta-method variance (Congalton & Green 1999:106):
-        # var(K_i) = [ p_i.(1-p_.i) ]^-3 *
+        # delta-method variance (Bishop, Fienberg & Holland 1975;
+        # Congalton & Green):
+        # var(K_i) = (p_i. - p_ii) / [ n (p_i.(1-p_.i))^3 ] *
         #   [ (p_i. - p_ii)(p_i. p_.i - p_ii)
-        #     + p_ii (1 - p_i. - p_.i + p_ii) ] * (p_i.(1-p_.i)) / n
+        #     + p_ii (1 - p_i. - p_.i + p_ii) ]
+        # (an earlier form here dropped the leading (p_i. - p_ii)
+        # factor and used base^2 -- ~3x-inflated SEs and a nonzero
+        # variance at perfect agreement; found in review, verified
+        # against Monte Carlo)
         pi_ = row / tot
         pj_ = col / tot
         pii = diag / tot
         vnum = (pi_ - pii) * (pi_ * pj_ - pii) \
             + pii * (1.0 - pi_ - pj_ + pii)
         base = pi_ * (1.0 - pj_)
-        vi = np.where(base > 0, vnum / (tot * base * base), np.nan)
+        vi = np.where(base > 0,
+                      (pi_ - pii) * vnum / (tot * base ** 3), np.nan)
     return ki, np.maximum(vi, 0.0)
 
 
@@ -479,18 +485,31 @@ def compare_kappas(pairs):
     ks = np.array([p[0] for p in pairs], dtype=np.float64)
     vs = np.array([p[1] for p in pairs], dtype=np.float64)
     with np.errstate(divide="ignore", invalid="ignore"):
-        z_single = np.where(vs > 0, ks / np.sqrt(vs), np.inf)
+        # a zero-variance kappa of exactly 0 differs from 0 by
+        # nothing: z = 0, not inf
+        z_single = np.where(vs > 0, ks / np.sqrt(vs),
+                            np.where(ks == 0, 0.0, np.inf))
     p_single = np.array([2.0 * _norm_sf(abs(z))
-                         if math.isfinite(z) else 0.0
+                         if math.isfinite(z)
+                         else (float("nan") if math.isnan(z)
+                               else 0.0)
                          for z in z_single])
     pw = []
     g = len(pairs)
     for i in range(g):
         for j in range(i + 1, g):
             sv = vs[i] + vs[j]
-            z = (ks[i] - ks[j]) / math.sqrt(sv) if sv > 0 \
-                else float("inf")
-            p = 2.0 * _norm_sf(abs(z)) if math.isfinite(z) else 0.0
+            if sv > 0:
+                z = (ks[i] - ks[j]) / math.sqrt(sv)
+            elif ks[i] == ks[j]:
+                # two zero-variance analyses with IDENTICAL kappas
+                # are not "significantly different" (found in
+                # review: perfect-agreement pairs reported P = 0)
+                z = 0.0
+            else:
+                z = float("inf")
+            p = 2.0 * _norm_sf(abs(z)) if math.isfinite(z) \
+                else (float("nan") if math.isnan(z) else 0.0)
             pw.append((i, j, float(z), float(p)))
     common = chi2 = p_eq = float("nan")
     if g >= 2 and (vs > 0).all():
@@ -525,6 +544,15 @@ def sample_size_tortora(n_classes, conf=0.95, precision=0.05,
     if props is not None and precisions is not None:
         props = np.asarray(props, dtype=np.float64)
         precisions = np.asarray(precisions, dtype=np.float64)
+        if (precisions <= 0).any():
+            raise ValueError(
+                "Every per-class precision must be greater than 0 "
+                "(a precision of 0 would require an infinite "
+                "sample).")
+        if ((props <= 0) | (props >= 1)).any():
+            raise ValueError(
+                "Every class proportion must lie strictly between "
+                "0 and 1 (enter 0.25 or 25% -- not 0 or 150).")
         ns = b_crit * props * (1.0 - props) / precisions ** 2
         n = float(np.max(ns))
     else:
@@ -681,7 +709,7 @@ WEIGHTING_QUAD = "Quadratic (ordinal classes)"
 WEIGHTINGS = [WEIGHTING_NONE, WEIGHTING_LINEAR, WEIGHTING_QUAD]
 
 
-def _read_point_rows(in_features, fields, messages):
+def _read_point_rows(in_features, fields, messages, want_xy=True):
     """[(x, y, field values...)] honoring an active selection."""
     import arcpy
     import mahalanobis as _mh
@@ -692,11 +720,28 @@ def _read_point_rows(in_features, fields, messages):
         _say(messages, "The sample layer has an active selection: "
                        "{} of {} records are used.".format(n_sel,
                                                            n_total))
-    cols = ["SHAPE@X", "SHAPE@Y"] + (fields or [])
+    if want_xy:
+        cols = ["SHAPE@X", "SHAPE@Y"] + (fields or [])
+    else:
+        # field/field mode never uses coordinates -- and demanding
+        # SHAPE@ crashed the advertised standalone-TABLE input
+        # (found in review)
+        cols = list(fields or [])
     rows = []
-    with arcpy.da.SearchCursor(in_features, cols) as cur:
+    try:
+        cur = arcpy.da.SearchCursor(in_features, cols)
+    except RuntimeError:
+        if want_xy:
+            raise arcpy.ExecuteError(
+                "The sample input has no geometry, so classes "
+                "cannot be extracted from a classified layer. Give "
+                "the predicted and observed values as FIELDS, or "
+                "use a point feature class.")
+        raise
+    with cur:
         for row in cur:
-            rows.append(row)
+            rows.append(row if want_xy
+                        else (None, None) + tuple(row))
     return rows
 
 
@@ -713,28 +758,52 @@ def _extract_from_raster(points_xy, raster, radius_cs, messages):
     cw, ch = r.meanCellWidth, r.meanCellHeight
     ncol, nrow = r.width, r.height
     nod = r.noDataValue
-    band = arcpy.RasterToNumPyArray(r)
+    rad_c = int(math.ceil(radius_cs / cw)) if radius_cs else 0
+    rad_r = int(math.ceil(radius_cs / ch)) if radius_cs else 0
+
+    # read ONLY the cell window covering the sample points (plus the
+    # majority-circle margin) -- reading the whole classification to
+    # score a handful of points meant multi-GB allocations on large
+    # rasters (found in review)
+    px = np.asarray([p[0] for p in points_xy], dtype=np.float64)
+    py_ = np.asarray([p[1] for p in points_xy], dtype=np.float64)
+    if len(px) == 0:
+        return []
+    c_lo = max(0, math.floor((px.min() - ext.XMin) / cw) - rad_c)
+    c_hi = min(ncol, math.floor((px.max() - ext.XMin) / cw)
+               + rad_c + 1)
+    r_lo = max(0, math.floor((ext.YMax - py_.max()) / ch) - rad_r)
+    r_hi = min(nrow, math.floor((ext.YMax - py_.min()) / ch)
+               + rad_r + 1)
+    if c_hi <= c_lo or r_hi <= r_lo:
+        return [None] * len(points_xy)      # all outside the raster
+    band = arcpy.RasterToNumPyArray(
+        r, arcpy.Point(ext.XMin + c_lo * cw,
+                       ext.YMax - r_hi * ch),
+        c_hi - c_lo, r_hi - r_lo)
     if band.ndim == 3:
         band = band[0]
     out = []
-    rad_c = int(math.ceil(radius_cs / cw)) if radius_cs else 0
-    rad_r = int(math.ceil(radius_cs / ch)) if radius_cs else 0
 
     def py(v):
         return v.item() if hasattr(v, "item") else v
 
     for xy in points_xy:
         x, y = float(xy[0]), float(xy[1])
-        c = int((x - ext.XMin) / cw)
-        rr = int((ext.YMax - y) / ch)
+        # floor, not int(): int() truncates toward zero, so points
+        # up to one full cell WEST of XMin / NORTH of YMax mapped to
+        # index 0 and silently scored with the edge cell instead of
+        # dropping as outside (found in review)
+        c = math.floor((x - ext.XMin) / cw)
+        rr = math.floor((ext.YMax - y) / ch)
         if not (0 <= c < ncol and 0 <= rr < nrow):
             out.append(None)
             continue
-        v_at = band[rr, c]
+        v_at = band[rr - r_lo, c - c_lo]
         if radius_cs:
-            c0, c1 = max(0, c - rad_c), min(ncol, c + rad_c + 1)
-            r0, r1 = max(0, rr - rad_r), min(nrow, rr + rad_r + 1)
-            win = band[r0:r1, c0:c1]
+            c0, c1 = max(c_lo, c - rad_c), min(c_hi, c + rad_c + 1)
+            r0, r1 = max(r_lo, rr - rad_r), min(r_hi, rr + rad_r + 1)
+            win = band[r0 - r_lo:r1 - r_lo, c0 - c_lo:c1 - c_lo]
             cc = ext.XMin + (np.arange(c0, c1) + 0.5) * cw
             rc = ext.YMax - (np.arange(r0, r1) + 0.5) * ch
             dx = cc[None, :] - x
@@ -831,11 +900,32 @@ def _is_number(v):
         return False
 
 
+def _canon_label(v):
+    """Canonical class label: numerically-equal values merge (a
+    raster's integer 1, a float field's 1.0, and a text field's "1"
+    are the SAME class -- without this they formed duplicate classes
+    with an empty diagonal and kappa silently collapsed; found in
+    review).  NaN canonicalizes to None (dropped like None)."""
+    if v is None:
+        return None
+    if isinstance(v, float) and math.isnan(v):
+        return None
+    if _is_number(v):
+        f = float(v)
+        if math.isnan(f):
+            return None
+        return int(f) if f == int(f) else f
+    return v
+
+
 def build_matrix(pred, obs):
     """(matrix, class labels, n_dropped) from paired
-    predicted/observed values; None pairs are dropped. Class order:
-    numeric when every label is numeric, else text."""
-    pairs = [(p, o) for p, o in zip(pred, obs)
+    predicted/observed values; None/NaN pairs are dropped. Labels
+    are canonicalized so numerically-equal codes merge. Class
+    order: numeric when every label is numeric, else text."""
+    pairs = [(_canon_label(p), _canon_label(o))
+             for p, o in zip(pred, obs)]
+    pairs = [(p, o) for p, o in pairs
              if p is not None and o is not None]
     dropped = len(pred) - len(pairs)
     vals = sorted({v for pr, ob in pairs for v in (pr, ob)},
@@ -919,33 +1009,44 @@ def map_proportions_from_raster(raster, labels, messages,
     r = arcpy.Raster(str(raster))
     sr = r.spatialReference
     geographic = sr is not None and sr.type == "Geographic"
-    band = arcpy.RasterToNumPyArray(r)
-    if band.ndim == 3:
-        band = band[0]
+    ext = r.extent
+    ncol, nrow = r.width, r.height
+    cw, chh = r.meanCellWidth, r.meanCellHeight
+    lvs = {}
+    for lb in labels:
+        try:
+            lvs[lb] = float(lb)
+        except (TypeError, ValueError):
+            return None, None
     if geographic:
-        lat = r.extent.YMax - (np.arange(band.shape[0]) + 0.5) \
-            * r.meanCellHeight
-        wrow = np.cos(np.radians(np.clip(lat, -89.9, 89.9)))
-        cell_m2 = (math.radians(abs(r.meanCellWidth))
-                   * _AUTHALIC_R
-                   * math.radians(abs(r.meanCellHeight))
-                   * _AUTHALIC_R)
+        cell_m2 = (math.radians(abs(cw)) * _AUTHALIC_R
+                   * math.radians(abs(chh)) * _AUTHALIC_R)
     else:
-        wrow = np.ones(band.shape[0])
         try:
             mpu = float(sr.metersPerUnit)
         except Exception:                                        # noqa: BLE001
             mpu = 1.0
-        cell_m2 = abs(r.meanCellWidth * r.meanCellHeight) \
-            * mpu * mpu
-    counts = {}
-    for lb in labels:
-        try:
-            lv = float(lb)
-        except (TypeError, ValueError):
-            return None, None
-        counts[lb] = float(((band == lv)
-                            * wrow[:, None]).sum())
+        cell_m2 = abs(cw * chh) * mpu * mpu
+    # stream the raster in row blocks -- reading the WHOLE grid was
+    # a multi-GB single allocation on large classifications (found
+    # in review)
+    counts = {lb: 0.0 for lb in labels}
+    block = max(1, int(4_000_000 // max(ncol, 1)))
+    for r0 in range(0, nrow, block):
+        nr = min(block, nrow - r0)
+        arr = arcpy.RasterToNumPyArray(
+            r, arcpy.Point(ext.XMin, ext.YMax - (r0 + nr) * chh),
+            ncol, nr)
+        if arr.ndim == 3:
+            arr = arr[0]
+        if geographic:
+            lat = ext.YMax - (np.arange(r0, r0 + nr) + 0.5) * chh
+            wrow = np.cos(np.radians(np.clip(lat, -89.9, 89.9)))
+        else:
+            wrow = np.ones(nr)
+        for lb, lv in lvs.items():
+            counts[lb] += float(((arr == lv)
+                                 * wrow[:, None]).sum())
     tot = sum(counts.values())
     if tot <= 0:
         return None, None
@@ -1145,6 +1246,12 @@ def analyze_matrix(m, labels, conf=0.95, weighting=None,
         res["card"] = card(m, map_props, design)
         areas = np.asarray(map_props) * (area_total or 1.0)
         res["olofsson"] = olofsson(m, areas, conf)
+        # explicit flag: real areas were given, so Area_ha columns
+        # are meaningful (the old sum-not-in-(0,1) heuristic printed
+        # garbage hectares whenever normalized proportions missed
+        # 1.0 in binary; found in review)
+        res["olofsson"]["has_area"] = area_total is not None \
+            and float(area_total) > 0
         res["pontius_w"] = pontius(res["olofsson"]["p"])
     else:
         res["card"] = res["olofsson"] = res["pontius_w"] = None
@@ -1273,8 +1380,9 @@ def report_lines(res, title=""):
                      int(round(conf * 100)),
                      _fmt(o["overall"] - zq * o["se_overall"]),
                      _fmt(o["overall"] + zq * o["se_overall"])))
-        has_area = float(np.asarray(o["area"]).sum()) \
-            not in (0.0, 1.0)
+        has_area = o.get("has_area",
+                         float(np.asarray(o["area"]).sum())
+                         not in (0.0, 1.0))
         hdr = ("  {:<14s}{:>9s}{:>9s}{:>9s}{:>9s}{:>13s}{:>13s}"
                ).format("Class", "UserAcc", "SE", "ProdAcc",
                         "SE", "AreaProp", "SE")
@@ -1354,7 +1462,10 @@ def run_classification_accuracy(
     for f in (predicted_field, observed_field, analysis_field):
         if f:
             fields.append(f)
-    rows = _read_point_rows(in_features, fields, messages)
+    rows = _read_point_rows(
+        in_features, fields, messages,
+        want_xy=(predicted_layer is not None
+                 or observed_layer is not None))
     if not rows:
         raise arcpy.ExecuteError(
             "The sample input contains no records (empty dataset, "
@@ -1368,11 +1479,27 @@ def run_classification_accuracy(
     def extracted(layer, class_field, what):
         import random_points as _rp
         lsr = arcpy.Describe(layer).spatialReference
+        try:
+            _t, _s, _hs = _mh.selection_info(layer, str(layer))
+            if _hs:
+                _warn(messages,
+                      "The {} classification layer has an ACTIVE "
+                      "SELECTION ({} of {} features): classes "
+                      "extract, and map proportions compute, from "
+                      "the selected features only.".format(
+                          what, _s, _t))
+        except Exception:                                # noqa: BLE001
+            pass
         xy = np.array([[r[0], r[1]] for r in rows],
                       dtype=np.float64)
         if in_sr is not None and lsr is not None \
                 and not _same_sr(in_sr, lsr):
-            xy = _rp._project_xy(xy, in_sr, lsr)
+            # resolve the datum shift explicitly -- a bare projectAs
+            # silently skips it (NAD27 samples on a NAD83 map land
+            # ~100 m off; found in review)
+            xy = _rp._project_xy(
+                xy, in_sr, lsr,
+                transformation=_rp._geo_transformation(in_sr, lsr))
         rad_cs = None
         if radius_m:
             if lsr is not None and lsr.type == "Geographic":
@@ -1475,12 +1602,50 @@ def run_classification_accuracy(
                   "{}: {} sample{} dropped (NoData, outside the "
                   "layer, or null values).".format(
                       title, dropped, "" if dropped == 1 else "s"))
+        low = {}
+        for lb in labels:
+            low.setdefault(str(lb).casefold(), []).append(lb)
+        cased = [g for g in low.values() if len(g) > 1]
+        if cased:
+            _warn(messages,
+                  "{}: class labels differing only by case are "
+                  "treated as DIFFERENT classes ({}) -- check the "
+                  "field values if that is not intended.".format(
+                      title,
+                      " vs ".join(repr(str(v)) for v in cased[0])))
+        if len(labels) > 1 and float(np.trace(m)) == 0.0:
+            _warn(messages,
+                  "{}: the predicted and observed values NEVER "
+                  "agree (an empty matrix diagonal -- kappa will "
+                  "be near zero). Check that both sources use the "
+                  "same class codes or names.".format(title))
         props = None
         area_total_m2 = None
         if weight_by_map:
             if map_props_override:
                 lut = {str(lb): float(v)
                        for lb, v in map_props_override}
+                labset = {str(lb) for lb in labels}
+                extra = sorted(k2 for k2 in lut
+                               if k2 not in labset)
+                zeroed = sorted(str(lb) for lb in labels
+                                if str(lb) not in lut)
+                if extra or zeroed:
+                    _warn(messages,
+                          "{}: the map-proportion override does "
+                          "not fully match the matrix classes"
+                          "{}{} -- unmatched classes get weight 0, "
+                          "which biases the area-weighted "
+                          "estimators. Label matching is exact "
+                          "(case and spelling).".format(
+                              title,
+                              " (override rows with no matching "
+                              "class: {})".format(
+                                  ", ".join(extra[:6]))
+                              if extra else "",
+                              " (classes given weight 0: {})"
+                              .format(", ".join(zeroed[:6]))
+                              if zeroed else ""))
                 vals = np.array([lut.get(str(lb), 0.0)
                                  for lb in labels])
                 if vals.sum() > 0:
@@ -1525,6 +1690,23 @@ def run_classification_accuracy(
         res["title"] = title
         res["key"] = key
         res["area_total_m2"] = area_total_m2
+        o = res.get("olofsson")
+        if o is not None and props is not None:
+            es = np.asarray(o.get("empty_strata", []), dtype=bool)
+            if es.any():
+                wlost = float(np.asarray(props)[es].sum())
+                _warn(messages,
+                      "{}: {} mapped class(es) have NO predicted "
+                      "samples ({}), carrying {:.1%} of the map "
+                      "weight -- the area-weighted (Card/Olofsson) "
+                      "estimates treat that weight as zero "
+                      "accuracy and are biased low. Add samples "
+                      "for those classes or exclude them from the "
+                      "weights.".format(
+                          title, int(es.sum()),
+                          ", ".join(str(labels[i])
+                                    for i in np.flatnonzero(es)[:6]),
+                          wlost))
         results.append(res)
         all_lines += report_lines(res, title) + [""]
     if not results:
@@ -1699,8 +1881,10 @@ def _write_class_table(path, results, conf, messages):
                         o["se_producers"][i]
                     ap, ap_se = o["area_prop"][i], \
                         o["se_area_prop"][i]
-                    has_area = float(np.asarray(
-                        o["area"]).sum()) not in (0.0, 1.0)
+                    has_area = o.get(
+                        "has_area",
+                        float(np.asarray(o["area"]).sum())
+                        not in (0.0, 1.0))
                     a_ha = o["area"][i] / 10000.0 if has_area \
                         else None
                     a_se = o["se_area"][i] / 10000.0 if has_area \
