@@ -87,6 +87,8 @@ import random_points  # noqa: E402
 import random_arrays  # noqa: E402
 import grts_core  # noqa: E402
 import grts_sampling  # noqa: E402
+import route_core  # noqa: E402
+import route_survey  # noqa: E402
 import centerline_width  # noqa: E402
 import longest_line  # noqa: E402
 import radiating_lines  # noqa: E402
@@ -362,7 +364,8 @@ class Toolbox(object):
                       VoronoiPolygons, AdaptiveVoronoiPolygons,
                       RepeatingShapes, RandomPointGenerator,
                       RandomSampleArrayGenerator,
-                      SpatiallyBalancedSample, CenterlineAndWidth,
+                      SpatiallyBalancedSample, EstimatedShortestPath,
+                      CenterlineAndWidth,
                       LongestLineFetch, RadiatingLines,
                       MaximumInscribedGeometry, ConcaveHull,
                       ClassificationAccuracy,
@@ -14430,6 +14433,175 @@ class SpatiallyBalancedSample(object):
             if var_v is not None:
                 P["out_var_v"].value = float(var_v)
                 P["out_pielou"].value = float(pielou)
+        except arcpy.ExecuteError:
+            raise
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            raise arcpy.ExecuteError(
+                "The tool stopped because of an unexpected error; see the report above.")
+
+
+class EstimatedShortestPath(object):
+    """Estimated Shortest Path through Points -- a short
+    straight-line route through every input point. See
+    ``route_survey.run_estimated_route``."""
+
+    def __init__(self):
+        self.label = "Estimated Shortest Path through Points"
+        self.description = (
+            "Orders a set of points into a short travel route -- a "
+            "survey route you can load into a GPS. Three route "
+            "types: a simple shortest path (the route starts and "
+            "ends at whichever two input points give the shortest "
+            "total), a round trip from a single start/end point "
+            "(back to the truck), or a fixed start to a fixed end. "
+            "Legs are straight lines between locations, NOT "
+            "road-network routes. The solver is a polished "
+            "traveling-salesperson heuristic (nearest-neighbor and "
+            "cheapest-insertion constructions, 2-opt and Or-opt "
+            "refinement), typically within a few percent of the "
+            "true optimum, and deterministic. Outputs the route "
+            "polyline and an optional copy of the points numbered "
+            "in visit order. Works at every license level.")
+        self.category = "Geometric Tools"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        in_points = arcpy.Parameter(
+            displayName="Points to visit (a layer's selection is "
+                        "honored)",
+            name="in_points", datatype="GPFeatureLayer",
+            parameterType="Required", direction="Input")
+        mode = arcpy.Parameter(
+            displayName="Route type",
+            name="mode", datatype="GPString",
+            parameterType="Required", direction="Input")
+        mode.filter.type = "ValueList"
+        mode.filter.list = route_survey.MODES
+        mode.value = route_survey.MODE_SIMPLE
+        loop_point = arcpy.Parameter(
+            displayName="Start/end point (a single point, or a "
+                        "single selected point)",
+            name="loop_point", datatype="GPFeatureLayer",
+            parameterType="Optional", direction="Input")
+        start_point = arcpy.Parameter(
+            displayName="Start point (a single point, or a single "
+                        "selected point)",
+            name="start_point", datatype="GPFeatureLayer",
+            parameterType="Optional", direction="Input")
+        end_point = arcpy.Parameter(
+            displayName="End point (a single point, or a single "
+                        "selected point)",
+            name="end_point", datatype="GPFeatureLayer",
+            parameterType="Optional", direction="Input")
+        out_route = arcpy.Parameter(
+            displayName="Output route polyline",
+            name="out_route", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        out_points = arcpy.Parameter(
+            displayName="Output points numbered in visit order "
+                        "(optional)",
+            name="out_points", datatype="DEFeatureClass",
+            parameterType="Optional", direction="Output")
+        attempts = arcpy.Parameter(
+            displayName="Extra randomized solver attempts (more = "
+                        "sometimes slightly shorter routes, slower)",
+            name="attempts", datatype="GPLong",
+            parameterType="Optional", direction="Input",
+            category="Advanced")
+        attempts.value = 3
+        out_n = arcpy.Parameter(
+            displayName="Stops visited (derived)",
+            name="out_n", datatype="GPLong",
+            parameterType="Derived", direction="Output")
+        out_length_km = arcpy.Parameter(
+            displayName="Route length in kilometers (derived)",
+            name="out_length_km", datatype="GPDouble",
+            parameterType="Derived", direction="Output")
+        return [in_points, mode, loop_point, start_point, end_point,
+                out_route, out_points, attempts, out_n,
+                out_length_km]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        m = route_survey.canon_mode(P["mode"].valueAsText)
+        want = {"loop_point": m == route_survey.MODE_LOOP,
+                "start_point": m == route_survey.MODE_TWO,
+                "end_point": m == route_survey.MODE_TWO}
+        for name, w in want.items():
+            if bool(P[name].enabled) != w:
+                P[name].enabled = w
+        # suggest-once output name (hasBeenValidated per the
+        # standing dialog rule; a cleared box stays cleared)
+        if P["in_points"].valueAsText \
+                and not P["in_points"].hasBeenValidated \
+                and not P["out_route"].valueAsText:
+            try:
+                base = os.path.splitext(os.path.basename(
+                    arcpy.Describe(P["in_points"].value
+                                   or P["in_points"].valueAsText)
+                    .catalogPath))[0]
+                ws = arcpy.env.workspace or arcpy.env.scratchGDB
+                P["out_route"].value = os.path.join(
+                    ws, arcpy.ValidateTableName(base + "_Route", ws))
+            except Exception:                            # noqa: BLE001
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        for name, label in (("in_points", "points to visit"),
+                            ("loop_point", "start/end point"),
+                            ("start_point", "start point"),
+                            ("end_point", "end point")):
+            if P[name].valueAsText and P[name].enabled:
+                try:
+                    shp = str(arcpy.Describe(
+                        P[name].value
+                        or P[name].valueAsText).shapeType)
+                    if shp not in ("Point", "Multipoint"):
+                        P[name].setErrorMessage(
+                            "The {} must be POINTS.".format(label))
+                except Exception:                        # noqa: BLE001
+                    pass
+        if P["attempts"].value is not None \
+                and int(P["attempts"].value) < 0:
+            P["attempts"].setErrorMessage(
+                "Extra attempts cannot be negative.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(route_core)
+            importlib.reload(route_survey)
+            P = {p.name: p for p in parameters}
+            route_path, n_stops, length_km, _pts = \
+                route_survey.run_estimated_route(
+                    in_points=P["in_points"].value
+                    or P["in_points"].valueAsText,
+                    out_route=P["out_route"].valueAsText,
+                    mode=P["mode"].valueAsText,
+                    loop_point=(P["loop_point"].value
+                                or P["loop_point"].valueAsText
+                                if P["loop_point"].enabled else None),
+                    start_point=(P["start_point"].value
+                                 or P["start_point"].valueAsText
+                                 if P["start_point"].enabled
+                                 else None),
+                    end_point=(P["end_point"].value
+                               or P["end_point"].valueAsText
+                               if P["end_point"].enabled else None),
+                    out_points=P["out_points"].valueAsText,
+                    attempts=P["attempts"].value
+                    if P["attempts"].value is not None else 3,
+                    messages=messages)
+            P["out_n"].value = int(n_stops)
+            P["out_length_km"].value = float(length_km)
         except arcpy.ExecuteError:
             raise
         except Exception:

@@ -317,6 +317,10 @@
     <Content Include="Images\GrtsSample_32.png" />
     <Content Include="DarkImages\GrtsSample_16.png" />
     <Content Include="DarkImages\GrtsSample_32.png" />
+    <Content Include="Images\EstPath_16.png" />
+    <Content Include="Images\EstPath_32.png" />
+    <Content Include="DarkImages\EstPath_16.png" />
+    <Content Include="DarkImages\EstPath_32.png" />
     <Content Include="Images\CenterlineWidth_16.png" />
     <Content Include="Images\CenterlineWidth_32.png" />
     <Content Include="Images\LongestLine_16.png" />

@@ -133,6 +133,7 @@ namespace WildlifeTools
                 "WildlifeTools_RadiatingLines",
                 "WildlifeTools_InscribedGeometry",
                 "WildlifeTools_ConcaveHull",
+                "WildlifeTools_EstShortestPath",
             }),
         })
         {
