@@ -167,18 +167,27 @@ def _read_points(frame, work_sr, stratum_field, aux_field):
 # ---------------------------------------------------------------------------
 
 def _test_points_areal(measure, rng, n_test=4000):
+    """Uniform test points within the frame for the balance report,
+    drawn by BATCH rejection against the vectorized point-in-polygon
+    test (the one-dart-at-a-time loop ground for minutes on sliver
+    frames whose area is a tiny share of their bounding box)."""
     pts = measure.bounds_points()
-    x0, y0 = pts[:, 0].min(), pts[:, 1].min()
-    x1, y1 = pts[:, 0].max(), pts[:, 1].max()
+    lo = np.array([pts[:, 0].min(), pts[:, 1].min()])
+    hi = np.array([pts[:, 0].max(), pts[:, 1].max()])
     out = []
-    tries = 0
-    while len(out) < n_test and tries < n_test * 60:
-        tries += 1
-        x = rng.uniform(x0, x1)
-        y = rng.uniform(y0, y1)
-        if measure.point_in(x, y):
-            out.append((x, y))
-    return np.asarray(out) if out else np.empty((0, 2))
+    got = 0
+    budget = n_test * 60
+    while got < n_test and budget > 0:
+        b = min(max(n_test, 20000), budget)
+        budget -= b
+        cand = rng.uniform(lo, hi, size=(b, 2))
+        keep = cand[measure.points_in(cand)]
+        if len(keep):
+            out.append(keep)
+            got += len(keep)
+    if not out:
+        return np.empty((0, 2))
+    return np.vstack(out)[:n_test]
 
 
 def _test_points_linear(segs, rng, n_test=4000):

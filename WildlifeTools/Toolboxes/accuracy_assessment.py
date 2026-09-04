@@ -824,6 +824,11 @@ def _extract_from_raster(points_xy, raster, radius_cs, messages):
     return out
 
 
+_POLY_INDEX_MIN = 20      # build the grid index above this many
+                          # polygons (harness sets it huge to
+                          # compare indexed vs linear scans)
+
+
 def _extract_from_polygons(points_xy, layer, class_field, radius_cs,
                            messages):
     """Class values from a polygon layer's ``class_field`` at each
@@ -854,8 +859,42 @@ def _extract_from_polygons(points_xy, layer, class_field, radius_cs,
                           (gw.extent.XMin, gw.extent.YMin,
                            gw.extent.XMax, gw.extent.YMax)))
 
+    # coarse grid index over the polygon bounding boxes, so a probe
+    # tests only nearby polygons instead of every one (37 probes per
+    # sample made the linear scan O(samples x polygons); found in
+    # review). Bucket lists keep READ ORDER, so the first-hit
+    # semantics below are identical with or without the index.
+    index = None
+    if len(polys) > _POLY_INDEX_MIN:
+        ax0 = min(p[3][0] for p in polys)
+        ay0 = min(p[3][1] for p in polys)
+        ax1 = max(p[3][2] for p in polys)
+        ay1 = max(p[3][3] for p in polys)
+        ng = max(1, int(math.sqrt(len(polys))))
+        sx = ((ax1 - ax0) / ng) or 1.0
+        sy = ((ay1 - ay0) / ng) or 1.0
+        buckets = {}
+        for pi, (_e, _b, _v, (bx0, by0, bx1, by1)) \
+                in enumerate(polys):
+            c0 = min(max(int((bx0 - ax0) / sx), 0), ng - 1)
+            c1 = min(max(int((bx1 - ax0) / sx), 0), ng - 1)
+            r0 = min(max(int((by0 - ay0) / sy), 0), ng - 1)
+            r1 = min(max(int((by1 - ay0) / sy), 0), ng - 1)
+            for cc in range(c0, c1 + 1):
+                for rw in range(r0, r1 + 1):
+                    buckets.setdefault((cc, rw), []).append(pi)
+        index = (ax0, ay0, sx, sy, ng, buckets)
+
     def value_at(px, py):
-        for e, bands, v, (x0, y0, x1, y1) in polys:
+        if index is None:
+            cand = range(len(polys))
+        else:
+            ax0, ay0, sx, sy, ng, buckets = index
+            cc = min(max(int((px - ax0) / sx), 0), ng - 1)
+            rw = min(max(int((py - ay0) / sy), 0), ng - 1)
+            cand = buckets.get((cc, rw), ())
+        for pi in cand:
+            e, bands, v, (x0, y0, x1, y1) = polys[pi]
             if not (x0 <= px <= x1 and y0 <= py <= y1):
                 continue
             if _pa.points_inside(np.array([[px, py]]), e,
