@@ -1,0 +1,51 @@
+# -*- coding: utf-8 -*-
+"""GP-level smoke test: ImportToolbox the source .pyt and run the
+Spatially Balanced Sample (GRTS) tool end to end -- exercises the
+dialog class wiring (parameters, execute, derived output)."""
+import os
+import sys
+import shutil
+import tempfile
+
+import arcpy
+
+PYT = (r"D:\ArcGIS_stuff\general_tools\Pro_Wildlife\Wildlife_Tools"
+       r"\WildlifeTools\Toolboxes\JennessEnterprisesTools.pyt")
+
+tmp = tempfile.mkdtemp(prefix="grts_smoke_")
+arcpy.management.CreateFileGDB(tmp, "t.gdb")
+gdb = os.path.join(tmp, "t.gdb")
+sr = arcpy.SpatialReference(26912)
+arcpy.management.CreateFeatureclass(gdb, "aoi", "POLYGON",
+                                    spatial_reference=sr)
+with arcpy.da.InsertCursor(os.path.join(gdb, "aoi"),
+                           ["SHAPE@"]) as ic:
+    ic.insertRow([arcpy.Polygon(arcpy.Array(
+        [arcpy.Point(600000, 3600000), arcpy.Point(600000, 3610000),
+         arcpy.Point(612000, 3610000), arcpy.Point(612000, 3600000),
+         arcpy.Point(600000, 3600000)]), sr)])
+
+arcpy.ImportToolbox(PYT)
+out = os.path.join(gdb, "sites")
+res = arcpy.jenness.SpatiallyBalancedSample(
+    in_frame=os.path.join(gdb, "aoi"),
+    n_base=12, n_over=3, random_seed=42, out_fc=out)
+n_written = int(res.getOutput(1))
+assert n_written == 15, n_written
+var_v = float(res.getOutput(2))
+pielou = float(res.getOutput(3))
+assert 0.0 <= var_v < 1.0, var_v
+assert 0.0 <= pielou < 1.0, pielou
+rows = list(arcpy.da.SearchCursor(
+    out, ["SiteID", "Site_Use", "Design_Wgt"]))
+assert len(rows) == 15
+assert rows[0][0] == "Site-0001"
+assert sum(1 for r in rows if r[1] == "Base") == 12
+assert sum(1 for r in rows if r[1] == "Over") == 3
+assert all(r[2] > 0 for r in rows)
+print("GP smoke OK: 15 sites (12 base + 3 over), SiteIDs ordered, "
+      "weights positive, derived outputs n={} Var(v)={:.3f} "
+      "Pielou={:.4f}".format(n_written, var_v, pielou))
+
+arcpy.management.Delete(gdb)
+shutil.rmtree(tmp, ignore_errors=True)
