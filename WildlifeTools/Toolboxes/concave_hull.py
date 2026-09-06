@@ -576,16 +576,21 @@ def knn_hull(pts, k_start, messages=None, label=""):
     return ring_hi, hi
 
 
-def knn_k_from_concavity(n, concavity):
-    """Map 0-100 concavity onto k: 100 -> 3 (maximum detail),
-    0 -> n - 1 (the convex hull), exponentially between."""
-    if n <= 4:
-        return 3
+def knn_k_from_concavity(n, concavity, k_min=3):
+    """Map 0-100 concavity onto k: 100 -> ``k_min`` (the tightest
+    workable k -- 3 unless the cloud's own closing floor is higher),
+    0 -> n - 1 (the convex hull), exponentially between. Passing the
+    cloud's real floor as ``k_min`` stretches the dial across the k
+    range that actually exists; with the default 3 this is the plain
+    Moreira-Santos mapping."""
+    k_min = max(3, int(k_min))
+    if n <= 4 or k_min >= n - 1:
+        return min(max(3, n - 1), max(k_min, 3))
     if concavity >= 100:
-        return 3
+        return k_min
     if concavity <= 0:
         return n - 1
-    return int(round(3.0 * ((n - 1) / 3.0)
+    return int(round(k_min * ((n - 1) / float(k_min))
                      ** ((100.0 - concavity) / 100.0)))
 
 
@@ -754,16 +759,40 @@ def run_concave_hull(in_features, method, out_features,
                                        precomp=alpha_pre)
             param_m = a_work * unit_m
         else:
+            ring = None
             if k_neighbors not in (None, "", 0):
                 k0 = int(k_neighbors)
             elif conc is not None:
                 k0 = knn_k_from_concavity(len(pts), conc)
+                if 0.0 < conc < 100.0:
+                    # find the cloud's own smallest workable k first,
+                    # so the dial spans the k range that actually
+                    # exists: separated clusters can push the closing
+                    # floor far above 3, and against a fixed 3..n-1
+                    # mapping nearly every dial position collapses
+                    # onto that floor
+                    ring_min, k_min = knn_hull(pts, 3)
+                    if k_min > 3:
+                        k0 = knn_k_from_concavity(len(pts), conc,
+                                                  k_min=k_min)
+                        _say(messages,
+                             "{}the k-NN walk first closes at "
+                             "k = {} on this cloud, so Concavity "
+                             "runs from k = {} (at 0) down to "
+                             "k = {} (at 100) here; Concavity {:g} "
+                             "-> k = {}.".format(
+                                 (label + ": ") if label else "",
+                                 k_min, max(3, len(pts) - 1),
+                                 k_min, conc, k0))
+                        if k0 <= k_min:
+                            ring, k_used = ring_min, k_min
             else:
                 # automatic: a moderate k that grows with the point
                 # count (Concavity 100 forces the tightest k = 3)
                 k0 = max(3, int(round(math.sqrt(len(pts)))))
-            ring, k_used = knn_hull(pts, k0, messages=messages,
-                                    label=label)
+            if ring is None:
+                ring, k_used = knn_hull(pts, k0, messages=messages,
+                                        label=label)
             if ring is not None:
                 rings = [ring]
         if not rings:

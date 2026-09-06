@@ -234,6 +234,32 @@ with arcpy.da.SearchCursor(out4, ["Animal", "K_used"]) as cur:
 check("driver: kNN auto uses a gentler k than concavity 100",
       all(kblank[a] > k100[a] for a in k100), str((kblank, k100)))
 
+print("== kNN concavity dial spans the workable range ==")
+# Jeff's Oak Creek find (2026-09-05): with two separated clusters the
+# kNN walk cannot close until k is large enough to see across the
+# gap, so a fixed 3..n-1 dial collapses every mid setting onto that
+# floor.  The dial must stretch over the k range that actually
+# exists for the cloud.
+check("kernel: floor-aware mapping reduces to classic at k_min=3",
+      all(ch.knn_k_from_concavity(43, c) ==
+          ch.knn_k_from_concavity(43, c, k_min=3)
+          for c in (0, 25, 50, 75, 100)), "")
+dial = {}
+for cv in (0, 50, 100):
+    oc = os.path.join(GDB, "hulls_dial_{}".format(cv))
+    ch.run_concave_hull(fc, ch.METHOD_KNN, oc, concavity=cv,
+                        messages=Msgs())
+    with arcpy.da.SearchCursor(oc, ["NPoints", "K_used",
+                                    "Area_m2"]) as cur:
+        dial[cv] = next(cur)
+n_all = dial[0][0]
+check("dial: Concavity 0 is the convex hull (k = n-1)",
+      dial[0][1] == n_all - 1, str(dial))
+check("dial: K_used strictly decreasing across 0 / 50 / 100",
+      dial[0][1] > dial[50][1] > dial[100][1], str(dial))
+check("dial: area never grows as the dial tightens",
+      dial[0][2] >= dial[50][2] >= dial[100][2], str(dial))
+
 print("== driver: geographic points ==")
 GCS = arcpy.SpatialReference(4326)
 gfc = arcpy.management.CreateFeatureclass(
