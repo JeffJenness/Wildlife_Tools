@@ -507,9 +507,9 @@ namespace WildlifeTools.SlopeGraphic
             btnAddGraphic.IsEnabled = false;
             try
             {
-                string where = await QueuedTask.Run(
-                    () => PolarPlotCim.PlaceOnActiveView(model, name, "Slope Graphics"));
-                SetStatus(where);
+                string where = await LayoutPlacement.AddChart(this, model,
+                    name);
+                if (where != null) SetStatus(where);
             }
             catch (Exception ex) { MessageBox.Show(ex.Message, "Slope Graphic"); }
             finally { btnAddGraphic.IsEnabled = true; }

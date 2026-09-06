@@ -651,9 +651,9 @@ namespace WildlifeTools.PolarPlots
             btnAddGraphic.IsEnabled = false;
             try
             {
-                string where = await QueuedTask.Run(
-                    () => PolarPlotCim.PlaceOnActiveView(model, name));
-                SetStatus(where);
+                string where = await LayoutPlacement.AddChart(this, model,
+                    name);
+                if (where != null) SetStatus(where);
             }
             catch (Exception ex)
             {

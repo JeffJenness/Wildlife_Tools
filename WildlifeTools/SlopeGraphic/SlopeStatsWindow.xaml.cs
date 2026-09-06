@@ -212,10 +212,9 @@ namespace WildlifeTools.SlopeGraphic
             string tagged = BuildEsriTagged();
             try
             {
-                string where = await ArcGIS.Desktop.Framework.Threading.Tasks
-                    .QueuedTask.Run(() =>
-                        PolarPlots.PolarPlotCim.PlaceStatsTextOnLayout(tagged));
-                ShowToast(sender, "✓ " + where);
+                string where = await PolarPlots.LayoutPlacement
+                    .AddStatsText(this, tagged);
+                if (where != null) ShowToast(sender, "✓ " + where);
             }
             catch (Exception ex) { MessageBox.Show(ex.Message, "Slope Graphic"); }
         }

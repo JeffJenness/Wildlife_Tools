@@ -1,0 +1,130 @@
+<controls:ProWindow x:Class="WildlifeTools.LocohParameterWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        Title="LoCoH Parameter Explorer"
+        Height="620" Width="1080" MinHeight="480" MinWidth="1020"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <controls:ProWindow.Resources>
+        <!-- long hover help wraps instead of running one endless line -->
+        <Style TargetType="ToolTip">
+            <Setter Property="MaxWidth" Value="420"/>
+            <Setter Property="ContentTemplate">
+                <Setter.Value>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextWrapping="Wrap"
+                                   MaxWidth="400"/>
+                    </DataTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </controls:ProWindow.Resources>
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- ============ controls ============ -->
+        <Grid Grid.Row="0" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Orientation="Horizontal">
+                <TextBlock Text="Point features:" VerticalAlignment="Center"/>
+                <ComboBox x:Name="cboLayer" Width="200" Margin="6,0,0,0"
+                          ToolTip="The point feature layers of the active map. A selection on the layer is honored -- select one animal's locations to sweep just that animal."/>
+                <Button Content="⟳" Padding="6,1" Margin="4,0,10,0"
+                        Click="OnRefreshLayers"
+                        ToolTip="Re-read the point layers from the active map."/>
+                <TextBlock Text="Method:" VerticalAlignment="Center"/>
+                <RadioButton x:Name="radK" Content="Standard (k)"
+                             IsChecked="True" Margin="8,0,0,0"
+                             VerticalAlignment="Center"
+                             ToolTip="Sweep k, the number of points in each hull (the focal point plus its k-1 nearest neighbors)."/>
+                <RadioButton x:Name="radA" Content="Adaptive (a)"
+                             Margin="10,0,0,0" VerticalAlignment="Center"
+                             ToolTip="Sweep a, the cumulative distance budget each focal point spends on its neighbors."/>
+                <RadioButton x:Name="radR" Content="Fixed Sphere (r)"
+                             Margin="10,0,10,0" VerticalAlignment="Center"
+                             ToolTip="Sweep r, the sphere-of-influence radius around each focal point."/>
+                <TextBlock Text="Steps:" VerticalAlignment="Center"/>
+                <TextBox x:Name="txtSteps" Width="36" Margin="4,0,10,0"
+                         Text="12"
+                         ToolTip="How many parameter values to try across the sweep (4-40). More steps draw smoother curves and take proportionally longer."/>
+                <Button x:Name="btnRun" Content="Run Sweep" Padding="14,3"
+                        FontWeight="SemiBold" Click="OnRun"
+                        ToolTip="Build the local hulls at every sweep value and chart the 50 / 75 / 95 percent isopleth areas -- the Getz et al. (2007) leveling-off analysis. A dashed line marks the published starting heuristic."/>
+                <Button x:Name="btnCancel" Content="Cancel" Padding="10,3"
+                        Margin="8,0,0,0" Click="OnCancel"
+                        Visibility="Collapsed"/>
+            </StackPanel>
+            <Button Grid.Column="2" x:Name="btnHelp"
+                    VerticalAlignment="Center"
+                    Margin="8,0,8,0" Width="20" Height="20" Padding="0"
+                    Background="Transparent" BorderThickness="0"
+                    Cursor="Hand" Click="OnHelp"
+                    ToolTip="Open the online help page for this tool">
+                <Grid>
+                    <Ellipse Width="18" Height="18" Fill="#0079C1"/>
+                    <TextBlock Text="?" Foreground="White"
+                               FontWeight="Bold" FontSize="12"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Margin="0,-1,0,0"/>
+                </Grid>
+            </Button>
+            <Button Grid.Column="3" Content="Close" Padding="14,3"
+                    Click="OnClose"/>
+        </Grid>
+
+        <!-- ============ chart ============ -->
+        <Border Grid.Row="1" BorderBrush="#66000000" BorderThickness="1"
+                Background="White" Padding="4">
+            <!-- chart size follows the CONTAINER, never the Image itself:
+                 with Stretch=Uniform the Image's own size can track its
+                 letterboxed content, and sizing from it feeds back into
+                 ever-shorter charts on re-runs -->
+            <Grid x:Name="chartHost" SizeChanged="OnChartSized">
+                <Image x:Name="imgChart" Stretch="Uniform"
+                       RenderOptions.BitmapScalingMode="HighQuality"/>
+                <TextBlock x:Name="txtChartHint"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center" Opacity="0.55"
+                           FontSize="14" TextAlignment="Center"
+                           Text="Pick a point feature layer, choose a LoCoH method, and click Run Sweep.&#10;&#10;The chart plots the 50%, 75% and 95% isopleth areas against the parameter:&#10;spurious holes fill quickly at small values, the curves flatten into a plateau,&#10;and genuinely unused ground begins to be bridged past it."/>
+            </Grid>
+        </Border>
+
+        <!-- ============ exports + status ============ -->
+        <Grid Grid.Row="2" Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Orientation="Horizontal">
+                <Button x:Name="btnSaveGraph" Content="Save Graph..."
+                        Padding="10,3" Click="OnSaveGraph" IsEnabled="False"
+                        ToolTip="Export the chart as a PNG image (300 dpi) or a scalable SVG vector file."/>
+                <Button x:Name="btnExportCsv" Content="Export CSV..."
+                        Margin="8,0,0,0" Padding="10,3" Click="OnExportCsv"
+                        IsEnabled="False"
+                        ToolTip="Write the sweep table -- parameter value and the 50 / 75 / 95 percent isopleth areas -- as a CSV file."/>
+                <Button x:Name="btnAddToLayout" Content="Add to Layout"
+                        Margin="8,0,0,0" Padding="10,3" Click="OnAddToLayout"
+                        IsEnabled="False"
+                        ToolTip="Place the chart on a layout as native, individually editable graphic elements. The active layout is used when one is open; otherwise you pick from the project's layouts. (Charts go on layouts, not maps -- map placement slows drawing and sizes fonts wrongly.)"/>
+            </StackPanel>
+            <TextBlock Grid.Column="1" x:Name="txtStatus" Margin="12,0,12,0"
+                       Opacity="0.75" VerticalAlignment="Center"
+                       TextWrapping="Wrap"/>
+            <ProgressBar Grid.Column="2" x:Name="prgRun" Width="180"
+                         Height="14" Visibility="Collapsed"/>
+        </Grid>
+    </Grid>
+</controls:ProWindow>

@@ -86,6 +86,7 @@ namespace WildlifeTools
                 "WildlifeTools_LoCoHStandard",
                 "WildlifeTools_LoCoHAdaptive",
                 "WildlifeTools_LoCoHFixedSphere",
+                "WildlifeTools_LocohParameterExplorer",
             }),
             ("Kernel Density Tools", new[]
             {

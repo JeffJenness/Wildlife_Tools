@@ -490,13 +490,11 @@ namespace WildlifeTools.Corridor
         private async void OnAddToLayout(object sender, RoutedEventArgs e)
         {
             if (_model == null) return;
-            var model = _model;
             try
             {
-                string where = await QueuedTask.Run(() =>
-                    PolarPlotCim.PlaceOnActiveView(model,
-                        "Cross-Tabulation Table", "Cross-Tab Tables"));
-                txtStatus.Text = "✓ " + where;
+                string where = await LayoutPlacement.AddChart(this, _model,
+                    "Cross-Tabulation Table");
+                if (where != null) txtStatus.Text = "✓ " + where;
             }
             catch (Exception ex)
             { MessageBox.Show(ex.Message, Title); }

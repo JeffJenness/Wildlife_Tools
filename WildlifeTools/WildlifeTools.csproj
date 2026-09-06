@@ -43,6 +43,10 @@
     <Content Include="Images\LoCoH_32.png" />
     <Content Include="DarkImages\LoCoH_16.png" />
     <Content Include="DarkImages\LoCoH_32.png" />
+    <Content Include="Images\LocohExplorer_16.png" />
+    <Content Include="Images\LocohExplorer_32.png" />
+    <Content Include="DarkImages\LocohExplorer_16.png" />
+    <Content Include="DarkImages\LocohExplorer_32.png" />
     <Content Include="Images\LoCoH_a_16.png" />
     <Content Include="Images\LoCoH_a_32.png" />
     <Content Include="DarkImages\LoCoH_a_16.png" />

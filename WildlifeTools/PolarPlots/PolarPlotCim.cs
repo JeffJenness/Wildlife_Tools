@@ -197,71 +197,38 @@ namespace WildlifeTools.PolarPlots
         }
 
         // ---- placement targets ----------------------------------------------
+        // (Map placement retired 2026-09-06: charts on a map slow drawing
+        // and size fonts and symbols wrongly. All Add-to-Layout buttons now
+        // route through LayoutPlacement, which targets layouts only.)
+
         /// <summary>
-        /// Places the plot on the active LAYOUT (page units; centered on the
-        /// visible page) or, if a map view is active instead, into a "Polar
-        /// Plots" graphics layer (sized to ~30% of the shorter visible extent
-        /// dimension). Returns a description of where it went, or throws with a
-        /// user-frien­dly message. MCT.
+        /// Places the plot centered on a SPECIFIC layout's page (page
+        /// units), whether or not that layout is the active view. MCT.
         /// </summary>
-        public static string PlaceOnActiveView(PolarPlotModel m, string name,
-                                               string graphicsLayerName = "Polar Plots")
+        public static string PlaceOnLayout(PolarPlotModel m, Layout layout,
+                                           string name)
         {
-            var lv = LayoutView.Active;
-            if (lv?.Layout != null)
+            double cx = 0, cy = 0, upi = 1.0;
+            try
             {
-                var layout = lv.Layout;
-                double cx = 0, cy = 0, upi = 1.0;
-                try
-                {
-                    var page = layout.GetPage();
-                    cx = page.Width / 2.0;
-                    cy = page.Height / 2.0;
-                }
-                catch { cx = m.HalfWidthIn; cy = m.HalfHeightIn; }
-                var grp = Place(m, layout, cx, cy, upi, name);
-                if (grp == null) throw new InvalidOperationException(
-                    "No plot elements could be created on the layout.");
-                return "Added to layout '" + layout.Name + "' (grouped as '" +
-                       grp.Name + "').";
+                var page = layout.GetPage();
+                cx = page.Width / 2.0;
+                cy = page.Height / 2.0;
             }
-
-            var mv = MapView.Active;
-            if (mv?.Map != null)
-            {
-                var map = mv.Map;
-                GraphicsLayer gl = map.GetLayersAsFlattenedList()
-                    .OfType<GraphicsLayer>()
-                    .FirstOrDefault(g => g.Name == graphicsLayerName)
-                    ?? LayerFactory.Instance.CreateLayer<GraphicsLayer>(
-                        new GraphicsLayerCreationParams { Name = graphicsLayerName }, map);
-                var ext = mv.Extent;
-                double cx = (ext.XMin + ext.XMax) / 2.0;
-                double cy = (ext.YMin + ext.YMax) / 2.0;
-                double shorter = Math.Min(ext.Width, ext.Height);
-                double upi = shorter * 0.30 / Math.Max(2.0 * m.HalfWidthIn, 0.1);
-                var grp = Place(m, gl, cx, cy, upi, name);
-                if (grp == null) throw new InvalidOperationException(
-                    "No plot elements could be created in the graphics layer.");
-                return "Added to the '" + graphicsLayerName +
-                       "' graphics layer in map '" + map.Name + "'.";
-            }
-
-            throw new InvalidOperationException(
-                "Open a layout view (or a map view) first, then add the plot.");
+            catch { cx = m.HalfWidthIn; cy = m.HalfHeightIn; }
+            var grp = Place(m, layout, cx, cy, upi, name);
+            if (grp == null) throw new InvalidOperationException(
+                "No plot elements could be created on the layout.");
+            return "Added to layout '" + layout.Name + "' (grouped as '" +
+                   grp.Name + "').";
         }
 
-        /// <summary>
-        /// One-click statistics: places a text element on the active layout
-        /// whose text carries ArcGIS formatting tags (rendered by Pro). MCT.
-        /// </summary>
-        public static string PlaceStatsTextOnLayout(string taggedText)
+        /// <summary>One-click statistics: places a text element carrying
+        /// ArcGIS formatting tags (rendered by Pro) on a SPECIFIC layout,
+        /// whether or not it is the active view. MCT.</summary>
+        public static string PlaceStatsTextOnLayout(Layout layout,
+            string taggedText)
         {
-            var lv = LayoutView.Active;
-            if (lv?.Layout == null)
-                throw new InvalidOperationException(
-                    "Open a layout view first, then add the statistics text.");
-            var layout = lv.Layout;
             double cx = 1.0, cy = 1.0;
             try
             {

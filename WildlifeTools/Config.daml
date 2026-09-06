@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.98.5" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.99.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -136,6 +136,17 @@
                 keytip="LF">
           <tooltip heading="Local Convex Hull (LoCoH) - Fixed Sphere">
             Opens the Fixed-sphere-of-influence (r-) Local Convex Hull home-range tool from the Jenness Enterprises toolbox.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_LocohParameterExplorer"
+                caption="LoCoH Parameter Explorer"
+                className="LocohParameterButton"
+                loadOnClick="true"
+                smallImage="Images\LocohExplorer_16.png"
+                largeImage="Images\LocohExplorer_32.png"
+                keytip="LE">
+          <tooltip heading="LoCoH Parameter Explorer">
+            Charts the 50 / 75 / 95 percent isopleth areas across a sweep of k, a or r values for a point layer -- the Getz et al. (2007) leveling-off analysis for choosing the LoCoH parameter, with the published starting heuristic marked.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_KernelDensityGenerate"

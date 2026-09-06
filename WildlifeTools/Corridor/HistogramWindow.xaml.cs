@@ -585,21 +585,11 @@ namespace WildlifeTools.Corridor
         private async void OnAddToLayout(object sender, RoutedEventArgs e)
         {
             if (_model == null) return;
-            var model = _model;
-            string tagged = BuildTaggedStats();
             try
             {
-                string where = await QueuedTask.Run(() =>
-                {
-                    string msg = PolarPlotCim.PlaceOnActiveView(model,
-                        "Habitat Histogram", "Habitat Histograms");
-                    if (LayoutView.Active?.Layout != null)
-                        PolarPlotCim.PlaceStatsTextOnLayout(tagged);
-                    return msg;
-                });
-                txtStatus.Text = "✓ " + where +
-                    (LayoutView.Active?.Layout != null
-                        ? " Statistics text added beside it." : "");
+                string where = await LayoutPlacement.AddChart(this, _model,
+                    "Habitat Histogram", BuildTaggedStats());
+                if (where != null) txtStatus.Text = "✓ " + where;
             }
             catch (Exception ex)
             { MessageBox.Show(ex.Message, Title); }
