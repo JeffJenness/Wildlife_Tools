@@ -1773,6 +1773,10 @@ class KernelDensityGenerate(object):
                 area_unit=P["area_unit"].valueAsText,
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
+            lyrx = kernel_density.kd_density_lyrx(
+                P["out_raster"].valueAsText, messages)
+            if lyrx:
+                P["out_raster"].symbology = lyrx
         except arcpy.ExecuteError:
             raise
         except Exception:
@@ -1843,6 +1847,10 @@ class KernelDensityProportion(object):
                 out_raster=P["out_raster"].valueAsText,
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
+            lyrx = kernel_density.kd_density_lyrx(
+                P["out_raster"].valueAsText, messages)
+            if lyrx:
+                P["out_raster"].symbology = lyrx
         except arcpy.ExecuteError:
             raise
         except Exception:
@@ -1934,6 +1942,13 @@ class KernelDensityContours(object):
             kernel_density.run_probability_contours(
                 kd=P["in_raster"].valueAsText,
                 out_lines=lines, out_polys=polys, messages=messages)
+            for out_name, out_val in (("out_lines", lines),
+                                      ("out_polys", polys)):
+                if out_val:
+                    lyrx = kernel_density.kd_contour_lyrx(
+                        out_val, messages)
+                    if lyrx:
+                        P[out_name].symbology = lyrx
         except arcpy.ExecuteError:
             raise
         except Exception:

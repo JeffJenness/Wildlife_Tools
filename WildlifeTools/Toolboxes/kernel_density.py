@@ -94,8 +94,27 @@ def _today():
 
 def _kd_write_meta(target, title, summary, description, proportion=False, messages=None):
     """Write short title/tags/summary/description metadata onto an output. Stamps the
-    proportion-surface marker when ``proportion`` is True. Never raises."""
+    proportion-surface marker when ``proportion`` is True. Never raises.
+
+    Memory-workspace outputs are SKIPPED entirely: they cannot hold
+    metadata, and the arcpy metadata layer's save failure leaves the
+    interpreter's error indicator set even inside a try/except, detonating
+    as a SystemError at the NEXT unrelated call (seen live 2026-09-07,
+    'Failed to save metadata' -> crash in _writeback_resolved_raster)."""
     try:
+        if mh.is_memory_workspace(str(target)):
+            if messages:
+                if proportion:
+                    messages.addWarningMessage(
+                        "In-memory output: metadata cannot be written, so the "
+                        "proportion-surface marker was NOT stamped. KD "
+                        "Probability Contours will treat this raster as plain "
+                        "densities -- write the output to a geodatabase (or "
+                        "copy it to one) if you plan to contour it as a "
+                        "proportion surface.")
+                else:
+                    messages.addMessage("In-memory output: metadata skipped.")
+            return
         from arcpy import metadata as md
         m = md.Metadata(target)
         m.title = title
@@ -290,6 +309,24 @@ def run_proportion_surface(kd, out_raster, messages):
         arcpy.management.CopyRaster(out_path, out_raster)
     finally:
         arcpy.env.pyramid = prev
+    # GDAL's OpenFileGDB driver can return an EMPTY projection for
+    # geodatabase rasters whose coordinate system is perfectly healthy
+    # on the arcpy side (seen live 2026-09-07: NAD83 UTM 12N described
+    # by arcpy, blank from GDAL) -- the scratch GeoTIFF then carries no
+    # CS into the output. Repair from the INPUT's described CS.
+    try:
+        out_sr = arcpy.Describe(out_raster).spatialReference
+        if out_sr is None or getattr(out_sr, "name", "Unknown") in ("", "Unknown"):
+            src_sr = arcpy.Describe(kd).spatialReference
+            if src_sr is not None and getattr(src_sr, "name", "Unknown") not in ("", "Unknown"):
+                arcpy.management.DefineProjection(out_raster, src_sr)
+                messages.addMessage(
+                    "Applied the input raster's coordinate system ({}) to the "
+                    "output (GDAL could not read it from the source).".format(
+                        src_sr.name))
+    except Exception as e:                                   # noqa: BLE001
+        messages.addWarningMessage(
+            "Could not verify the output coordinate system: {}".format(e))
     if out_stats and out_stats.get("on_raster"):
         messages.addMessage(
             "Statistics and histogram were written with the raster (no scan needed).")
@@ -500,6 +537,31 @@ def run_probability_contours(kd, out_lines, out_polys, messages):
     if not out_lines and not out_polys:
         raise arcpy.ExecuteError(
             "Choose at least one output: contour polylines and/or polygon areas.")
+    # A raster without up-to-date statistics stops 3D ContourList cold
+    # (ERROR 010667). Memory-workspace rasters NEVER satisfy its
+    # up-to-date flag (our written stats are readable, but the internal
+    # flag stays stale), so recalculate unconditionally for those; for
+    # disk rasters, probe first. This is an INPUT repair, not our
+    # output-stats path, so the never-CalculateStatistics-on-outputs
+    # rule is untouched.
+    try:
+        kd_path = arcpy.Describe(kd).catalogPath
+    except Exception:                                        # noqa: BLE001
+        kd_path = str(kd)
+    need_stats = mh.is_memory_workspace(kd_path)
+    if not need_stats:
+        try:
+            arcpy.management.GetRasterProperties(kd, "MEAN")
+        except Exception:                                    # noqa: BLE001
+            need_stats = True
+    if need_stats:
+        try:
+            messages.addMessage(
+                "Refreshing the input raster's statistics...")
+            arcpy.management.CalculateStatistics(kd)
+        except Exception as e:                               # noqa: BLE001
+            messages.addWarningMessage(
+                "Could not compute input statistics: {}".format(e))
     target_cs = arcpy.env.outputCoordinateSystem
     prev = arcpy.env.outputCoordinateSystem
     arcpy.env.outputCoordinateSystem = None       # contour in the raster's native CS
@@ -534,8 +596,11 @@ def run_probability_contours(kd, out_lines, out_polys, messages):
         path_note,
         "Outputs: {}.".format(" and ".join(kinds))])
     for fc in outputs:
-        tmeta.set_entity_and_fields(fc, entity=_CONTOUR_ENTITY, fields=_CONTOUR_FIELDS,
-                                    messages=messages)
+        if not mh.is_memory_workspace(str(fc)):
+            # memory outputs cannot hold metadata (see _kd_write_meta)
+            tmeta.set_entity_and_fields(fc, entity=_CONTOUR_ENTITY,
+                                        fields=_CONTOUR_FIELDS,
+                                        messages=messages)
         try:
             title = arcpy.Describe(fc).baseName
         except Exception:
@@ -1127,3 +1192,248 @@ def run_kernel_density(points, pop_field, out_raster, cell_size, search_radius,
                    description=_DESC_KDE + " " + desc_extra,
                    proportion=(out_value == OUTV_PROPORTION), messages=messages)
     return out_raster
+
+
+# ---------------------------------------------------------------------------
+#  default output symbology (2026-09-07, Jeff's spec)
+# ---------------------------------------------------------------------------
+_KD_SYMB_TEMPLATE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "kd_density_symbology_template.lyrx")
+
+
+def kd_density_lyrx(out_raster, messages=None):
+    """Create a .lyrx beside ``out_raster`` carrying Jeff's kernel-density
+    ramp (a dark-purple-to-yellow continuous stretch exported from his
+    Oak_Creek_Species_Locations_KDens.lyrx, shipped as
+    kd_density_symbology_template.lyrx) with the layer 30% transparent, so
+    the surface reads over imagery the moment the tool adds it to the map.
+    Same proven mechanics as mahalanobis.default_stretch_lyrx:
+    MakeRasterLayer -> SaveToLayerFile (which captures the real
+    stretchStats -- a colorizer with no stats will not render), then
+    transplant the template's colorizer and transparency onto the saved
+    document. Returns the .lyrx path (set it as the output parameter's
+    ``.symbology``) or None; never raises."""
+    import json
+    try:
+        path = arcpy.Describe(out_raster).catalogPath
+        name = os.path.splitext(os.path.basename(path))[0]
+    except Exception as e:                                   # noqa: BLE001
+        if messages is not None:
+            messages.addWarningMessage(
+                "Could not create layer file: {}".format(e))
+        return None
+    lyr_dir = mh.lyrx_dir_for(os.path.dirname(path))
+    if lyr_dir is None or not os.path.exists(_KD_SYMB_TEMPLATE):
+        return None
+    out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
+    tmp = "jenness_kd_symb_tmp"
+    try:
+        try:
+            arcpy.management.Delete(tmp)
+        except Exception:                                    # noqa: BLE001
+            pass
+        arcpy.management.MakeRasterLayer(path, tmp)
+        arcpy.management.SaveToLayerFile(tmp, out_lyrx, "ABSOLUTE")
+    except Exception as e:                                   # noqa: BLE001
+        if messages is not None:
+            messages.addWarningMessage(
+                "Could not create layer file: {}".format(e))
+        return None
+    finally:
+        try:
+            arcpy.management.Delete(tmp)
+        except Exception:                                    # noqa: BLE001
+            pass
+    try:
+        with open(out_lyrx, encoding="utf-8") as f:
+            lyr = json.load(f)
+        with open(_KD_SYMB_TEMPLATE, encoding="utf-8") as f:
+            tpl = json.load(f)
+        out_ld = lyr["layerDefinitions"][0]
+        tpl_ld = tpl["layerDefinitions"][0]
+        col = dict(tpl_ld.get("colorizer") or {})
+        # keep the stats SaveToLayerFile captured for THIS raster; the
+        # template's stats describe Jeff's original dataset
+        saved = out_ld.get("colorizer") or {}
+        for key in ("stretchStats", "stretchClasses"):
+            if key in saved:
+                col[key] = saved[key]
+            else:
+                col.pop(key, None)
+        col.pop("colorScheme", None)
+        # zero-density cells are honest values (kept 0, not NoData, so
+        # raster algebra keeps working) -- but they should not paint the
+        # whole analysis rectangle, so display value 0 as transparent
+        # (the same thing as Pro's "Display background value" checkbox)
+        col["displayBackgroundValue"] = True
+        col["backgroundValue"] = 0.0
+        col["backgroundColor"] = {"type": "CIMRGBColor",
+                                  "values": [255, 255, 255, 0]}
+        out_ld["colorizer"] = col
+        out_ld["transparency"] = tpl_ld.get("transparency", 30)
+        out_ld["name"] = name
+        with open(out_lyrx, "w", encoding="utf-8") as f:
+            json.dump(lyr, f)
+    except Exception as e:                                   # noqa: BLE001
+        if messages is not None:
+            messages.addWarningMessage(
+                "Layer file created but symbology could not be "
+                "applied: {}".format(e))
+    return out_lyrx
+
+
+def _kd_stroke(width_pt, rgb):
+    return {"type": "CIMSolidStroke", "enable": True,
+            "capStyle": "Round", "joinStyle": "Round",
+            "lineStyle3D": "Strip", "miterLimit": 10,
+            "width": width_pt,
+            "color": {"type": "CIMRGBColor",
+                      "values": list(rgb) + [100]}}
+
+
+def kd_contour_lyrx(out_fc, messages=None):
+    """Create a .lyrx beside ``out_fc`` (the probability-contour polylines
+    or polygon areas) drawing the PRIMARY isopleths (5/25/50/75/95 percent,
+    Primary = "True") as heavier dark lines and the minor levels as
+    lighter gray ones -- the two-weight display the Primary field was
+    designed for. Polygons draw hollow with the same outline weights, so
+    the nested isopleths all stay visible. Returns the .lyrx path or
+    None; never raises."""
+    import json
+    try:
+        d = arcpy.Describe(out_fc)
+        path = d.catalogPath
+        shape = (getattr(d, "shapeType", "") or "").lower()
+        name = os.path.splitext(os.path.basename(path))[0]
+    except Exception as e:                                   # noqa: BLE001
+        if messages is not None:
+            messages.addWarningMessage(
+                "Could not create layer file: {}".format(e))
+        return None
+    lyr_dir = mh.lyrx_dir_for(os.path.dirname(path))
+    if lyr_dir is None:
+        return None
+    out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
+    tmp = "jenness_kd_ctr_tmp"
+    try:
+        try:
+            arcpy.management.Delete(tmp)
+        except Exception:                                    # noqa: BLE001
+            pass
+        arcpy.management.MakeFeatureLayer(path, tmp)
+        arcpy.management.SaveToLayerFile(tmp, out_lyrx, "ABSOLUTE")
+    except Exception as e:                                   # noqa: BLE001
+        if messages is not None:
+            messages.addWarningMessage(
+                "Could not create layer file: {}".format(e))
+        return None
+    finally:
+        try:
+            arcpy.management.Delete(tmp)
+        except Exception:                                    # noqa: BLE001
+            pass
+    try:
+        with open(out_lyrx, encoding="utf-8") as f:
+            lyr = json.load(f)
+        out_ld = lyr["layerDefinitions"][0]
+
+        def symbol(width_pt, rgb):
+            stroke = _kd_stroke(width_pt, rgb)
+            if shape == "polygon":
+                sym = {"type": "CIMPolygonSymbol",
+                       "symbolLayers": [stroke]}   # hollow: outline only
+            else:
+                sym = {"type": "CIMLineSymbol", "symbolLayers": [stroke]}
+            return {"type": "CIMSymbolReference", "symbol": sym}
+
+        def uv_class(value, label, sym):
+            return {"type": "CIMUniqueValueClass", "label": label,
+                    "visible": True, "patch": "Default",
+                    "values": [{"type": "CIMUniqueValue",
+                                "fieldValues": [value]}],
+                    "symbol": sym}
+
+        out_ld["renderer"] = {
+            "type": "CIMUniqueValueRenderer",
+            "fields": ["Primary"],
+            "useDefaultSymbol": False,
+            "groups": [{
+                "type": "CIMUniqueValueGroup",
+                "heading": "Primary isopleth",
+                "classes": [
+                    uv_class("True",
+                             "Primary (5 / 25 / 50 / 75 / 95%)",
+                             symbol(1.5, (0, 0, 0))),
+                    uv_class("False", "Minor levels",
+                             symbol(0.6, (110, 110, 110))),
+                ],
+            }],
+        }
+        if shape != "polygon":
+            # label the primary isopleths along the lines ("95%", ...),
+            # white-haloed for readability over imagery; the minor
+            # levels stay unlabeled so twenty levels don't wallpaper
+            # the map (turn the where-clause off in Pro to label all)
+            fill = {"type": "CIMSolidFill", "enable": True,
+                    "color": {"type": "CIMRGBColor",
+                              "values": [0, 0, 0, 100]}}
+            halo = {"type": "CIMSolidFill", "enable": True,
+                    "color": {"type": "CIMRGBColor",
+                              "values": [255, 255, 255, 100]}}
+            out_ld["labelClasses"] = [{
+                "type": "CIMLabelClass",
+                "name": "Primary isopleth labels",
+                "visibility": True,
+                "expression": "$feature.Label",
+                "expressionEngine": "Arcade",
+                "featuresToLabel": "AllVisibleFeatures",
+                "whereClause": "Primary = 'True'",
+                "priority": 1,
+                "maplexLabelPlacementProperties": {
+                    "type": "CIMMaplexLabelPlacementProperties",
+                    "featureType": "Line",
+                    # Maplex CONTOUR placement (Jeff's spec 2026-09-07):
+                    # page label alignment, +/-90 degree maximum angle,
+                    # curved ladders, centered curved on the line
+                    "lineFeatureType": "Contour",
+                    "contourAlignmentType": "Page",
+                    "contourMaximumAngle": 90,
+                    "contourLadderType": "Curved",
+                    "linePlacementMethod": "CenteredCurvedOnLine",
+                    "canOverrunFeature": True,
+                    "repeatLabel": True,
+                    "minimumRepetitionInterval": 200,
+                    # "Remove duplicate labels: remove within fixed
+                    # distance" of 150 points
+                    "thinDuplicateLabels": True,
+                    "thinningDistance": 150,
+                    "thinningDistanceUnit": "Point",
+                },
+                "textSymbol": {
+                    "type": "CIMSymbolReference",
+                    "symbol": {
+                        "type": "CIMTextSymbol",
+                        "fontFamilyName": "Tahoma",
+                        "fontStyleName": "Regular",
+                        "height": 8,
+                        "horizontalAlignment": "Center",
+                        "verticalAlignment": "Center",
+                        "haloSize": 1,
+                        "haloSymbol": {"type": "CIMPolygonSymbol",
+                                       "symbolLayers": [halo]},
+                        "symbol": {"type": "CIMPolygonSymbol",
+                                   "symbolLayers": [fill]},
+                    },
+                },
+            }]
+            out_ld["labelVisibility"] = True
+        out_ld["name"] = name
+        with open(out_lyrx, "w", encoding="utf-8") as f:
+            json.dump(lyr, f)
+    except Exception as e:                                   # noqa: BLE001
+        if messages is not None:
+            messages.addWarningMessage(
+                "Layer file created but symbology could not be "
+                "applied: {}".format(e))
+    return out_lyrx
