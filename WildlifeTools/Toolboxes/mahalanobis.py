@@ -35,6 +35,7 @@ verifying against real, multi-projection data.
 """
 
 import os
+import re
 import json
 from datetime import datetime
 
@@ -770,9 +771,76 @@ def _gdal_source_path(raster, scratch):
     return tif, tif
 
 
+def _fmt_num(v):
+    """Format a raster cell value for messages: integers without a trailing .0."""
+    f = float(v)
+    return str(int(f)) if f == int(f) else repr(f)
+
+
+def resolve_category_values(cat_raster, cat_field, cat_value, messages=None):
+    """Map a raster-attribute-table field + value to the matching cell values.
+
+    Returns ``(values, label)``: ``values`` is the list of numeric cell values
+    whose attribute-table rows have ``cat_field`` equal to ``cat_value`` (e.g.
+    every Landfire EVT code whose EVT_LF is 'Tree'), and ``label`` is a
+    human-readable description for messages.
+
+    When ``cat_field`` is empty or is the Value field itself, ``cat_value`` is
+    interpreted the classic way -- as literal numeric cell value(s) -- so
+    scripts and models that pass a bare number keep working, and so do rasters
+    with no attribute table at all. Multiple literal values may be separated
+    by semicolons or commas ("3;4;5"), matching geoprocessing multivalue
+    convention; all the listed values join the reference sample.
+    """
+    field = (cat_field or "").strip()
+    if not field or field.lower() == "value":
+        parts = [p.strip() for p in re.split(r"[;,]", str(cat_value or ""))
+                 if p.strip()]
+        if not parts:
+            raise arcpy.ExecuteError("Enter the category cell value to use.")
+        return parts, None
+    try:
+        cat_path = arcpy.Describe(cat_raster).catalogPath
+    except Exception:
+        cat_path = cat_raster
+    sel = "" if cat_value is None else str(cat_value).strip()
+    values, seen = [], set()
+    try:
+        with arcpy.da.SearchCursor(cat_path, ["Value", field]) as cur:
+            for val, attr in cur:
+                if val is None:
+                    continue
+                text = _fmt_num(attr) if isinstance(attr, (int, float)) else str(attr)
+                if text.strip() == sel and val not in seen:
+                    seen.add(val)
+                    values.append(float(val))
+    except Exception as e:
+        raise arcpy.ExecuteError(
+            "Could not read field '{}' from the categorical raster's attribute "
+            "table ({}). Choose a field from the raster's attribute table, or "
+            "leave the field blank and enter the cell value directly.".format(field, e))
+    if not values:
+        raise arcpy.ExecuteError(
+            "No rows in the categorical raster's attribute table have {} = '{}'. "
+            "Check the category value (values are matched exactly).".format(field, sel))
+    label = "{} = '{}' ({} raster value{})".format(
+        field, sel, len(values), "" if len(values) == 1 else "s")
+    if messages is not None:
+        messages.addMessage("Category {}: cell value{} [{}]".format(
+            label, "" if len(values) == 1 else "s",
+            ", ".join(_fmt_num(v) for v in values[:25])
+            + (", ..." if len(values) > 25 else "")))
+    return values, label
+
+
 def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
-                           scratch, messages, value_caps=None):
-    """Mean/cov/corr from cells where a categorical raster equals ``cat_value``.
+                           scratch, messages, value_caps=None, cat_label=None):
+    """Mean/cov/corr from cells where a categorical raster matches ``cat_value``.
+
+    ``cat_value`` may be a single numeric value or a list/tuple of them (e.g. the
+    set of cell values a raster-attribute-table category maps to); a cell matching
+    ANY of the values joins the reference sample. ``cat_label`` (optional) is a
+    human-readable name for the category used in messages (e.g. "EVT_LF = 'Tree'").
 
     The category raster is aligned to the analysis grid (nearest), then predictors
     are accumulated (streaming, block by block) over matching, fully-valid cells.
@@ -789,18 +857,39 @@ def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
     width, height = geo["width"], geo["height"]
     minx, maxy, cell = geo["minx"], geo["maxy"], geo["cell"]
     cat_src, cat_tmp = _gdal_source_path(cat_path, scratch)
+    # dstSRS is REQUIRED: the outputBounds are grid coordinates, and without a
+    # target SRS gdal.Warp interprets them in the SOURCE's coordinate system --
+    # a categorical raster in a different CS (e.g. Landfire in CONUS Albers vs
+    # a UTM analysis grid) then reads an empty window and NO cells match. The
+    # aligned predictor VRTs carry the grid's exact WKT; fall back to the
+    # arcpy spatial reference if a VRT reports none (OpenFileGDB trap).
+    grid_wkt = vrts[0].GetProjection() if vrts else ""
+    if not grid_wkt:
+        try:
+            grid_wkt = geo["sr"].exportToString()
+        except Exception:
+            grid_wkt = ""
     cat_vrt = gdal.Warp(
         "", cat_src, format="VRT",
-        outputType=gdal.GDT_Float64,
+        outputType=gdal.GDT_Float64, dstSRS=(grid_wkt or None),
         outputBounds=(minx, geo["maxy"] - height * cell, minx + width * cell, maxy),
         width=width, height=height, resampleAlg="near", dstNodata=float("nan"))
     cat_band = cat_vrt.GetRasterBand(1)
+    raw_values = (list(cat_value) if isinstance(cat_value, (list, tuple, set))
+                  else [cat_value])
     try:
-        target = float(cat_value)
+        targets = [float(v) for v in raw_values]
     except (TypeError, ValueError):
         raise arcpy.ExecuteError(
             "Categorical value '{}' is not numeric; raster cell values are numeric.".format(
                 cat_value))
+    if not targets:
+        raise arcpy.ExecuteError("No category cell values to match.")
+    if cat_label is None:
+        cat_label = (_fmt_num(targets[0]) if len(targets) == 1 else
+                     "{} values [{}]".format(
+                         len(targets), ", ".join(_fmt_num(t) for t in targets[:12])
+                         + (", ..." if len(targets) > 12 else "")))
 
     k = len(vrts)
     n = 0
@@ -814,7 +903,10 @@ def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
         stack = np.empty((k, rows, width))
         for j, band in enumerate(bands):
             stack[j] = band.ReadAsArray(0, yoff, width, rows)
-        mask = np.isclose(cat, target) & np.all(np.isfinite(stack), axis=0)
+        mask = np.zeros(cat.shape, dtype=bool)
+        for t in targets:
+            mask |= np.isclose(cat, t)
+        mask &= np.all(np.isfinite(stack), axis=0)
         if value_caps:
             for j, cap in value_caps.items():
                 with np.errstate(invalid="ignore"):
@@ -850,7 +942,11 @@ def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
     if n < k + 1:
         raise arcpy.ExecuteError(
             "Only {} cells matched category {}; need at least {} for a {}-variable "
-            "covariance.".format(n, cat_value, k + 1, k))
+            "covariance.{}".format(
+                n, cat_label, k + 1, k,
+                (" Check that the categorical raster actually overlaps the "
+                 "analysis extent (the grid set by the landscape variables and "
+                 "environments)." if n == 0 else "")))
     # Covariance from the shifted sums: because the deviations are near zero, this
     # subtraction is well-conditioned -- avoiding the catastrophic cancellation a raw
     # one-pass X@X.T suffers on large-magnitude, small-variance data. Add the shift back
@@ -863,8 +959,12 @@ def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
     d = np.sqrt(np.diag(cov))
     with np.errstate(invalid="ignore", divide="ignore"):
         corr = cov / np.outer(d, d)
-    messages.addMessage("Categorical source: {:,} cells matched category {}.".format(
-        n, cat_value))
+    try:
+        cat_name = arcpy.Describe(cat_path).baseName
+    except Exception:
+        cat_name = os.path.basename(str(cat_path).rstrip("\\/")) or str(cat_path)
+    messages.addMessage("Categorical source: {:,} cells of {} matched category {}.".format(
+        n, cat_name, cat_label))
     return mean, cov, corr, n
 
 
@@ -2080,8 +2180,13 @@ def run_mahalanobis_raster(var_rows, sample_method, stats_source, out_type,
                 "selected. They must match in count and order.".format(len(mean), k))
         messages.addMessage("Loaded mean vector and covariance matrix from tables.")
     elif stats_source == SRC_CATEGORICAL:
+        cat_values, cat_label = resolve_category_values(
+            cat_raster, cat_field, cat_value, messages)
         mean, cov, corr, n_used = stats_from_categorical(
-            vrts, geo, cat_raster, cat_value, sample_method, scratch, messages)
+            vrts, geo, cat_raster, cat_values, sample_method, scratch, messages,
+            cat_label=cat_label)
+        if cat_label:
+            stats_source = "{} ({})".format(stats_source, cat_label)
     else:  # SRC_POINTS
         xy = read_point_xy(points, geo["sr"])
         if len(xy) == 0:
@@ -2202,7 +2307,7 @@ _POINT_FIELD_DESC = {
             "the multivariate mean of the reference sample: D2 = (x - mu)' * Sigma^-1 * "
             "(x - mu).",
     OUT_D: "Mahalanobis distance: the square root of the squared distance (D2).",
-    OUT_PVALUE: "Chi-square typicality p-value -- the upper-tail probability P(chi-square "
+    OUT_PVALUE: "Chi-square p-value -- the upper-tail probability P(chi-square "
                 "with k degrees of freedom > D2), from 0 to 1; values near 1 indicate "
                 "conditions close to the reference mean.",
 }
@@ -2279,8 +2384,13 @@ def run_mahalanobis_points(target_points, var_rows, sample_method, stats_source,
                 "selected. They must match in count and order.".format(len(mean), k))
         messages.addMessage("Loaded mean vector and covariance matrix from tables.")
     elif stats_source == SRC_CATEGORICAL:
+        cat_values, cat_label = resolve_category_values(
+            cat_raster, cat_field, cat_value, messages)
         mean, cov, corr, n_used = stats_from_categorical(
-            vrts, geo, cat_raster, cat_value, sample_method, scratch, messages)
+            vrts, geo, cat_raster, cat_values, sample_method, scratch, messages,
+            cat_label=cat_label)
+        if cat_label:
+            stats_source = "{} ({})".format(stats_source, cat_label)
     else:  # SRC_POINTS -- statistics from a point sample (defaults to the target points)
         sp = stats_points or target_points
         xy = read_point_xy(sp, geo["sr"])
@@ -2420,8 +2530,13 @@ def run_covariance_from_datasets(var_rows, sample_method, stats_source, out_tabl
     corr = None
     n_used = None
     if stats_source == SRC_CATEGORICAL:
+        cat_values, cat_label = resolve_category_values(
+            cat_raster, cat_field, cat_value, messages)
         mean, cov, corr, n_used = stats_from_categorical(
-            vrts, geo, cat_raster, cat_value, sample_method, scratch, messages)
+            vrts, geo, cat_raster, cat_values, sample_method, scratch, messages,
+            cat_label=cat_label)
+        if cat_label:
+            stats_source = "{} ({})".format(stats_source, cat_label)
     else:  # SRC_POINTS
         xy = read_point_xy(points, geo["sr"])
         if len(xy) == 0:
@@ -2491,13 +2606,13 @@ def _write_chi_metadata(in_raster, out_raster, df):
         src_name = arcpy.Describe(in_raster).baseName
     except Exception:
         src_name = str(in_raster)
-    summary = ("Chi-square typicality p-value raster generated by the Jenness Enterprises "
+    summary = ("Chi-square p-value raster generated by the Jenness Enterprises "
                "Wildlife Tools on {:%B} {}, {}. {}").format(now, now.day, now.year,
                                                             MAHAL_REFERENCE)
     description = (
         "Per-cell chi-square p-value transformed from the squared Mahalanobis distance "
         "raster '{src}', using df = {df} degrees of freedom. Each cell is the upper-tail "
-        "probability P(chi-square_{df} > D2): a 0 to 1 typicality where values near 1 "
+        "probability P(chi-square_{df} > D2): a 0 to 1 similarity score where values near 1 "
         "indicate a close match to the reference conditions. This tool uses the "
         "statistically standard df = number of variables; some ecological sources (Clark "
         "et al. 1993; Farber and Kadmon 2003) use number of variables minus 1, which only "

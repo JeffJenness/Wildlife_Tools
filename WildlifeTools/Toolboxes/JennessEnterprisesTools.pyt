@@ -285,6 +285,33 @@ def _detrend_check(P):
                 "The smoothing (detrending) radius must be positive.")
 
 
+def _add_tables_to_map(P, names, messages=None):
+    """Add secondary table outputs to the active map. Pro's GP pane adds only
+    the FIRST output parameter of a tool to the map (Jeff's run, 2026-09-08:
+    Calculate Statistical Matrices with four table outputs -> only the mean
+    vector appeared), so any further output tables must be added explicitly
+    via arcpy.mp -- execute-time only (CURRENT is reliable there), honoring
+    the add-outputs-to-map option, and silently doing nothing headless."""
+    if arcpy.env.addOutputsToMap is False:
+        return
+    paths = [P[n].valueAsText for n in names if n in P and P[n].valueAsText]
+    if not paths:
+        return
+    try:
+        m = arcpy.mp.ArcGISProject("CURRENT").activeMap
+    except Exception:
+        m = None
+    if m is None:
+        return
+    for path in paths:
+        try:
+            m.addDataFromPath(path)
+        except Exception as e:
+            if messages is not None:
+                messages.addWarningMessage("Could not add {} to the map: {}".format(
+                    os.path.basename(path), e))
+
+
 def _writeback_resolved_raster(P, name):
     """Point a raster output parameter at the dataset actually
     delivered: a folder output typed without an extension becomes a
@@ -945,6 +972,52 @@ def _any_multiband(p_raster):
     return False
 
 
+def _mahal_cat_value_filter(P):
+    """Drive the Category value dropdown from the chosen attribute field.
+
+    With a field chosen, the dropdown lists that field's unique attribute-table
+    values (e.g. every EVT_LF class of a Landfire raster); the engine then
+    gathers all the matching cell values itself at run time. With no field (or
+    an unreadable attribute table) the parameter stays free text and is
+    interpreted as the literal numeric cell value. The attribute table is
+    re-read only when the raster or field actually changed (hasBeenValidated),
+    never on unrelated validation cycles.
+    """
+    p_cr, p_cf, p_cv = P["cat_raster"], P["cat_field"], P["cat_value"]
+    if not (p_cr.value and p_cf.valueAsText):
+        if p_cv.filter.list:
+            p_cv.filter.list = []
+        return
+    if p_cr.hasBeenValidated and p_cf.hasBeenValidated:
+        return
+    try:
+        path = arcpy.Describe(p_cr.value).catalogPath
+    except Exception:
+        path = p_cr.valueAsText
+    vals = set()
+    try:
+        with arcpy.da.SearchCursor(path, [p_cf.valueAsText]) as cur:
+            for (v,) in cur:
+                if v is None:
+                    continue
+                if isinstance(v, float) and v == int(v):
+                    vals.add(str(int(v)))
+                else:
+                    vals.add(str(v))
+    except Exception:
+        p_cv.filter.list = []
+        return
+
+    def _key(s):
+        try:
+            return (0, float(s), "")
+        except ValueError:
+            return (1, 0.0, s.lower())
+    p_cv.filter.list = sorted(vals, key=_key)
+    if p_cv.valueAsText and p_cv.valueAsText not in p_cv.filter.list:
+        p_cv.value = None
+
+
 def _mahal_update(tool, P, out_name, out_base, derived_re):
     """Shared updateParameters: sample always on; output + table autofill; enabling."""
     P["sample_method"].enabled = True
@@ -1007,6 +1080,8 @@ def _mahal_update(tool, P, out_name, out_base, derived_re):
         # dependency validation -- an invisible "fix 1 parameter"
         if not is_cat and P["cat_field"].valueAsText:
             P["cat_field"].value = None
+        if is_cat:
+            _mahal_cat_value_filter(P)
     P["mean_table"].enabled = is_tab
     P["cov_table"].enabled = is_tab
 
@@ -1038,7 +1113,9 @@ def _mahal_messages(tool, P):
         if not P["cat_raster"].value:
             P["cat_raster"].setErrorMessage("Select the categorical raster.")
         if P["cat_value"].value in (None, ""):
-            P["cat_value"].setErrorMessage("Enter the category cell value to use.")
+            P["cat_value"].setErrorMessage(
+                "Choose the category value (with an attribute field selected, pick "
+                "from that field's values; otherwise enter the cell value).")
     if source == mahalanobis.SRC_TABLES:
         if not P["mean_table"].value:
             P["mean_table"].setErrorMessage("Select the mean vector table.")
@@ -1089,11 +1166,12 @@ def _mahal_core_params():
         displayName="Categorical raster", name="cat_raster", datatype="GPRasterLayer",
         parameterType="Optional", direction="Input")
     cat_field = arcpy.Parameter(
-        displayName="Category field (informational; cell values are used)", name="cat_field",
+        displayName="Category attribute field", name="cat_field",
         datatype="Field", parameterType="Optional", direction="Input")
     cat_field.parameterDependencies = [cat_raster.name]
+    cat_field.filter.list = ["Short", "Long", "Float", "Double", "Text"]
     cat_value = arcpy.Parameter(
-        displayName="Category cell value", name="cat_value", datatype="GPString",
+        displayName="Category value", name="cat_value", datatype="GPString",
         parameterType="Optional", direction="Input")
 
     mean_table = arcpy.Parameter(
@@ -1187,10 +1265,11 @@ class MahalanobisRaster(object):
             datatype="DERasterDataset", parameterType="Required", direction="Output")
 
         sm, ss, cr, cf, cv, mt, ct, inv = _mahal_core_params()
-        # Sample points (and its selection toggle) sit with the other input datasets,
-        # above the Cell value sampling option.
+        # The statistics source comes right after the landscape variables, so the
+        # user picks the source FIRST and the relevant inputs appear below it
+        # (Jeff, 2026-09-08); the source-neutral computation options follow.
         return [_make_raster_vars_param(), _make_poly_vars_param(), _make_exclude_bands_param(),
-                points, use_selected, sm, ss, cr, cf, cv, mt, ct, inv,
+                ss, points, use_selected, cr, cf, cv, mt, ct, sm, inv,
                 out_raster, _out_type_param()] + _make_mahal_table_params(self.CAT)
 
     def isLicensed(self):
@@ -1238,6 +1317,10 @@ class MahalanobisRaster(object):
                 exclude_bands=_build_exclude(P["exclude_bands"]),
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
+            # The GP pane adds only the first output (the raster) itself; add
+            # any generated statistics tables explicitly.
+            _add_tables_to_map(P, [tbl for gen, tbl, _s, _k in _MAHAL_TABLE_SPECS
+                                   if P[gen].value and P[tbl].valueAsText], messages)
             if out_lyrx:
                 try:
                     P["out_raster"].symbology = out_lyrx
@@ -1296,11 +1379,12 @@ class MahalanobisPoints(object):
 
         sm, ss, cr, cf, cv, mt, ct, inv = _mahal_core_params()
         # Categorical-raster statistics are not offered at points; only on-the-fly
-        # from the point sample or precomputed from existing tables.
+        # from the point sample or precomputed from existing tables. Source first,
+        # then its inputs, then the source-neutral computation options.
         ss.filter.list = [mahalanobis.SRC_POINTS, mahalanobis.SRC_TABLES]
         return [target_points, _make_raster_vars_param(), _make_poly_vars_param(),
-                _make_exclude_bands_param(), sm, ss, stats_points, use_selected,
-                mt, ct, inv, out_points] + _out_type_checks() \
+                _make_exclude_bands_param(), ss, stats_points, use_selected,
+                mt, ct, sm, inv, out_points] + _out_type_checks() \
             + _make_mahal_table_params(self.CAT)
 
     def isLicensed(self):
@@ -1353,6 +1437,10 @@ class MahalanobisPoints(object):
                            else (_mahal_save_opts(P) or None)),
                 exclude_bands=_build_exclude(P["exclude_bands"]),
                 messages=messages)
+            # The GP pane adds only the first output (the points) itself; add
+            # any generated statistics tables explicitly.
+            _add_tables_to_map(P, [tbl for gen, tbl, _s, _k in _MAHAL_TABLE_SPECS
+                                   if P[gen].value and P[tbl].valueAsText], messages)
         except arcpy.ExecuteError:
             raise
         except Exception:
@@ -1415,11 +1503,12 @@ class MahalanobisCovariance(object):
                 parameterType="Optional", direction="Output"))
 
         sm, ss, cr, cf, cv, mt, ct, inv = _mahal_core_params()
-        # Existing tables is not a valid source here -- this tool *produces* those tables.
+        # Existing tables is not a valid source here -- this tool *produces* those
+        # tables. Source first, then its inputs, then the computation options.
         ss.filter.list = [mahalanobis.SRC_POINTS, mahalanobis.SRC_CATEGORICAL]
         return [_make_raster_vars_param(), _make_poly_vars_param(),
-                _make_exclude_bands_param(), sm, ss, points, use_selected,
-                cr, cf, cv, inv] + out_params
+                _make_exclude_bands_param(), ss, points, use_selected,
+                cr, cf, cv, sm, inv] + out_params
 
     def isLicensed(self):
         return True
@@ -1442,6 +1531,8 @@ class MahalanobisCovariance(object):
         # dependency validation -- an invisible "fix 1 parameter"
         if not is_cat and P["cat_field"].valueAsText:
             P["cat_field"].value = None
+        if is_cat:
+            _mahal_cat_value_filter(P)
         # The inversion method only governs the inverse-covariance table.
         P["inversion"].enabled = bool(P["out_invcov"].value)
 
@@ -1503,6 +1594,10 @@ class MahalanobisCovariance(object):
                 cat_value=P["cat_value"].valueAsText,
                 exclude_bands=_build_exclude(P["exclude_bands"]),
                 messages=messages)
+            # The GP pane adds only the FIRST output table itself; add the rest.
+            filled = [name for _key, name, _base in self._OUT_SPECS
+                      if P[name].valueAsText]
+            _add_tables_to_map(P, filled[1:], messages)
         except arcpy.ExecuteError:
             raise
         except Exception:
@@ -1515,7 +1610,7 @@ class MahalanobisCovariance(object):
 class MahalanobisChiSquare(object):
     """Chi-square / p-value transform of a Mahalanobis squared-distance (D2) raster.
 
-    Rescales a D2 raster to a 0-1 chi-square typicality p-value. Degrees of freedom =
+    Rescales a D2 raster to a 0-1 chi-square p-value (a similarity score). Degrees of freedom =
     number of variables; pre-filled from the input raster's metadata when our Mahalanobis
     Raster tool created it.
     """
@@ -1524,7 +1619,7 @@ class MahalanobisChiSquare(object):
         self.label = "Mahalanobis Distance - Chi-Square Transform"
         self.description = (
             "Transforms a Mahalanobis squared-distance (D2) raster into a chi-square "
-            "typicality p-value raster. For every cell, p = P(chi-square > D2) with degrees "
+            "p-value raster (a 0 to 1 similarity score). For every cell, p = P(chi-square > D2) with degrees "
             "of freedom equal to the number of variables, producing a 0 to 1 surface where "
             "values near 1 indicate a close match to the reference conditions. When the "
             "input D2 raster was created by the Mahalanobis Raster tool, the degrees of "
@@ -1555,10 +1650,12 @@ class MahalanobisChiSquare(object):
 
         # Pre-fill df from the input raster's recorded variable count (our D2 rasters carry
         # it). Don't clobber a value the user typed -- only fill when empty or still equal
-        # to the last value we auto-filled.
+        # to the last value we auto-filled. Resolve the LAYER to its dataset path first:
+        # a renamed map layer's valueAsText is the display name (or a CIMPATH), which
+        # arcpy.metadata cannot open, and the pre-fill silently failed (Jeff, 2026-09-08).
         if p_in.value:
             try:
-                n, _ot = mahalanobis.read_recorded_df(p_in.valueAsText)
+                n, _ot = mahalanobis.read_recorded_df(_resolve_raster_path(p_in))
             except Exception:
                 n = None
             if n and (p_df.value in (None, "") or p_df.value == self._df_src):
@@ -1586,7 +1683,7 @@ class MahalanobisChiSquare(object):
                 "Degrees of freedom must be a positive integer (the number of variables).")
         if p_in.value:
             try:
-                _n, ot = mahalanobis.read_recorded_df(p_in.valueAsText)
+                _n, ot = mahalanobis.read_recorded_df(_resolve_raster_path(p_in))
             except Exception:
                 ot = None
             if ot and ot != mahalanobis.OUT_D2:
@@ -1601,7 +1698,8 @@ class MahalanobisChiSquare(object):
             importlib.reload(mahalanobis)
             P = {p.name: p for p in parameters}
             out_lyrx = mahalanobis.run_chi_square_transform(
-                in_raster=P["in_raster"].valueAsText,
+                in_raster=(_resolve_raster_path(P["in_raster"])
+                           or P["in_raster"].valueAsText),
                 df=int(P["df"].value),
                 out_raster=P["out_raster"].valueAsText,
                 messages=messages)
