@@ -218,6 +218,35 @@ def _stamp(out_path, src_name, area_name, cs_note, raster):
         pass
 
 
+def _cell_size_from_env():
+    """The Cell Size environment as an explicit Project Raster cell_size
+    value, or None when it is unset / MAXOF / MINOF (the defaults). A
+    number (or numeric string) passes straight through; a raster path
+    resolves to that raster's mean cell width so the two ways users set
+    the environment -- typing a size or pointing at a raster -- both
+    work. Any failure returns None (Project Raster's own default)."""
+    import arcpy
+    try:
+        v = arcpy.env.cellSize
+    except Exception:                                            # noqa: BLE001
+        return None
+    if v is None:
+        return None
+    t = str(v).strip()
+    if not t or t.upper() in ("MAXOF", "MINOF"):
+        return None
+    try:
+        return float(t)
+    except ValueError:
+        pass
+    try:
+        d = arcpy.Describe(t)
+        w = float(getattr(d, "meanCellWidth", 0) or 0)
+        return w if w > 0 else None
+    except Exception:                                            # noqa: BLE001
+        return None
+
+
 def run_clip_data(datasets, area, workspace, out_cs=None,
                   transformations=None, prefix="", suffix="",
                   messages=None):
@@ -379,11 +408,19 @@ def run_clip_data(datasets, area, workspace, out_cs=None,
                         # beats per-raster resampling choices; users who
                         # want bilinear/cubic for a surface should Project
                         # Raster first, then clip the projected copy.
+                        # Project Raster does NOT honor the Cell Size
+                        # environment on its own (verified Pro 3.7,
+                        # 2026-09-10: env 90 m -> output still 30 m),
+                        # only its explicit cell_size parameter -- so
+                        # pass the environment through ourselves. Snap
+                        # Raster IS honored natively.
+                        kw = {"resampling_type": "NEAREST",
+                              "geographic_transform": (_tr or "")}
+                        cs = _cell_size_from_env()
+                        if cs is not None:
+                            kw["cell_size"] = cs
                         arcpy.management.ProjectRaster(
-                            step1, dest,
-                            out_cs,
-                            resampling_type="NEAREST",
-                            geographic_transform=(_tr or ""))
+                            step1, dest, out_cs, **kw)
                         try:
                             arcpy.management.Delete(step1)
                         except Exception:                        # noqa: BLE001

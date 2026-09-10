@@ -8755,6 +8755,10 @@ class LeastCostCorridor(object):
                 block_pairs=_split(P["block_pairs"]),
                 facet_values=facet_values,
                 messages=messages)
+            lyrx = least_cost_corridor.write_layer_file(
+                P["out_fc"].valueAsText, messages)
+            if lyrx:
+                P["out_fc"].symbology = lyrx
         except arcpy.ExecuteError:
             raise
         except Exception:

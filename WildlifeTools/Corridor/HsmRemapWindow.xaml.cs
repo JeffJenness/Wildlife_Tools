@@ -1323,5 +1323,8 @@ namespace WildlifeTools.Corridor
             UpdateOutputNote();
 
         private void OnClose(object sender, RoutedEventArgs e) => Close();
+
+        private void OnHelp(object sender, RoutedEventArgs e)
+            => WebHelp.Open("corridor-designer-tools/create-hsm-remap-table.html");
     }
 }

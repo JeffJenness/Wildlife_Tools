@@ -1232,6 +1232,63 @@ def lyrx_dir_for(ws):
     return os.path.dirname(ws) if is_gdb_workspace(ws) else ws
 
 
+def ensure_label_class(lyrx, messages=None):
+    """Give every feature layer in ``lyrx`` a default label class if it has
+    none, and return ``lyrx`` (unchanged on any failure).
+
+    A layer file written by MakeFeatureLayer -> SaveToLayerFile carries NO
+    ``labelClasses`` at all, and when the GP framework applies such a file
+    as an output parameter's symbology the map layer is created WITHOUT a
+    label class. Pro's Labeling ribbon then has nothing to bind to: its
+    Label Class box shows -- and keeps showing -- some OTHER layer's label
+    properties, and the layer cannot be labeled (Jeff, 2026-09-09, the
+    Black Bear corridor; every symbolized feature output of ours had the
+    same defect, and Export Features / Project carry it on to copies). One
+    arcpy.mp round trip materializes Pro's own geometry-aware default label
+    class (an Arcade expression on the display field) and ``save()`` writes
+    it into the file, so call this LAST in every feature-class .lyrx
+    builder, after the renderer patch. Files that already have label
+    classes are left untouched."""
+    import json
+    try:
+        with open(lyrx, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        defs = [ld for ld in doc.get("layerDefinitions", [])
+                if ld.get("type") == "CIMFeatureLayer"]
+        if not defs or all(ld.get("labelClasses") for ld in defs):
+            return lyrx
+        import arcpy
+        lf = arcpy.mp.LayerFile(lyrx)
+        for lyr in lf.listLayers():
+            try:
+                if not (lyr.isFeatureLayer and lyr.supports("SHOWLABELS")):
+                    continue
+                lyr.listLabelClasses()          # materializes the default
+                cim = lyr.getDefinition("V3")
+                # A hand-built layer definition has no display field, so
+                # the default class comes back with an EMPTY expression;
+                # label by ObjectID rather than ship a class Pro rejects.
+                for lc in cim.labelClasses or []:
+                    if not lc.expression:
+                        lc.expression = "$feature." + arcpy.Describe(
+                            lyr).OIDFieldName
+                        lc.expressionEngine = "Arcade"
+                lyr.setDefinition(cim)
+            except Exception:
+                pass
+        lf.save()
+    except Exception as e:
+        if messages is not None:
+            try:
+                messages.addWarningMessage(
+                    "Could not add a default label class to the symbology "
+                    "layer file ({}); the output can still be labeled after "
+                    "re-adding it to the map.".format(e))
+            except Exception:
+                pass
+    return lyrx
+
+
 def resolve_raster_output(path, messages=None):
     """Folder-based raster outputs default to GeoTIFF (Jeff's no-more-GRID
     convention, 2026-07-19). Without this, CopyRaster writes an extensionless
@@ -1370,6 +1427,8 @@ def default_stretch_lyrx(out_raster, colors, messages=None):
         except Exception:
             pass
         arcpy.management.MakeRasterLayer(path, tmp)
+        if os.path.exists(out_lyrx):      # SaveToLayerFile refuses to overwrite
+            os.remove(out_lyrx)
         arcpy.management.SaveToLayerFile(tmp, out_lyrx, "ABSOLUTE")
     except Exception as e:
         if messages is not None:
@@ -1455,6 +1514,8 @@ def default_aspect_lyrx(out_raster, messages=None):
         except Exception:
             pass
         arcpy.management.MakeRasterLayer(path, tmp)
+        if os.path.exists(out_lyrx):      # SaveToLayerFile refuses to overwrite
+            os.remove(out_lyrx)
         arcpy.management.SaveToLayerFile(tmp, out_lyrx, "ABSOLUTE")
     except Exception as e:
         if messages is not None:
@@ -1549,6 +1610,8 @@ def default_unique_value_lyrx(out_raster, classes, field="Class_Name",
         except Exception:
             pass
         arcpy.management.MakeRasterLayer(path, tmp)
+        if os.path.exists(out_lyrx):      # SaveToLayerFile refuses to overwrite
+            os.remove(out_lyrx)
         arcpy.management.SaveToLayerFile(tmp, out_lyrx, "ABSOLUTE")
     except Exception as e:
         if messages is not None:
@@ -1665,6 +1728,8 @@ def default_unclassed_lyrx(fc, field, colors, messages=None):
         except Exception:
             pass
         arcpy.management.MakeFeatureLayer(path, tmp)
+        if os.path.exists(out_lyrx):      # SaveToLayerFile refuses to overwrite
+            os.remove(out_lyrx)
         arcpy.management.SaveToLayerFile(tmp, out_lyrx, "ABSOLUTE")
     except Exception as e:
         if messages is not None:
@@ -1722,7 +1787,7 @@ def default_unclassed_lyrx(fc, field, colors, messages=None):
         if messages is not None:
             messages.addWarningMessage(
                 "Layer file created but symbology could not be applied: {}".format(e))
-    return out_lyrx
+    return ensure_label_class(out_lyrx, messages)
 
 
 def _apply_known_statistics(raster, stats, messages):
@@ -2097,6 +2162,8 @@ def write_raster_layer_file(out_raster, messages, stretch_stats=None, template=N
         except Exception:
             pass
         arcpy.management.MakeRasterLayer(out_raster, tmp)
+        if os.path.exists(out_lyrx):      # SaveToLayerFile refuses to overwrite
+            os.remove(out_lyrx)
         arcpy.management.SaveToLayerFile(tmp, out_lyrx, "RELATIVE")
     except Exception as e:
         messages.addWarningMessage("Could not create layer file: {}".format(e))

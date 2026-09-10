@@ -421,6 +421,112 @@ def _create_corridor_fc(out_ws, out_name, sr):
     return out_fc
 
 
+LAYER_TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "corridor_symbology_template.lyrx")
+
+
+def write_layer_file(out_fc, messages=None):
+    """A .lyrx beside ``out_fc`` symbolizing the corridor polygons by
+    Unique Values on Percentile, colored from Jeff's template
+    (Black_Bear_Corridor_symbology.lyrx, 2026-09-10: eleven fills running
+    yellow-green through blue for 0.1% .. 10%, thin gray outline, layer
+    40% transparent). The template's eleven classes are re-keyed to the
+    percentiles ACTUALLY present in the output, spread across the ramp by
+    rank, so a run with three custom slices still gets three sensibly
+    graded colors. Built the standard way: save a real layer file from
+    the output (correct data connection), replace its renderer, then
+    ensure_label_class so the layer can be labeled. Returns the .lyrx
+    path, or None on any failure (the output still works, unsymbolized).
+    """
+    import json
+    import arcpy
+
+    try:
+        ws = os.path.dirname(str(out_fc))
+        lyr_dir = _mh.lyrx_dir_for(ws)
+        if lyr_dir is None:
+            return None
+        if _mh.in_gdb_container(ws):
+            probe = ws
+            while probe and not _mh.is_gdb_workspace(probe):
+                parent = os.path.dirname(probe)
+                if parent == probe:
+                    break
+                probe = parent
+            if _mh.is_gdb_workspace(probe):
+                lyr_dir = os.path.dirname(probe)
+        name = os.path.splitext(os.path.basename(str(out_fc)))[0]
+        out_lyrx = os.path.join(lyr_dir, name + "_symbology.lyrx")
+
+        pcts = sorted({float(r[0]) for r in arcpy.da.SearchCursor(
+            out_fc, ["Percentile"]) if r[0] is not None})
+        if not pcts:
+            return None
+        with open(LAYER_TEMPLATE, "r", encoding="utf-8") as fh:
+            tpl_layer = json.load(fh)["layerDefinitions"][0]
+        tpl_classes = tpl_layer["renderer"]["groups"][0]["classes"]
+        n_t = len(tpl_classes)
+        classes = []
+        for i, pct in enumerate(pcts):
+            j = 0 if len(pcts) == 1 else int(round(i * (n_t - 1) / (len(pcts) - 1)))
+            c = json.loads(json.dumps(tpl_classes[j]))     # deep copy
+            txt = "{:g}".format(pct)
+            c["label"] = txt + "%"
+            c["values"] = [{"type": "CIMUniqueValue", "fieldValues": [txt]}]
+            classes.append(c)
+
+        renderer = json.loads(json.dumps(tpl_layer["renderer"]))
+        renderer["fields"] = ["Percentile"]
+        renderer["groups"] = [{"type": "CIMUniqueValueGroup",
+                               "heading": "Corridor slice (% of analysis area)",
+                               "classes": classes}]
+
+        tmp = "jenness_corridor_tmp_layer"
+        try:
+            arcpy.management.Delete(tmp)
+        except Exception:                                        # noqa: BLE001
+            pass
+        arcpy.management.MakeFeatureLayer(out_fc, tmp)
+        try:
+            if os.path.exists(out_lyrx):      # SaveToLayerFile refuses to overwrite
+                os.remove(out_lyrx)
+            arcpy.management.SaveToLayerFile(tmp, out_lyrx, "ABSOLUTE")
+        finally:
+            try:
+                arcpy.management.Delete(tmp)
+            except Exception:                                    # noqa: BLE001
+                pass
+        with open(out_lyrx, "r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+        layer = doc["layerDefinitions"][0]
+        layer["renderer"] = renderer
+        layer["name"] = name
+        if "transparency" in tpl_layer:
+            layer["transparency"] = tpl_layer["transparency"]
+        # Feature drawing order (the layer's featureSortInfos, i.e. Layer
+        # Properties > Display > feature sort): draw the widest slice
+        # first and the narrowest last, so every narrower slice sits on
+        # top of the wider ones. The interactive map view does NOT honor
+        # ObjectID order or legend order for this (verified 2026-09-10:
+        # both left the 10% swath covering everything); this does.
+        layer["featureSortInfos"] = [{"type": "CIMFeatureSortInfo",
+                                      "fieldName": "Percentile",
+                                      "sortDirection": "Descending"}]
+        if "featureTable" in layer:
+            layer["featureTable"]["displayField"] = "Percentile"
+        with open(out_lyrx, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, indent=2)
+        return _mh.ensure_label_class(out_lyrx, messages)
+    except Exception as e:                                       # noqa: BLE001
+        if messages is not None:
+            try:
+                messages.addWarningMessage(
+                    "Could not create the symbology layer file: {}".format(e))
+            except Exception:                                    # noqa: BLE001
+                pass
+        return None
+
+
 def run_least_cost_corridor(in_termini, cost_raster=None, cost_workspace=None,
                             out_workspace=None, out_prefix="Cor", out_fc=None,
                             percentiles=None, block_pairs=None,
@@ -714,7 +820,13 @@ def run_least_cost_corridor(in_termini, cost_raster=None, cost_workspace=None,
 
             vals = corridor[both]
             n_pieces = 0
-            for p in percentiles:
+            # Widest slice first, narrowest last (Jeff, 2026-09-10). The
+            # interactive map view actually draws by the layer's
+            # featureSortInfos (set in write_layer_file below), not by
+            # ObjectID order -- but writing OIDs in this order is still
+            # correct and harmless, and matters for any client that DOES
+            # draw by OID (e.g. a plain export or a non-Pro consumer).
+            for p in sorted(percentiles, reverse=True):
                 thr = float(np.percentile(vals, p))
                 mask_p = both & (corridor <= thr)
                 n_pieces += _insert_pieces(mask_p, p, label, fid, b1, b2,

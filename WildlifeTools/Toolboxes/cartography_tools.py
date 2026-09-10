@@ -185,7 +185,7 @@ def _write_layer_file(out_fc, name, messages):
     try:
         with open(lyrx, "w") as f:
             json.dump(doc, f, indent=2)
-        return lyrx
+        return _mh.ensure_label_class(lyrx, messages)
     except Exception as exc:
         _msg(messages, "Warning: could not write the layer file ({}).".format(exc))
         return None

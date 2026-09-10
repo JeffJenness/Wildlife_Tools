@@ -202,6 +202,8 @@ def write_layer_file(out_fc, messages=None):
             pass
         arcpy.management.MakeFeatureLayer(out_fc, tmp)
         try:
+            if os.path.exists(out_lyrx):      # SaveToLayerFile refuses to overwrite
+                os.remove(out_lyrx)
             arcpy.management.SaveToLayerFile(tmp, out_lyrx, "ABSOLUTE")
         finally:
             try:
@@ -221,7 +223,7 @@ def write_layer_file(out_fc, messages=None):
             layer["featureTable"]["displayField"] = "Type"
         with open(out_lyrx, "w", encoding="utf-8") as fh:
             json.dump(doc, fh, indent=2)
-        return out_lyrx
+        return _mh.ensure_label_class(out_lyrx, messages)
     except Exception as e:                                       # noqa: BLE001
         _warn(messages, "Could not create the symbology layer file: "
                         "{}".format(e))

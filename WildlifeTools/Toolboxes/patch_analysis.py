@@ -13,7 +13,7 @@ spanning tree is the MINIMAX path -- it minimizes the longest single edge
 traversed. Ecologically that is exactly the question this tool answers: not
 "shortest total travel" but "what is the largest expanse of unsuitable habitat
 the species must cross in one push?" The original implemented a variation of
-Kruskal's algorithm (O'Rourke 2000, pp. 174-177) that stopped as soon as its
+Kruskal's algorithm (O'Rourke 1998, pp. 174-177) that stopped as soon as its
 two habitat blocks connected; because the minimax property holds for EVERY
 pair of nodes in the tree simultaneously, this version runs Kruskal to the
 full spanning forest and reads off the optimal route for every termini pair
@@ -73,7 +73,7 @@ import tool_metadata as _tm
 
 _CD_CITATION = (
     "CorridorDesigner: Majka, D., J. Jenness, and P. Beier. 2007. "
-    "http://corridordesign.org. MST/Kruskal: O'Rourke, J. 2000. "
+    "http://corridordesign.org. MST/Kruskal: O'Rourke, J. 1998. "
     "Computational Geometry in C, 2nd Ed. Cambridge University Press.")
 
 # Numerical tolerances (working-SR meters unless noted).

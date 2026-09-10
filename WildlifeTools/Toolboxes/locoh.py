@@ -449,6 +449,8 @@ def write_layer_file(out_fc, messages=None):
         except Exception:
             pass
         arcpy.management.MakeFeatureLayer(out_fc, tmp)
+        if os.path.exists(out_lyrx):      # SaveToLayerFile refuses to overwrite
+            os.remove(out_lyrx)
         arcpy.management.SaveToLayerFile(tmp, out_lyrx, "RELATIVE")
     except Exception as e:
         if messages is not None:
@@ -485,7 +487,8 @@ def write_layer_file(out_fc, messages=None):
         if messages is not None:
             messages.addWarningMessage(
                 "Layer file created but symbology could not be applied: {}".format(e))
-    return out_lyrx
+    import mahalanobis as _mh
+    return _mh.ensure_label_class(out_lyrx, messages)
 
 
 # ---------------------------------------------------------------------------

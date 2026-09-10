@@ -1234,6 +1234,8 @@ def kd_density_lyrx(out_raster, messages=None):
         except Exception:                                    # noqa: BLE001
             pass
         arcpy.management.MakeRasterLayer(path, tmp)
+        if os.path.exists(out_lyrx):      # SaveToLayerFile refuses to overwrite
+            os.remove(out_lyrx)
         arcpy.management.SaveToLayerFile(tmp, out_lyrx, "ABSOLUTE")
     except Exception as e:                                   # noqa: BLE001
         if messages is not None:
@@ -1322,6 +1324,8 @@ def kd_contour_lyrx(out_fc, messages=None):
         except Exception:                                    # noqa: BLE001
             pass
         arcpy.management.MakeFeatureLayer(path, tmp)
+        if os.path.exists(out_lyrx):      # SaveToLayerFile refuses to overwrite
+            os.remove(out_lyrx)
         arcpy.management.SaveToLayerFile(tmp, out_lyrx, "ABSOLUTE")
     except Exception as e:                                   # noqa: BLE001
         if messages is not None:
@@ -1436,4 +1440,4 @@ def kd_contour_lyrx(out_fc, messages=None):
             messages.addWarningMessage(
                 "Layer file created but symbology could not be "
                 "applied: {}".format(e))
-    return out_lyrx
+    return mh.ensure_label_class(out_lyrx, messages)
