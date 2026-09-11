@@ -174,7 +174,9 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <Button Grid.Column="0" x:Name="btnSaveRoute"
@@ -192,10 +194,28 @@
                         Content="Save Graph..." Margin="8,0,0,0"
                         Padding="10,3" IsEnabled="False"
                         Click="OnSaveGraph"/>
-                <Button Grid.Column="4" x:Name="btnCopyStats"
+                <Button Grid.Column="4" x:Name="btnAddToLayout"
+                        Content="Add Graph and Stats to Layout" Margin="8,0,0,0"
+                        Padding="10,3" IsEnabled="False"
+                        Click="OnAddGraphToLayout"
+                        ToolTip="Place the width-profile graph AND the statistics on the active layout (or map) as native, individually editable elements."/>
+                <Button Grid.Column="5" x:Name="btnCopyStats"
                         Content="Copy Stats" Margin="8,0,0,0" Padding="10,3"
                         IsEnabled="False" Click="OnCopyStats"/>
-                <Button Grid.Column="6" Content="Close" Padding="14,3"
+                <!-- online-help icon, GP-pane style -->
+                <Button Grid.Column="7" x:Name="btnHelp" Margin="0,0,8,0"
+                        VerticalAlignment="Center" Width="20" Height="20"
+                        Padding="0" Background="Transparent" BorderThickness="0"
+                        Cursor="Hand" Click="OnHelp"
+                        ToolTip="Open the online help page for this tool">
+                    <Grid>
+                        <Ellipse Width="18" Height="18" Fill="#0079C1"/>
+                        <TextBlock Text="?" Foreground="White" FontWeight="Bold"
+                                   FontSize="12" HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" Margin="0,-1,0,0"/>
+                    </Grid>
+                </Button>
+                <Button Grid.Column="8" Content="Close" Padding="14,3"
                         Click="OnClose"/>
             </Grid>
         </Grid>

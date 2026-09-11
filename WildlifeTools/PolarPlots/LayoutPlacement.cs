@@ -24,7 +24,8 @@ namespace WildlifeTools.PolarPlots
         /// returns the status message, or null when the user canceled or no
         /// layout exists (a message is shown).</summary>
         public static async Task<string> AddChart(Window owner,
-            PolarPlotModel model, string name, string taggedStatsText = null)
+            PolarPlotModel model, string name, string taggedStatsText = null,
+            string statsName = null)
         {
             var (layout, item) = ResolveTarget(owner);
             if (layout == null && item == null) return null;
@@ -34,7 +35,8 @@ namespace WildlifeTools.PolarPlots
                 string msg = PolarPlotCim.PlaceOnLayout(model, target, name);
                 if (!string.IsNullOrEmpty(taggedStatsText))
                     msg += " " + PolarPlotCim.PlaceStatsTextOnLayout(
-                        target, taggedStatsText);
+                        target, taggedStatsText,
+                        statsName ?? (name + " Statistics"));
                 return msg;
             });
         }
@@ -43,13 +45,13 @@ namespace WildlifeTools.PolarPlots
         /// Call from the UI thread; returns the status message, or null when
         /// the user canceled or no layout exists.</summary>
         public static async Task<string> AddStatsText(Window owner,
-            string taggedText)
+            string taggedText, string name = "Statistics")
         {
             var (layout, item) = ResolveTarget(owner);
             if (layout == null && item == null) return null;
             return await QueuedTask.Run(() =>
                 PolarPlotCim.PlaceStatsTextOnLayout(
-                    layout ?? item.GetLayout(), taggedText));
+                    layout ?? item.GetLayout(), taggedText, name));
         }
 
         /// <summary>Active layout, or a chosen project layout: exactly one

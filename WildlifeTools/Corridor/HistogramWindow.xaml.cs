@@ -588,7 +588,8 @@ namespace WildlifeTools.Corridor
             try
             {
                 string where = await LayoutPlacement.AddChart(this, _model,
-                    "Habitat Histogram", BuildTaggedStats());
+                    "Habitat Histogram", BuildTaggedStats(),
+                    "Histogram Statistics");
                 if (where != null) txtStatus.Text = "✓ " + where;
             }
             catch (Exception ex)

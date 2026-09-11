@@ -213,7 +213,7 @@ namespace WildlifeTools.SlopeGraphic
             try
             {
                 string where = await PolarPlots.LayoutPlacement
-                    .AddStatsText(this, tagged);
+                    .AddStatsText(this, tagged, "Slope Statistics");
                 if (where != null) ShowToast(sender, "✓ " + where);
             }
             catch (Exception ex) { MessageBox.Show(ex.Message, "Slope Graphic"); }

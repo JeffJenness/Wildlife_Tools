@@ -227,7 +227,7 @@ namespace WildlifeTools.PolarPlots
         /// ArcGIS formatting tags (rendered by Pro) on a SPECIFIC layout,
         /// whether or not it is the active view. MCT.</summary>
         public static string PlaceStatsTextOnLayout(Layout layout,
-            string taggedText)
+            string taggedText, string name = "Statistics")
         {
             double cx = 1.0, cy = 1.0;
             try
@@ -243,7 +243,7 @@ namespace WildlifeTools.PolarPlots
             ts.HorizontalAlignment = HorizontalAlignment.Left;
             var el = ElementFactory.Instance.CreateTextGraphicElement(
                 layout, TextType.PointText, pt, ts, taggedText,
-                "Circular Statistics", false, null);
+                name, false, null);
             if (el == null)
                 throw new InvalidOperationException("The text element could not be created.");
             return "Statistics text element added to layout '" + layout.Name + "'.";

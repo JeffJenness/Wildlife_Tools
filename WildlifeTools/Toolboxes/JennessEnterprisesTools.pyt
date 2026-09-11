@@ -511,13 +511,26 @@ class LoCoHStandard(object):
                     parameters[2].symbology = iso_lyrx
                 except Exception as e:
                     messages.addWarningMessage("Could not set output symbology: {}".format(e))
-        except arcpy.ExecuteError:
-            raise   # clean validation / GP messages pass through unchanged
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class LoCoHAdaptive(object):
@@ -659,13 +672,26 @@ class LoCoHAdaptive(object):
                     parameters[3].symbology = iso_lyrx
                 except Exception as e:
                     messages.addWarningMessage("Could not set output symbology: {}".format(e))
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class LoCoHFixedSphere(object):
@@ -805,13 +831,26 @@ class LoCoHFixedSphere(object):
                     parameters[3].symbology = iso_lyrx
                 except Exception as e:
                     messages.addWarningMessage("Could not set output symbology: {}".format(e))
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 # ---------------------------------------------------------------------------
@@ -1326,13 +1365,26 @@ class MahalanobisRaster(object):
                     P["out_raster"].symbology = out_lyrx
                 except Exception as e:
                     messages.addWarningMessage("Could not set output symbology: {}".format(e))
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class MahalanobisPoints(object):
@@ -1441,13 +1493,26 @@ class MahalanobisPoints(object):
             # any generated statistics tables explicitly.
             _add_tables_to_map(P, [tbl for gen, tbl, _s, _k in _MAHAL_TABLE_SPECS
                                    if P[gen].value and P[tbl].valueAsText], messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class MahalanobisCovariance(object):
@@ -1598,13 +1663,26 @@ class MahalanobisCovariance(object):
             filled = [name for _key, name, _base in self._OUT_SPECS
                       if P[name].valueAsText]
             _add_tables_to_map(P, filled[1:], messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class MahalanobisChiSquare(object):
@@ -1709,13 +1787,26 @@ class MahalanobisChiSquare(object):
                     P["out_raster"].symbology = out_lyrx
                 except Exception as e:
                     messages.addWarningMessage("Could not set output symbology: {}".format(e))
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 # --------------------------------------------------------------------------- #
@@ -1875,13 +1966,26 @@ class KernelDensityGenerate(object):
                 P["out_raster"].valueAsText, messages)
             if lyrx:
                 P["out_raster"].symbology = lyrx
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class KernelDensityProportion(object):
@@ -1949,13 +2053,26 @@ class KernelDensityProportion(object):
                 P["out_raster"].valueAsText, messages)
             if lyrx:
                 P["out_raster"].symbology = lyrx
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class KernelDensityContours(object):
@@ -2047,13 +2164,26 @@ class KernelDensityContours(object):
                         out_val, messages)
                     if lyrx:
                         P[out_name].symbology = lyrx
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class ShadowPolygons(object):
@@ -2160,13 +2290,26 @@ class ShadowPolygons(object):
                     P["out_fc"].symbology = lyrx
                 except Exception:
                     pass
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class EnhancedHillshade(object):
@@ -2385,13 +2528,26 @@ class EnhancedHillshade(object):
                 "model_shadows": bool(P["model_shadows"].value),
                 "shadow_dim": P["shadow_dim"].value,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class MDOWHillshade(object):
@@ -2571,13 +2727,26 @@ class MDOWHillshade(object):
                 "hypso_strength": P["hypso_strength"].value,
                 "vert_exag": P["vert_exag"].value,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 # Static defaults for the eight Multi-Sun Hillshade sun positions: suns 1-2
@@ -2906,13 +3075,26 @@ class MultiSunHillshade(object):
                     name = "{}_{}".format(stem, i)
                     saved[name] = P[name].value
             _save_tool_defaults("MultiSunHillshade", saved)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class BlurredHillshade(object):
@@ -3144,13 +3326,26 @@ class BlurredHillshade(object):
                 "model_shadows": bool(P["model_shadows"].value),
                 "shadow_dim": P["shadow_dim"].value,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class SimpleHypsometricShading(object):
@@ -3265,13 +3460,26 @@ class SimpleHypsometricShading(object):
                 "transparency": P["transparency"].value,
                 "blend_mode": P["blend_mode"].valueAsText or "Normal",
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class SurfaceAreaRatio(object):
@@ -3452,13 +3660,26 @@ class SurfaceAreaRatio(object):
                 "detrend_radius": P["detrend_radius"].value,
                 "detrend_units": P["detrend_units"].valueAsText,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class VRM(object):
@@ -3602,13 +3823,26 @@ class VRM(object):
                 "detrend_radius": P["detrend_radius"].value,
                 "detrend_units": P["detrend_units"].valueAsText,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class ArcChordRatio(object):
@@ -3743,13 +3977,26 @@ class ArcChordRatio(object):
                 "detrend_radius": P["detrend_radius"].value,
                 "detrend_units": P["detrend_units"].valueAsText,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class TRI(object):
@@ -3890,13 +4137,26 @@ class TRI(object):
                 "radius_units": P["radius_units"].valueAsText,
                 "elev_units": P["elev_units"].valueAsText,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class TopographyAlongLines(object):
@@ -4388,13 +4648,26 @@ class TopographyAlongLines(object):
             _save_tool_defaults("TopographyAlongLines", {
                 "length_unit": length_unit, "slope_unit": slope_unit})
             P["out_lines"].value = P["in_lines"].valueAsText
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class SplitLinesIntoSegments(object):
@@ -4803,13 +5076,26 @@ class SplitLinesIntoSegments(object):
             mahalanobis.end_phases()
             _save_tool_defaults("SplitLinesIntoSegments", {
                 "length_unit": length_unit, "slope_unit": slope_unit})
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class AspectFocalStatistics(object):
@@ -5065,13 +5351,26 @@ class AspectFocalStatistics(object):
                 "nbr_units": P["nbr_units"].valueAsText,
                 "flat_handling": P["flat_handling"].valueAsText,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class AspectTransformation(object):
@@ -5227,13 +5526,26 @@ class AspectTransformation(object):
                 "target_bearing": P["target_bearing"].value,
                 "flat_handling": P["flat_handling"].valueAsText,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class ExtractAspectValuesToPoints(object):
@@ -5370,13 +5682,26 @@ class ExtractAspectValuesToPoints(object):
                 "interpolate": bool(P["interpolate"].value),
                 "field_name": P["field_name"].valueAsText,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class AspectZonalStatisticsAsTable(object):
@@ -5584,13 +5909,26 @@ class AspectZonalStatisticsAsTable(object):
                 "ignore_nodata": P["ignore_nodata"].value is not False,
                 "statistics_type": P["statistics_type"].valueAsText,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class SlopeZonalStatisticsAsTable(object):
@@ -5813,13 +6151,26 @@ class SlopeZonalStatisticsAsTable(object):
                 "statistics_type": P["statistics_type"].valueAsText,
                 "use_absolute": P["use_absolute"].value is not False,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class FractalDimension(object):
@@ -5963,13 +6314,26 @@ class FractalDimension(object):
                 "window_size": P["window_size"].value,
                 "elev_units": P["elev_units"].valueAsText,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class TopographicWetnessIndex(object):
@@ -6186,13 +6550,26 @@ class TopographicWetnessIndex(object):
                 "elev_units": P["elev_units"].valueAsText,
                 "slope_epsilon": P["slope_epsilon"].value,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class SimpleTPI(object):
@@ -6330,13 +6707,26 @@ class SimpleTPI(object):
                         P[pname].symbology = lyrx[key]
                     except Exception:
                         pass
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 # ----------------------------------------------------------------------------
@@ -6847,13 +7237,26 @@ class SlopePositionClassification(object):
             for sp in ("save_tpi", "save_slope"):
                 if onfly and P[sp].valueAsText:
                     _writeback_saved_output(P, sp)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class LandformClassification(object):
@@ -7131,13 +7534,26 @@ class LandformClassification(object):
             for sp in ("save_tpi_small", "save_tpi_large", "save_slope"):
                 if onfly and P[sp].valueAsText:
                     _writeback_saved_output(P, sp)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class GeneralRasterClassification(object):
@@ -7234,13 +7650,26 @@ class GeneralRasterClassification(object):
                     P["out_raster"].symbology = lyrx
                 except Exception:
                     pass
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class LSRIOnDEM(object):
@@ -7417,13 +7846,26 @@ class LSRIOnDEM(object):
                 "radius_units": P["radius_units"].valueAsText,
                 "length_units": P["length_units"].valueAsText,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class LSRIOnContourPolylines(object):
@@ -7545,13 +7987,26 @@ class LSRIOnContourPolylines(object):
                 "radius_units": P["radius_units"].valueAsText,
                 "length_units": P["length_units"].valueAsText,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 
@@ -7800,13 +8255,26 @@ class DiversityIndices(object):
                 "neighborhood": P["neighborhood"].valueAsText,
                 "nbr_units": P["nbr_units"].valueAsText,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 # Dialog wording for the two denominator rules. The first reproduces the
@@ -8069,13 +8537,26 @@ class LandFacetDensity(object):
                 "neighborhood": P["neighborhood"].valueAsText,
                 "nbr_units": P["nbr_units"].valueAsText,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class LandFacetMahalanobis(object):
@@ -8294,13 +8775,26 @@ class LandFacetMahalanobis(object):
                 "out_type": P["out_type"].valueAsText,
                 "inversion": P["inversion"].valueAsText,
             })
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class IdentifyTerminiPolygons(object):
@@ -8519,13 +9013,26 @@ class IdentifyTerminiPolygons(object):
                 except Exception as e:
                     messages.addWarningMessage(
                         "Could not set output symbology: {}".format(e))
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class LeastCostCorridor(object):
@@ -8759,13 +9266,26 @@ class LeastCostCorridor(object):
                 P["out_fc"].valueAsText, messages)
             if lyrx:
                 P["out_fc"].symbology = lyrx
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class FillCorridorHoles(object):
@@ -8871,13 +9391,26 @@ class FillCorridorHoles(object):
                     P["out_features"].value = ";".join(outputs)
                 except Exception:
                     pass
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class UnionCorridors(object):
@@ -8958,13 +9491,26 @@ class UnionCorridors(object):
                 in_features_list=list(P["in_features"].values or []),
                 out_features=P["out_features"].valueAsText,
                 messages=messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class PatchAnalysis(object):
@@ -9137,13 +9683,26 @@ class PatchAnalysis(object):
                 patch_where=P["patch_where"].valueAsText or None,
                 simplify_tolerance=(None if tol is None else float(tol)),
                 messages=messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class BottleneckAnalysis(object):
@@ -9371,13 +9930,26 @@ class BottleneckAnalysis(object):
                                     is not None else None),
                 profile_json=P["profile_json"].valueAsText or None,
                 messages=messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class WeightedSummaryStatistics(object):
@@ -9493,13 +10065,26 @@ class WeightedSummaryStatistics(object):
                 out_table=P["out_table"].valueAsText,
                 case_field=P["case_field"].valueAsText or None,
                 messages=messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class FindRasterExtremeValues(object):
@@ -9620,13 +10205,26 @@ class FindRasterExtremeValues(object):
                 except Exception as e:
                     messages.addWarningMessage(
                         "Could not set output symbology: {}".format(e))
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class InvertRaster(object):
@@ -9827,13 +10425,26 @@ class InvertRaster(object):
                 messages=messages)
             if P["out_raster"].valueAsText:
                 _writeback_resolved_raster(P, "out_raster")
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 # ---------------------------------------------------------------------------
@@ -10099,13 +10710,26 @@ class HabitatSuitabilityModel(object):
                         P["saved_factors"].symbology = lyrx
                     except Exception:
                         pass
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class CombineHabitatFactors(object):
@@ -10179,13 +10803,26 @@ class CombineHabitatFactors(object):
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
             _apply_hsm_symbology(P, messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class NormalizeExistingHSM(object):
@@ -10282,13 +10919,26 @@ class NormalizeExistingHSM(object):
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
             _apply_hsm_symbology(P, messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class ReclassifyFeaturesInHSM(object):
@@ -10385,13 +11035,26 @@ class ReclassifyFeaturesInHSM(object):
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
             _apply_hsm_symbology(P, messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class CriticalHabitatFeature(object):
@@ -10535,13 +11198,26 @@ class CriticalHabitatFeature(object):
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
             _apply_hsm_symbology(P, messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class HabitatPatches(object):
@@ -10669,13 +11345,26 @@ class HabitatPatches(object):
                     P["out_fc"].symbology = lyrx
                 except Exception:
                     pass
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class ClipDataToAnalysisArea(object):
@@ -10871,13 +11560,26 @@ class ClipDataToAnalysisArea(object):
             created = [str(p) for p in list(fcs) + list(ras)]
             if created:
                 P["out_datasets"].value = created
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class CumulativeSurface(object):
@@ -11018,13 +11720,26 @@ class CumulativeSurface(object):
                 except Exception as e:
                     messages.addWarningMessage(
                         "Could not set output symbology: {}".format(e))
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class VoronoiPolygons(object):
@@ -11182,13 +11897,26 @@ class VoronoiPolygons(object):
                 refine_ellipsoid=bool(P["refine"].value),
                 add_area=bool(P["add_area"].value),
                 messages=messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class AdaptiveVoronoiPolygons(object):
@@ -11354,13 +12082,26 @@ class AdaptiveVoronoiPolygons(object):
                 random_seed=(P["random_seed"].value
                              if P["random_seed"].enabled else None),
                 messages=messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class RepeatingShapes(object):
@@ -11678,13 +12419,26 @@ class RepeatingShapes(object):
                 edge_policy=(P["edge_policy"].valueAsText
                              or repeating_shapes.EDGE_POLICIES[0]),
                 messages=messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 class RandomPointGenerator(object):
     """Random Point Generator -- uniform random points within polygons,
@@ -12047,13 +12801,26 @@ class RandomPointGenerator(object):
                 random_seed=P["random_seed"].value,
                 max_attempts=P["max_attempts"].value or 1000,
                 messages=messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class RandomSampleArrayGenerator(object):
@@ -12582,13 +13349,26 @@ class RandomSampleArrayGenerator(object):
                 random_seed=P["random_seed"].value,
                 max_attempts=P["max_attempts"].value or 1000,
                 messages=messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class CenterlineAndWidth(object):
@@ -12783,13 +13563,26 @@ class CenterlineAndWidth(object):
                 out_segments=P["out_segments"].valueAsText,
                 linear_units=P["linear_units"].valueAsText or "Meters",
                 messages=messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class LongestLineFetch(object):
@@ -13050,13 +13843,26 @@ class LongestLineFetch(object):
                     linear_units=P["linear_units"].valueAsText
                         or "Meters",
                     messages=messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class RadiatingLines(object):
@@ -13281,13 +14087,26 @@ class RadiatingLines(object):
                 out_lines=P["out_lines"].valueAsText,
                 out_points=P["out_points"].valueAsText,
                 messages=messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class MaximumInscribedGeometry(object):
@@ -13461,13 +14280,26 @@ class MaximumInscribedGeometry(object):
                                if P["fixed_azimuth"].enabled
                                else None),
                 messages=messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class ConcaveHull(object):
@@ -13664,13 +14496,26 @@ class ConcaveHull(object):
                 allow_parts=bool(P["allow_parts"].value)
                     if P["allow_parts"].enabled else False,
                 messages=messages)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class ClassificationAccuracy(object):
@@ -14015,13 +14860,26 @@ class ClassificationAccuracy(object):
                     "Derived kappa/accuracy outputs carry the "
                     "FIRST analysis ({}).".format(
                         results[0]["key"]))
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class CompareAccuracyAnalyses(object):
@@ -14118,13 +14976,26 @@ class CompareAccuracyAnalyses(object):
                     messages=messages)
             P["out_kappa"].value = float(ck)
             P["out_p"].value = float(pe)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class AccuracySampleSize(object):
@@ -14347,13 +15218,26 @@ class AccuracySampleSize(object):
                 out_report=P["out_report"].valueAsText,
                 messages=messages)
             P["out_n"].value = int(n_rec)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class SpatiallyBalancedSample(object):
@@ -14579,13 +15463,26 @@ class SpatiallyBalancedSample(object):
             if var_v is not None:
                 P["out_var_v"].value = float(var_v)
                 P["out_pielou"].value = float(pielou)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class EstimatedShortestPath(object):
@@ -14754,13 +15651,26 @@ class EstimatedShortestPath(object):
                     messages=messages)
             P["out_n"].value = int(n_stops)
             P["out_length_km"].value = float(length_km)
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
 
 
 class SelectRandomRecords(object):
@@ -15024,10 +15934,23 @@ class SelectRandomRecords(object):
                 random_seed=P["random_seed"].value,
                 messages=messages)
             P["out_layer"].value = P["in_layer"].valueAsText
-        except arcpy.ExecuteError:
-            raise
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
-            raise arcpy.ExecuteError(
-                "The tool stopped because of an unexpected error; see the report above.")
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.

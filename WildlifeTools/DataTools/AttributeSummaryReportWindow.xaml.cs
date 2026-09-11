@@ -202,7 +202,7 @@ namespace WildlifeTools.DataTools
             try
             {
                 string where = await PolarPlots.LayoutPlacement
-                    .AddStatsText(this, tagged);
+                    .AddStatsText(this, tagged, "Attribute Summary Report");
                 if (where != null) ShowToast(sender, "✓ " + where);
             }
             catch (Exception ex)

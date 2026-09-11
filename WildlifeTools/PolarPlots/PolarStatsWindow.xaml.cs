@@ -188,7 +188,7 @@ namespace WildlifeTools.PolarPlots
             try
             {
                 string where = await LayoutPlacement.AddStatsText(this,
-                    tagged);
+                    tagged, "Circular Descriptive Statistics");
                 if (where != null) ShowToast(sender, "✓ " + where);
             }
             catch (Exception ex)

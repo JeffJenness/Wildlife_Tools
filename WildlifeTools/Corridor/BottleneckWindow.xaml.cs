@@ -20,6 +20,7 @@ using ArcGIS.Desktop.Core.Geoprocessing;
 using ArcGIS.Desktop.Framework;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
 using ArcGIS.Desktop.Mapping;
+using WildlifeTools.PolarPlots;
 using EsriPolyline = ArcGIS.Core.Geometry.Polyline;
 using WpfPolyline = System.Windows.Shapes.Polyline;
 using WpfLine = System.Windows.Shapes.Line;
@@ -651,7 +652,7 @@ namespace WildlifeTools.Corridor
                 txtGraphHint.Visibility = Visibility.Collapsed;
                 foreach (var b in new[] { btnSaveRoute, btnSavePoints,
                                           btnSaveSegments, btnSaveGraph,
-                                          btnCopyStats })
+                                          btnAddToLayout, btnCopyStats })
                     b.IsEnabled = true;
                 DrawGraph();
                 RenderStats();
@@ -1653,6 +1654,84 @@ namespace WildlifeTools.Corridor
             Close();
         }
 
+        private void OnHelp(object sender, RoutedEventArgs e)
+            => WebHelp.Open("corridor-designer-tools/bottleneck-analysis.html");
+
+        private async void OnAddGraphToLayout(object sender, RoutedEventArgs e)
+        {
+            if (_widths == null) return;
+            try
+            {
+                var model = BottleneckGraphBuilder.Build(_stations, _widths,
+                    _threshold);
+                string where = await LayoutPlacement.AddChart(this, model,
+                    "Bottleneck Width Profile", BuildTaggedStats(),
+                    "Bottleneck Width Statistics");
+                if (where != null) txtStatus.Text = "✓ " + where;
+            }
+            catch (Exception ex)
+            {
+                ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                    ex.Message, Title);
+            }
+        }
+
+        private string BuildTaggedStats()
+        {
+            if (!_haveStats) return "";
+            string esc(string t) => (t ?? "").Replace("&", "&amp;")
+                .Replace("<", "&lt;").Replace(">", "&gt;");
+            double S(string name) => _stats.GetProperty(name).GetDouble();
+            var sb = new StringBuilder();
+            sb.AppendLine(
+                "<FNT size=\"14\"><BOL>Bottleneck Width Statistics</BOL></FNT>");
+            sb.AppendLine();
+            sb.AppendLine(esc(string.Format(CultureInfo.InvariantCulture,
+                "Route length:  {0:#,##0.#} m", S("route_length_m"))));
+            sb.AppendLine("<BOL>" + esc(string.Format(
+                CultureInfo.InvariantCulture,
+                "Narrowest point:  {0:#,##0.#} m", S("min_width_m")))
+                + "</BOL>");
+            sb.AppendLine(esc(string.Format(CultureInfo.InvariantCulture,
+                "  at {0:#,##0.#} m along the route",
+                S("min_width_station_m"))));
+            sb.AppendLine(esc(string.Format(CultureInfo.InvariantCulture,
+                "Maximum width:  {0:#,##0.#} m", S("max_width_m"))));
+            sb.AppendLine(esc(string.Format(CultureInfo.InvariantCulture,
+                "Mean width:  {0:#,##0.#} m", S("mean_width_m"))));
+            sb.AppendLine(esc(string.Format(CultureInfo.InvariantCulture,
+                "Median width:  {0:#,##0.#} m", S("median_width_m"))));
+            sb.AppendLine(esc(string.Format(CultureInfo.InvariantCulture,
+                "Std. deviation:  {0:#,##0.##} m", S("sd_width_m"))));
+            if (!double.IsNaN(_threshold) && _widths != null)
+            {
+                var below = ThresholdPieces().Where(pc => pc.below).ToList();
+                double belowLen = below.Sum(pc => pc.s1 - pc.s0);
+                double total = _stations[_stations.Length - 1] - _stations[0];
+                sb.AppendLine();
+                sb.AppendLine("<BOL>" + esc(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Threshold:  {0:#,##0.#} m", _threshold)) + "</BOL>");
+                sb.AppendLine(esc(string.Format(CultureInfo.InvariantCulture,
+                    "Below threshold:  {0:0.#}% of the route",
+                    total > 0 ? 100.0 * belowLen / total : 0)));
+                sb.AppendLine(esc(string.Format(CultureInfo.InvariantCulture,
+                    "Length below:  {0:#,##0.#} m in {1} stretch{2}",
+                    belowLen, below.Count, below.Count == 1 ? "" : "es")));
+                if (below.Count > 0)
+                {
+                    sb.AppendLine("<BOL>Stretches, longest first:</BOL>");
+                    foreach (var pc in below.OrderByDescending(
+                                 pc => pc.s1 - pc.s0).Take(12))
+                        sb.AppendLine(esc(string.Format(
+                            CultureInfo.InvariantCulture,
+                            "   {0:#,##0.#} m  (at {1:#,##0} m)",
+                            pc.s1 - pc.s0, pc.s0)));
+                }
+            }
+            return sb.ToString();
+        }
+
         // =====================================================================
         // drag-and-drop from the Contents pane
         // =====================================================================
@@ -1690,9 +1769,15 @@ namespace WildlifeTools.Corridor
 
         private string _lastDragDiag;
 
-        /// <summary>Live drag feedback in the status bar -- doubles as the
-        /// diagnostic: if this text never appears during a drag, drag
-        /// events are not reaching the window at all.</summary>
+        /// <summary>Debug-only drag diagnostic (was live in txtStatus during
+        /// development; Jeff, 2026-09-10, saw it fire while dragging the
+        /// graph's threshold line -- OnDragOver is registered for the whole
+        /// WINDOW, not just the three input rows, so any drag-like mouse
+        /// movement anywhere in the window trips it, not just an actual
+        /// layer drag). Kept as a Debug.WriteLine in case drag-and-drop from
+        /// the Contents pane ever needs re-diagnosing after a Pro update;
+        /// no longer shown to the user.</summary>
+        [System.Diagnostics.Conditional("DEBUG")]
         private void ShowDragDiagnostic(DragEventArgs e, object data)
         {
             string msg = string.Format(
@@ -1703,7 +1788,7 @@ namespace WildlifeTools.Corridor
             if (msg != _lastDragDiag)
             {
                 _lastDragDiag = msg;
-                txtStatus.Text = msg;
+                System.Diagnostics.Debug.WriteLine(msg);
             }
         }
 
