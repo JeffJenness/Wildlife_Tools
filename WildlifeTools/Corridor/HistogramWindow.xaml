@@ -59,8 +59,22 @@
                         IsEnabled="False"
                         ToolTip="Copy the statistics report as plain text."/>
             </StackPanel>
-            <Button Content="Close" HorizontalAlignment="Right" Padding="14,3"
-                    Click="OnClose"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <!-- online-help icon, GP-pane style -->
+                <Button x:Name="btnHelp" Margin="0,0,8,0"
+                        VerticalAlignment="Center" Width="20" Height="20"
+                        Padding="0" Background="Transparent" BorderThickness="0"
+                        Cursor="Hand" Click="OnHelp"
+                        ToolTip="Open the online help page for this tool">
+                    <Grid>
+                        <Ellipse Width="18" Height="18" Fill="#0079C1"/>
+                        <TextBlock Text="?" Foreground="White" FontWeight="Bold"
+                                   FontSize="12" HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" Margin="0,-1,0,0"/>
+                    </Grid>
+                </Button>
+                <Button Content="Close" Padding="14,3" Click="OnClose"/>
+            </StackPanel>
         </Grid>
 
         <!-- ============ chart + options ============ -->

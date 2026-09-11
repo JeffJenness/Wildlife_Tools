@@ -685,6 +685,9 @@ namespace WildlifeTools.Corridor
 
         private void OnClose(object sender, RoutedEventArgs e) => Close();
 
+        private void OnHelp(object sender, RoutedEventArgs e)
+            => WebHelp.Open("corridor-designer-tools/histograms-and-statistics.html");
+
         // =================================================================
         // drag and drop (whole window; standing rules: answer an ALLOWED
         // effect, set Handled, expect the TOC's internal payload)
