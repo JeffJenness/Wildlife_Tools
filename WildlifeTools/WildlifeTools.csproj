@@ -532,12 +532,25 @@
        a full path, so deployment fails when the ArcGIS Pro 'bin' folder is not on
        PATH (e.g. building from a plain shell). This calls it by full path after the
        build so the freshly packaged add-in installs to the user AddIns folder.
-       ContinueOnError keeps a locked file (Pro running) from failing the build. -->
+       ContinueOnError keeps a locked file (Pro running) from failing the build.
+       GUARD: the install is SKIPPED while any ArcGIS Pro instance is running.
+       Installing then leaves the AddIns package newer than the running
+       instance's AssemblyCache, and the next Pro to start (a second instance,
+       or a fresh one after Pro closes) cannot refresh the locked DLL, fails to
+       create the add-in module, and crashes on the Wildlife tab. A failed
+       check counts as "running" so the safe path is the default. -->
   <Target Name="DeployAddInFallback" AfterTargets="Build"
           Condition="Exists('C:\Program Files\ArcGIS\Pro\bin\RegisterAddIn.exe') AND Exists('$(TargetDir)$(AssemblyName).esriAddinX')">
-    <Exec Command="&quot;C:\Program Files\ArcGIS\Pro\bin\RegisterAddIn.exe&quot; &quot;$(TargetDir)$(AssemblyName).esriAddinX&quot; /s"
+    <Exec Command="powershell -NoProfile -Command &quot;(Get-Process ArcGISPro -ErrorAction SilentlyContinue | Measure-Object).Count&quot;"
+          ConsoleToMSBuild="true" ContinueOnError="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="ProInstanceCount" />
+    </Exec>
+    <Warning Condition="'$(ProInstanceCount)' != '0'"
+             Text="DeployAddInFallback: install SKIPPED -- $(ProInstanceCount) ArcGIS Pro instance(s) running. The package was built ($(TargetDir)$(AssemblyName).esriAddinX) but NOT installed. Close every ArcGIS Pro window, then double-click the .esriAddinX to install; installing while Pro runs makes the next Pro to start crash on the Wildlife tab." />
+    <Exec Condition="'$(ProInstanceCount)' == '0'"
+          Command="&quot;C:\Program Files\ArcGIS\Pro\bin\RegisterAddIn.exe&quot; &quot;$(TargetDir)$(AssemblyName).esriAddinX&quot; /s"
           ContinueOnError="true" />
-    <Message Importance="high" Text="DeployAddInFallback: registered $(AssemblyName).esriAddinX to the user AddIns folder." />
+    <Message Condition="'$(ProInstanceCount)' == '0'" Importance="high" Text="DeployAddInFallback: registered $(AssemblyName).esriAddinX to the user AddIns folder." />
   </Target>
   <!-- The Thought-for-the-Day quotes have ONE master list, maintained in the SSI
        add-in. Before each build, refresh this project's bundled copy from that
