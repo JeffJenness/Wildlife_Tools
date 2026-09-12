@@ -3,7 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
         Title="Add Data to Histogram"
-        Height="430" Width="470" ResizeMode="NoResize"
+        Height="430" Width="470" MinHeight="430" MinWidth="470"
+        ResizeMode="CanResizeWithGrip"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
     <controls:ProWindow.Resources>
         <!-- long hover help wraps instead of running one endless line -->

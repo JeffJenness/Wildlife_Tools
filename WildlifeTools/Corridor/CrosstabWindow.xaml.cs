@@ -77,7 +77,13 @@ namespace WildlifeTools.Corridor
         private async void OnNewAnalysis(object sender, RoutedEventArgs e)
         {
             var dlg = new CrosstabInputWindow { Owner = this };
-            if (dlg.ShowDialog() != true || dlg.Result == null) return;
+            if (dlg.ShowDialog() != true || dlg.Result == null)
+            {
+                // cancelling the dialog that opened with the window means
+                // "never mind": close the empty window too
+                if (_data == null && !_closedDown) Close();
+                return;
+            }
             var req = dlg.Result;
             var aoiLayer = dlg.AoiLayer;
             btnNew.IsEnabled = false;
@@ -282,24 +288,25 @@ namespace WildlifeTools.Corridor
                 Rebuild();
         }
 
-        private double MeasureInches(string text, double sizePt, string family)
+        private double MeasureInches(string text, FontSpec f)
         {
             try
             {
                 var tf = new Typeface(
-                    new FontFamily(string.IsNullOrEmpty(family)
-                        ? "Segoe UI" : family),
-                    FontStyles.Normal, FontWeights.Normal,
+                    new FontFamily(string.IsNullOrEmpty(f.Family)
+                        ? "Segoe UI" : f.Family),
+                    f.Italic ? FontStyles.Italic : FontStyles.Normal,
+                    f.Bold ? FontWeights.Bold : FontWeights.Normal,
                     FontStretches.Normal);
                 var ft = new FormattedText(text ?? "",
                     CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-                    tf, sizePt * 96.0 / 72.0, Brushes.Black,
+                    tf, f.SizePt * 96.0 / 72.0, Brushes.Black,
                     VisualTreeHelper.GetDpi(this).PixelsPerDip);
                 return ft.WidthIncludingTrailingWhitespace / 96.0;
             }
             catch
             {
-                return 0.075 * (text?.Length ?? 0) * sizePt / 9.0;
+                return 0.075 * (text?.Length ?? 0) * f.SizePt / 9.0;
             }
         }
 
@@ -402,7 +409,7 @@ namespace WildlifeTools.Corridor
                 Title = "Save the cross-tabulation table image",
                 Filter = "PNG image (*.png)|*.png|SVG vector (*.svg)|*.svg",
                 FileName = "Crosstab_Table.png",
-                InitialDirectory = DefaultDir(),
+                InitialDirectory = ImageSaveFolder.Initial(),
             };
             if (dlg.ShowDialog() != true) return;
             try
@@ -421,6 +428,7 @@ namespace WildlifeTools.Corridor
                     using (var fs = File.Create(dlg.FileName))
                         enc.Save(fs);
                 }
+                ImageSaveFolder.Remember(dlg.FileName);
                 txtStatus.Text = "Image saved: " + dlg.FileName;
             }
             catch (Exception ex)

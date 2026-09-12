@@ -43,7 +43,15 @@ namespace WildlifeTools.Corridor
         {
             CellValues,      // sample at each raster cell
             Min, Mean, Max, Range, StdDev, Sum,   // per-polygon zonal
+            Majority,        // per-polygon most common cell value (categorical)
         }
+
+        /// <summary>The statistics that keep a categorical raster
+        /// categorical: every cell keeps its class, or each polygon takes
+        /// its dominant class. The others (mean, range, ...) average codes
+        /// and are offered only for continuous rasters.</summary>
+        public static bool KeepsCategories(RasterStatKind k)
+            => k == RasterStatKind.CellValues || k == RasterStatKind.Majority;
 
         public sealed class Request
         {
@@ -353,14 +361,26 @@ namespace WildlifeTools.Corridor
 
             var d = StreamPairs(template, other, aIsTemplate, req.Aoi,
                                 null, progress);
-            d.Labels1 = RasterLabels(ra);
-            d.Labels2 = RasterLabels(rb);
-            d.Name1 = req.SourceA.Name;
-            d.Name2 = req.SourceB.Name;
+            d.Labels1 = (req.FieldA != null
+                            ? GroupByVatColumn(d.V1, ra, req.FieldA) : null)
+                        ?? RasterLabels(req.SourceA);
+            d.Labels2 = (req.FieldB != null
+                            ? GroupByVatColumn(d.V2, rb, req.FieldB) : null)
+                        ?? RasterLabels(req.SourceB);
+            d.Name1 = req.SourceA.Name
+                      + (req.FieldA != null ? " : " + req.FieldA : "");
+            d.Name2 = req.SourceB.Name
+                      + (req.FieldB != null ? " : " + req.FieldB : "");
             d.SourceLines.Add("First Data Source:  Raster");
             d.SourceLines.Add("      Name:  " + req.SourceA.Name);
+            if (req.FieldA != null)
+                d.SourceLines.Add("      Grouped by attribute column:  "
+                                  + req.FieldA);
             d.SourceLines.Add("Second Data Source:  Raster");
             d.SourceLines.Add("      Name:  " + req.SourceB.Name);
+            if (req.FieldB != null)
+                d.SourceLines.Add("      Grouped by attribute column:  "
+                                  + req.FieldB);
             d.SourceLines.Add("Data Values:  Cell Values (grid of '"
                 + (aIsTemplate ? req.SourceA.Name : req.SourceB.Name) + "')");
             return d;
@@ -386,31 +406,63 @@ namespace WildlifeTools.Corridor
                 throw new InvalidOperationException(
                     "This scenario needs one polygon layer and one raster.");
 
+            // cell values and the per-polygon majority keep the raster's
+            // own categories -- or regroup them by a chosen VAT text column
+            // (applied per cell, so a polygon's majority is the majority
+            // GROUP, not the group of the majority code); the other zonal
+            // statistics (mean, range, ...) are continuous numbers and take
+            // neither
+            bool categorical = KeepsCategories(req.RasterStat);
+            string rasterField = categorical ? (aIsPoly ? req.FieldB : req.FieldA)
+                                             : null;
+            Dictionary<double, double> valueCode = null;
+            Dictionary<double, string> groupLabels = null;
+            if (rasterField != null)
+                (valueCode, groupLabels) = VatGrouping(raster, rasterField);
+
             CrosstabData d = req.RasterStat == RasterStatKind.CellValues
                 ? PolyRasterPerCell(lyr, polyField, raster, aIsPoly, req.Aoi,
                                     progress)
                 : PolyRasterPerPolygon(lyr, polyField, raster, aIsPoly,
-                                       req.RasterStat, req.Aoi, progress);
-            // cell-value pairings keep the raster's own categories; a zonal
-            // statistic (mean, range, ...) is a continuous number
-            if (req.RasterStat == RasterStatKind.CellValues)
+                                       req.RasterStat, req.Aoi, progress,
+                                       valueCode);
+            string rasterLabel = rastSrc.Name;
+            if (categorical)
             {
-                var rl = RasterLabels(raster);
+                var arr = aIsPoly ? d.V2 : d.V1;
+                Dictionary<double, string> rl;
+                if (valueCode != null)
+                {
+                    // per-cell path: regroup now; per-polygon path already
+                    // grouped each cell before taking the majority
+                    if (req.RasterStat == RasterStatKind.CellValues)
+                        ApplyCodes(arr, valueCode);
+                    rl = groupLabels;
+                    rasterLabel += " : " + rasterField;
+                }
+                else
+                    rl = RasterLabels(rastSrc);
                 if (aIsPoly) d.Labels2 = rl; else d.Labels1 = rl;
             }
             string polyLabel = polySrc.Name + " : " + polyField;
-            d.Name1 = aIsPoly ? polyLabel : req.SourceA.Name;
-            d.Name2 = aIsPoly ? req.SourceB.Name : polyLabel;
+            d.Name1 = aIsPoly ? polyLabel : rasterLabel;
+            d.Name2 = aIsPoly ? rasterLabel : polyLabel;
             d.SourceLines.Add("First Data Source:  " + (aIsPoly
                 ? "Polygon Feature Class" : "Raster"));
             d.SourceLines.Add("      Name:  " + req.SourceA.Name);
             if (aIsPoly)
                 d.SourceLines.Add("      Attribute Field:  " + req.FieldA);
+            else if (rasterField != null)
+                d.SourceLines.Add("      Grouped by attribute column:  "
+                                  + rasterField);
             d.SourceLines.Add("Second Data Source:  " + (aIsPoly
                 ? "Raster" : "Polygon Feature Class"));
             d.SourceLines.Add("      Name:  " + req.SourceB.Name);
             if (!aIsPoly)
                 d.SourceLines.Add("      Attribute Field:  " + req.FieldB);
+            else if (rasterField != null)
+                d.SourceLines.Add("      Grouped by attribute column:  "
+                                  + rasterField);
             d.SourceLines.Add("Data Values:  " + StatWord(req.RasterStat));
             return d;
         }
@@ -425,6 +477,7 @@ namespace WildlifeTools.Corridor
                 case RasterStatKind.Range: return "Polygon Range";
                 case RasterStatKind.StdDev: return "Polygon Std. Deviation";
                 case RasterStatKind.Sum: return "Polygon Sum";
+                case RasterStatKind.Majority: return "Polygon Majority";
                 default: return "Cell Values";
             }
         }
@@ -486,7 +539,8 @@ namespace WildlifeTools.Corridor
         /// p. 76).</summary>
         private static CrosstabData PolyRasterPerPolygon(FeatureLayer lyr,
             string field, Raster raster, bool polyIsV1, RasterStatKind stat,
-            Polygon aoi, Action<double> progress)
+            Polygon aoi, Action<double> progress,
+            Dictionary<double, double> valueCode = null)
         {
             var grid = GridInfo.Of(raster);
             var index = new int[(long)grid.W * grid.H];
@@ -514,6 +568,11 @@ namespace WildlifeTools.Corridor
                 mn[i] = double.PositiveInfinity;
                 mx[i] = double.NegativeInfinity;
             }
+            // majority: a per-polygon tally of cell values (already grouped
+            // when a VAT column is in play), so each polygon takes the class
+            // covering the most of its cells
+            var hist = stat == RasterStatKind.Majority
+                ? new Dictionary<double, long>[n] : null;
             object noData = raster.GetNoDataValue();
             for (int y0 = 0; y0 < grid.H; y0 += StripRows)
             {
@@ -531,11 +590,18 @@ namespace WildlifeTools.Corridor
                         int k = index[baseIdx + c];
                         if (k < 0) continue;
                         double v = vals[r, c];
+                        if (valueCode != null &&
+                            !valueCode.TryGetValue(v, out v)) continue;
                         cnt[k]++;
                         sum[k] += v;
                         sumsq[k] += v * v;
                         if (v < mn[k]) mn[k] = v;
                         if (v > mx[k]) mx[k] = v;
+                        if (hist != null)
+                        {
+                            var hk = hist[k] ??= new Dictionary<double, long>();
+                            hk[v] = hk.TryGetValue(v, out long c0) ? c0 + 1 : 1;
+                        }
                     }
                 }
                 progress?.Invoke(0.35 + 0.65 * Math.Min(y0 + h, grid.H)
@@ -562,6 +628,17 @@ namespace WildlifeTools.Corridor
                                 / (cnt[k] - 1)))
                             : 0;
                         break;
+                    case RasterStatKind.Majority:
+                    {
+                        // most cells wins; a tie goes to the smaller value
+                        double best = double.NaN; long bestN = -1;
+                        foreach (var kv in hist[k])
+                            if (kv.Value > bestN ||
+                                (kv.Value == bestN && kv.Key < best))
+                            { best = kv.Key; bestN = kv.Value; }
+                        s = best;
+                        break;
+                    }
                     default: s = sum[k] / cnt[k]; break;   // mean
                 }
                 double pv = polyVals[k];
@@ -865,11 +942,135 @@ namespace WildlifeTools.Corridor
             }
         }
 
-        /// <summary>Class labels from a raster's attribute table (VAT):
-        /// VALUE -> the most label-like string column (CLASS_NAME, NAME,
-        /// LABEL, DESC, TYPE, COVER, ...; else the first string column).
-        /// Null when the raster has no VAT or no string column.</summary>
-        private static Dictionary<double, string> RasterLabels(Raster r)
+        /// <summary>Text columns of a raster's attribute table, offered in
+        /// the input dialog as "group the cells by this column". MCT.</summary>
+        public static List<string> RasterLabelFields(PolarPlotData.Source src)
+        {
+            var names = new List<string>();
+            var raster = src.RasterLayer?.GetRaster();
+            if (raster == null) return names;
+            Table vat = null;
+            try
+            {
+                vat = raster.GetAttributeTable();
+                if (vat == null) return names;
+                foreach (var f in vat.GetDefinition().GetFields())
+                    if (f.FieldType == FieldType.String) names.Add(f.Name);
+            }
+            catch { }
+            finally { vat?.Dispose(); }
+            return names;
+        }
+
+        /// <summary>VALUE -> the text in one named VAT column (null when
+        /// the column is missing or empty).</summary>
+        private static Dictionary<double, string> VatColumn(Raster r,
+                                                            string field)
+        {
+            Table vat = null;
+            try
+            {
+                vat = r.GetAttributeTable();
+                if (vat == null) return null;
+                var def = vat.GetDefinition();
+                int iv = def.FindField("VALUE"), ic = def.FindField(field ?? "");
+                if (iv < 0 || ic < 0) return null;
+                var map = new Dictionary<double, string>();
+                using (var cur = vat.Search(null, false))
+                    while (cur.MoveNext())
+                        using (var row = cur.Current)
+                        {
+                            object v = row[iv], c = row[ic];
+                            if (v == null || v is DBNull || c == null ||
+                                c is DBNull) continue;
+                            string s = Convert.ToString(c,
+                                CultureInfo.InvariantCulture).Trim();
+                            if (s.Length > 0)
+                                map[Convert.ToDouble(v,
+                                    CultureInfo.InvariantCulture)] = s;
+                        }
+                return map.Count > 0 ? map : null;
+            }
+            catch { return null; }
+            finally { vat?.Dispose(); }
+        }
+
+        /// <summary>Regroup a raster variable by a VAT text column: every
+        /// cell value becomes the code of its column text (codes numbered
+        /// alphabetically, one class per distinct text -- so a land-cover
+        /// raster grouped by its NLCD column has one class per NLCD group,
+        /// not one per code). Values with no text become NaN (Other).
+        /// Returns code -> text; null (array untouched) when the column
+        /// yields nothing.</summary>
+        private static Dictionary<double, string> GroupByVatColumn(
+            double[] arr, Raster r, string field)
+        {
+            var (valueCode, labels) = VatGrouping(r, field);
+            if (valueCode == null) return null;
+            ApplyCodes(arr, valueCode);
+            return labels;
+        }
+
+        /// <summary>The grouping behind a VAT text column: raster value ->
+        /// group code (codes numbered alphabetically by text) and code ->
+        /// text. (null, null) when the column yields nothing.</summary>
+        private static (Dictionary<double, double> valueCode,
+                        Dictionary<double, string> labels)
+            VatGrouping(Raster r, string field)
+        {
+            var map = VatColumn(r, field);
+            if (map == null) return (null, null);
+            var texts = map.Values.Distinct()
+                .OrderBy(t => t, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+            var code = new Dictionary<string, double>(StringComparer.Ordinal);
+            var labels = new Dictionary<double, string>();
+            for (int i = 0; i < texts.Count; i++)
+            {
+                code[texts[i]] = i + 1;
+                labels[i + 1] = texts[i];
+            }
+            var valueCode = new Dictionary<double, double>();
+            foreach (var kv in map) valueCode[kv.Key] = code[kv.Value];
+            return (valueCode, labels);
+        }
+
+        /// <summary>Replace raster values by their group codes in place;
+        /// values with no group become NaN (Other).</summary>
+        private static void ApplyCodes(double[] arr,
+                                       Dictionary<double, double> valueCode)
+        {
+            for (int i = 0; i < arr.Length; i++)
+            {
+                if (double.IsNaN(arr[i])) continue;
+                arr[i] = valueCode.TryGetValue(arr[i], out double c)
+                    ? c : double.NaN;
+            }
+        }
+
+        /// <summary>Class labels for a raster source: the layer's
+        /// unique-value symbology labels first (what the map shows), else
+        /// the dataset's attribute table (VAT). A map-level Add Join is a
+        /// layer-only view the SDK does not expose for rasters, so joined
+        /// name columns are visible here only after Join Field writes them
+        /// into the VAT.</summary>
+        private static Dictionary<double, string> RasterLabels(
+            PolarPlotData.Source src)
+        {
+            var raster = src.RasterLayer?.GetRaster();
+            if (raster == null) return null;
+            return ColorizerLabels(src.RasterLayer, raster)
+                   ?? VatLabels(raster);
+        }
+
+        /// <summary>VALUE -> the most label-like string column of the VAT.
+        /// Name preference first (CLASS_NAME, NAME, LABEL, DESC, TYPE,
+        /// COVER, VEGETATION, LANDCOVER, HABITAT, ...); with no preferred
+        /// name, the string column with the MOST distinct values wins (a
+        /// joined Nlcd + Vegetation pair yields the vegetation class, not
+        /// its coarse group). Null when there is no VAT or no string
+        /// column.</summary>
+        private static Dictionary<double, string> VatLabels(Raster r)
         {
             Table vat = null;
             try
@@ -880,38 +1081,133 @@ namespace WildlifeTools.Corridor
                 string[] pref =
                 {
                     "CLASS_NAME", "CLASSNAME", "CLASS", "NAME", "LABEL",
-                    "DESC", "TYPE", "COVER", "CATEGORY",
+                    "DESC", "VEGETATION", "LANDCOVER", "LAND_COVER",
+                    "HABITAT", "TYPE", "COVER", "CATEGORY",
                 };
                 int iv = -1, il = -1, best = int.MaxValue;
+                var stringCols = new List<int>();
                 for (int i = 0; i < fields.Count; i++)
                 {
                     string n = fields[i].Name.ToUpperInvariant();
                     if (n == "VALUE") { iv = i; continue; }
                     if (fields[i].FieldType != FieldType.String) continue;
+                    stringCols.Add(i);
                     int rank = pref.Length;
                     for (int p = 0; p < pref.Length; p++)
                         if (n.Contains(pref[p])) { rank = p; break; }
                     if (rank < best) { best = rank; il = i; }
                 }
-                if (iv < 0 || il < 0) return null;
-                var labels = new Dictionary<double, string>();
+                if (iv < 0 || stringCols.Count == 0) return null;
+                // read every string column once; pick afterwards
+                var cols = new Dictionary<int, Dictionary<double, string>>();
+                foreach (int c in stringCols)
+                    cols[c] = new Dictionary<double, string>();
+                long rowsRead = 0;
                 using (var cur = vat.Search(null, false))
-                    while (cur.MoveNext() && labels.Count < 100000)
+                    while (cur.MoveNext() && rowsRead++ < 100000)
                         using (var row = cur.Current)
                         {
-                            object v = row[iv], l = row[il];
-                            if (v == null || v is DBNull || l == null ||
-                                l is DBNull) continue;
-                            string s = Convert.ToString(l,
-                                CultureInfo.InvariantCulture).Trim();
-                            if (s.Length == 0) continue;
-                            labels[Convert.ToDouble(v,
-                                CultureInfo.InvariantCulture)] = s;
+                            object v = row[iv];
+                            if (v == null || v is DBNull) continue;
+                            double key = Convert.ToDouble(v,
+                                CultureInfo.InvariantCulture);
+                            foreach (int c in stringCols)
+                            {
+                                object l = row[c];
+                                if (l == null || l is DBNull) continue;
+                                string s = Convert.ToString(l,
+                                    CultureInfo.InvariantCulture).Trim();
+                                if (s.Length > 0) cols[c][key] = s;
+                            }
                         }
+                if (best == pref.Length)
+                    il = stringCols
+                        .OrderByDescending(c => cols[c].Values.Distinct().Count())
+                        .ThenBy(c => stringCols.IndexOf(c))
+                        .First();
+                var labels = cols[il];
                 return labels.Count > 0 ? labels : null;
             }
             catch { return null; }
             finally { vat?.Dispose(); }
+        }
+
+        /// <summary>Labels from a unique-value colorizer on the layer,
+        /// keyed on raster value. Classes drawn on the VALUE field map
+        /// directly; classes drawn on another VAT column are mapped back to
+        /// values through the VAT. Labels that merely repeat the value
+        /// ("12") count as absent so the VAT can supply a real name.</summary>
+        private static Dictionary<double, string> ColorizerLabels(
+            BasicRasterLayer layer, Raster raster)
+        {
+            try
+            {
+                var col = (layer as RasterLayer)?.GetColorizer()
+                    as ArcGIS.Core.CIM.CIMRasterUniqueValueColorizer;
+                if (col?.Groups == null) return null;
+                string field = (col.FieldName ?? "VALUE").Trim();
+                bool onValue = field.Equals("VALUE",
+                    StringComparison.OrdinalIgnoreCase);
+                // field value -> raster value(s), via the VAT, when the
+                // colorizer classifies on some other VAT column
+                var back = new Dictionary<string, List<double>>(
+                    StringComparer.OrdinalIgnoreCase);
+                if (!onValue)
+                {
+                    Table vat = null;
+                    try
+                    {
+                        vat = raster.GetAttributeTable();
+                        if (vat == null) return null;
+                        var def = vat.GetDefinition();
+                        int iv = def.FindField("VALUE"), ic = def.FindField(field);
+                        if (iv < 0 || ic < 0) return null;
+                        using (var cur = vat.Search(null, false))
+                            while (cur.MoveNext())
+                                using (var row = cur.Current)
+                                {
+                                    object v = row[iv], c = row[ic];
+                                    if (v == null || v is DBNull || c == null
+                                        || c is DBNull) continue;
+                                    string k = Convert.ToString(c,
+                                        CultureInfo.InvariantCulture).Trim();
+                                    if (!back.TryGetValue(k, out var list))
+                                        back[k] = list = new List<double>();
+                                    list.Add(Convert.ToDouble(v,
+                                        CultureInfo.InvariantCulture));
+                                }
+                    }
+                    finally { vat?.Dispose(); }
+                }
+                var labels = new Dictionary<double, string>();
+                foreach (var g in col.Groups)
+                {
+                    if (g?.Classes == null) continue;
+                    foreach (var cls in g.Classes)
+                    {
+                        if (cls?.Values == null) continue;
+                        string label = (cls.Label ?? "").Trim();
+                        if (label.Length == 0) continue;
+                        foreach (var vs in cls.Values)
+                        {
+                            string s = (vs ?? "").Trim();
+                            if (s.Length == 0) continue;
+                            if (onValue)
+                            {
+                                if (!double.TryParse(s, NumberStyles.Float,
+                                        CultureInfo.InvariantCulture,
+                                        out double d)) continue;
+                                if (label == s) continue;   // "12" labeled "12"
+                                labels[d] = label;
+                            }
+                            else if (back.TryGetValue(s, out var vals))
+                                foreach (var d in vals) labels[d] = label;
+                        }
+                    }
+                }
+                return labels.Count > 0 ? labels : null;
+            }
+            catch { return null; }
         }
 
         private sealed class GridInfo

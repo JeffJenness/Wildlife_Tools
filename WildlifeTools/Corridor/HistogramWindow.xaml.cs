@@ -536,9 +536,10 @@ namespace WildlifeTools.Corridor
                 Title = "Save the histogram graphic",
                 Filter = "PNG image (*.png)|*.png|SVG vector (*.svg)|*.svg",
                 FileName = "Habitat_Histogram.png",
-                InitialDirectory = DefaultDir(),
+                InitialDirectory = ImageSaveFolder.Initial(),
             };
             if (dlg.ShowDialog() != true) return;
+            ImageSaveFolder.Remember(dlg.FileName);
             try
             {
                 if (Path.GetExtension(dlg.FileName)

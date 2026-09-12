@@ -246,8 +246,10 @@ namespace WildlifeTools
                 Title = "Save the sweep chart",
                 Filter = "PNG image (*.png)|*.png|SVG vector (*.svg)|*.svg",
                 FileName = SafeName() + "_locoh_sweep.png",
+                InitialDirectory = ImageSaveFolder.Initial(),
             };
             if (dlg.ShowDialog() != true) return;
+            ImageSaveFolder.Remember(dlg.FileName);
             try
             {
                 if (Path.GetExtension(dlg.FileName)

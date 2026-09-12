@@ -28,19 +28,23 @@ namespace WildlifeTools.Corridor
         private static readonly RgbaColor CellFill = new RgbaColor(255, 255, 255, 255);
 
         /// <summary>Build the table. ``grid`` comes from
-        /// CrosstabReport.Grid; ``measureIn`` (text, sizePt, family) ->
-        /// inches, null = estimate (headless tests).</summary>
+        /// CrosstabReport.Grid; ``measureIn`` (text, font) -> inches,
+        /// measured in the font's actual weight (bold headers and class
+        /// names run wider than regular text -- measuring them regular
+        /// crowded long names against the cell edge); null = estimate
+        /// (headless tests).</summary>
         public static PolarPlotModel Build(List<string[]> grid,
             string colVariable, string rowVariable, CrosstabStyle st,
-            Func<string, double, string, double> measureIn)
+            Func<string, FontSpec, double> measureIn)
         {
             double Measure(string t, FontSpec f) =>
-                measureIn != null ? measureIn(t ?? "", f.SizePt, f.Family)
-                : 0.075 * (t?.Length ?? 0) * f.SizePt / 9.0;
+                measureIn != null ? measureIn(t ?? "", f)
+                : 0.075 * (t?.Length ?? 0) * f.SizePt / 9.0
+                  * (f.Bold ? 1.08 : 1.0);
 
             int nRows = grid.Count;
             int nCols = grid[0].Length;
-            const double padX = 0.10;
+            const double padX = 0.14;              // breathing room each side
             double rowH = Math.Max(0.22, st.CellFont.SizePt / 42.0);
 
             // column widths from measured content

@@ -72,6 +72,12 @@ namespace WildlifeTools
         private const string PolygonPrefsKey = "PolygonBackground_Prefs";
         private const string McpSymbolKey = "McpBackground_SymbolJson";
         private const string McpPrefsKey = "McpBackground_Prefs";
+        private const string LastImageFolderKey = "ImageSave_LastFolder";
+
+        /// <summary>Folder of the last graph/table image saved from any of
+        /// the suite's windows, persisted with the project (see
+        /// ImageSaveFolder). Null until an image is saved.</summary>
+        public static string LastImageFolder { get; set; }
 
         /// <summary>Circle Background's last-used dialog parameters (never null).</summary>
         public static BackgroundToolPrefs CirclePrefs { get; set; } = new();
@@ -188,6 +194,7 @@ namespace WildlifeTools
             RectanglePrefs = PrefsFromJson(settings?.Get(RectanglePrefsKey) as string);
             PolygonPrefs = PrefsFromJson(settings?.Get(PolygonPrefsKey) as string);
             McpPrefs = PrefsFromJson(settings?.Get(McpPrefsKey) as string);
+            LastImageFolder = settings?.Get(LastImageFolderKey) as string;
             return Task.FromResult(0);
         }
 
@@ -208,6 +215,8 @@ namespace WildlifeTools
             settings.Add(RectanglePrefsKey, System.Text.Json.JsonSerializer.Serialize(RectanglePrefs));
             settings.Add(PolygonPrefsKey, System.Text.Json.JsonSerializer.Serialize(PolygonPrefs));
             settings.Add(McpPrefsKey, System.Text.Json.JsonSerializer.Serialize(McpPrefs));
+            if (!string.IsNullOrEmpty(LastImageFolder))
+                settings.Add(LastImageFolderKey, LastImageFolder);
             return Task.FromResult(0);
         }
 

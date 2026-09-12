@@ -223,13 +223,13 @@ namespace WildlifeTools.Corridor
             return res;
         }
 
-        /// <summary>Format one display value: percent (as a proportion,
-        /// like the original's reports) or count/size, with the chosen
-        /// decimals.</summary>
+        /// <summary>Format one display value: percent of the grand total
+        /// (0-100, so a table sums to 100 -- matching the exported PERCENT
+        /// column) or count/size, with the chosen decimals.</summary>
         public static string Fmt(double value, double total, bool percent,
                                  int decimals)
         {
-            double v = percent ? (total > 0 ? value / total : 0) : value;
+            double v = percent ? (total > 0 ? value / total * 100.0 : 0) : value;
             return v.ToString("F" + Math.Min(Math.Max(decimals, 0), 10),
                               CultureInfo.InvariantCulture);
         }
@@ -348,7 +348,7 @@ namespace WildlifeTools.Corridor
                                 factor).grid);
             sb.AppendLine();
             sb.AppendLine("Crosstabs Table as Percents:");
-            AppendGrid(sb, Grid(res, h, v, true, Math.Max(decimals, 3),
+            AppendGrid(sb, Grid(res, h, v, true, Math.Max(decimals, 2),
                                 flip).grid);
             sb.AppendLine();
             sb.AppendLine(new string('-', 56));

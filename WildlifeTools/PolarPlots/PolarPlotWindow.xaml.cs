@@ -632,8 +632,10 @@ namespace WildlifeTools.PolarPlots
                 Filter = "SVG file (*.svg)|*.svg",
                 FileName = MakeFileBase() + ".svg",
                 Title = "Save polar plot as SVG",
+                InitialDirectory = ImageSaveFolder.Initial(),
             };
             if (dlg.ShowDialog() != true) return;
+            ImageSaveFolder.Remember(dlg.FileName);
             try
             {
                 File.WriteAllText(dlg.FileName, PolarPlotSvg.Render(_model));

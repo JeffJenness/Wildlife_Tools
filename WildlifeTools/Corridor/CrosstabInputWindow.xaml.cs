@@ -30,6 +30,9 @@ namespace WildlifeTools.Corridor
         internal CrosstabDataReader.Request Result;
         internal FeatureLayer AoiLayer;
 
+        private const string RasterCellValues = "(raster cell values)";
+        private List<StatChoice> _statsAll, _statsCategorical;
+
         private sealed class StatChoice
         {
             public CrosstabDataReader.RasterStatKind Kind;
@@ -41,9 +44,10 @@ namespace WildlifeTools.Corridor
         {
             InitializeComponent();
             JennessIcon.Apply(this);
-            cboStat.ItemsSource = new[]
+            _statsAll = new[]
             {
                 CrosstabDataReader.RasterStatKind.CellValues,
+                CrosstabDataReader.RasterStatKind.Majority,
                 CrosstabDataReader.RasterStatKind.Min,
                 CrosstabDataReader.RasterStatKind.Mean,
                 CrosstabDataReader.RasterStatKind.Max,
@@ -51,6 +55,9 @@ namespace WildlifeTools.Corridor
                 CrosstabDataReader.RasterStatKind.StdDev,
                 CrosstabDataReader.RasterStatKind.Sum,
             }.Select(k => new StatChoice { Kind = k }).ToList();
+            _statsCategorical = _statsAll
+                .Where(s => CrosstabDataReader.KeepsCategories(s.Kind)).ToList();
+            cboStat.ItemsSource = _statsAll;
             cboStat.SelectedIndex = 0;
             Loaded += async (_, __) =>
             {
@@ -135,15 +142,45 @@ namespace WildlifeTools.Corridor
                                          : Visibility.Collapsed;
         }
 
+        /// <summary>A raster grouped by an attribute column is categorical:
+        /// its cells are codes, so the zonal statistics that average them
+        /// (mean, range, ...) are meaningless. Offer only Cell Values and
+        /// the per-polygon Majority in that case.</summary>
+        private void OnTwoFieldChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (cboStat == null || _statsAll == null) return;
+            bool grouped = false;
+            foreach (var (src, combo) in new[]
+                     {
+                         (cboSourceA.SelectedItem as PolarPlotData.Source, cboFieldA),
+                         (cboSourceB.SelectedItem as PolarPlotData.Source, cboFieldB),
+                     })
+                if (src != null && src.IsRaster &&
+                    combo.SelectedItem is string f && f != RasterCellValues)
+                    grouped = true;
+            var want = grouped ? _statsCategorical : _statsAll;
+            if (ReferenceEquals(cboStat.ItemsSource, want)) return;
+            var keep = (cboStat.SelectedItem as StatChoice)?.Kind
+                       ?? CrosstabDataReader.RasterStatKind.CellValues;
+            cboStat.ItemsSource = want;
+            cboStat.SelectedItem = want.FirstOrDefault(s => s.Kind == keep)
+                                   ?? want[0];
+        }
+
         private async System.Threading.Tasks.Task FillTwoFields(
             PolarPlotData.Source src, ComboBox fieldCombo)
         {
             if (src == null) return;
             if (src.IsRaster)
             {
-                fieldCombo.ItemsSource = new[] { "(raster cell values)" };
+                // cell values as they are, or regrouped by a text column of
+                // the raster's attribute table (one class per distinct text)
+                var items = new List<string> { RasterCellValues };
+                items.AddRange(await QueuedTask.Run(() =>
+                    CrosstabDataReader.RasterLabelFields(src)));
+                fieldCombo.ItemsSource = items;
                 fieldCombo.SelectedIndex = 0;
-                fieldCombo.IsEnabled = false;
+                fieldCombo.IsEnabled = items.Count > 1;
                 return;
             }
             var fields = await QueuedTask.Run(() =>
@@ -214,6 +251,13 @@ namespace WildlifeTools.Corridor
                         return;
                     }
                 }
+                else
+                {
+                    // a chosen VAT text column regroups the cells; the
+                    // plain cell-values entry passes null
+                    var f = cboFieldA.SelectedItem as string;
+                    req.FieldA = f == RasterCellValues ? null : f;
+                }
                 if (!req.SourceB.IsRaster)
                 {
                     req.FieldB = cboFieldB.SelectedItem as string;
@@ -223,6 +267,11 @@ namespace WildlifeTools.Corridor
                             + "field.", Title);
                         return;
                     }
+                }
+                else
+                {
+                    var f = cboFieldB.SelectedItem as string;
+                    req.FieldB = f == RasterCellValues ? null : f;
                 }
                 req.RasterStat = req.SourceA.IsRaster == req.SourceB.IsRaster
                     ? CrosstabDataReader.RasterStatKind.CellValues

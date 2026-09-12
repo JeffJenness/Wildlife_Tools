@@ -1597,8 +1597,10 @@ namespace WildlifeTools.Corridor
                 Title = "Save the width graph",
                 Filter = "PNG image (*.png)|*.png",
                 FileName = "Bottleneck_Width_Graph.png",
+                InitialDirectory = ImageSaveFolder.Initial(),
             };
             if (dlg.ShowDialog() != true) return;
+            ImageSaveFolder.Remember(dlg.FileName);
             try
             {
                 double scale = 2.0;   // crisp export

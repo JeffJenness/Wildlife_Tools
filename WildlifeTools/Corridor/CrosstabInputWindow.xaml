@@ -23,7 +23,7 @@
             <RadioButton x:Name="rbSingle" Content="Single data source"
                          IsChecked="True" GroupName="Mode" Margin="0,0,16,0"
                          Checked="OnModeChanged"
-                         ToolTip="Both variables come from two numeric fields of ONE table or feature class; each record is one observation."/>
+                         ToolTip="Both variables come from two attribute fields of ONE table or feature class; each record is one observation. A numeric field is classed by value ranges; a text field (an ownership type, a habitat class) gives one class per distinct value, already named."/>
             <RadioButton x:Name="rbTwo" Content="Two data sources"
                          GroupName="Mode" Checked="OnModeChanged"
                          ToolTip="The variables come from TWO overlapping datasets (polygon layers and/or rasters); observations come from their spatial intersection and are always weighted by size."/>
@@ -33,7 +33,8 @@
         <StackPanel x:Name="pnlSingle">
             <TextBlock Text="Feature layer or table:"/>
             <ComboBox x:Name="cboSource" Margin="0,2,0,6"
-                      SelectionChanged="OnSourceChanged"/>
+                      SelectionChanged="OnSourceChanged"
+                      ToolTip="The one dataset both variables are read from: a feature layer or a standalone table in the map."/>
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -41,11 +42,13 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Margin="0,0,4,0">
                     <TextBlock Text="Variable #1 field (columns):"/>
-                    <ComboBox x:Name="cboField1" Margin="0,2,0,6"/>
+                    <ComboBox x:Name="cboField1" Margin="0,2,0,6"
+                              ToolTip="The field whose classes run ACROSS the table as columns. Numeric: classed into value ranges you can edit afterward. Text: one named class per distinct value."/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Margin="4,0,0,0">
                     <TextBlock Text="Variable #2 field (rows):"/>
-                    <ComboBox x:Name="cboField2" Margin="0,2,0,6"/>
+                    <ComboBox x:Name="cboField2" Margin="0,2,0,6"
+                              ToolTip="The field whose classes run DOWN the table as rows. Numeric: classed into value ranges you can edit afterward. Text: one named class per distinct value. (Rows and columns can be flipped in the table window.)"/>
                 </StackPanel>
             </Grid>
             <TextBlock Text="Weighting:"/>
@@ -56,14 +59,16 @@
                              ToolTip="Polygons count by geodesic area, polylines by geodesic length, multipoints by point count. A 100-hectare polygon counts twice as much as a 50-hectare one."/>
                 <RadioButton x:Name="rbWeightNone"
                              Content="Each record equally" GroupName="W"
-                             Margin="0,0,12,0"/>
+                             Margin="0,0,12,0"
+                             ToolTip="Every record is one observation regardless of its size: the table shows record COUNTS. Use this when the records themselves are the units of interest (parcels, sample plots), not the ground they cover."/>
                 <RadioButton x:Name="rbWeightField" Content="By field:"
                              GroupName="W" Checked="OnWeightChanged"
                              Unchecked="OnWeightChanged"
                              ToolTip="Each record counts as the value of a third numeric attribute field."/>
             </StackPanel>
             <ComboBox x:Name="cboWeightField" Margin="0,2,0,6"
-                      IsEnabled="False"/>
+                      IsEnabled="False"
+                      ToolTip="The numeric field that weights each record (a population count, an area already stored in the table, a sampling weight). Records with a null or non-positive weight are skipped."/>
             <CheckBox x:Name="chkSelected" Content="Selected records only"
                       Margin="0,0,0,6"
                       ToolTip="Uses only the layer's current selection; with nothing selected, all records are used."/>
@@ -74,17 +79,21 @@
             <TextBlock Text="Variable #1 layer (columns):"/>
             <ComboBox x:Name="cboSourceA" Margin="0,2,0,4"
                       SelectionChanged="OnTwoSourceChanged"
-                      ToolTip="A polygon layer or a raster."/>
+                      ToolTip="The dataset whose classes run ACROSS the table as columns: a polygon layer or a raster. Two polygon layers are crossed by their intersection areas; a polygon layer and a raster by the cells inside each polygon; two rasters cell by cell."/>
             <ComboBox x:Name="cboFieldA" Margin="0,0,0,6"
-                      ToolTip="The polygon attribute field for Variable #1 (rasters use their cell values)."/>
+                      SelectionChanged="OnTwoFieldChanged"
+                      ToolTip="For a polygon layer: the attribute field that defines the classes (numeric = value ranges, text = one named class per value). For a raster: '(raster cell values)' makes one class per cell value, named from the raster's attribute table when it has a name column; choosing a text column of that table instead regroups the cells by it (a land-cover raster grouped by its NLCD column has one class per NLCD group)."/>
             <TextBlock Text="Variable #2 layer (rows):"/>
             <ComboBox x:Name="cboSourceB" Margin="0,2,0,4"
-                      SelectionChanged="OnTwoSourceChanged"/>
-            <ComboBox x:Name="cboFieldB" Margin="0,0,0,6"/>
+                      SelectionChanged="OnTwoSourceChanged"
+                      ToolTip="The dataset whose classes run DOWN the table as rows: a polygon layer or a raster. (Rows and columns can be flipped in the table window.)"/>
+            <ComboBox x:Name="cboFieldB" Margin="0,0,0,6"
+                      SelectionChanged="OnTwoFieldChanged"
+                      ToolTip="For a polygon layer: the attribute field that defines the classes (numeric = value ranges, text = one named class per value). For a raster: '(raster cell values)' makes one class per cell value, named from the raster's attribute table when it has a name column; choosing a text column of that table instead regroups the cells by it (a land-cover raster grouped by its NLCD column has one class per NLCD group)."/>
             <StackPanel x:Name="pnlStat">
                 <TextBlock Text="Raster variable statistic:"/>
                 <ComboBox x:Name="cboStat" Margin="0,2,0,6"
-                          ToolTip="Cell Values samples one observation per raster cell (the polygon attribute is read at each cell). The Polygon statistics sample one observation per polygon, summarizing all raster cells inside it."/>
+                          ToolTip="Polygon layer against a raster only. Cell Values: one observation per raster cell, each cell paired with the polygon it falls in -- the natural choice for a categorical raster (land cover, habitat class), whose values are codes. Polygon Majority: one observation per polygon, the class covering the most of its cells -- the dominant land cover of each parcel. The other Polygon statistics (mean, minimum, ...) summarize the cells inside each polygon as numbers and suit a continuous raster only (elevation, suitability, distance); a mean of land-cover codes means nothing, so they are withheld whenever the raster is grouped by an attribute column."/>
             </StackPanel>
         </StackPanel>
 
