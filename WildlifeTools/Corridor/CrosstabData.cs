@@ -103,6 +103,9 @@ namespace WildlifeTools.Corridor
                 int f2 = def.FindField(req.Field2 ?? "");
                 if (f1 < 0 || f2 < 0)
                     throw new InvalidOperationException("Field not found.");
+                var defFields = def.GetFields();
+                var c1 = new FieldCoder(defFields[f1]);
+                var c2 = new FieldCoder(defFields[f2]);
                 int fw = -1;
                 if (req.Weight == WeightMode.ByField)
                 {
@@ -139,9 +142,10 @@ namespace WildlifeTools.Corridor
                         using (var row = cur.Current)
                         {
                             if (((++done) & 511) == 0) progress?.Invoke(-1);
-                            object a = row[f1], b = row[f2];
-                            if (a == null || a is DBNull || b == null ||
-                                b is DBNull) continue;
+                            double va = c1.Code(row[f1]);
+                            double vb = c2.Code(row[f2]);
+                            if (double.IsNaN(va) || double.IsNaN(vb))
+                                continue;
                             double wt = 1.0;
                             if (fc != null)
                             {
@@ -168,15 +172,15 @@ namespace WildlifeTools.Corridor
                                     CultureInfo.InvariantCulture);
                                 if (wt <= 0) continue;
                             }
-                            v1.Add(Convert.ToDouble(a,
-                                CultureInfo.InvariantCulture));
-                            v2.Add(Convert.ToDouble(b,
-                                CultureInfo.InvariantCulture));
+                            v1.Add(va);
+                            v2.Add(vb);
                             w.Add(wt);
                         }
                 d.V1 = v1.ToArray();
                 d.V2 = v2.ToArray();
                 d.W = w.ToArray();
+                d.Labels1 = c1.Finish(d.V1);
+                d.Labels2 = c2.Finish(d.V2);
                 d.Name1 = req.Field1;
                 d.Name2 = req.Field2;
                 if (bySize)
@@ -239,6 +243,8 @@ namespace WildlifeTools.Corridor
                 int fb = defB.FindField(req.FieldB ?? "");
                 if (fa < 0 || fb < 0)
                     throw new InvalidOperationException("Field not found.");
+                var cA = new FieldCoder(defA.GetFields()[fa]);
+                var cB = new FieldCoder(defB.GetFields()[fb]);
                 var srA = ((FeatureClassDefinition)defA)
                     .GetSpatialReference();
                 Polygon aoi = ProjectAoi(req.Aoi, srA);
@@ -256,8 +262,8 @@ namespace WildlifeTools.Corridor
                             done++;
                             if (total > 0 && (done & 15) == 0)
                                 progress?.Invoke((double)done / total);
-                            object a = rowA[fa];
-                            if (a == null || a is DBNull) continue;
+                            double va = cA.Code(rowA[fa]);
+                            if (double.IsNaN(va)) continue;
                             Geometry ga = rowA.GetShape();
                             if (ga == null || ga.IsEmpty) continue;
                             if (aoi != null)
@@ -265,8 +271,6 @@ namespace WildlifeTools.Corridor
                                 ga = ClipToAoi(ga, aoi, GeometryType.Polygon);
                                 if (ga == null) continue;
                             }
-                            double va = Convert.ToDouble(a,
-                                CultureInfo.InvariantCulture);
                             // spatial index does the candidate filtering
                             var sf = new SpatialQueryFilter
                             {
@@ -278,9 +282,8 @@ namespace WildlifeTools.Corridor
                                 while (curB.MoveNext())
                                     using (var rowB = (Feature)curB.Current)
                                     {
-                                        object b = rowB[fb];
-                                        if (b == null || b is DBNull)
-                                            continue;
+                                        double vb = cB.Code(rowB[fb]);
+                                        if (double.IsNaN(vb)) continue;
                                         Geometry gb = rowB.GetShape();
                                         if (gb == null || gb.IsEmpty)
                                             continue;
@@ -303,14 +306,15 @@ namespace WildlifeTools.Corridor
                                             GeometryType.Polygon);
                                         if (area <= 0) continue;
                                         v1.Add(va);
-                                        v2.Add(Convert.ToDouble(b,
-                                            CultureInfo.InvariantCulture));
+                                        v2.Add(vb);
                                         w.Add(area);
                                     }
                         }
                 d.V1 = v1.ToArray();
                 d.V2 = v2.ToArray();
                 d.W = w.ToArray();
+                d.Labels1 = cA.Finish(d.V1);
+                d.Labels2 = cB.Finish(d.V2);
             }
             // dataset name + field: two sources often share field names
             // (e.g. GRIDCODE in two patch maps), so the field alone is
@@ -349,6 +353,8 @@ namespace WildlifeTools.Corridor
 
             var d = StreamPairs(template, other, aIsTemplate, req.Aoi,
                                 null, progress);
+            d.Labels1 = RasterLabels(ra);
+            d.Labels2 = RasterLabels(rb);
             d.Name1 = req.SourceA.Name;
             d.Name2 = req.SourceB.Name;
             d.SourceLines.Add("First Data Source:  Raster");
@@ -385,6 +391,13 @@ namespace WildlifeTools.Corridor
                                     progress)
                 : PolyRasterPerPolygon(lyr, polyField, raster, aIsPoly,
                                        req.RasterStat, req.Aoi, progress);
+            // cell-value pairings keep the raster's own categories; a zonal
+            // statistic (mean, range, ...) is a continuous number
+            if (req.RasterStat == RasterStatKind.CellValues)
+            {
+                var rl = RasterLabels(raster);
+                if (aIsPoly) d.Labels2 = rl; else d.Labels1 = rl;
+            }
             string polyLabel = polySrc.Name + " : " + polyField;
             d.Name1 = aIsPoly ? polyLabel : req.SourceA.Name;
             d.Name2 = aIsPoly ? req.SourceB.Name : polyLabel;
@@ -427,7 +440,7 @@ namespace WildlifeTools.Corridor
             var grid = GridInfo.Of(raster);
             var attr = new double[(long)grid.W * grid.H];
             for (long i = 0; i < attr.LongLength; i++) attr[i] = double.NaN;
-            PaintPolygons(lyr, field, grid, attr, p =>
+            var coder = PaintPolygons(lyr, field, grid, attr, p =>
                 progress?.Invoke(p * 0.35));
 
             bool[] aoiMask = aoi != null
@@ -461,6 +474,8 @@ namespace WildlifeTools.Corridor
             }
             var d = acc.ToData();
             grid.ApplyBasis(d);
+            var labels = coder.Finish(polyIsV1 ? d.V1 : d.V2);
+            if (polyIsV1) d.Labels1 = labels; else d.Labels2 = labels;
             return d;
         }
 
@@ -480,7 +495,7 @@ namespace WildlifeTools.Corridor
             var polyVals = new List<double>();
             var polyAreas = new List<double>();
             Polygon aoiP = ProjectAoi(aoi, lyr.GetSpatialReference());
-            PaintPolygons(lyr, field, grid, null, p =>
+            var coder = PaintPolygons(lyr, field, grid, null, p =>
                 progress?.Invoke(p * 0.35), index, polyVals, polyAreas, aoiP);
 
             bool[] aoiMask = aoi != null
@@ -562,6 +577,8 @@ namespace WildlifeTools.Corridor
                 Basis = WeightBasis.AreaM2,
                 WeightDesc = "Geodesic polygon area",
             };
+            var labels = coder.Finish(polyIsV1 ? d.V1 : d.V2);
+            if (polyIsV1) d.Labels1 = labels; else d.Labels2 = labels;
             return d;
         }
 
@@ -570,10 +587,11 @@ namespace WildlifeTools.Corridor
         /// ``attr`` (the polygon's field value per cell) OR ``index`` (the
         /// polygon's ordinal, with its value and AOI-clipped geodesic area
         /// recorded in the lists).</summary>
-        private static void PaintPolygons(FeatureLayer lyr, string field,
-            GridInfo grid, double[] attr, Action<double> progress,
-            int[] index = null, List<double> polyVals = null,
-            List<double> polyAreas = null, Polygon aoiForAreas = null)
+        private static FieldCoder PaintPolygons(FeatureLayer lyr,
+            string field, GridInfo grid, double[] attr,
+            Action<double> progress, int[] index = null,
+            List<double> polyVals = null, List<double> polyAreas = null,
+            Polygon aoiForAreas = null)
         {
             using (var t = lyr.GetTable())
             {
@@ -582,6 +600,7 @@ namespace WildlifeTools.Corridor
                 if (fi < 0)
                     throw new InvalidOperationException(
                         "Field not found: " + field);
+                var coder = new FieldCoder(def.GetFields()[fi]);
                 long total = 0;
                 try { total = t.GetCount(); } catch { }
                 long done = 0;
@@ -592,12 +611,10 @@ namespace WildlifeTools.Corridor
                             done++;
                             if (total > 0 && (done & 15) == 0)
                                 progress?.Invoke((double)done / total);
-                            object o = f[fi];
-                            if (o == null || o is DBNull) continue;
+                            double val = coder.Code(f[fi]);
+                            if (double.IsNaN(val)) continue;
                             var g = f.GetShape() as Polygon;
                             if (g == null || g.IsEmpty) continue;
-                            double val = Convert.ToDouble(o,
-                                CultureInfo.InvariantCulture);
                             Polygon gp = g;
                             try
                             {
@@ -624,6 +641,7 @@ namespace WildlifeTools.Corridor
                             }
                             StampPolygon(gp, grid, attr, index, val, id);
                         }
+                return coder;
             }
         }
 
@@ -741,6 +759,161 @@ namespace WildlifeTools.Corridor
         // =================================================================
         // helpers
         // =================================================================
+
+        /// <summary>Fields a variable can be drawn from: numeric AND text.
+        /// A text field becomes a categorical axis (one class per distinct
+        /// value, labeled with the text). MCT.</summary>
+        public static List<string> VariableFields(PolarPlotData.Source src)
+        {
+            var names = new List<string>();
+            if (src.IsRaster) return names;
+            Table t = null;
+            try
+            {
+                t = PolarPlotData.GetTable(src);
+                if (t == null) return names;
+                foreach (var f in t.GetDefinition().GetFields())
+                    switch (f.FieldType)
+                    {
+                        case FieldType.SmallInteger:
+                        case FieldType.Integer:
+                        case FieldType.BigInteger:
+                        case FieldType.Single:
+                        case FieldType.Double:
+                        case FieldType.String:
+                            names.Add(f.Name);
+                            break;
+                    }
+            }
+            catch { }
+            finally { t?.Dispose(); }
+            return names;
+        }
+
+        /// <summary>Turns one field's values into doubles for the pairing.
+        /// Numeric fields pass through; TEXT fields get one integer code
+        /// per distinct value, assigned as seen and renumbered
+        /// alphabetically by Finish (so the classes come out sorted), with
+        /// the text kept as the class label. Numeric fields with a
+        /// coded-value domain contribute the domain descriptions as
+        /// labels. Blank text counts as null.</summary>
+        private sealed class FieldCoder
+        {
+            public readonly bool IsText;
+            private readonly Dictionary<string, double> _codes =
+                new Dictionary<string, double>(StringComparer.Ordinal);
+            private Dictionary<double, string> _domain;
+
+            public FieldCoder(Field f)
+            {
+                IsText = f.FieldType == FieldType.String;
+                if (IsText) return;
+                try
+                {
+                    if (f.GetDomain() is CodedValueDomain cvd)
+                    {
+                        _domain = new Dictionary<double, string>();
+                        foreach (var kv in cvd.GetCodedValuePairs())
+                            _domain[Convert.ToDouble(kv.Key,
+                                CultureInfo.InvariantCulture)] = kv.Value;
+                    }
+                }
+                catch { _domain = null; }
+            }
+
+            /// <summary>NaN = null or blank: skip the row.</summary>
+            public double Code(object o)
+            {
+                if (o == null || o is DBNull) return double.NaN;
+                if (!IsText)
+                    return Convert.ToDouble(o, CultureInfo.InvariantCulture);
+                string s = Convert.ToString(o, CultureInfo.InvariantCulture)
+                    ?.Trim();
+                if (string.IsNullOrEmpty(s)) return double.NaN;
+                if (!_codes.TryGetValue(s, out double c))
+                {
+                    c = _codes.Count + 1;
+                    _codes[s] = c;
+                }
+                return c;
+            }
+
+            /// <summary>Renumber text codes alphabetically, remapping the
+            /// given value arrays in place, and return the code -> label
+            /// lookup (null for a plain numeric field).</summary>
+            public Dictionary<double, string> Finish(params double[][] arrays)
+            {
+                if (!IsText)
+                    return _domain != null && _domain.Count > 0
+                        ? _domain : null;
+                var sorted = _codes.Keys
+                    .OrderBy(k => k, StringComparer.CurrentCultureIgnoreCase)
+                    .ToList();
+                var remap = new Dictionary<double, double>();
+                var labels = new Dictionary<double, string>();
+                for (int i = 0; i < sorted.Count; i++)
+                {
+                    remap[_codes[sorted[i]]] = i + 1;
+                    labels[i + 1] = sorted[i];
+                }
+                foreach (var arr in arrays)
+                    for (int i = 0; i < arr.Length; i++)
+                        if (!double.IsNaN(arr[i]) &&
+                            remap.TryGetValue(arr[i], out double n))
+                            arr[i] = n;
+                return labels;
+            }
+        }
+
+        /// <summary>Class labels from a raster's attribute table (VAT):
+        /// VALUE -> the most label-like string column (CLASS_NAME, NAME,
+        /// LABEL, DESC, TYPE, COVER, ...; else the first string column).
+        /// Null when the raster has no VAT or no string column.</summary>
+        private static Dictionary<double, string> RasterLabels(Raster r)
+        {
+            Table vat = null;
+            try
+            {
+                vat = r.GetAttributeTable();
+                if (vat == null) return null;
+                var fields = vat.GetDefinition().GetFields();
+                string[] pref =
+                {
+                    "CLASS_NAME", "CLASSNAME", "CLASS", "NAME", "LABEL",
+                    "DESC", "TYPE", "COVER", "CATEGORY",
+                };
+                int iv = -1, il = -1, best = int.MaxValue;
+                for (int i = 0; i < fields.Count; i++)
+                {
+                    string n = fields[i].Name.ToUpperInvariant();
+                    if (n == "VALUE") { iv = i; continue; }
+                    if (fields[i].FieldType != FieldType.String) continue;
+                    int rank = pref.Length;
+                    for (int p = 0; p < pref.Length; p++)
+                        if (n.Contains(pref[p])) { rank = p; break; }
+                    if (rank < best) { best = rank; il = i; }
+                }
+                if (iv < 0 || il < 0) return null;
+                var labels = new Dictionary<double, string>();
+                using (var cur = vat.Search(null, false))
+                    while (cur.MoveNext() && labels.Count < 100000)
+                        using (var row = cur.Current)
+                        {
+                            object v = row[iv], l = row[il];
+                            if (v == null || v is DBNull || l == null ||
+                                l is DBNull) continue;
+                            string s = Convert.ToString(l,
+                                CultureInfo.InvariantCulture).Trim();
+                            if (s.Length == 0) continue;
+                            labels[Convert.ToDouble(v,
+                                CultureInfo.InvariantCulture)] = s;
+                        }
+                return labels.Count > 0 ? labels : null;
+            }
+            catch { return null; }
+            finally { vat?.Dispose(); }
+        }
+
         private sealed class GridInfo
         {
             public int W, H;

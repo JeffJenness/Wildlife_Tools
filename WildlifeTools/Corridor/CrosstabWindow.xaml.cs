@@ -109,18 +109,20 @@ namespace WildlifeTools.Corridor
                 // defaults: a variable with at most 5 distinct values is
                 // DISCRETE -- one single-value class per value (GRIDCODE
                 // 1,2,3 makes exactly three classes); otherwise the
-                // original's 4 equal-interval classes
-                var u1 = d.UniqueValues1(5);
-                var u2 = d.UniqueValues2(5);
+                // original's 4 equal-interval classes. A LABELED variable
+                // (text field, coded-value domain, raster attribute table)
+                // is categorical outright: one named class per value.
+                var u1 = d.UniqueValues1(d.Labels1 != null ? 500 : 5);
+                var u2 = d.UniqueValues2(d.Labels2 != null ? 500 : 5);
                 var (mn1, mx1) = d.Range1();
                 var (mn2, mx2) = d.Range2();
                 _h.VariableName = d.Name1;
                 _h.Classes = u1 != null
-                    ? CrosstabAxis.ForValues(u1)
+                    ? CrosstabAxis.ForValues(u1, d.Labels1)
                     : CrosstabAxis.EqualInterval(4, mn1, mx1);
                 _v.VariableName = d.Name2;
                 _v.Classes = u2 != null
-                    ? CrosstabAxis.ForValues(u2)
+                    ? CrosstabAxis.ForValues(u2, d.Labels2)
                     : CrosstabAxis.EqualInterval(4, mn2, mx2);
                 _loading = true;
                 txtVar1.Text = _h.VariableName;
@@ -501,6 +503,9 @@ namespace WildlifeTools.Corridor
         }
 
         private void OnClose(object sender, RoutedEventArgs e) => Close();
+
+        private void OnHelp(object sender, RoutedEventArgs e)
+            => WebHelp.Open("corridor-designer-tools/cross-tab-statistics.html");
     }
 
     /// <summary>Modal per-axis class editor: a row per class (name, min,

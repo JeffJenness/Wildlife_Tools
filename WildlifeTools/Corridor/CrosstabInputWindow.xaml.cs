@@ -13,7 +13,7 @@ namespace WildlifeTools.Corridor
 {
     /// <summary>
     /// The Cross-Tab input dialog: single data source (one table / feature
-    /// class, two numeric fields, weighting choice) or two data sources
+    /// class, two numeric-or-text fields, weighting choice) or two data sources
     /// (polygon layers and/or rasters, with the raster-statistic choice
     /// for the polygon x raster case), plus the optional analysis-area
     /// polygon. Validates and returns a CrosstabDataReader.Request; the
@@ -102,15 +102,16 @@ namespace WildlifeTools.Corridor
         {
             var src = cboSource.SelectedItem as PolarPlotData.Source;
             if (src == null) return;
-            var fields = await QueuedTask.Run(() =>
-                HistogramData.NumericFields(src));
+            var (fields, numeric) = await QueuedTask.Run(() =>
+                (CrosstabDataReader.VariableFields(src),
+                 HistogramData.NumericFields(src)));
             cboField1.ItemsSource = fields;
             cboField2.ItemsSource = fields.ToList();
-            cboWeightField.ItemsSource = fields.ToList();
+            cboWeightField.ItemsSource = numeric;
             if (fields.Count > 0) cboField1.SelectedIndex = 0;
             if (fields.Count > 1) cboField2.SelectedIndex = 1;
             else if (fields.Count > 0) cboField2.SelectedIndex = 0;
-            if (fields.Count > 0) cboWeightField.SelectedIndex = 0;
+            if (numeric.Count > 0) cboWeightField.SelectedIndex = 0;
             bool isFc = src.FeatureLayer != null;
             rbWeightSize.IsEnabled = isFc && src.FeatureLayer.ShapeType !=
                 esriGeometryType.esriGeometryPoint;
@@ -146,7 +147,7 @@ namespace WildlifeTools.Corridor
                 return;
             }
             var fields = await QueuedTask.Run(() =>
-                HistogramData.NumericFields(src));
+                CrosstabDataReader.VariableFields(src));
             fieldCombo.ItemsSource = fields;
             fieldCombo.IsEnabled = true;
             if (fields.Count > 0) fieldCombo.SelectedIndex = 0;

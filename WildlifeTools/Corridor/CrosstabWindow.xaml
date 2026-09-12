@@ -56,8 +56,22 @@
                         Click="OnAddToLayout"
                         ToolTip="Place the table on the active layout (or map) as native, individually editable graphic elements."/>
             </StackPanel>
-            <Button Content="Close" HorizontalAlignment="Right" Padding="14,3"
-                    Click="OnClose"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <!-- online-help icon, GP-pane style -->
+                <Button x:Name="btnHelp" Margin="0,0,8,0"
+                        VerticalAlignment="Center" Width="20" Height="20"
+                        Padding="0" Background="Transparent" BorderThickness="0"
+                        Cursor="Hand" Click="OnHelp"
+                        ToolTip="Open the online help page for this tool">
+                    <Grid>
+                        <Ellipse Width="18" Height="18" Fill="#0079C1"/>
+                        <TextBlock Text="?" Foreground="White" FontWeight="Bold"
+                                   FontSize="12" HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" Margin="0,-1,0,0"/>
+                    </Grid>
+                </Button>
+                <Button Content="Close" Padding="14,3" Click="OnClose"/>
+            </StackPanel>
         </Grid>
 
         <!-- ============ table + options ============ -->
@@ -69,9 +83,15 @@
             <Border Grid.Column="0" BorderBrush="#66000000" BorderThickness="1"
                     Background="White" Padding="6">
                 <Grid>
-                    <Image x:Name="imgTable" Stretch="Uniform"
-                           StretchDirection="DownOnly"
-                           RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <!-- natural size + scroll bars: a many-category table
+                         must stay readable, not shrink to fit -->
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                                  VerticalScrollBarVisibility="Auto">
+                        <Image x:Name="imgTable" Stretch="None"
+                               HorizontalAlignment="Left"
+                               VerticalAlignment="Top"
+                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                    </ScrollViewer>
                     <TextBlock x:Name="txtHint" HorizontalAlignment="Center"
                                VerticalAlignment="Center" Opacity="0.55"
                                FontSize="14" TextAlignment="Center"

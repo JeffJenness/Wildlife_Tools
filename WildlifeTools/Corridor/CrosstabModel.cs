@@ -30,6 +30,11 @@ namespace WildlifeTools.Corridor
         public string WeightDesc = "Count";           // provenance word
         public List<string> SourceLines = new List<string>();  // report
 
+        // Categorical axes: code -> display label (a text field's distinct
+        // values, a coded-value domain, or a raster attribute table). Null
+        // = a plain numeric variable.
+        public Dictionary<double, string> Labels1, Labels2;
+
         public long Observations => V1.Length;
 
         public (double min, double max) Range1() => RangeOf(V1);
@@ -123,7 +128,8 @@ namespace WildlifeTools.Corridor
         /// GRIDCODE of 1, 2, 3 makes exactly three classes named
         /// "1", "2", "3".</summary>
         public static List<CrosstabClass> ForValues(
-            IReadOnlyList<double> values)
+            IReadOnlyList<double> values,
+            IReadOnlyDictionary<double, string> labels = null)
         {
             var list = new List<CrosstabClass>();
             foreach (var v in values)
@@ -131,8 +137,10 @@ namespace WildlifeTools.Corridor
                 {
                     Min = v,
                     Max = v,
-                    Name = HistogramMath.AxisNumber(v,
-                        v == Math.Floor(v) ? 1 : 0.01),
+                    Name = labels != null && labels.TryGetValue(v, out var s)
+                        ? s
+                        : HistogramMath.AxisNumber(v,
+                            v == Math.Floor(v) ? 1 : 0.01),
                 });
             return list;
         }

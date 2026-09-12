@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.99.5" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.99.6" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>WildlifeTools</Name>
     <Description>Wildlife analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -833,7 +833,7 @@
                 largeImage="Images\Crosstab_32.png"
                 keytip="XT">
           <tooltip heading="Cross-Tab Statistics">
-            Build a cross-tabulation (contingency) table -- a two-dimensional histogram showing how much of the landscape falls in each joint range of two variables. Sources: two numeric fields of one table or feature class (weighted equally, by an attribute, or by geodesic feature size); two polygon layers (intersection regions, area-weighted); two rasters (paired cell values); or a polygon layer against a raster, sampled per cell or per polygon with a zonal statistic. Optionally restrict everything to an analysis polygon -- features are clipped before their size is measured. Edit class names and ranges live, show counts / sizes (hectares, acres, ...) or percentages, flip rows and columns; copy the table, its image, or the full report, export the table to a geodatabase / dBASE / CSV, and place it on a layout as editable graphics. A modernized port of the CorridorDesigner Evaluation Tools' Cross-Tab Statistics. No Spatial Analyst needed.<disabledText />
+            Build a cross-tabulation (contingency) table -- a two-dimensional histogram showing how much of the landscape falls in each joint range of two variables. Sources: two fields of one table or feature class (weighted equally, by an attribute, or by geodesic feature size); two polygon layers (intersection regions, area-weighted); two rasters (paired cell values); or a polygon layer against a raster, sampled per cell or per polygon with a zonal statistic. Fields may be numeric or text: a text field such as ownership type or land-cover name becomes one named class per value, and a raster with an attribute table takes its class names from it, so land cover by ownership comes out labeled with no typing. Optionally restrict everything to an analysis polygon -- features are clipped before their size is measured. Edit class names and ranges live, show counts / sizes (hectares, acres, ...) or percentages, flip rows and columns; copy the table, its image, or the full report, export the table to a geodatabase / dBASE / CSV, and place it on a layout as editable graphics. A modernized port of the CorridorDesigner Evaluation Tools' Cross-Tab Statistics. No Spatial Analyst needed.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_CumulativeSurface"
