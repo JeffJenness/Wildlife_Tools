@@ -171,6 +171,10 @@
                                          TextChanged="OnOptionText"
                                          ToolTip="Upper edge of the last bin."/>
                             </StackPanel>
+                            <TextBlock x:Name="lblCategorical" Margin="0,6,0,0"
+                                       TextWrapping="Wrap" Opacity="0.8"
+                                       Visibility="Collapsed"
+                                       Text="Categorical data: one bar per class. Bins, range and density curves do not apply."/>
                             <CheckBox x:Name="chkAutoRange" Margin="0,6,0,0"
                                       Content="Track the data range automatically"
                                       IsChecked="True"
@@ -253,7 +257,8 @@
                                     ToolTip="Pick the selected dataset's color. The outline is derived automatically as a darker shade of the fill."/>
                             <Button Content="Bars on/off" Padding="6,2"
                                     Margin="0,0,4,4" Click="OnToggleBars"/>
-                            <Button Content="Curve on/off" Padding="6,2"
+                            <Button x:Name="btnToggleKde" Content="Curve on/off"
+                                    Padding="6,2"
                                     Margin="0,0,4,4" Click="OnToggleKde"
                                     ToolTip="Toggle the weighted kernel-density curve for the selected dataset."/>
                             <Button Content="Up" Padding="6,2" Margin="0,0,4,4"

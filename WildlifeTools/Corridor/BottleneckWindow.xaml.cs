@@ -1490,6 +1490,15 @@ namespace WildlifeTools.Corridor
                         "Class TEXT # 32 # #;Length_m DOUBLE # # # #;"
                         + "Min_Distance DOUBLE # # # #;"
                         + "Max_Distance DOUBLE # # # #"));
+                // Captured BEFORE the write: the EditOperation below leaves
+                // the new rows PENDING in the project's edit session (Pro
+                // then shows a "Pending Edits" alert in every other tool).
+                // Same rule as GpTables.WriteTable: commit them ourselves,
+                // but never silently commit the user's own unrelated
+                // pending edits along with them.
+                bool hadPriorEdits = false;
+                try { hadPriorEdits = ArcGIS.Desktop.Core.Project.Current.HasEdits; }
+                catch { }
                 await QueuedTask.Run(() =>
                 {
                     using (var gdb = OpenDatastore(target))
@@ -1535,6 +1544,11 @@ namespace WildlifeTools.Corridor
                                 op.ErrorMessage ?? "edit failed");
                     }
                 });
+                if (!hadPriorEdits)
+                {
+                    try { await ArcGIS.Desktop.Core.Project.Current.SaveEditsAsync(); }
+                    catch { }
+                }
                 await StampSavedDataset(target);
                 await AddSavedLayer(target, "Class", belowVal, aboveVal,
                     line: true);

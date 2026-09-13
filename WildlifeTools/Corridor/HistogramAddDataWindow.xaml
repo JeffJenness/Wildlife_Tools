@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
         Title="Add Data to Histogram"
-        Height="430" Width="470" MinHeight="430" MinWidth="470"
+        Width="470" SizeToContent="Height" MinHeight="240" MinWidth="470"
         ResizeMode="CanResizeWithGrip"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
     <controls:ProWindow.Resources>
@@ -45,7 +45,19 @@
             <TextBlock Grid.Column="0" Text="Value field:" Margin="0,0,8,0"
                        VerticalAlignment="Center"/>
             <ComboBox Grid.Column="1" x:Name="cboField"
-                      ToolTip="The numeric field whose values build the histogram."/>
+                      ToolTip="The field whose values build the histogram. A numeric field gives an ordinary binned histogram; a text field gives a categorical one with one bar per distinct value (owner type, vegetation class...). Categorical and numeric datasets cannot share one chart."/>
+        </Grid>
+
+        <Grid Grid.Row="2" x:Name="pnlClass" Margin="0,0,0,8"
+              Visibility="Collapsed">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Treat cells as:" Margin="0,0,8,0"
+                       VerticalAlignment="Center"/>
+            <ComboBox Grid.Column="1" x:Name="cboClass"
+                      ToolTip="Numeric cell values give an ordinary binned histogram (habitat suitability, elevation, distance). For a categorical raster such as land cover, choose the layer's symbology class labels or a text column of its attribute table instead: the chart then shows one bar per class, and classes are matched between datasets by NAME. A map-level Add Join is invisible here; use Join Field to write names into the attribute table."/>
         </Grid>
 
         <StackPanel Grid.Row="3" x:Name="pnlRecords" Orientation="Horizontal"

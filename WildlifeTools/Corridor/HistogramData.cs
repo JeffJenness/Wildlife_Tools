@@ -41,10 +41,28 @@ namespace WildlifeTools.Corridor
         private const int MicroBins = 65536;
         private const double AuthalicR = 6371007.181;   // meters
 
+        /// <summary>Raster class choice meaning "use the layer's unique-value
+        /// symbology labels" (the other choices are VAT text columns; null
+        /// = the numeric cell values).</summary>
+        public const string SymbologyLabels = "(symbology class labels)";
+
+        /// <summary>A field offered in the Add Data dialog: numeric fields
+        /// build ordinary histograms, text fields categorical ones.</summary>
+        public sealed class FieldChoice
+        {
+            public string Name;
+            public bool IsText;
+            public override string ToString() =>
+                IsText ? Name + "   [text: categorical]" : Name;
+        }
+
         public sealed class AddRequest
         {
             public PolarPlotData.Source Source;
             public string Field;              // features / tables
+            public string ClassField;         // rasters: null = cell values;
+                                              // SymbologyLabels; or a VAT
+                                              // text column (categorical)
             public bool SelectedOnly;
             public bool WeightBySize = true;
             public Polygon ClipPolygon;       // any SR; null = no clip
@@ -63,6 +81,8 @@ namespace WildlifeTools.Corridor
                 throw new InvalidOperationException(
                     "No usable values were found" +
                     (req.ClipPolygon != null ? " inside the clip polygon." : "."));
+            if (req.Source.IsRaster && !string.IsNullOrEmpty(req.ClassField))
+                CategorizeRaster(d, req);
             d.ComputeStats();
             if (!string.IsNullOrEmpty(req.ClipName))
                 d.Name += " [" + req.ClipName + "]";
@@ -190,6 +210,88 @@ namespace WildlifeTools.Corridor
             return d;
         }
 
+        /// <summary>Turn a numeric raster dataset into a categorical one:
+        /// every cell value becomes the class named by the layer's
+        /// symbology labels or by one VAT text column (several values
+        /// sharing a name merge into one class, exactly as Cross-Tab groups
+        /// them). Symbology classes keep the raster's value order; VAT
+        /// column classes are alphabetical. Values with no name fall into
+        /// a trailing "(unlabeled)" class rather than vanishing.</summary>
+        private static void CategorizeRaster(HistDataset d, AddRequest req)
+        {
+            var raster = req.Source.RasterLayer.GetRaster();
+            bool symbology = req.ClassField == SymbologyLabels;
+            var map = symbology
+                ? CrosstabDataReader.ColorizerLabels(req.Source.RasterLayer, raster)
+                : CrosstabDataReader.VatColumn(raster, req.ClassField);
+            if (map == null || map.Count == 0)
+                throw new InvalidOperationException(symbology
+                    ? "The layer has no unique-value symbology with class "
+                      + "labels. Symbolize it by unique values first, or "
+                      + "choose an attribute-table column."
+                    : "The attribute-table column '" + req.ClassField
+                      + "' has no text to group by.");
+            // class order: value order for symbology, alphabetical for a
+            // VAT column (the Cross-Tab convention)
+            var names = symbology
+                ? map.OrderBy(kv => kv.Key).Select(kv => kv.Value).Distinct().ToList()
+                : map.Values.Distinct()
+                     .OrderBy(t => t, StringComparer.CurrentCultureIgnoreCase)
+                     .ToList();
+            var code = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (int i = 0; i < names.Count; i++) code[names[i]] = i + 1;
+            // integer-keyed maps tolerate the pixel path's micro-bin means
+            bool intKeys = map.Keys.All(k => Math.Abs(k - Math.Round(k)) < 1e-9);
+            var totals = new double[names.Count + 2];   // +1 unlabeled slot
+            double unlabeled = 0;
+            for (int i = 0; i < d.Values.Length; i++)
+            {
+                double v = d.Values[i];
+                if (!map.TryGetValue(v, out string name) &&
+                    !(intKeys && map.TryGetValue(Math.Round(v), out name)))
+                { unlabeled += d.Weights[i]; continue; }
+                totals[code[name]] += d.Weights[i];
+            }
+            var labels = new Dictionary<double, string>();
+            var vals = new List<double>();
+            var wts = new List<double>();
+            for (int i = 0; i < names.Count; i++)
+            {
+                labels[i + 1] = names[i];
+                if (totals[i + 1] > 0) { vals.Add(i + 1); wts.Add(totals[i + 1]); }
+            }
+            if (unlabeled > 0)
+            {
+                labels[names.Count + 1] = "(unlabeled)";
+                vals.Add(names.Count + 1);
+                wts.Add(unlabeled);
+            }
+            d.Values = vals.ToArray();
+            d.Weights = wts.ToArray();
+            d.Labels = labels;
+            d.SourceDesc += symbology
+                ? "; classes from the layer's symbology labels"
+                : "; classes from attribute-table column [" + req.ClassField + "]";
+        }
+
+        /// <summary>The class groupings a raster layer offers (MCT): its
+        /// unique-value symbology labels when it has any, then every text
+        /// column of its attribute table.</summary>
+        public static List<string> RasterClassChoices(PolarPlotData.Source src)
+        {
+            var list = new List<string>();
+            try
+            {
+                var raster = src.RasterLayer?.GetRaster();
+                if (raster == null) return list;
+                var col = CrosstabDataReader.ColorizerLabels(src.RasterLayer, raster);
+                if (col != null && col.Count > 0) list.Add(SymbologyLabels);
+                list.AddRange(CrosstabDataReader.RasterLabelFields(src));
+            }
+            catch { }
+            return list;
+        }
+
         /// <summary>Stream valid cells: calls sink(value, weight) where
         /// weight is 0 (caller supplies flat weight) unless rowWeight is
         /// given (per-row area in m2).</summary>
@@ -287,6 +389,12 @@ namespace WildlifeTools.Corridor
                     throw new InvalidOperationException(
                         "Field not found: " + req.Field);
 
+                bool textField = def.GetFields()[fi].FieldType == FieldType.String;
+                // text field: each distinct string is a class; codes are
+                // assigned alphabetically once every row has been read
+                var textCode = new Dictionary<string, int>(StringComparer.Ordinal);
+                var textNames = new List<string>();
+
                 var fc = table as FeatureClass;
                 GeometryType shp = GeometryType.Unknown;
                 if (fc != null) shp = fc.GetDefinition().GetShapeType();
@@ -327,8 +435,23 @@ namespace WildlifeTools.Corridor
                             if ((done & 511) == 0) progress?.Invoke(-1);
                             object o = row[fi];
                             if (o == null || o is DBNull) continue;
-                            double v = Convert.ToDouble(o,
-                                CultureInfo.InvariantCulture);
+                            double v;
+                            if (textField)
+                            {
+                                string s = Convert.ToString(o,
+                                    CultureInfo.InvariantCulture).Trim();
+                                if (s.Length == 0) continue;
+                                if (!textCode.TryGetValue(s, out int c))
+                                {
+                                    c = textNames.Count + 1;
+                                    textCode[s] = c;
+                                    textNames.Add(s);
+                                }
+                                v = c;
+                            }
+                            else
+                                v = Convert.ToDouble(o,
+                                    CultureInfo.InvariantCulture);
                             double w = 1.0;
                             if (fc != null)
                             {
@@ -365,6 +488,30 @@ namespace WildlifeTools.Corridor
 
                 d.Values = vals.ToArray();
                 d.Weights = wts.ToArray();
+                if (textField && textNames.Count > 0)
+                {
+                    // renumber alphabetically and compress to one (code,
+                    // total) pair per class
+                    var sorted = textNames
+                        .OrderBy(t => t, StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+                    var newCode = new Dictionary<int, int>();
+                    for (int i = 0; i < sorted.Count; i++)
+                        newCode[textCode[sorted[i]]] = i + 1;
+                    var totals = new double[sorted.Count + 1];
+                    for (int i = 0; i < d.Values.Length; i++)
+                        totals[newCode[(int)d.Values[i]]] += d.Weights[i];
+                    var cv = new List<double>();
+                    var cw = new List<double>();
+                    d.Labels = new Dictionary<double, string>();
+                    for (int i = 0; i < sorted.Count; i++)
+                    {
+                        d.Labels[i + 1] = sorted[i];
+                        if (totals[i + 1] > 0) { cv.Add(i + 1); cw.Add(totals[i + 1]); }
+                    }
+                    d.Values = cv.ToArray();
+                    d.Weights = cw.ToArray();
+                }
                 d.Basis = !weight ? WeightBasis.Records
                     : shp == GeometryType.Polygon ? WeightBasis.AreaM2
                     : WeightBasis.LengthM;
@@ -442,16 +589,22 @@ namespace WildlifeTools.Corridor
                     "The clip layer did not produce a polygon.");
         }
 
-        /// <summary>Numeric fields of a feature layer / table source. MCT.</summary>
-        public static List<string> NumericFields(PolarPlotData.Source src)
+        /// <summary>Numeric fields only (weight fields, Cross-Tab). MCT.</summary>
+        public static List<string> NumericFields(PolarPlotData.Source src) =>
+            ValueFields(src).Where(f => !f.IsText).Select(f => f.Name).ToList();
+
+        /// <summary>Value fields of a feature layer / table source: numeric
+        /// fields first, then text fields (categorical). MCT.</summary>
+        public static List<FieldChoice> ValueFields(PolarPlotData.Source src)
         {
-            var names = new List<string>();
+            var names = new List<FieldChoice>();
             if (src.IsRaster) return names;
             Table t = null;
             try
             {
                 t = PolarPlotData.GetTable(src);
                 if (t == null) return names;
+                var texts = new List<FieldChoice>();
                 foreach (var f in t.GetDefinition().GetFields())
                     switch (f.FieldType)
                     {
@@ -460,9 +613,13 @@ namespace WildlifeTools.Corridor
                         case FieldType.BigInteger:
                         case FieldType.Single:
                         case FieldType.Double:
-                            names.Add(f.Name);
+                            names.Add(new FieldChoice { Name = f.Name });
+                            break;
+                        case FieldType.String:
+                            texts.Add(new FieldChoice { Name = f.Name, IsText = true });
                             break;
                     }
+                names.AddRange(texts);
             }
             catch { }
             finally { t?.Dispose(); }

@@ -41,12 +41,15 @@ namespace WildlifeTools.Corridor
             public bool ShowKde { get; set; }
             public double[] Values { get; set; }
             public double[] Weights { get; set; }
+            // categorical datasets (v2): parallel code / name arrays
+            public double[] LabelCodes { get; set; }
+            public string[] LabelNames { get; set; }
         }
 
         public sealed class FileDto
         {
             [JsonPropertyName("format")] public string Format { get; set; } = FormatName;
-            [JsonPropertyName("version")] public int Version { get; set; } = 1;
+            [JsonPropertyName("version")] public int Version { get; set; } = 2;
             public List<DatasetDto> Datasets { get; set; } = new List<DatasetDto>();
         }
 
@@ -69,6 +72,8 @@ namespace WildlifeTools.Corridor
                     ShowKde = d.ShowKde,
                     Values = d.Values,
                     Weights = d.Weights,
+                    LabelCodes = d.Labels?.Keys.ToArray(),
+                    LabelNames = d.Labels?.Values.ToArray(),
                 });
             File.WriteAllText(path, JsonSerializer.Serialize(dto));
         }
@@ -106,6 +111,14 @@ namespace WildlifeTools.Corridor
                 if (d.Values.Length != d.Weights.Length)
                     throw new InvalidOperationException(
                         "The preset's data arrays are inconsistent.");
+                if (x.LabelCodes != null && x.LabelNames != null &&
+                    x.LabelCodes.Length == x.LabelNames.Length &&
+                    x.LabelCodes.Length > 0)
+                {
+                    d.Labels = new Dictionary<double, string>();
+                    for (int i = 0; i < x.LabelCodes.Length; i++)
+                        d.Labels[x.LabelCodes[i]] = x.LabelNames[i] ?? "";
+                }
                 d.ComputeStats();
                 list.Add(d);
             }
@@ -143,14 +156,33 @@ namespace WildlifeTools.Corridor
             t.Schema.Add(("VARIANCE", "DOUBLE", 0, "Variance"));
             t.Schema.Add(("MEDIAN", "DOUBLE", 0, "Median"));
             t.Schema.Add(("SE_MEAN", "DOUBLE", 0, "Standard Error of the Mean"));
+            t.Schema.Add(("N_CLASSES", "LONG", 0, "Number of Classes (categorical)"));
+            t.Schema.Add(("TOP_CLASS", "TEXT", 254, "Largest Class (categorical)"));
+            t.Schema.Add(("TOP_PCT", "DOUBLE", 0, "Largest Class Percent (categorical)"));
             t.Schema.Add(("SOURCE", "TEXT", 254, "Source"));
             foreach (var d in ds)
             {
                 var s = d.Stats;
+                if (d.IsCategorical)
+                {
+                    // the value statistics describe CODES, not the classes:
+                    // left blank rather than reported as if they meant
+                    // something
+                    var (top, share) = HistogramMath.LargestCategory(d);
+                    double nan = double.NaN;
+                    t.Rows.Add(new object[]
+                    {
+                        d.Name, BasisWord(d), s.SumWeights, nan, nan, nan,
+                        nan, nan, nan, nan, nan, nan,
+                        d.CategoryNames().Count, top, share, d.SourceDesc,
+                    });
+                    continue;
+                }
                 t.Rows.Add(new object[]
                 {
                     d.Name, BasisWord(d), s.SumWeights, s.Sum, s.Mean, s.Min,
-                    s.Max, s.Range, s.SD, s.Var, s.Median, s.SE, d.SourceDesc,
+                    s.Max, s.Range, s.SD, s.Var, s.Median, s.SE,
+                    null, null, double.NaN, d.SourceDesc,
                 });
             }
             return t;
@@ -164,6 +196,7 @@ namespace WildlifeTools.Corridor
             var t = new TableSpec();
             t.Schema.Add(("DATASET", "TEXT", 254, "Dataset"));
             t.Schema.Add(("BIN", "LONG", 0, "Bin Number (1-based)"));
+            t.Schema.Add(("CLASS", "TEXT", 254, "Class Name (categorical)"));
             t.Schema.Add(("BIN_MIN", "DOUBLE", 0, "Bin Lower Edge"));
             t.Schema.Add(("BIN_MAX", "DOUBLE", 0, "Bin Upper Edge"));
             t.Schema.Add(("WEIGHT", "DOUBLE", 0, "Weight in Bin (cells / m2 / m / records)"));
@@ -171,12 +204,18 @@ namespace WildlifeTools.Corridor
                 "Value in the Display Unit (" +
                 HistogramMath.UnitLabel(o.Unit, ds) + ")"));
             t.Schema.Add(("PERCENT", "DOUBLE", 0, "Percent of Dataset"));
-            int bins = Math.Max(o.Bins, 1);
+            // categorical: one row per dataset x class on the SHARED class
+            // axis (a class the dataset lacks gets an explicit 0 row)
+            var cats = HistogramMath.UnionCategories(ds);
+            int bins = cats.Count > 0 ? cats.Count : Math.Max(o.Bins, 1);
             double w = (o.AxisMax - o.AxisMin) / bins;
             foreach (var d in ds)
             {
-                var tot = HistogramMath.BinTotals(d, bins, o.AxisMin, o.AxisMax,
-                                                  out _);
+                bool cat = d.IsCategorical && cats.Count > 0;
+                var tot = cat
+                    ? HistogramMath.CategoryTotals(d, cats)
+                    : HistogramMath.BinTotals(d, bins, o.AxisMin, o.AxisMax,
+                                              out _);
                 for (int b = 0; b < bins; b++)
                 {
                     double unitV = HistogramMath.ToUnit(tot[b], d, o.Unit,
@@ -184,7 +223,10 @@ namespace WildlifeTools.Corridor
                     if (double.IsNaN(unitV)) unitV = tot[b];
                     t.Rows.Add(new object[]
                     {
-                        d.Name, b + 1, o.AxisMin + b * w, o.AxisMin + (b + 1) * w,
+                        d.Name, b + 1,
+                        cat ? cats[b] : null,
+                        cat ? double.NaN : o.AxisMin + b * w,
+                        cat ? double.NaN : o.AxisMin + (b + 1) * w,
                         tot[b], unitV,
                         d.Stats.SumWeights > 0
                             ? tot[b] / d.Stats.SumWeights * 100.0 : 0.0,

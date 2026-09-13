@@ -20,6 +20,7 @@ namespace WildlifeTools.Corridor
     public partial class HistogramAddDataWindow
         : ArcGIS.Desktop.Framework.Controls.ProWindow
     {
+        private const string NumericCells = "(numeric cell values)";
         private List<PolarPlotData.Source> _sources = new List<PolarPlotData.Source>();
         private List<FeatureLayer> _clipLayers = new List<FeatureLayer>();
         internal HistogramData.AddRequest Result;   // null = cancelled
@@ -79,6 +80,8 @@ namespace WildlifeTools.Corridor
             bool raster = src.IsRaster;
             pnlField.Visibility = raster ? Visibility.Collapsed
                                          : Visibility.Visible;
+            pnlClass.Visibility = raster ? Visibility.Visible
+                                         : Visibility.Collapsed;
             pnlRecords.Visibility = pnlField.Visibility;
             expSample.Visibility = raster ? Visibility.Visible
                                           : Visibility.Collapsed;
@@ -93,9 +96,20 @@ namespace WildlifeTools.Corridor
             if (!raster)
             {
                 var fields = await QueuedTask.Run(() =>
-                    HistogramData.NumericFields(src));
+                    HistogramData.ValueFields(src));
                 cboField.ItemsSource = fields;
                 if (fields.Count > 0) cboField.SelectedIndex = 0;
+            }
+            else
+            {
+                // numeric cell values, or the layer's symbology labels /
+                // a VAT text column for a categorical raster
+                var items = new List<string> { NumericCells };
+                items.AddRange(await QueuedTask.Run(() =>
+                    HistogramData.RasterClassChoices(src)));
+                cboClass.ItemsSource = items;
+                cboClass.SelectedIndex = 0;
+                cboClass.IsEnabled = items.Count > 1;
             }
         }
 
@@ -109,13 +123,16 @@ namespace WildlifeTools.Corridor
             }
             if (!src.IsRaster && cboField.SelectedItem == null)
             {
-                MessageBoxText("Choose a numeric value field.");
+                MessageBoxText("Choose a value field.");
                 return;
             }
+            string cls = cboClass.SelectedItem as string;
             Result = new HistogramData.AddRequest
             {
                 Source = src,
-                Field = cboField.SelectedItem as string,
+                Field = (cboField.SelectedItem as HistogramData.FieldChoice)?.Name,
+                ClassField = src.IsRaster && cls != null && cls != NumericCells
+                             ? cls : null,
                 SelectedOnly = rbSelected.IsChecked == true,
                 WeightBySize = chkWeight.Visibility == Visibility.Visible
                                && chkWeight.IsChecked == true,

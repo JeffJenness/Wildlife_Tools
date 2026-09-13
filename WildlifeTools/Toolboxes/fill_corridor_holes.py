@@ -54,16 +54,19 @@ import land_facet_termini as _term
 
 DEFAULT_SUFFIX = "_holes_removed"
 
-UNIT_CHOICES = ["Square Meters", "Square Kilometers", "Square Feet",
-                "Square Miles"]
+UNIT_CHOICES = ["Square Meters", "Hectares", "Square Kilometers",
+                "Square Feet", "Acres", "Square Miles"]
 DEFAULT_UNITS = UNIT_CHOICES[0]
 
 # Exact conversions (1 ft = 0.3048 m and 1 mile = 5280 ft are exact by
-# definition; the sq-ft and sq-mile factors follow from squaring those).
+# definition; the sq-ft, acre (43,560 sq ft) and sq-mile factors follow
+# from squaring those).
 _UNIT_FACTORS_M2 = {
     "Square Meters": 1.0,
+    "Hectares": 10_000.0,
     "Square Kilometers": 1_000_000.0,
     "Square Feet": 0.09290304,
+    "Acres": 4_046.8564224,
     "Square Miles": 2_589_988.110336,
 }
 

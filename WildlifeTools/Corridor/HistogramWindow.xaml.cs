@@ -244,6 +244,79 @@ namespace WildlifeTools.Corridor
             if (keep >= 0 && keep < _datasets.Count)
                 lstDatasets.SelectedIndex = keep;
             RefreshUnitCombo();
+            ApplyModeUi();
+        }
+
+        // =================================================================
+        // categorical mode: one bar per class, no bins or curves
+        // =================================================================
+        private bool Categorical => _datasets.Any(d => d.IsCategorical);
+
+        /// <summary>Bins, axis range and density-curve controls apply only
+        /// to continuous data; in categorical mode they are disabled and a
+        /// one-line note says why.</summary>
+        private void ApplyModeUi()
+        {
+            bool cat = Categorical;
+            foreach (var c in new Control[] { txtBins, txtMin, txtMax,
+                chkAutoRange, chkCurvesOnly, sldBw, btnToggleKde })
+                c.IsEnabled = !cat;
+            int n = cat ? HistogramMath.UnionCategories(_datasets).Count : 0;
+            lblCategorical.Text = cat
+                ? string.Format("Categorical data: one bar per class ({0} "
+                    + "class{1}). Bins, range and density curves do not "
+                    + "apply.", n, n == 1 ? "" : "es")
+                : "";
+            lblCategorical.Visibility = cat ? Visibility.Visible
+                                            : Visibility.Collapsed;
+        }
+
+        /// <summary>A categorical dataset cannot share the X axis with a
+        /// continuous one (the axis is either a number line or a list of
+        /// classes). Null = compatible; else the message to show.</summary>
+        private string MixMessage(IEnumerable<HistDataset> incoming)
+        {
+            var all = _datasets.Concat(incoming).ToList();
+            bool anyCat = all.Any(d => d.IsCategorical);
+            bool anyNum = all.Any(d => !d.IsCategorical);
+            if (!(anyCat && anyNum)) return null;
+            bool haveCat = Categorical;
+            return haveCat
+                ? "This histogram holds categorical datasets (one bar per "
+                  + "class). A numeric dataset cannot share its axis. Remove "
+                  + "the categorical datasets first, or open a second "
+                  + "Histogram window for the numeric data."
+                : "This histogram holds numeric datasets. A categorical "
+                  + "dataset (one bar per class) cannot share their axis. "
+                  + "Remove the numeric datasets first, or open a second "
+                  + "Histogram window for the categorical data.";
+        }
+
+        /// <summary>Jeff: warn when the categorical datasets do not carry
+        /// the same set of classes -- an empty slot then means "none of
+        /// that class here", which is only meaningful if both datasets were
+        /// classified the same way.</summary>
+        private void WarnCategoryMismatch()
+        {
+            if (!Categorical || _datasets.Count(d => d.IsCategorical) < 2) return;
+            var miss = HistogramMath.MissingCategories(_datasets);
+            if (miss.Count == 0) return;
+            var sb = new StringBuilder();
+            sb.AppendLine("The datasets do not all carry the same classes:");
+            sb.AppendLine();
+            foreach (var (d, m) in miss)
+                sb.AppendLine("  '" + d.Name + "' has no:  "
+                              + string.Join(", ", m));
+            sb.AppendLine();
+            sb.Append("An empty slot on the chart means the dataset has none "
+                + "of that class. That is a real finding when both datasets "
+                + "were classified the same way (same attribute column or "
+                + "symbology); if they were not, the classes will not "
+                + "correspond and the comparison is not meaningful.");
+            txtStatus.Text = "Note: the datasets' class sets differ ("
+                + string.Join("; ", miss.Select(x =>
+                    "'" + x.d.Name + "' lacks " + x.missing.Count)) + ").";
+            MessageBox.Show(sb.ToString(), "Class sets differ");
         }
 
         // =================================================================
@@ -281,6 +354,13 @@ namespace WildlifeTools.Corridor
                     });
                 });
                 if (d == null || _closedDown) return;
+                string mix = MixMessage(new[] { d });
+                if (mix != null)
+                {
+                    txtStatus.Text = "Not added: " + d.Name;
+                    MessageBox.Show(mix, "Add Data to Histogram");
+                    return;
+                }
                 if (!string.IsNullOrEmpty(dlg.RequestedName) &&
                     req.ClipPolygon == null)
                     d.Name = dlg.RequestedName;
@@ -289,13 +369,22 @@ namespace WildlifeTools.Corridor
                 d.Fill = HistogramMath.PaletteFill(_palette);
                 d.Outline = HistogramMath.PaletteOutline(_palette);
                 _palette++;
+                if (d.IsCategorical && _datasets.Count == 0 &&
+                    txtXLabel.Text == "Habitat Suitability")
+                    txtXLabel.Text = "Class";     // the numeric default
                 _datasets.Add(d);
                 RefreshDatasetList(_datasets.Count - 1);
                 Rebuild();
-                txtStatus.Text = string.Format(CultureInfo.InvariantCulture,
-                    "Added '{0}': {1:#,##0} distinct value(s), total weight "
-                    + "{2:#,##0.###} ({3}).", d.Name, d.Values.Length,
-                    d.Stats.SumWeights, HistogramStore.BasisWord(d));
+                txtStatus.Text = d.IsCategorical
+                    ? string.Format(CultureInfo.InvariantCulture,
+                        "Added '{0}': {1:#,##0} class(es), total weight "
+                        + "{2:#,##0.###} ({3}).", d.Name, d.Values.Length,
+                        d.Stats.SumWeights, HistogramStore.BasisWord(d))
+                    : string.Format(CultureInfo.InvariantCulture,
+                        "Added '{0}': {1:#,##0} distinct value(s), total weight "
+                        + "{2:#,##0.###} ({3}).", d.Name, d.Values.Length,
+                        d.Stats.SumWeights, HistogramStore.BasisWord(d));
+                WarnCategoryMismatch();
             }
             catch (Exception ex)
             {
@@ -450,12 +539,26 @@ namespace WildlifeTools.Corridor
                         + "preset.", Title);
                     return;
                 }
+                string mix = MixMessage(loaded);
+                if (mix != null)
+                {
+                    MessageBox.Show(loaded.Any(d => d.IsCategorical) &&
+                                    loaded.Any(d => !d.IsCategorical)
+                        ? "The preset mixes categorical and numeric datasets, "
+                          + "which cannot share one chart. Nothing was loaded."
+                        : mix, Title);
+                    return;
+                }
+                if (_datasets.Count == 0 && loaded.Any(d => d.IsCategorical)
+                    && txtXLabel.Text == "Habitat Suitability")
+                    txtXLabel.Text = "Class";
                 _datasets.AddRange(loaded);
                 _palette += loaded.Count;
                 RefreshDatasetList(_datasets.Count - 1);
                 Rebuild();
                 txtStatus.Text = "Loaded " + loaded.Count + " dataset(s) from "
                     + Path.GetFileName(dlg.FileName);
+                WarnCategoryMismatch();
             }
             catch (Exception ex)
             { MessageBox.Show("Could not load: " + ex.Message, Title); }
@@ -636,6 +739,30 @@ namespace WildlifeTools.Corridor
                 total += "   (" + N(ha) + " ha = " + N(ha / 100.0) + " km2"
                     + (d.ApproxCellArea ? ", approx. cell area" : "") + ")";
             yield return total;
+            if (d.IsCategorical)
+            {
+                // per-class totals and shares; mean/SD of class CODES would
+                // be meaningless and are not shown
+                var totals = d.CategoryTotals();
+                var names = d.CategoryNames();
+                yield return "Classes: " + names.Count;
+                foreach (var name in names)
+                {
+                    totals.TryGetValue(name, out double w);
+                    double pct = s.SumWeights > 0 ? w / s.SumWeights * 100 : 0;
+                    double haC = HistogramMath.ToUnit(w, d, YUnit.Hectares, 1);
+                    yield return "   " + name + ":  " + N(w)
+                        + (double.IsNaN(haC) ? "" : " (" + N(haC) + " ha)")
+                        + "   " + pct.ToString("0.0#",
+                            CultureInfo.InvariantCulture) + "%";
+                }
+                var missing = HistogramMath.MissingCategories(_datasets)
+                    .FirstOrDefault(x => ReferenceEquals(x.d, d)).missing;
+                if (missing != null && missing.Count > 0)
+                    yield return "Classes present in other datasets but not "
+                        + "this one: " + string.Join(", ", missing);
+                yield break;
+            }
             yield return "Mean: " + N(s.Mean) + "   Median: " + N(s.Median)
                 + "   SD: " + N(s.SD) + "   SE: " + N(s.SE);
             yield return "Min: " + N(s.Min) + "   Max: " + N(s.Max)

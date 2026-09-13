@@ -38,6 +38,20 @@ namespace WildlifeTools.Corridor
 
             var visible = datasets.Where(d => d.Stats.SumWeights > 0).ToList();
 
+            // ---- categorical mode --------------------------------------
+            // One slot per CLASS instead of per bin; classes matched by
+            // name across datasets; no density curves (there is no order
+            // along the axis to smooth over). The window refuses to mix
+            // categorical and continuous datasets, so any = all here.
+            bool categorical = visible.Any(d => d.IsCategorical);
+            var cats = categorical
+                ? HistogramMath.UnionCategories(visible) : new List<string>();
+            double catLabelW = 0;              // widest class name, inches
+            bool tiltLabels = false;
+            if (categorical)
+                foreach (var c in cats)
+                    catLabelW = Math.Max(catLabelW, MeasureText(c, o.TickFont));
+
             // ---- margins ------------------------------------------------
             double top = o.ShowTitle && o.Title.Length > 0 ? 0.42 : 0.12;
             double yTickW = 0.60;
@@ -48,7 +62,17 @@ namespace WildlifeTools.Corridor
             if (o.ShowLegend && visible.Count > 0)
                 legendRows = LegendRows(visible, W - 0.4, o.LegendFont,
                                         MeasureText, out _);
-            double bottom = 0.24                       // x tick labels
+            double xTickH = 0.24;                      // x tick labels
+            if (categorical && cats.Count > 0)
+            {
+                // class names sit flat when they fit their slot; otherwise
+                // they tilt 45 degrees, and the margin grows to hold them
+                double slotW = Math.Max(W - left - right, 0.5) / cats.Count;
+                tiltLabels = catLabelW > slotW * 0.92;
+                if (tiltLabels)
+                    xTickH = 0.12 + Math.Min(catLabelW, 2.4) * 0.7071 + 0.08;
+            }
+            double bottom = xTickH
                 + (o.ShowXLabel ? 0.30 : 0.04)
                 + legendRows * legendRowH + (legendRows > 0 ? 0.10 : 0);
             double plotX = left, plotY = top;
@@ -57,7 +81,8 @@ namespace WildlifeTools.Corridor
 
             double axMin = o.AxisMin, axMax = o.AxisMax;
             if (axMax <= axMin) { axMin = 0; axMax = 1; }
-            int bins = Math.Max(o.Bins, 1);
+            int bins = categorical ? Math.Max(cats.Count, 1) : Math.Max(o.Bins, 1);
+            if (categorical) { axMin = 0; axMax = bins; }
             double binWidth = (axMax - axMin) / bins;
 
             // ---- per-dataset bin values in DISPLAY units ----------------
@@ -77,7 +102,9 @@ namespace WildlifeTools.Corridor
             var totalsUnit = new List<double>();
             foreach (var d in visible)
             {
-                var tot = HistogramMath.BinTotals(d, bins, axMin, axMax, out _);
+                var tot = categorical
+                    ? HistogramMath.CategoryTotals(d, cats)
+                    : HistogramMath.BinTotals(d, bins, axMin, axMax, out _);
                 double totalUnit = d.TotalInUnit(o.Unit, o.CustomMultiplier);
                 if (double.IsNaN(totalUnit)) totalUnit = d.Stats.SumWeights;
                 totalUnit *= CellFactor(d);
@@ -102,11 +129,11 @@ namespace WildlifeTools.Corridor
             // ---- KDE curves (display-unit scaled) -----------------------
             const int GridN = 257;
             var curves = new List<double[]>();
-            bool anyKde = false;
             for (int i = 0; i < visible.Count; i++)
             {
                 var d = visible[i];
-                if (!(d.ShowKde || o.CurvesOnly)) { curves.Add(null); continue; }
+                if (categorical || !(d.ShowKde || o.CurvesOnly))
+                { curves.Add(null); continue; }
                 var f = HistogramMath.Kde(d, axMin, axMax, GridN,
                                           o.KdeBandwidthMult, out _);
                 double scale = o.YPercent
@@ -114,14 +141,13 @@ namespace WildlifeTools.Corridor
                     : binWidth * totalsUnit[i];
                 for (int g = 0; g < GridN; g++) f[g] *= scale;
                 curves.Add(f);
-                anyKde = true;
             }
 
             // ---- y range ------------------------------------------------
             double yMax = 0;
             for (int i = 0; i < binVals.Count; i++)
             {
-                if (!o.CurvesOnly && visible[i].ShowBars)
+                if ((!o.CurvesOnly || categorical) && visible[i].ShowBars)
                     foreach (var v in binVals[i]) yMax = Math.Max(yMax, v);
                 if (curves[i] != null)
                     foreach (var v in curves[i]) yMax = Math.Max(yMax, v);
@@ -162,7 +188,7 @@ namespace WildlifeTools.Corridor
             double groupW = slot * (1 - gap);
             int nDs = Math.Max(visible.Count, 1);
             double barW = groupW / nDs;
-            if (!o.CurvesOnly)
+            if (!o.CurvesOnly || categorical)
                 for (int b = 0; b < bins; b++)
                 {
                     double gx = plotX + b * slot + slot * gap / 2;
@@ -220,9 +246,36 @@ namespace WildlifeTools.Corridor
                 StrokeWidthPt = 1.1,
             });
 
+            // ---- x ticks: class names under each slot (categorical) ----
+            if (categorical)
+                for (int b = 0; b < bins; b++)
+                {
+                    double xc = plotX + (b + 0.5) * slot;
+                    m.Elements.Add(new PolarElement
+                    {
+                        Kind = PolarElementKind.Line,
+                        Points = new List<PtIn>
+                        { P(xc, plotY + plotH), P(xc, plotY + plotH + 0.05) },
+                        Stroke = axis,
+                        StrokeWidthPt = 0.9,
+                    });
+                    if (tiltLabels)
+                    {
+                        // anchored at its END just under the tick, rotated
+                        // 45 degrees counter-clockwise so it reads up
+                        // toward the axis
+                        var t = Text(P(xc + 0.04, plotY + plotH + 0.10), cats[b],
+                                     o.TickFont, axis, TextAnchor.End);
+                        t.RotationDeg = -45;
+                        m.Elements.Add(t);
+                    }
+                    else
+                        m.Elements.Add(Text(P(xc, plotY + plotH + 0.16), cats[b],
+                                            o.TickFont, axis, TextAnchor.Middle));
+                }
             // ---- x ticks: bin edges, thinned to fit ---------------------
             int every = Math.Max(1, (int)Math.Ceiling(0.55 / slot));
-            for (int e = 0; e <= bins; e += every)
+            for (int e = 0; e <= bins && !categorical; e += every)
             {
                 double xv = axMin + e * binWidth;
                 double x = XPos(xv);
@@ -244,7 +297,8 @@ namespace WildlifeTools.Corridor
                 m.Elements.Add(Text(P(plotX + plotW / 2, 0.20), o.Title,
                                     o.TitleFont, axis, TextAnchor.Middle));
             if (o.ShowXLabel && o.XLabel.Length > 0)
-                m.Elements.Add(Text(P(plotX + plotW / 2, plotY + plotH + 0.42),
+                m.Elements.Add(Text(P(plotX + plotW / 2,
+                                      plotY + plotH + xTickH + 0.18),
                                     o.XLabel, o.LabelFont, axis,
                                     TextAnchor.Middle));
             if (o.ShowYLabel)
@@ -282,7 +336,7 @@ namespace WildlifeTools.Corridor
                     foreach (var (idx, width) in row)
                     {
                         var d = visible[idx];
-                        if (o.CurvesOnly)
+                        if (o.CurvesOnly && !categorical)
                             m.Elements.Add(new PolarElement
                             {
                                 Kind = PolarElementKind.Line,

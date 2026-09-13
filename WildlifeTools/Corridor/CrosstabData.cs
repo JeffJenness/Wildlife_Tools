@@ -964,8 +964,8 @@ namespace WildlifeTools.Corridor
 
         /// <summary>VALUE -> the text in one named VAT column (null when
         /// the column is missing or empty).</summary>
-        private static Dictionary<double, string> VatColumn(Raster r,
-                                                            string field)
+        internal static Dictionary<double, string> VatColumn(Raster r,
+                                                             string field)
         {
             Table vat = null;
             try
@@ -1070,7 +1070,7 @@ namespace WildlifeTools.Corridor
         /// joined Nlcd + Vegetation pair yields the vegetation class, not
         /// its coarse group). Null when there is no VAT or no string
         /// column.</summary>
-        private static Dictionary<double, string> VatLabels(Raster r)
+        internal static Dictionary<double, string> VatLabels(Raster r)
         {
             Table vat = null;
             try
@@ -1137,7 +1137,7 @@ namespace WildlifeTools.Corridor
         /// directly; classes drawn on another VAT column are mapped back to
         /// values through the VAT. Labels that merely repeat the value
         /// ("12") count as absent so the VAT can supply a real name.</summary>
-        private static Dictionary<double, string> ColorizerLabels(
+        internal static Dictionary<double, string> ColorizerLabels(
             BasicRasterLayer layer, Raster raster)
         {
             try

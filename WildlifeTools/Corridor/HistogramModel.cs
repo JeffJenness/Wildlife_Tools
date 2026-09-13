@@ -46,6 +46,34 @@ namespace WildlifeTools.Corridor
         public double[] Values = Array.Empty<double>();
         public double[] Weights = Array.Empty<double>();
 
+        /// <summary>Categorical datasets only: class code -> class name
+        /// (Values then hold the codes, one per class). Null = continuous.
+        /// Classes are matched BETWEEN datasets by NAME, never by code, so
+        /// two rasters coded differently still line up on the axis.</summary>
+        public Dictionary<double, string> Labels;
+        public bool IsCategorical => Labels != null;
+
+        /// <summary>Class names in this dataset's own order (code order:
+        /// raster value order for symbology labels, alphabetical for
+        /// VAT-column and text-field groupings).</summary>
+        public List<string> CategoryNames() =>
+            Labels == null ? new List<string>()
+            : Labels.OrderBy(kv => kv.Key).Select(kv => kv.Value).ToList();
+
+        /// <summary>Total weight per class name.</summary>
+        public Dictionary<string, double> CategoryTotals()
+        {
+            var t = new Dictionary<string, double>(StringComparer.Ordinal);
+            if (Labels == null) return t;
+            for (int i = 0; i < Values.Length; i++)
+            {
+                if (!Labels.TryGetValue(Values[i], out string name)) continue;
+                t.TryGetValue(name, out double cur);
+                t[name] = cur + Weights[i];
+            }
+            return t;
+        }
+
         public WeightBasis Basis = WeightBasis.Records;
         public double CellAreaM2;             // rasters; 0 = unknown
         public bool ApproxCellArea;           // geographic VAT rasters
@@ -301,6 +329,69 @@ namespace WildlifeTools.Corridor
                         return "Count";
                     return "Native units";
             }
+        }
+
+        // ---- categories --------------------------------------------------
+        /// <summary>The class axis shared by several categorical datasets:
+        /// the FIRST dataset's classes in its own order, then any class the
+        /// others add, in order of appearance. Names match exactly (case
+        /// and spacing included), since a name IS the class.</summary>
+        public static List<string> UnionCategories(IEnumerable<HistDataset> ds)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var list = new List<string>();
+            foreach (var d in ds)
+            {
+                if (!d.IsCategorical) continue;
+                foreach (var n in d.CategoryNames())
+                    if (seen.Add(n)) list.Add(n);
+            }
+            return list;
+        }
+
+        /// <summary>Per-class totals of one categorical dataset laid onto a
+        /// shared class axis (0 where the dataset lacks the class).</summary>
+        public static double[] CategoryTotals(HistDataset d,
+                                              IReadOnlyList<string> cats)
+        {
+            var tot = new double[cats.Count];
+            var own = d.CategoryTotals();
+            for (int i = 0; i < cats.Count; i++)
+                if (own.TryGetValue(cats[i], out double w)) tot[i] = w;
+            return tot;
+        }
+
+        /// <summary>The classes each dataset LACKS relative to the shared
+        /// axis -- empty when every dataset carries every class. This is
+        /// what the window warns about: a land-cover raster clipped to one
+        /// corridor may simply have no wetland, and the reader must know
+        /// whether an empty slot means "none there" or "different
+        /// classification".</summary>
+        public static List<(HistDataset d, List<string> missing)>
+            MissingCategories(IReadOnlyList<HistDataset> ds)
+        {
+            var cats = UnionCategories(ds);
+            var res = new List<(HistDataset, List<string>)>();
+            foreach (var d in ds)
+            {
+                if (!d.IsCategorical) continue;
+                var own = new HashSet<string>(d.CategoryNames(),
+                                              StringComparer.Ordinal);
+                var miss = cats.Where(c => !own.Contains(c)).ToList();
+                if (miss.Count > 0) res.Add((d, miss));
+            }
+            return res;
+        }
+
+        /// <summary>Name of the heaviest class and its share of the total
+        /// (share NaN when the dataset is not categorical or is empty).</summary>
+        public static (string name, double share) LargestCategory(HistDataset d)
+        {
+            var t = d.CategoryTotals();
+            if (t.Count == 0) return (null, double.NaN);
+            double sum = t.Values.Sum();
+            var top = t.OrderByDescending(kv => kv.Value).First();
+            return (top.Key, sum > 0 ? top.Value / sum * 100.0 : double.NaN);
         }
 
         // ---- binning -----------------------------------------------------
