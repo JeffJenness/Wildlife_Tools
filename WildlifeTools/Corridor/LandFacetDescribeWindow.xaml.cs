@@ -116,6 +116,9 @@ namespace WildlifeTools.Corridor
                 : "";
         }
 
+        private void OnWebHelp(object sender, RoutedEventArgs e)
+            => WebHelp.Open("corridor-designer-tools/corridor-analysis-data-report.html");
+
         private void OnBrowse(object sender, RoutedEventArgs e)
         {
             var dlg = new OpenItemDialog

@@ -18,6 +18,7 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <TextBlock Grid.Column="0" Text="Dataset:" VerticalAlignment="Center"
                        Margin="0,0,8,0"/>
@@ -28,6 +29,19 @@
             <Button Grid.Column="3" x:Name="btnDescribe" Content="Describe"
                     Margin="8,0,0,0" Padding="14,3" FontWeight="SemiBold"
                     Click="OnDescribe"/>
+            <!-- online-help icon, GP-pane style -->
+            <Button Grid.Column="4" x:Name="btnWebHelp" Margin="8,0,0,0"
+                    VerticalAlignment="Center" Width="20" Height="20"
+                    Padding="0" Background="Transparent" BorderThickness="0"
+                    Cursor="Hand" Click="OnWebHelp"
+                    ToolTip="Open the online help page for this tool">
+                <Grid>
+                    <Ellipse Width="18" Height="18" Fill="#0079C1"/>
+                    <TextBlock Text="?" Foreground="White" FontWeight="Bold"
+                               FontSize="12" HorizontalAlignment="Center"
+                               VerticalAlignment="Center" Margin="0,-1,0,0"/>
+                </Grid>
+            </Button>
         </Grid>
 
         <Border Grid.Row="1" BorderBrush="#66000000" BorderThickness="1">
