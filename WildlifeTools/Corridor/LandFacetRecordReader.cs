@@ -1250,23 +1250,45 @@ namespace WildlifeTools.Corridor
         {
             var rec = node.Record;
             var sources = Arr(rec, "sources").ToList();
+            var pars = O(rec, "params");
+            // per-feature mode (2026-09-14): every polygon feature counted
+            // as its own layer, so the unit count is the feature count
+            bool perFeature = pars.HasValue && B(pars.Value, "per_feature") == true;
+            int nUnits = 0;
+            foreach (var s in sources)
+            {
+                var nu = D(s, "n_units");
+                nUnits += nu.HasValue ? (int)nu.Value : 1;
+            }
             blocks.Add(new Block(HeadKind(node),
                 Header(node, "Cumulative surface of " + sources.Count
-                    + " layer" + (sources.Count == 1 ? "" : "s"))));
+                    + " layer" + (sources.Count == 1 ? "" : "s")
+                    + (perFeature && nUnits > sources.Count
+                        ? " (" + nUnits + " polygon features counted separately)"
+                        : ""))));
             AddOrigin(blocks, node);
 
-            blocks.Add(new Block(BlockKind.Body,
-                "A raster whose cell value counts how many of the input "
-                + "layers occur on that cell -- an estimate of the relative "
-                + "importance (or number of species served) of preserving "
-                + "that ground. Each LAYER counts at most once per cell: a "
-                + "polygon layer where any of its (selected) polygons "
-                + "covers the cell center, a raster where its value is "
-                + "neither NoData nor 0. A modernized port of the "
-                + "CorridorDesigner Evaluation Tools' Cumulative Surface "
-                + "Tool."));
+            blocks.Add(new Block(BlockKind.Body, perFeature
+                ? "A raster whose cell value counts how many of the input "
+                  + "polygon features (and rasters) occur on that cell -- an "
+                  + "estimate of the relative importance (or number of "
+                  + "corridors, facets or species served) of preserving that "
+                  + "ground. Every polygon FEATURE was counted as its own "
+                  + "layer: a cell's value is the number of (selected) "
+                  + "polygons covering its center, plus one for each raster "
+                  + "whose value there is neither NoData nor 0. A modernized "
+                  + "port of the CorridorDesigner Evaluation Tools' "
+                  + "Cumulative Surface Tool."
+                : "A raster whose cell value counts how many of the input "
+                  + "layers occur on that cell -- an estimate of the relative "
+                  + "importance (or number of species served) of preserving "
+                  + "that ground. Each LAYER counts at most once per cell: a "
+                  + "polygon layer where any of its (selected) polygons "
+                  + "covers the cell center, a raster where its value is "
+                  + "neither NoData nor 0. A modernized port of the "
+                  + "CorridorDesigner Evaluation Tools' Cumulative Surface "
+                  + "Tool."));
 
-            var pars = O(rec, "params");
             if (pars.HasValue)
             {
                 string lbl = S(pars.Value, "legend_label");

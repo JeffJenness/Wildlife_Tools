@@ -11629,12 +11629,15 @@ class CumulativeSurface(object):
             displayName="Output cumulative surface raster",
             name="out_raster", datatype="DERasterDataset",
             parameterType="Required", direction="Output")
-        use_selected = arcpy.Parameter(
-            displayName="Use only selected polygons (a layer with no "
-                        "selection uses all its polygons)",
-            name="use_selected", datatype="GPBoolean",
+        # Replaced the old "Use only selected polygons" switch (Jeff,
+        # 2026-09-14): Pro's own per-layer "Use the selected records"
+        # toggles made it redundant, and selections are now always honored.
+        per_feature = arcpy.Parameter(
+            displayName="Treat each polygon as a separate layer (a cell "
+                        "counts the polygons covering it)",
+            name="per_feature", datatype="GPBoolean",
             parameterType="Optional", direction="Input")
-        use_selected.value = False
+        per_feature.value = False
         legend_label = arcpy.Parameter(
             displayName="Legend label (optional -- e.g. Species, for a "
                         "legend reading \"3 Species\")",
@@ -11651,7 +11654,7 @@ class CumulativeSurface(object):
                         "input raster's, or 1/1000 of the extent)",
             name="cell_size", datatype="GPDouble",
             parameterType="Optional", direction="Input")
-        return [datasets, out_raster, use_selected, legend_label,
+        return [datasets, out_raster, per_feature, legend_label,
                 zero_to_nodata, cell_size]
 
     def isLicensed(self):
@@ -11709,7 +11712,7 @@ class CumulativeSurface(object):
             out_path, lyrx = cumulative_surface.run_cumulative_surface(
                 datasets=list(P["datasets"].values or []),
                 out_raster=P["out_raster"].valueAsText,
-                use_selected=bool(P["use_selected"].value),
+                per_feature=bool(P["per_feature"].value),
                 legend_label=P["legend_label"].valueAsText or "",
                 zero_to_nodata=bool(P["zero_to_nodata"].value),
                 cell_size=P["cell_size"].value,

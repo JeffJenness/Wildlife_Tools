@@ -28,6 +28,7 @@
     <!-- Step indicator: colored pill chips in a banded bar -->
     <Border DockPanel.Dock="Top" Margin="0,0,0,12" Background="#F1F3F6"
             BorderBrush="#E1E4E9" BorderThickness="1" CornerRadius="8" Padding="6,5">
+      <Grid>
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
         <Border x:Name="step1chip" Style="{StaticResource StepChip}">
           <TextBlock x:Name="step1lbl" Text="1  Setup" FontSize="13" />
@@ -45,6 +46,18 @@
           <TextBlock x:Name="step4lbl" Text="4  Facets" FontSize="13" />
         </Border>
       </StackPanel>
+      <!-- online-help icon, GP-pane style -->
+      <Button x:Name="btnWebHelp" HorizontalAlignment="Right" VerticalAlignment="Center"
+              Width="20" Height="20" Margin="0,0,4,0" Padding="0"
+              Background="Transparent" BorderThickness="0" Cursor="Hand"
+              Click="OnWebHelp" ToolTip="Open the online help page for this tool">
+        <Grid>
+          <Ellipse Width="18" Height="18" Fill="#0079C1" />
+          <TextBlock Text="?" Foreground="White" FontWeight="Bold" FontSize="12"
+                     HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0" />
+        </Grid>
+      </Button>
+      </Grid>
     </Border>
 
     <!-- Navigation -->
@@ -87,7 +100,7 @@
           <TextBlock Text="Clip to polygon (optional)" Style="{StaticResource H}" />
           <ComboBox x:Name="cboClip" DisplayMemberPath="Name"
                     SelectionChanged="OnClipChanged" />
-          <TextBlock Text="Restrict the analysis to a Wildland-Blocks polygon layer."
+          <TextBlock Text="Defines the facets from the cells inside these polygons (the Wildland Blocks); every cell of the raster can still be classified on step 4."
                      TextWrapping="Wrap" Foreground="#777" FontSize="11" Margin="0,2,0,0" />
 
           <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
@@ -235,6 +248,7 @@
           <RowDefinition Height="Auto" />
           <RowDefinition Height="Auto" />
           <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         <DockPanel Grid.Row="0" Margin="0,0,0,4" LastChildFill="False">
           <TextBlock Text="Every specified category is written into ONE combined raster; each facet gets a unique ID."
@@ -263,13 +277,19 @@
           <TextBlock Text="  (cells above this — too ambiguous — are left NoData; outliers too)"
                      VerticalAlignment="Center" Foreground="#777" FontSize="11" />
         </StackPanel>
-        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,8">
+        <CheckBox x:Name="chkWholeRaster" Grid.Row="3" Margin="0,0,0,8" IsChecked="True"
+                  Content="Classify every cell of the categorical raster (the clip polygon only defines the facets)"
+                  ToolTip="The original Land Facet Corridor Designer defined the facets from the cells inside the Wildland Blocks and then classified the ENTIRE landscape into them, so the density, diversity and Mahalanobis surfaces cover the ground between the blocks. Unchecked, only the cells inside the clip polygon are classified. Has no effect when no clip polygon was used." />
+        <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,0,0,8">
           <TextBlock Text="Output raster:" VerticalAlignment="Center" Margin="0,0,6,0" />
           <TextBox x:Name="txtOut" Width="380" VerticalAlignment="Center" />
           <Button x:Name="btnBrowse" Content="Browse..." Margin="6,0,0,0" Padding="8,2"
                   Click="OnBrowseOut" />
+          <Button x:Name="btnCopyReport" Content="Copy report" Margin="18,0,0,0"
+                  Padding="8,2" Click="OnCopyReport"
+                  ToolTip="Copy the facet report below (each facet, its name, how it was generated and its cell count) to the clipboard. The text can also be selected and copied directly." />
         </StackPanel>
-        <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,0,0,8">
+        <StackPanel Grid.Row="5" Orientation="Horizontal" Margin="0,0,0,8">
           <Button x:Name="btnGenerate" Content="Generate land facet raster from specified categories"
                   Padding="10,3" Click="OnGenerate" />
           <ProgressBar x:Name="pbGen" Width="150" Height="16" Margin="12,0"
@@ -277,12 +297,13 @@
           <TextBlock x:Name="txtGenInfo" VerticalAlignment="Center" Foreground="#555"
                      TextTrimming="CharacterEllipsis" />
         </StackPanel>
-        <Border Grid.Row="5" Height="118" BorderBrush="#DDD" BorderThickness="1"
+        <Border Grid.Row="6" Height="118" BorderBrush="#DDD" BorderThickness="1"
                 Background="#FAFAFA" Padding="10">
-          <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <TextBlock x:Name="txtFacetSummary" TextWrapping="Wrap" Foreground="#444"
-                       Text="Set outliers and clustering for each category (steps 2 and 3), then set the confusion threshold and output raster and click Generate." />
-          </ScrollViewer>
+          <!-- a read-only TextBox, not a TextBlock, so the report is selectable -->
+          <TextBox x:Name="txtFacetSummary" TextWrapping="Wrap" Foreground="#444"
+                   IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                   VerticalScrollBarVisibility="Auto"
+                   Text="Set outliers and clustering for each category (steps 2 and 3), then set the confusion threshold and output raster and click Generate." />
         </Border>
       </Grid>
     </Grid>

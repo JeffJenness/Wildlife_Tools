@@ -298,12 +298,20 @@ def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
     tot_safe = np.where(total > np.float32(0), total, ONE)
     valid_out = total > thr
     with np.errstate(invalid="ignore", divide="ignore"):
+        # ln(total) and S1/total are equal when one class fills the
+        # window, but not bit-for-bit in float32: the difference came out
+        # as -2.4e-7 (Jeff, 2026-09-13). Clamp H at 0, and the derived
+        # indices at their theoretical floors, so a pure window reads
+        # exactly 0 (H, Gini-Simpson) or exactly 1 (effective number).
+        ZERO = np.float32(0.0)
         if index == "SHANNON":
             out = np.where(valid_out,
-                           np.log(tot_safe) - S1 / tot_safe, NANF)
+                           np.maximum(np.log(tot_safe) - S1 / tot_safe, ZERO),
+                           NANF)
         elif index == "GINISIMPSON":
             out = np.where(valid_out,
-                           ONE - S2 / (tot_safe * tot_safe), NANF)
+                           np.maximum(ONE - S2 / (tot_safe * tot_safe), ZERO),
+                           NANF)
         elif index == "SIMPSON":
             out = np.where(valid_out,
                            S2 / (tot_safe * tot_safe), NANF)
@@ -311,7 +319,7 @@ def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
             if need_rich:
                 out = np.where(valid_out, rich, NANF)
             elif need_S1:
-                h = np.log(tot_safe) - S1 / tot_safe
+                h = np.maximum(np.log(tot_safe) - S1 / tot_safe, ZERO)
                 out = np.where(valid_out, np.exp(h), NANF)
             elif need_S2:
                 out = np.where(valid_out,

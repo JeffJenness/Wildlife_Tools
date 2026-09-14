@@ -133,6 +133,13 @@ namespace WildlifeTools.Corridor
         private bool _slopeResolved;    // percent-slope question answered
                                         // for the CURRENT stack
         private List<string> _varPaths = new();  // catalog paths, in VariableNames order
+        // The layers read on step 1, kept so step 4 can rebuild the stack WITHOUT
+        // the clip: the facets are defined inside the blocks, the whole raster is
+        // classified into them (the original tool's behavior, manual p. 35).
+        private LayerItem _catItem;
+        private List<LayerItem> _varItems = new();
+        private bool _clipUsed;
+        private RasterStack _fullStack;          // unclipped, built on demand
         private int _step = 1;
 
         // Batch state: one analysis per category, and the category being edited now.
@@ -577,6 +584,10 @@ namespace WildlifeTools.Corridor
                 if (_closedDown) return;
                 var stack = res.st;
                 _stack = stack;
+                _catItem = cat;
+                _varItems = vars;
+                _clipUsed = clipItem?.Feature != null;
+                _fullStack = null;
                 btnExportR.IsEnabled = true;
                 _varFlags = res.flags;
                 _slopeResolved = false;      // fresh data -> ask again
@@ -1306,23 +1317,48 @@ namespace WildlifeTools.Corridor
         }
 
         // ---- step 4: facets --------------------------------------------------
+        private void OnWebHelp(object sender, RoutedEventArgs e)
+            => WebHelp.Open("corridor-designer-tools/land-facet-clustering.html");
+
         private void OnBrowseOut(object sender, RoutedEventArgs e)
         {
-            var dlg = new Microsoft.Win32.SaveFileDialog
+            // Pro's own save browser, so the output can be a raster INSIDE a
+            // geodatabase as well as a GeoTIFF in a folder (Jeff, 2026-09-13:
+            // the Windows file dialog only ever offered a folder + .tif).
+            // A folder target with no extension becomes a .tif downstream
+            // (ResolveOutput); a geodatabase target is used exactly as given.
+            var dlg = new ArcGIS.Desktop.Catalog.SaveItemDialog
             {
-                Filter = "GeoTIFF (*.tif)|*.tif",
-                FileName = "land_facets.tif",
                 Title = "Save the land-facet raster",
+                Filter = ArcGIS.Desktop.Catalog.ItemFilters.Rasters,
+                DefaultExt = "",
+                OverwritePrompt = true,
             };
             try
             {
                 var proj = ArcGIS.Desktop.Core.Project.Current;
-                if (proj != null && !string.IsNullOrEmpty(proj.HomeFolderPath)
-                    && System.IO.Directory.Exists(proj.HomeFolderPath))
-                    dlg.InitialDirectory = proj.HomeFolderPath;
+                dlg.InitialLocation = proj?.DefaultGeodatabasePath
+                    ?? proj?.HomeFolderPath;
             }
-            catch { /* no project home */ }
-            if (dlg.ShowDialog() == true) txtOut.Text = dlg.FileName;
+            catch { /* no project */ }
+            if (dlg.ShowDialog() == true && !string.IsNullOrEmpty(dlg.FilePath))
+                txtOut.Text = dlg.FilePath;
+        }
+
+        /// <summary>Copy the facet report (every facet, its name, how it
+        /// was generated and its cell count) to the clipboard as plain
+        /// text; the report box itself is also selectable.</summary>
+        private void OnCopyReport(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Clipboard.SetText(txtFacetSummary.Text ?? "");
+                txtGenInfo.Text = "Report copied to the clipboard.";
+            }
+            catch (Exception ex)
+            {
+                txtGenInfo.Text = "Could not copy: " + ex.Message;
+            }
         }
 
         // Where the raster is written (a GeoTIFF the GDAL helper produces) and where
@@ -1565,6 +1601,37 @@ namespace WildlifeTools.Corridor
             if (target == null)
             { MessageBox.Show("Enter an output raster name or path.", "Land Facet Clustering"); return; }
 
+            // Whole-raster classification (default when a clip was used): the
+            // clusters, outlier threshold and standardization all come from the
+            // clipped sample; only the cells being CLASSIFIED change.
+            bool wholeRaster = _clipUsed && chkWholeRaster.IsChecked == true;
+            if (wholeRaster && _fullStack == null)
+            {
+                btnGenerate.IsEnabled = false;
+                txtGenInfo.Text = "Reading every cell of the raster (no clip)…";
+                SetStatus(txtGenInfo.Text);
+                try
+                {
+                    var catItem = _catItem; var varItems = _varItems;
+                    _fullStack = await QueuedTask.Run(() =>
+                    {
+                        var catRaster = catItem.Raster.GetRaster();
+                        var vlist = varItems.Select(v => (v.Raster.GetRaster(), v.Name)).ToList();
+                        return RasterStack.Build(catRaster, vlist, null);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    btnGenerate.IsEnabled = true;
+                    txtGenInfo.Text = "";
+                    MessageBox.Show("Could not read the unclipped raster: " + ex.Message,
+                        "Land Facet Clustering");
+                    return;
+                }
+                if (_closedDown) return;
+            }
+            var gridStack = wholeRaster ? _fullStack : _stack;
+
             int W = _stack.Width, H = _stack.Height;
             // The output grid is held as one flat int[], and cell indices are cast
             // down to int when the classified values are written back, so the cell
@@ -1611,7 +1678,12 @@ namespace WildlifeTools.Corridor
                     int k = a.ChosenK, off = offset;
                     var centers = a.CentroidsByC[k];
                     var kde = a.Kde; var mean = a.StdMean; var sd = a.StdSd; double psi = a.Psi;
+                    // the category's cells: every cell of the raster, or only the
+                    // clipped ones (a class absent outside the clip keeps its
+                    // clipped cells)
                     var data = a.Data;
+                    if (wholeRaster && gridStack.Classes.TryGetValue(a.Data.Value, out var full))
+                        data = full;
                     if (_closedDown) return;
                     var res = await Task.Run(() => ClassifyInto(
                         arr, off, data, centers, mean, sd, psi, kde, densThresh, confThresh, k));
@@ -1691,6 +1763,12 @@ namespace WildlifeTools.Corridor
                 sb.AppendLine($"{legend.Count} facets across {setItems.Count} "
                     + $"{Plural(setItems.Count, "category", "categories")} "
                     + $"(fuzziness {_psi:0.##}, confusion threshold {confThresh:0.##}).");
+                if (_clipUsed)
+                    sb.AppendLine(wholeRaster
+                        ? "Facets defined from the cells inside the clip polygon; every "
+                          + "cell of the raster classified into them."
+                        : "Facets defined from, and written for, the cells inside the "
+                          + "clip polygon only.");
                 sb.AppendLine();
                 foreach (var l in legend)
                     sb.AppendLine($"    Facet {l.id}:  {l.catLabel}, cluster {l.cluster}  ({l.count:N0} cells)");

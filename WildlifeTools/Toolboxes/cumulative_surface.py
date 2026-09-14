@@ -170,13 +170,47 @@ def _classify_inputs(datasets, messages):
     return out
 
 
-def _projected_extent(d, out_sr):
+def _dataset_extent(d, path):
+    """A dataset's extent, never None: Describe's cached extent first; a
+    fresh Describe of the catalog path when that is missing (seen 2026-09-13
+    on feature classes written moments earlier in the same session); and,
+    as the last resort, the union of the features' own envelopes."""
+    import arcpy
+
+    ext = getattr(d, "extent", None)
+    if ext is None and path:
+        try:
+            ext = arcpy.Describe(path).extent
+        except Exception:                                        # noqa: BLE001
+            ext = None
+    if ext is None and path:
+        xmin = ymin = xmax = ymax = None
+        sr = getattr(d, "spatialReference", None)
+        with arcpy.da.SearchCursor(path, ["SHAPE@"]) as cur:
+            for (g,) in cur:
+                if g is None:
+                    continue
+                e = g.extent
+                xmin = e.XMin if xmin is None else min(xmin, e.XMin)
+                ymin = e.YMin if ymin is None else min(ymin, e.YMin)
+                xmax = e.XMax if xmax is None else max(xmax, e.XMax)
+                ymax = e.YMax if ymax is None else max(ymax, e.YMax)
+        if xmin is not None:
+            ext = arcpy.Extent(xmin, ymin, xmax, ymax, spatial_reference=sr)
+    if ext is None:
+        raise arcpy.ExecuteError(
+            "{}: the extent of this input could not be determined (it may "
+            "be empty).".format(os.path.basename(str(path))))
+    return ext
+
+
+def _projected_extent(d, out_sr, path=None):
     """A dataset's extent as (xmin, ymin, xmax, ymax) in ``out_sr`` --
     projected through the densified extent polygon, so a curved projection
     edge cannot under-cover the true footprint."""
     import arcpy
 
-    ext = d.extent
+    ext = _dataset_extent(d, path)
     sr = getattr(ext, "spatialReference", None) or d.spatialReference
     if sr is None or _kd._same_cs(sr, out_sr):
         return ext.XMin, ext.YMin, ext.XMax, ext.YMax
@@ -222,7 +256,7 @@ def _build_grid(inputs, out_sr, cell_size, opened, messages):
             if best is None or min(cx, cy) < min(best[0]):
                 best = ((cx, cy), x0, y0)
         else:
-            exmin, eymin, exmax, eymax = _projected_extent(d, out_sr)
+            exmin, eymin, exmax, eymax = _projected_extent(d, out_sr, path)
         xmin = exmin if xmin is None else min(xmin, exmin)
         ymin = eymin if ymin is None else min(ymin, eymin)
         xmax = exmax if xmax is None else max(xmax, exmax)
@@ -374,6 +408,48 @@ def _polygon_geoms(ds, path, name, use_selected, out_sr, densify_step,
     return geoms, n_total, n_selected, use_sel
 
 
+def _rasterize_counts(gdal, geoms, out_sr, gt, proj, w, h, scratch):
+    """Int32 (H, W) grid of how many of ``geoms`` cover each cell center:
+    the same scratch-shapefile rasterization as ``hsm_tools._rasterize_mask``
+    but burned ADDITIVELY, so every polygon feature adds one where it lies.
+    One rasterization per layer whatever the feature count. A multipart
+    feature is one feature (its parts add once, together); several
+    single-part features that overlap each add their own one."""
+    import arcpy
+    from osgeo import ogr
+
+    sample_sr = geoms[0].spatialReference
+    same = (sample_sr is None or out_sr is None
+            or (sample_sr.factoryCode == out_sr.factoryCode
+                and sample_sr.name == out_sr.name))
+    if not same:
+        geoms = [g.projectAs(out_sr) for g in geoms]
+    shp = arcpy.CreateUniqueName("cum_feat.shp", scratch)
+    with _mh.neutral_grid_env():
+        arcpy.management.CopyFeatures(geoms, shp)
+    drv = gdal.GetDriverByName("MEM")
+    mds = drv.Create("", w, h, 1, gdal.GDT_Int32)
+    mds.SetGeoTransform(gt)
+    try:
+        mds.SetProjection(proj)
+    except Exception:                                            # noqa: BLE001
+        pass
+    vec = ogr.Open(shp)
+    try:
+        gdal.RasterizeLayer(mds, [1], vec.GetLayer(0), burn_values=[1],
+                            options=["MERGE_ALG=ADD"])
+    finally:
+        vec = None
+    mds.FlushCache()
+    cnt = mds.GetRasterBand(1).ReadAsArray().astype(np.int32)
+    mds = None
+    try:
+        arcpy.management.Delete(shp)
+    except Exception:                                            # noqa: BLE001
+        pass
+    return cnt
+
+
 # ---------------------------------------------------------------------------
 #  Output
 # ---------------------------------------------------------------------------
@@ -448,15 +524,22 @@ def _write_count_raster(gdal, path, gt, proj, counts, valid, classes,
 # ---------------------------------------------------------------------------
 #  Orchestrator
 # ---------------------------------------------------------------------------
-def run_cumulative_surface(datasets, out_raster, use_selected=False,
+def run_cumulative_surface(datasets, out_raster, per_feature=False,
                            legend_label="", zero_to_nodata=False,
-                           cell_size=None, messages=None):
+                           cell_size=None, messages=None, use_selected=None):
     """Build the cumulative "how many layers occur here" raster.
 
     ``datasets`` -- any mix of polygon feature layers/classes and rasters
-    (the multivalue GP parameter's values, or plain paths). ``use_selected``
-    honors each polygon MAP LAYER's selection (an empty selection means all
-    polygons, as the original documented). ``legend_label`` is the optional
+    (the multivalue GP parameter's values, or plain paths). Each polygon
+    MAP LAYER's selection is always honored (an empty selection means all
+    polygons, as the original documented) -- Pro's own per-layer "Use the
+    selected records" switch is the control. ``per_feature`` makes every
+    polygon FEATURE count as its own layer, so a cell's value is the number
+    of overlapping polygons (one feature class holding one corridor per
+    land facet is then eighteen strands, not one layer); unchecked, a layer
+    counts once wherever any of its polygons lies. ``use_selected`` is the
+    retired pre-2026-09-14 switch, accepted and ignored so old scripts
+    still run. ``legend_label`` is the optional
     word appended to each legend class ("Species" -> "3 Species").
     ``zero_to_nodata`` turns cells where no layer occurs into NoData instead
     of the white 0 class. ``cell_size`` overrides the original's automatic
@@ -474,9 +557,11 @@ def run_cumulative_surface(datasets, out_raster, use_selected=False,
     # pin every polygon layer's selection UP FRONT: a later input's
     # live selection can be dropped while earlier inputs are being
     # processed (standing rule, see mahalanobis.pin_selection)
-    pins = [(_mh.pin_selection(ds) if kind != "raster" and use_selected
-             else None)
+    pins = [(_mh.pin_selection(ds) if kind != "raster" else None)
             for kind, ds, _d, _path, _name in inputs]
+    if per_feature:
+        _say(messages, "Each polygon feature counts as its own layer "
+                       "(overlapping polygons add up).")
 
     # Output coordinate system: the first raster's, else the first layer's.
     out_sr = None
@@ -521,6 +606,7 @@ def run_cumulative_surface(datasets, out_raster, use_selected=False,
         densify_step = min(csx, csy) * 0.5
         sources_rec = []
         source_ids = []
+        n_units = 0        # layers, or features in per-feature mode
         for i, (kind, ds, d, path, name) in enumerate(inputs, start=1):
             entry = {"path": path, "type": kind}
             rec = _lnk.read(path, None)
@@ -529,6 +615,7 @@ def run_cumulative_surface(datasets, out_raster, use_selected=False,
             if entry["analysis_id"]:
                 source_ids.append(entry["analysis_id"])
             if kind == "raster":
+                n_units += 1
                 n_present = _raster_presence(counts, opened[path][0], path,
                                              gt, width, height, messages)
                 _say(messages,
@@ -537,15 +624,25 @@ def run_cumulative_surface(datasets, out_raster, use_selected=False,
                                                      n_present))
             else:
                 geoms, n_total, n_selected, sel_used = _polygon_geoms(
-                    ds, path, name, use_selected, out_sr, densify_step,
+                    ds, path, name, True, out_sr, densify_step,
                     messages, pin=pins[i - 1])
                 entry.update({"n_total": n_total, "n_selected": n_selected,
-                              "selected": sel_used})
-                if geoms:
+                              "selected": sel_used,
+                              "per_feature": bool(per_feature),
+                              "n_units": len(geoms) if per_feature else 1})
+                if geoms and per_feature:
+                    cnt = _rasterize_counts(gdal, geoms, out_sr, gt, proj,
+                                            width, height, scratch)
+                    counts += cnt.astype(counts.dtype)   # uint16 grid
+                    n_present = int((cnt > 0).sum())
+                    n_units += len(geoms)
+                    del cnt
+                elif geoms:
                     mask = _hsm._rasterize_mask(gdal, geoms, out_sr, gt, proj,
                                                 width, height, scratch)
                     counts[mask] += 1
                     n_present = int(mask.sum())
+                    n_units += 1
                     del mask
                 else:
                     n_present = 0
@@ -558,8 +655,10 @@ def run_cumulative_surface(datasets, out_raster, use_selected=False,
                 else:
                     ftxt = "all polygons"
                 _say(messages,
-                     "  {} of {}: {} ({}) -- present on {:,} cells.".format(
-                         i, len(inputs), name, ftxt, n_present))
+                     "  {} of {}: {} ({}{}) -- present on {:,} cells.".format(
+                         i, len(inputs), name, ftxt,
+                         ", each counted separately" if per_feature else "",
+                         n_present))
                 if n_present == 0:
                     _warn(messages,
                           "{} contributed no cells -- its polygons may not "
@@ -601,7 +700,7 @@ def run_cumulative_surface(datasets, out_raster, use_selected=False,
 
     tmp = arcpy.CreateUniqueName("cumulative.tif", scratch)
     present = _write_count_raster(gdal, tmp, gt, proj, counts, valid,
-                                  classes, len(inputs))
+                                  classes, max(n_units, max_count))
     del counts, valid
 
     src_list = ", ".join(
@@ -615,10 +714,14 @@ def run_cumulative_surface(datasets, out_raster, use_selected=False,
         title=os.path.basename(str(out_raster)),
         summary=(
             "Created by Cumulative Surface: each cell counts how many of "
-            "the {} input layers occur there (rasters count where their "
-            "value is neither NoData nor 0; polygon layers where a polygon "
-            "covers the cell center). Inputs: {}.{}{}".format(
-                len(inputs), src_list,
+            "the {} input {} occur there (rasters count where their "
+            "value is neither NoData nor 0; polygon{} where a polygon "
+            "covers the cell center). Inputs: {}.{}{}{}".format(
+                n_units if per_feature else len(inputs),
+                "layers and polygon features" if per_feature else "layers",
+                " features" if per_feature else " layers", src_list,
+                " Every polygon feature was counted as its own layer."
+                if per_feature else "",
                 " Cells where no layer occurs are NoData."
                 if zero_to_nodata else "",
                 " Legend label: {!r}.".format(word) if word else "")),
@@ -626,10 +729,13 @@ def run_cumulative_surface(datasets, out_raster, use_selected=False,
             "Cumulative surface -- a raster whose cell value equals the "
             "number of input polygon layers or rasters present on that "
             "cell, a means of estimating the relative importance (or "
-            "number of species served) of preserving that ground. Each "
-            "LAYER counts at most once per cell. A modernized port of the "
-            "CorridorDesigner Evaluation Tools' Cumulative Surface Tool. "
-            + _CD_CITATION),
+            "number of species served) of preserving that ground. "
+            + ("Every polygon FEATURE was counted as its own layer "
+               "(overlapping polygons add up). "
+               if per_feature else
+               "Each LAYER counts at most once per cell. ")
+            + "A modernized port of the CorridorDesigner Evaluation Tools' "
+            "Cumulative Surface Tool. " + _CD_CITATION),
         tags=("cumulative surface, overlap, count, corridor, patches, "
               "richness, CorridorDesigner, Corridor Designer, Jenness "
               "Enterprises"),
@@ -647,7 +753,8 @@ def run_cumulative_surface(datasets, out_raster, use_selected=False,
         source_analysis_ids=sorted(set(source_ids)),
         params={"zero_to_nodata": bool(zero_to_nodata),
                 "legend_label": word or None,
-                "use_selected": bool(use_selected),
+                "per_feature": bool(per_feature),
+                "selections_honored": True,
                 "cell_size": csx,
                 "grid": {"width": width, "height": height,
                          "spatial_reference": out_sr.name}}), messages)
