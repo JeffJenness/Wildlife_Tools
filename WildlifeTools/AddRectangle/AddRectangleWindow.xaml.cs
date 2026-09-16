@@ -23,24 +23,52 @@ namespace WildlifeTools
     {
         private CIMSymbolReference _symbol;
         private readonly BackgroundToolPrefs _prefs;
+        private readonly bool _isLayout;
+        private readonly double _metersPerPageUnit;
 
         /// <summary>The collected options, valid after the dialog returns true.</summary>
         internal AddRectangleOptions Result { get; private set; }
 
         /// <param name="defaultSymbol">The starting polygon symbol reference.</param>
+        /// <param name="isLayout">True on a layout (page units offered); false on a
+        /// map (the map unit offered).</param>
+        /// <param name="mapUnitName">Map only: the coordinate system's unit name.</param>
+        /// <param name="metersPerPageUnit">Layout only: meters per page unit.</param>
         /// <param name="prefs">Last-used parameters (persisted with the project);
         /// initialized from and written back to on OK. The name is never persisted.</param>
-        public AddRectangleWindow(CIMSymbolReference defaultSymbol, BackgroundToolPrefs prefs)
+        public AddRectangleWindow(CIMSymbolReference defaultSymbol, bool isLayout,
+            string mapUnitName, double metersPerPageUnit, BackgroundToolPrefs prefs)
         {
             InitializeComponent();
             _symbol = defaultSymbol;
             _prefs = prefs ?? new BackgroundToolPrefs();
+            _isLayout = isLayout;
+            _metersPerPageUnit = metersPerPageUnit > 0 ? metersPerPageUnit : 0.0254;
             FillTranspBox.Text = _prefs.FillTransparency.ToString(CultureInfo.CurrentCulture);
             OutlineTranspBox.Text = _prefs.OutlineTransparency.ToString(CultureInfo.CurrentCulture);
+            foreach (string label in BackgroundUnits.Choices(isLayout, mapUnitName))
+                UnitCombo.Items.Add(label);
+            UnitCombo.SelectedIndex = Math.Clamp(_prefs.SizeUnitIndex, 0, UnitCombo.Items.Count - 1);
             HorizExtentBox.Text = _prefs.HorizontalExtentPct.ToString(CultureInfo.CurrentCulture);
             VertExtentBox.Text = _prefs.VerticalExtentPct.ToString(CultureInfo.CurrentCulture);
             RoundingBox.Text = _prefs.RoundingPct.ToString(CultureInfo.CurrentCulture);
             UpdateSwatch();
+        }
+
+        /// <summary>Relabel the two size rows for the chosen unit, and swap their
+        /// values between the percent default (100) and the margin default (0) when
+        /// the user crosses from one kind of unit to the other.</summary>
+        private void OnUnitChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (HorizLabel == null || VertLabel == null || HorizExtentBox == null || VertExtentBox == null)
+                return;
+            bool linear = BackgroundUnits.IsLinear(UnitCombo.SelectedIndex);
+            HorizLabel.Text = linear ? "Horizontal margin:" : "Horizontal extent (%):";
+            VertLabel.Text = linear ? "Vertical margin:" : "Vertical extent (%):";
+            bool wasLinear = e.RemovedItems.Count > 0 &&
+                             !string.Equals(e.RemovedItems[0] as string, BackgroundUnits.PercentLabel);
+            if (e.RemovedItems.Count > 0 && wasLinear != linear)
+                HorizExtentBox.Text = VertExtentBox.Text = linear ? "0" : "100";
         }
 
         private void OnDesignSymbology(object sender, RoutedEventArgs e)
@@ -91,13 +119,16 @@ namespace WildlifeTools
 
         private void OnOk(object sender, RoutedEventArgs e)
         {
+            bool linear = BackgroundUnits.IsLinear(UnitCombo.SelectedIndex);
+            double lo = linear ? -1e9 : 0.01, hi = linear ? 1e9 : 100000;
             if (!TryParseNumber(FillTranspBox.Text, "Fill transparency", 0, 100, out double fillT) ||
                 !TryParseNumber(OutlineTranspBox.Text, "Outline transparency", 0, 100, out double outT) ||
-                !TryParseNumber(HorizExtentBox.Text, "Horizontal extent", 0.01, 100000, out double horiz) ||
-                !TryParseNumber(VertExtentBox.Text, "Vertical extent", 0.01, 100000, out double vert) ||
+                !TryParseNumber(HorizExtentBox.Text, linear ? "Horizontal margin" : "Horizontal extent", lo, hi, out double horiz) ||
+                !TryParseNumber(VertExtentBox.Text, linear ? "Vertical margin" : "Vertical extent", lo, hi, out double vert) ||
                 !TryParseNumber(RoundingBox.Text, "Rounding", 0, 100, out double rounding))
                 return;
 
+            int unit = Math.Max(0, UnitCombo.SelectedIndex);
             Result = new AddRectangleOptions
             {
                 Name = NameBox.Text,
@@ -106,6 +137,9 @@ namespace WildlifeTools
                 OutlineTransparency = outT,
                 HorizontalExtentPct = horiz,
                 VerticalExtentPct = vert,
+                UseMargins = linear,
+                HorizontalMargin = BackgroundUnits.ToContainerUnits(horiz, unit, _isLayout, _metersPerPageUnit),
+                VerticalMargin = BackgroundUnits.ToContainerUnits(vert, unit, _isLayout, _metersPerPageUnit),
                 RoundingPct = rounding,     // values above 50 are capped in the operation
             };
 
@@ -114,6 +148,7 @@ namespace WildlifeTools
             _prefs.OutlineTransparency = outT;
             _prefs.HorizontalExtentPct = horiz;
             _prefs.VerticalExtentPct = vert;
+            _prefs.SizeUnitIndex = unit;
             _prefs.RoundingPct = rounding;
 
             DialogResult = true;

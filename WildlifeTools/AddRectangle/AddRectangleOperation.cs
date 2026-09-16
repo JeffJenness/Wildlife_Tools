@@ -19,6 +19,12 @@ namespace WildlifeTools
         public double OutlineTransparency { get; set; }   // 0..100 (% transparent)
         public double HorizontalExtentPct { get; set; }   // 100 = exactly the extent width
         public double VerticalExtentPct { get; set; }     // 100 = exactly the extent height
+        /// <summary>True: the rectangle is the extent grown by the two margins below
+        /// (each side); false: the two percentages apply.</summary>
+        public bool UseMargins { get; set; }
+        /// <summary>Margins beyond the extent, ALREADY in container units.</summary>
+        public double HorizontalMargin { get; set; }
+        public double VerticalMargin { get; set; }
         public double RoundingPct { get; set; }           // corner radius as % of the smaller
                                                           // dimension; capped at 50 (= capsule /
                                                           // perfect circle on a square)
@@ -52,8 +58,12 @@ namespace WildlifeTools
 
             // Rectangle size from the extent percentages; guard degenerate extents
             // (e.g. a perfectly horizontal line element has zero height).
-            double w = ctx.Extent.Width * (opt.HorizontalExtentPct / 100.0);
-            double h = ctx.Extent.Height * (opt.VerticalExtentPct / 100.0);
+            double w = opt.UseMargins
+                ? ctx.Extent.Width + 2.0 * opt.HorizontalMargin
+                : ctx.Extent.Width * (opt.HorizontalExtentPct / 100.0);
+            double h = opt.UseMargins
+                ? ctx.Extent.Height + 2.0 * opt.VerticalMargin
+                : ctx.Extent.Height * (opt.VerticalExtentPct / 100.0);
             if (w <= 0 && h <= 0) { w = h = 1.0; }
             else if (w <= 0) { w = h * 0.01; }
             else if (h <= 0) { h = w * 0.01; }

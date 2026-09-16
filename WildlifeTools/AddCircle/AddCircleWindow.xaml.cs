@@ -22,6 +22,8 @@ namespace WildlifeTools
     {
         private CIMSymbolReference _symbol;
         private readonly BackgroundToolPrefs _prefs;
+        private readonly bool _isLayout;
+        private readonly double _metersPerPageUnit;
 
         /// <summary>The collected options, valid after the dialog returns true.</summary>
         internal AddCircleOptions Result { get; private set; }
@@ -29,20 +31,45 @@ namespace WildlifeTools
         /// <param name="showFocalOption">Show the focal-point checkbox (single element
         /// with a focal point selected).</param>
         /// <param name="defaultSymbol">The starting polygon symbol reference.</param>
+        /// <param name="isLayout">True on a layout (page units offered); false on a
+        /// map (the map unit offered).</param>
+        /// <param name="mapUnitName">Map only: the coordinate system's unit name.</param>
+        /// <param name="metersPerPageUnit">Layout only: meters per page unit.</param>
         /// <param name="prefs">Last-used parameters (persisted with the project);
         /// initialized from and written back to on OK. The name is never persisted.</param>
         public AddCircleWindow(bool showFocalOption, CIMSymbolReference defaultSymbol,
+            bool isLayout, string mapUnitName, double metersPerPageUnit,
             BackgroundToolPrefs prefs)
         {
             InitializeComponent();
             _symbol = defaultSymbol;
             _prefs = prefs ?? new BackgroundToolPrefs();
+            _isLayout = isLayout;
+            _metersPerPageUnit = metersPerPageUnit > 0 ? metersPerPageUnit : 0.0254;
             FocalCheck.Visibility = showFocalOption ? Visibility.Visible : Visibility.Collapsed;
             FillTranspBox.Text = _prefs.FillTransparency.ToString(CultureInfo.CurrentCulture);
             OutlineTranspBox.Text = _prefs.OutlineTransparency.ToString(CultureInfo.CurrentCulture);
+            foreach (string label in BackgroundUnits.Choices(isLayout, mapUnitName))
+                UnitCombo.Items.Add(label);
+            UnitCombo.SelectedIndex = Math.Clamp(_prefs.SizeUnitIndex, 0, UnitCombo.Items.Count - 1);
             RadiusBox.Text = _prefs.RadiusPercent.ToString(CultureInfo.CurrentCulture);
             FocalCheck.IsChecked = _prefs.UseFocalPoint;
             UpdateSwatch();
+        }
+
+        /// <summary>Relabel the radius row for the chosen unit, and swap the value
+        /// between the percent default (100) and the margin default (0) when the
+        /// user crosses from one kind of unit to the other.</summary>
+        private void OnUnitChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (RadiusLabel == null || RadiusBox == null)
+                return;
+            bool linear = BackgroundUnits.IsLinear(UnitCombo.SelectedIndex);
+            RadiusLabel.Text = linear ? "Radius margin:" : "Radius (% of extent):";
+            bool wasLinear = e.RemovedItems.Count > 0 &&
+                             !string.Equals(e.RemovedItems[0] as string, BackgroundUnits.PercentLabel);
+            if (e.RemovedItems.Count > 0 && wasLinear != linear)
+                RadiusBox.Text = linear ? "0" : "100";
         }
 
         private void OnDesignSymbology(object sender, RoutedEventArgs e)
@@ -96,9 +123,11 @@ namespace WildlifeTools
 
         private void OnOk(object sender, RoutedEventArgs e)
         {
+            bool linear = BackgroundUnits.IsLinear(UnitCombo.SelectedIndex);
             if (!TryParsePercent(FillTranspBox.Text, "Fill transparency", 0, 100, out double fillT) ||
                 !TryParsePercent(OutlineTranspBox.Text, "Outline transparency", 0, 100, out double outT) ||
-                !TryParsePercent(RadiusBox.Text, "Radius", 0.01, 100000, out double radius))
+                !TryParsePercent(RadiusBox.Text, linear ? "Radius margin" : "Radius",
+                                 linear ? -1e9 : 0.01, linear ? 1e9 : 100000, out double radius))
                 return;
 
             Result = new AddCircleOptions
@@ -108,6 +137,9 @@ namespace WildlifeTools
                 FillTransparency = fillT,
                 OutlineTransparency = outT,
                 RadiusPercent = radius,
+                UseMargin = linear,
+                RadiusMargin = BackgroundUnits.ToContainerUnits(
+                    radius, UnitCombo.SelectedIndex, _isLayout, _metersPerPageUnit),
                 UseFocalPoint = FocalCheck.Visibility == Visibility.Visible && FocalCheck.IsChecked == true,
             };
 
@@ -115,6 +147,7 @@ namespace WildlifeTools
             _prefs.FillTransparency = fillT;
             _prefs.OutlineTransparency = outT;
             _prefs.RadiusPercent = radius;
+            _prefs.SizeUnitIndex = Math.Max(0, UnitCombo.SelectedIndex);
             if (FocalCheck.Visibility == Visibility.Visible)
                 _prefs.UseFocalPoint = FocalCheck.IsChecked == true;
 

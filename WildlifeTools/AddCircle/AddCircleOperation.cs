@@ -20,6 +20,11 @@ namespace WildlifeTools
         public double FillTransparency { get; set; }      // 0..100 (% transparent)
         public double OutlineTransparency { get; set; }   // 0..100 (% transparent)
         public double RadiusPercent { get; set; }         // 100 = circle exactly contains the extent
+        /// <summary>True: the radius is the containing circle's radius PLUS
+        /// <see cref="RadiusMargin"/>; false: <see cref="RadiusPercent"/> applies.</summary>
+        public bool UseMargin { get; set; }
+        /// <summary>Margin beyond the containing circle, ALREADY in container units.</summary>
+        public double RadiusMargin { get; set; }
         public bool UseFocalPoint { get; set; }
     }
 
@@ -232,7 +237,9 @@ namespace WildlifeTools
             // it equals max(width, height) / 2. Using the corners (half-diagonal) instead
             // overshoots by a factor of sqrt(2).
             double r100 = MaxEdgeMidpointDistance(cx, cy, ctx.Extent);
-            double radius = r100 * (opt.RadiusPercent / 100.0);
+            double radius = opt.UseMargin
+                ? r100 + opt.RadiusMargin                  // linear margin beyond the containing circle
+                : r100 * (opt.RadiusPercent / 100.0);
             if (radius <= 0)
                 radius = r100 > 0 ? r100 * 0.01 : 1.0;   // guard against a zero/degenerate radius
 

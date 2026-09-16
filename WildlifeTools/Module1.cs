@@ -34,10 +34,12 @@ namespace WildlifeTools
     {
         public double FillTransparency { get; set; }             // all tools
         public double OutlineTransparency { get; set; }          // all tools
-        public double RadiusPercent { get; set; } = 100;         // circle
+        public double RadiusPercent { get; set; } = 100;         // circle (raw value; % or margin)
         public bool UseFocalPoint { get; set; } = true;          // circle
-        public double HorizontalExtentPct { get; set; } = 100;   // rectangle
-        public double VerticalExtentPct { get; set; } = 100;     // rectangle
+        public double HorizontalExtentPct { get; set; } = 100;   // rectangle (raw value; % or margin)
+        public double VerticalExtentPct { get; set; } = 100;     // rectangle (raw value; % or margin)
+        public int SizeUnitIndex { get; set; }                   // circle + rectangle: 0 = % of extent,
+                                                                 // 1.. = BackgroundUnits linear units
         public double RoundingPct { get; set; }                  // rectangle
         public bool UseSymbolizedShape { get; set; }             // polygon
         public double BufferValue { get; set; }                  // polygon (raw value)

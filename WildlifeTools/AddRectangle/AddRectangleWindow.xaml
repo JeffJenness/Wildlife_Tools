@@ -20,6 +20,7 @@
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
 
     <!-- Graphic name (optional) -->
@@ -49,23 +50,29 @@
     <TextBox Grid.Row="3" Grid.Column="1" x:Name="OutlineTranspBox" Text="0" Margin="0,0,0,10"
              ToolTip="0–100. Applies to the boundary outline only; the fill is unaffected." />
 
-    <!-- Horizontal extent -->
-    <TextBlock Grid.Row="4" Grid.Column="0" Text="Horizontal extent (%):" VerticalAlignment="Center" Margin="0,0,10,10" />
-    <TextBox Grid.Row="4" Grid.Column="1" x:Name="HorizExtentBox" Text="100" Margin="0,0,0,10"
-             ToolTip="Rectangle width as a percentage of the selected extent's width. 100% matches the extent." />
+    <!-- Size units: percent of the extent, or a linear margin beyond it -->
+    <TextBlock Grid.Row="4" Grid.Column="0" Text="Size units:" VerticalAlignment="Center" Margin="0,0,10,10" />
+    <ComboBox Grid.Row="4" Grid.Column="1" x:Name="UnitCombo" HorizontalAlignment="Left" Width="160" Margin="0,0,0,10"
+              SelectionChanged="OnUnitChanged"
+              ToolTip="Size the rectangle as percentages of the selected extent, or as margins in page or map units added beyond it on every side." />
 
-    <!-- Vertical extent -->
-    <TextBlock Grid.Row="5" Grid.Column="0" Text="Vertical extent (%):" VerticalAlignment="Center" Margin="0,0,10,10" />
-    <TextBox Grid.Row="5" Grid.Column="1" x:Name="VertExtentBox" Text="100" Margin="0,0,0,10"
-             ToolTip="Rectangle height as a percentage of the selected extent's height. 100% matches the extent." />
+    <!-- Horizontal extent / margin -->
+    <TextBlock Grid.Row="5" Grid.Column="0" x:Name="HorizLabel" Text="Horizontal extent (%):" VerticalAlignment="Center" Margin="0,0,10,10" />
+    <TextBox Grid.Row="5" Grid.Column="1" x:Name="HorizExtentBox" Text="100" Margin="0,0,0,10"
+             ToolTip="As a percent: rectangle width as a percentage of the selected extent's width (100% matches the extent). In a linear unit: the margin added beyond the extent on the left and on the right." />
+
+    <!-- Vertical extent / margin -->
+    <TextBlock Grid.Row="6" Grid.Column="0" x:Name="VertLabel" Text="Vertical extent (%):" VerticalAlignment="Center" Margin="0,0,10,10" />
+    <TextBox Grid.Row="6" Grid.Column="1" x:Name="VertExtentBox" Text="100" Margin="0,0,0,10"
+             ToolTip="As a percent: rectangle height as a percentage of the selected extent's height (100% matches the extent). In a linear unit: the margin added beyond the extent at the top and at the bottom." />
 
     <!-- Corner rounding -->
-    <TextBlock Grid.Row="6" Grid.Column="0" Text="Rounding (%):" VerticalAlignment="Center" Margin="0,0,10,12" />
-    <TextBox Grid.Row="6" Grid.Column="1" x:Name="RoundingBox" Text="0" Margin="0,0,0,12"
+    <TextBlock Grid.Row="7" Grid.Column="0" Text="Rounding (%):" VerticalAlignment="Center" Margin="0,0,10,12" />
+    <TextBox Grid.Row="7" Grid.Column="1" x:Name="RoundingBox" Text="0" Margin="0,0,0,12"
              ToolTip="Corner radius as a percentage of the rectangle's smaller dimension. 0 = square corners; 50 = fully rounded (a square becomes a circle). Values above 50 are capped at 50." />
 
     <!-- Buttons -->
-    <StackPanel Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal"
+    <StackPanel Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal"
                 HorizontalAlignment="Right">
       <Button Content="OK" Click="OnOk" Width="84" Margin="0,0,8,0" IsDefault="True" />
       <Button Content="Cancel" Click="OnCancel" Width="84" IsCancel="True" />

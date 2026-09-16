@@ -114,14 +114,92 @@ def index_label(index, q):
         q, " (" + named + ")" if named else ""))
 
 
+def vat_class_fields(in_raster):
+    """Text and integer columns of the raster's attribute table that a user
+    could classify by -- everything except the value, count and object-id
+    columns. [] when the raster has no attribute table (the dialog then
+    offers only "Value"). Names are returned as stored."""
+    import arcpy
+    try:
+        fields = arcpy.ListFields(in_raster)
+    except Exception:                                            # noqa: BLE001
+        return []
+    out = []
+    for f in fields or []:
+        nm = (f.name or "").strip()
+        if not nm or nm.lower() in ("value", "count", "objectid", "oid"):
+            continue
+        if f.type in ("String", "SmallInteger", "Integer"):
+            out.append(nm)
+    return out
+
+
+def _regroup_by_field(arcpy, in_raster, a, valid, cats, class_field,
+                      messages):
+    """Relabel the cells of ``a`` by ``class_field`` of the raster's
+    attribute table: every distinct value of that column becomes one class,
+    numbered 1..k in sorted order; a blank entry is its own class; a raster
+    value with no row in the table keeps a class of its own, with a warning.
+    Returns (relabeled int32 array, its sorted class codes, a note for the
+    messages/metadata)."""
+    fields = {f.name.lower(): f.name for f in arcpy.ListFields(in_raster)}
+    vname = fields.get("value")
+    fname = fields.get(class_field.lower())
+    if vname is None or fname is None:
+        raise arcpy.ExecuteError(
+            "The raster's attribute table has no field named {!r} (or no "
+            "Value field); choose Value to classify by the cell values "
+            "themselves.".format(class_field))
+    lookup = {}
+    with arcpy.da.SearchCursor(in_raster, [vname, fname]) as cur:
+        for v, lab in cur:
+            if v is None:
+                continue
+            lab = "" if lab is None else str(lab).strip()
+            lookup[float(v)] = lab if lab else "(blank)"
+    labels_by_cat = []
+    missing = 0
+    for v in cats.tolist():
+        lab = lookup.get(float(v))
+        if lab is None:
+            lab = "value " + ("{:g}".format(v) if isinstance(v, float) else str(v))
+            missing += 1
+        labels_by_cat.append(lab)
+    names = sorted(set(labels_by_cat), key=lambda t: t.lower())
+    code_of = {nm: i + 1 for i, nm in enumerate(names)}
+    per_cat = np.array([code_of[lab] for lab in labels_by_cat], dtype=np.int32)
+    idx = np.searchsorted(cats, a[valid])
+    out = np.zeros(a.shape, dtype=np.int32)
+    out[valid] = per_cat[idx]
+    if missing:
+        _warn(messages,
+              "{:,} raster value(s) have no row in the attribute table and "
+              "were kept as classes of their own.".format(missing))
+    _say(messages,
+         "{:,} raster values classified by the attribute field {!r} into "
+         "{:,} classes: {}.".format(int(cats.size), class_field, len(names),
+                                    "; ".join(names)))
+    note = " (classified by the attribute field {!r}: {} classes)".format(
+        class_field, len(names))
+    return out, np.arange(1, len(names) + 1, dtype=np.int32), note
+
+
 def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
                   neighborhood="Circle", radius=3.0, width=3.0, height=3.0,
                   inner_radius=1.0, outer_radius=3.0,
                   start_angle=0.0, end_angle=90.0,
                   nbr_units="Cells", kernel_file=None,
-                  exclude_if_any_null=False, messages=None):
+                  exclude_if_any_null=False, messages=None,
+                  class_field=None):
     """Compute a neighborhood diversity index for a categorical raster. See the
-    module docstring and the tool help for the measures and conventions."""
+    module docstring and the tool help for the measures and conventions.
+
+    ``class_field`` (2026-09-16): a column of the raster's attribute table to
+    classify by. None / "Value" = every distinct cell value is its own class
+    (the original behavior). Otherwise every cell is relabeled by that
+    column's value before the neighborhood counting, so a 26-class
+    vegetation raster with an NLCD column becomes its 10 NLCD groups --
+    the same regrouping the Cross-Tab Statistics window offers."""
     import arcpy
 
     index = str(index).upper()
@@ -194,6 +272,11 @@ def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
     # ---- classes -------------------------------------------------------------
     _mh.phase_advance("Finding the classes...")
     cats = np.unique(a[valid])
+    group_note = ""
+    if class_field and str(class_field).strip().lower() != "value":
+        a, cats, group_note = _regroup_by_field(
+            arcpy, in_raster, a, valid, cats, str(class_field).strip(),
+            messages)
     n_classes = int(cats.size)
     if n_classes == 0:
         raise arcpy.ExecuteError("The raster has no valid (non-NoData) cells.")
@@ -214,7 +297,7 @@ def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
             "{:,} classes found. This tool makes one neighborhood pass per "
             "class, so a large number of classes will run slowly.".format(
                 n_classes))
-    else:
+    elif not group_note:
         _say(messages, "{:,} classes found.".format(n_classes))
 
     # ---- neighborhood kernel(s) ---------------------------------------------
@@ -373,16 +456,18 @@ def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
         out_path, out_raster, out_stats, messages,
         title=os.path.basename(str(out_raster)),
         summary=("Created by Diversity Indices from {src}: {lab}, computed over "
-                 "a {nbr} neighborhood on {n:,} classes. {excl}").format(
+                 "a {nbr} neighborhood on {n:,} classes{grp}. {excl}").format(
                      src=str(in_raster), lab=label, nbr=note,
-                     n=n_classes, excl=excl),
+                     n=n_classes, excl=excl, grp=group_note),
         description=(
             "Neighborhood diversity of a categorical raster -- the {lab} of the "
             "class values (for example species or community types) within a "
-            "{nbr} moving neighborhood. Ported and generalized from the Land "
-            "Facet Corridor Designer's ArcMap Shannon's Index tool; needs no "
-            "Spatial Analyst. {cite}").format(
-                lab=label, nbr=note, cite=_CD_CITATION),
+            "{nbr} moving neighborhood{grp}. Ported and generalized from the "
+            "Land Facet Corridor Designer's ArcMap Shannon's Index tool; needs "
+            "no Spatial Analyst. {cite}").format(
+                lab=label, nbr=note, cite=_CD_CITATION,
+                grp=(", with the cells classified by the attribute field "
+                     + str(class_field)) if group_note else ""),
         tags=("diversity, Shannon index, Simpson index, effective number of "
               "species, Hill numbers, richness, evenness, neighborhood, focal, "
               "categorical, species diversity, community, Corridor Designer, "

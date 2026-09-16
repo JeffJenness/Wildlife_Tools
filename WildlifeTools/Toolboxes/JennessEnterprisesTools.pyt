@@ -8046,6 +8046,19 @@ class DiversityIndices(object):
             name="in_raster",
             datatype=["GPRasterLayer", "DERasterDataset"],
             parameterType="Required", direction="Input")
+        # 2026-09-16 (Jeff): classify by a column of the raster's attribute
+        # table, the same regrouping the Cross-Tab window offers. A string
+        # list rather than a Field parameter so that "Value" (= each cell
+        # value is its own class, the original behavior) can be the
+        # default and the only entry when the raster has no VAT.
+        class_field = arcpy.Parameter(
+            displayName="Classify by attribute field (Value = each cell "
+                        "value is its own class)",
+            name="class_field", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        class_field.filter.type = "ValueList"
+        class_field.filter.list = ["Value"]
+        class_field.value = "Value"
         out_raster = arcpy.Parameter(
             displayName="Output diversity raster", name="out_raster",
             datatype="DERasterDataset", parameterType="Required",
@@ -8109,8 +8122,8 @@ class DiversityIndices(object):
                         "cell", name="exclude_null",
             datatype="GPBoolean", parameterType="Optional", direction="Input")
         exclude_null.value = False
-        params = [in_raster, out_raster, index, q, neighborhood, nbr_units,
-                  radius, width, height, inner_radius, outer_radius,
+        params = [in_raster, class_field, out_raster, index, q, neighborhood,
+                  nbr_units, radius, width, height, inner_radius, outer_radius,
                   start_angle, end_angle, kernel_file, exclude_null]
         saved = _load_tool_defaults("DiversityIndices")
         for p in (index, neighborhood, nbr_units):
@@ -8151,6 +8164,24 @@ class DiversityIndices(object):
         inr, outr = P["in_raster"], P["out_raster"]
         index_key = diversity_tools.INDEX_KEY.get(
             P["index"].valueAsText, "EFFECTIVE")
+        # the attribute-field list follows the raster: "Value" plus the
+        # VAT's text/integer columns; "Value" alone (disabled) without a VAT
+        cf = P["class_field"]
+        if inr.valueAsText:
+            if not inr.hasBeenValidated:
+                try:
+                    path = _resolve_raster_path(inr) or inr.valueAsText
+                    choices = ["Value"] + diversity_tools.vat_class_fields(path)
+                except Exception:
+                    choices = ["Value"]
+                cf.filter.list = choices
+                if cf.valueAsText not in choices:
+                    cf.value = "Value"
+                cf.enabled = len(choices) > 1
+        else:
+            cf.filter.list = ["Value"]
+            cf.value = "Value"
+            cf.enabled = False
         # q applies only to the effective number.
         P["q"].enabled = (index_key == "EFFECTIVE")
         nbr = P["neighborhood"].valueAsText or "Circle"
@@ -8242,7 +8273,11 @@ class DiversityIndices(object):
                 nbr_units=P["nbr_units"].valueAsText or "Cells",
                 kernel_file=P["kernel_file"].valueAsText,
                 exclude_if_any_null=bool(P["exclude_null"].value),
-                messages=messages)
+                messages=messages,
+                class_field=(P["class_field"].valueAsText
+                             if P["class_field"].valueAsText
+                             and P["class_field"].valueAsText.lower() != "value"
+                             else None))
             _writeback_resolved_raster(P, "out_raster")
             if out_lyrx:
                 try:

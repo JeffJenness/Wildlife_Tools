@@ -110,7 +110,13 @@ namespace WildlifeTools
         /// The shape of one element. Symbolized mode uses Esri's graphic-outline query
         /// (includes stroke widths, marker sizes, etc.) for graphic elements, falling
         /// back to the element's rotated bounds for non-graphic elements (map frames,
-        /// map surrounds, ...). Source mode uses the element's own geometry. MCT.
+        /// map surrounds, ...). Source mode uses the element's own geometry — with two
+        /// exceptions found live on 2026-09-16 (Jeff's legend + text MCP came out as
+        /// the legend's oversized frame with a slanted top): a NON-graphic element's
+        /// GetGeometry is its FRAME, which a legend's drawn content may fill only
+        /// partly, and a text element's geometry is a single anchor POINT. Both take
+        /// the drawn, rotation-aware bounds instead, which is what a background must
+        /// wrap. MCT.
         /// </summary>
         internal static Geometry ShapeOf(Element el, IElementContainer container, bool symbolized)
         {
@@ -129,18 +135,33 @@ namespace WildlifeTools
                         // Fall through to the bounds fallback below.
                     }
                 }
-                Envelope b = el.GetBounds(true);        // rotation-aware already
-                return (b == null || b.IsEmpty) ? null : PolygonBuilderEx.CreatePolygon(b);
+                return BoundsPolygon(el);
             }
 
+            // Source geometry: only a graphic element's own polygon/polyline/multipoint
+            // is a meaningful shape. Map surrounds (legends, scale bars, north arrows),
+            // map frames and tables report their frame; text and point graphics report
+            // an anchor point. Those get the drawn bounds.
+            if (el is not GraphicElement)
+                return BoundsPolygon(el);
             Geometry geom = null;
             try { geom = el.GetGeometry(); } catch { }
-            if (geom == null || geom.IsEmpty)
-            {
-                Envelope b = el.GetBounds(true);        // rotation-aware already
-                return (b == null || b.IsEmpty) ? null : PolygonBuilderEx.CreatePolygon(b);
-            }
+            if (geom == null || geom.IsEmpty || geom is MapPoint)
+                return BoundsPolygon(el);
+            Envelope ext = geom.Extent;
+            if (ext == null || ext.IsEmpty || (ext.Width <= 0 && ext.Height <= 0))
+                return BoundsPolygon(el);
             return Rotated(geom, el);
+        }
+
+        /// <summary>The element's drawn, rotation-aware bounds as a polygon (null when
+        /// the element has none). GetBounds(true) already applies the element's
+        /// rotation, so it must not pass through Rotated().</summary>
+        private static Geometry BoundsPolygon(Element el)
+        {
+            Envelope b = null;
+            try { b = el.GetBounds(true); } catch { }
+            return (b == null || b.IsEmpty) ? null : PolygonBuilderEx.CreatePolygon(b);
         }
 
         /// <summary>

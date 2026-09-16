@@ -48,10 +48,14 @@
     <TextBox Grid.Row="3" Grid.Column="1" x:Name="OutlineTranspBox" Text="0" Margin="0,0,0,10"
              ToolTip="0–100. Applies to the boundary outline only; the fill is unaffected." />
 
-    <!-- Radius -->
-    <TextBlock Grid.Row="4" Grid.Column="0" Text="Radius (% of extent):" VerticalAlignment="Center" Margin="0,0,10,10" />
-    <TextBox Grid.Row="4" Grid.Column="1" x:Name="RadiusBox" Text="100" Margin="0,0,0,10"
-             ToolTip="100% draws the circle that exactly contains the selected extent." />
+    <!-- Radius: a percent of the containing circle, or a linear margin beyond it -->
+    <TextBlock Grid.Row="4" Grid.Column="0" x:Name="RadiusLabel" Text="Radius (% of extent):" VerticalAlignment="Center" Margin="0,0,10,10" />
+    <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,10">
+      <TextBox x:Name="RadiusBox" Text="100" Width="100"
+               ToolTip="As a percent: 100% draws the circle that exactly contains the selected extent. In a linear unit: the margin added beyond that circle (0 = the containing circle itself)." />
+      <ComboBox x:Name="UnitCombo" Width="118" Margin="8,0,0,0" SelectionChanged="OnUnitChanged"
+                ToolTip="Size the radius as a percent of the containing circle, or as a margin in page or map units beyond it." />
+    </StackPanel>
 
     <!-- Focal-point option (only when a single element with a focal point is selected) -->
     <CheckBox Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" x:Name="FocalCheck"
