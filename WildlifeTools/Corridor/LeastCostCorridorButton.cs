@@ -27,7 +27,7 @@ namespace WildlifeTools.Corridor
                 {
                     MessageBox.Show(
                         "Could not find JennessEnterprisesTools.pyt next to the add-in.",
-                        "Wildlife Tools");
+                        "Wildlife and Forestry Tools");
                     return;
                 }
 
@@ -38,7 +38,7 @@ namespace WildlifeTools.Corridor
                 MessageBox.Show(
                     "Unable to open the Least-Cost Corridor tool:"
                     + Environment.NewLine + ex.Message,
-                    "Wildlife Tools");
+                    "Wildlife and Forestry Tools");
             }
         }
     }

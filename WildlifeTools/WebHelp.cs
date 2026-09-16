@@ -21,7 +21,7 @@ namespace WildlifeTools
                 ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
                     "The online help pages are being prepared and will "
                     + "be available at www.jennessent.com.",
-                    "Wildlife Tools help");
+                    "Wildlife and Forestry Tools help");
                 return;
             }
             try

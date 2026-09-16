@@ -2872,7 +2872,7 @@ def _write_slope_zonal_table(out_table, in_zone_data, zone_field,
             "percent slope is the tangent of the slope angle, a convex "
             "transform, so averaging raw percent values biases steepness "
             "statistics high. Produced by the Slope Zonal Statistics as "
-            "Table tool (Jenness Enterprises Wildlife Tools), the "
+            "Table tool (Jenness Enterprises Wildlife and Forestry Tools), the "
             "slope-targeted sibling of Esri's Zonal Statistics as Table; "
             "unlike that tool it needs no Spatial Analyst or Image Analyst "
             "extension. Reference: Zar, J.H. 1999. Biostatistical Analysis, "

@@ -29,7 +29,7 @@ namespace WildlifeTools.Classification
                 MessageBox.Show(
                     "Unable to open the Classification System Builder:" +
                     Environment.NewLine + ex.Message,
-                    "Wildlife Tools");
+                    "Wildlife and Forestry Tools");
             }
         }
     }

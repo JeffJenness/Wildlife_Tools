@@ -376,7 +376,7 @@ def run_weighted_stats(in_features, fields, out_table, case_field=None,
             "rather than an average mapping unit, and they do not change "
             "when the same landscape is subdivided into different "
             "polygons. Produced by the Weighted Summary Statistics tool "
-            "(Jenness Enterprises Wildlife Tools), a port of the "
+            "(Jenness Enterprises Wildlife and Forestry Tools), a port of the "
             "CorridorDesigner Evaluation Tools' Summary Statistics "
             "weighted-statistics family."
             .format("area" if is_polygon else "length"))

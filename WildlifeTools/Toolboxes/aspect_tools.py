@@ -2274,7 +2274,7 @@ def _write_zonal_table(out_table, in_zone_data, zone_field, zone_is_raster,
             "(aspect is a circular variable: 0 and 360 degrees are the same "
             "direction, so ordinary zonal means are wrong). Produced by the "
             "Aspect Zonal Statistics as Table tool (Jenness Enterprises "
-            "Wildlife Tools), the circular analog of Esri's Zonal Statistics "
+            "Wildlife and Forestry Tools), the circular analog of Esri's Zonal Statistics "
             "as Table; unlike that tool it needs no Spatial Analyst or Image "
             "Analyst extension. " + _CIRC_CITATION)
         md.save()

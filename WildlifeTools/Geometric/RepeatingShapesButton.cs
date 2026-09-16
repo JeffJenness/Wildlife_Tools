@@ -25,7 +25,7 @@ namespace WildlifeTools.Geometric
                 MessageBox.Show(
                     "Unable to open the Repeating Shapes window:"
                     + Environment.NewLine + ex.Message,
-                    "Wildlife Tools");
+                    "Wildlife and Forestry Tools");
             }
         }
     }

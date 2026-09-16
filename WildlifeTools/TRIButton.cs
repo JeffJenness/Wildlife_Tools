@@ -26,7 +26,7 @@ namespace WildlifeTools
                 {
                     MessageBox.Show(
                         "Could not find JennessEnterprisesTools.pyt next to the add-in.",
-                        "Wildlife Tools");
+                        "Wildlife and Forestry Tools");
                     return;
                 }
 
@@ -37,7 +37,7 @@ namespace WildlifeTools
             {
                 MessageBox.Show(
                     "Unable to open the TRI tool:" + Environment.NewLine + ex.Message,
-                    "Wildlife Tools");
+                    "Wildlife and Forestry Tools");
             }
         }
     }

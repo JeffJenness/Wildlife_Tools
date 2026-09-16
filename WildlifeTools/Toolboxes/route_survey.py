@@ -320,7 +320,7 @@ def _stamp(out_path, in_points, mode, n_stops, length_km):
             "constructions polished by 2-opt and Or-opt; typically "
             "within a few percent of the true optimum). Legs are "
             "straight lines between locations, not road-network "
-            "routes. Jenness Enterprises Wildlife Tools "
+            "routes. Jenness Enterprises Wildlife and Forestry Tools "
             "(www.jennessent.com).")
         md.save()
     except Exception:                                    # noqa: BLE001

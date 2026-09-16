@@ -4,7 +4,7 @@
 A single ArcGIS Pro toolbox that holds the Jenness Enterprises geoprocessing
 tools (usable in ModelBuilder and the GP pane). Tools are grouped into
 sub-toolboxes (toolsets) via each tool's ``category`` -- e.g. the
-"Wildlife Tools" sub-toolbox, which pairs with the WildlifeTools add-in. The
+"Wildlife and Forestry Tools" sub-toolbox, which pairs with the WildlifeTools add-in. The
 add-in's ribbon buttons invoke these tools so the analysis logic lives in one
 place. Add further tools/categories here as more sub-toolboxes are needed.
 """
@@ -132,7 +132,7 @@ def _unique_name(base, ws):
     return os.path.join(ws, name) if ws else name
 
 
-def _confirm(text, caption="Wildlife Tools"):
+def _confirm(text, caption="Wildlife and Forestry Tools"):
     """Show a Yes/No confirmation dialog; return True if the user confirms.
 
     Uses the native Windows dialog. If no UI is available (e.g. a headless script),

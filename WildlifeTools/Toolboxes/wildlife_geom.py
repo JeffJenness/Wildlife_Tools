@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Reusable geodesic / geometry helpers for the Wildlife Tools toolbox.
+"""Reusable geodesic / geometry helpers for the Wildlife and Forestry Tools toolbox.
 
 This module is a faithful Python port of the relevant numeric routines from the
 legacy ArcObjects/VB6 ``MyGeometricOperations`` module, cross-checked against the

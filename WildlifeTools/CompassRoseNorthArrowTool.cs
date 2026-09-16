@@ -71,7 +71,7 @@ namespace WildlifeTools
             catch (Exception ex)
             {
                 MessageBox.Show("Unable to add the compass north arrow:" + Environment.NewLine + ex.Message,
-                    "Wildlife Tools");
+                    "Wildlife and Forestry Tools");
             }
             // Same post-insert behavior as Esri's element tools (their FinishSketch does
             // exactly this): switch to the element Select tool so the user can move/resize.

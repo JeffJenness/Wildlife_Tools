@@ -25,7 +25,7 @@ namespace WildlifeTools
                 {
                     MessageBox.Show(
                         "Could not find JennessEnterprisesTools.pyt next to the add-in.",
-                        "Wildlife Tools");
+                        "Wildlife and Forestry Tools");
                     return;
                 }
                 Geoprocessing.OpenToolDialog(toolPath, Geoprocessing.MakeValueArray());
@@ -34,7 +34,7 @@ namespace WildlifeTools
             {
                 MessageBox.Show(
                     "Unable to open the Landform Classification tool:" + Environment.NewLine + ex.Message,
-                    "Wildlife Tools");
+                    "Wildlife and Forestry Tools");
             }
         }
     }

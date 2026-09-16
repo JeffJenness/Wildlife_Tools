@@ -26,7 +26,7 @@ namespace WildlifeTools.Geometric
                 {
                     MessageBox.Show(
                         "Could not find JennessEnterprisesTools.pyt next to the add-in.",
-                        "Wildlife Tools");
+                        "Wildlife and Forestry Tools");
                     return;
                 }
 
@@ -38,7 +38,7 @@ namespace WildlifeTools.Geometric
                 MessageBox.Show(
                     "Unable to open the Random Point Generator tool:"
                     + Environment.NewLine + ex.Message,
-                    "Wildlife Tools");
+                    "Wildlife and Forestry Tools");
             }
         }
     }

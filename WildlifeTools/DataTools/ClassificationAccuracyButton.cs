@@ -24,7 +24,7 @@ namespace WildlifeTools.DataTools
                 {
                     MessageBox.Show(
                         "Could not find JennessEnterprisesTools.pyt next to the add-in.",
-                        "Wildlife Tools");
+                        "Wildlife and Forestry Tools");
                     return;
                 }
 
@@ -36,7 +36,7 @@ namespace WildlifeTools.DataTools
                 MessageBox.Show(
                     "Unable to open the Classification Accuracy tool:"
                     + Environment.NewLine + ex.Message,
-                    "Wildlife Tools");
+                    "Wildlife and Forestry Tools");
             }
         }
     }
@@ -57,7 +57,7 @@ namespace WildlifeTools.DataTools
                 {
                     MessageBox.Show(
                         "Could not find JennessEnterprisesTools.pyt next to the add-in.",
-                        "Wildlife Tools");
+                        "Wildlife and Forestry Tools");
                     return;
                 }
 
@@ -69,7 +69,7 @@ namespace WildlifeTools.DataTools
                 MessageBox.Show(
                     "Unable to open the Compare Accuracy Analyses tool:"
                     + Environment.NewLine + ex.Message,
-                    "Wildlife Tools");
+                    "Wildlife and Forestry Tools");
             }
         }
     }
@@ -90,7 +90,7 @@ namespace WildlifeTools.DataTools
                 {
                     MessageBox.Show(
                         "Could not find JennessEnterprisesTools.pyt next to the add-in.",
-                        "Wildlife Tools");
+                        "Wildlife and Forestry Tools");
                     return;
                 }
 
@@ -102,7 +102,7 @@ namespace WildlifeTools.DataTools
                 MessageBox.Show(
                     "Unable to open the Estimate Sample Size tool:"
                     + Environment.NewLine + ex.Message,
-                    "Wildlife Tools");
+                    "Wildlife and Forestry Tools");
             }
         }
     }

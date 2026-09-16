@@ -39,7 +39,7 @@ namespace WildlifeTools.Corridor
                 MessageBox.Show(
                     "Unable to open the remap table builder:"
                     + Environment.NewLine + ex.Message,
-                    "Wildlife Tools");
+                    "Wildlife and Forestry Tools");
             }
         }
     }

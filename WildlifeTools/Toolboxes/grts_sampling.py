@@ -673,7 +673,7 @@ def _stamp(out_path, frame, kind, n_base, n_over, stratum_field,
             "start selects the sites, and reverse hierarchical "
             "ordering writes them so any leading run of SiteIDs is "
             "itself spatially balanced. Allocation: {}. {}"
-            "Computed {}. Jenness Enterprises Wildlife Tools "
+            "Computed {}. Jenness Enterprises Wildlife and Forestry Tools "
             "(www.jennessent.com).".format(
                 str(alloc).lower(),
                 "Random seed {}. ".format(seed)
