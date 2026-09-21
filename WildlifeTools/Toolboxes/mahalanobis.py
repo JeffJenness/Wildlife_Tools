@@ -752,19 +752,16 @@ def _gdal_source_path(raster, scratch):
     if ds is not None:
         ds = None
         return path, None
-    low = str(path).lower()
-    if ".gdb" in low:
-        i = low.rindex(".gdb")
-        gdb, name = path[:i + 4], path[i + 4:].strip("\\/")
-        if name:
-            sub = 'OpenFileGDB:"{}":{}'.format(gdb, name)
-            try:
-                ds = gdal.Open(sub)
-            except RuntimeError:
-                ds = None
-            if ds is not None:
-                ds = None
-                return sub, None
+    parts = split_gdb_dataset(path)
+    if parts:
+        sub = 'OpenFileGDB:"{}":{}'.format(*parts)
+        try:
+            ds = gdal.Open(sub)
+        except RuntimeError:
+            ds = None
+        if ds is not None:
+            ds = None
+            return sub, None
     tif = arcpy.CreateUniqueName("mahal_src.tif", scratch)
     with neutral_grid_env():        # the copy must match the source grid
         arcpy.management.CopyRaster(raster, tif)
@@ -1219,6 +1216,22 @@ def in_gdb_container(path):
         if low.endswith(ext) or (ext + "\\") in low:
             return True
     return is_memory_workspace(low)
+
+
+def split_gdb_dataset(path):
+    """``(gdb, name)`` for a dataset inside a FILE geodatabase, else None.
+
+    Boundary-aware like ``in_gdb_container``: the ".gdb" must be followed by
+    a separator, so a folder merely NAMED like ``My.gdb_exports`` is not
+    mistaken for a geodatabase and split in the wrong place. Used to build
+    GDAL's ``OpenFileGDB:"gdb":name`` subdataset string.
+    """
+    p = str(path or "").replace("/", "\\").rstrip("\\")
+    i = p.lower().rfind(".gdb\\")
+    if i < 0:
+        return None
+    gdb, name = p[:i + 4], p[i + 5:].strip("\\")
+    return (gdb, name) if name else None
 
 
 def lyrx_dir_for(ws):

@@ -185,17 +185,14 @@ def _open_source(in_raster, scratch, messages):
     if ds is not None:
         return _check_raster_plausible(ds, in_raster, messages), None
 
-    low = path.lower()
-    if ".gdb" in low:
-        i = low.rindex(".gdb")
-        gdb, name = path[:i + 4], path[i + 4:].strip("\\/")
-        if name:
-            try:
-                ds = gdal.Open('OpenFileGDB:"{}":{}'.format(gdb, name))
-            except RuntimeError:
-                ds = None
-            if ds is not None:
-                return _check_raster_plausible(ds, in_raster, messages), None
+    parts = _mh.split_gdb_dataset(path)
+    if parts:
+        try:
+            ds = gdal.Open('OpenFileGDB:"{}":{}'.format(*parts))
+        except RuntimeError:
+            ds = None
+        if ds is not None:
+            return _check_raster_plausible(ds, in_raster, messages), None
 
     _set_label("Exporting the DEM to a scratch GeoTIFF (GDAL cannot read this "
                "format directly; this can take a while for large rasters)...")

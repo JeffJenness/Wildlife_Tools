@@ -15,7 +15,7 @@ Outputs may be saved into a geodatabase or as files in a folder. In a folder, a 
 
 Surface area and surface ratio are NoData wherever any cell of the 3 x 3 neighborhood is NoData, and on the outer edge of the raster. The flat area raster is written for every cell (it does not depend on elevations). Outputs are floating point and carry statistics and a histogram so they render correctly without a separate Calculate Statistics step; pyramids are built with bilinear resampling.
 
-By default each output matches the input grid exactly (same extent, cell size, and coordinate system). Honored environments: Processing Extent, Snap Raster, Cell Size, and Output Coordinate System, all applied as finishing steps to the computed rasters -- the extent clips (with the snap raster aligning the clip window), the cell size resamples, and the output coordinate system reprojects. The Mask environment is not honored, and pyramids are always built with bilinear resampling regardless of the Pyramid environment.
+By default each output matches the input grid exactly (same extent, cell size, and coordinate system). Each output matches the input DEM exactly: same extent, cell size, and coordinate system. The Processing Extent, Snap Raster, Cell Size, Output Coordinate System, and Mask environments are deliberately not applied, so that the delivered raster is the grid the surface areas were computed on; project, clip, or resample the finished raster yourself if you need to. Pyramids are always built with bilinear resampling regardless of the Pyramid environment.
 
 <b>Reference:</b> Jenness, J. S. 2004. Calculating landscape surface area from digital elevation models. Wildlife Society Bulletin 32:829-839.</usage>
 		<parameters>

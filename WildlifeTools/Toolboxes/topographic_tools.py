@@ -1450,8 +1450,10 @@ def run_tri(in_raster, out_raster, method=None, radius=1.5,
 #                       vertical-scale handling).
 #   Diff. box counting : box-counting -- N(s) boxes to cover the surface at
 #                       box size s; D = -slope of log N vs log s (Sarkar &
-#                       Chaudhuri 1994; improved box height Li/Du/Sun 2009,
-#                       Liu et al. 2014). The WEAKEST/noisiest local estimator
+#                       Chaudhuri 1994; ceil-from-tile-minimum count =
+#                       modification B of Li/Du/Sun 2009; the box is a true
+#                       ground cube, NOT their reduced height, and tiles do
+#                       not overlap). The WEAKEST/noisiest local estimator
 #                       (few box sizes fit a window, coarse integer counts);
 #                       its raw slope can imply D just under 2 -- clipped.
 #
@@ -1488,12 +1490,10 @@ _FD_DBC_CIT = (
     "Sarkar, N., and B. B. Chaudhuri. 1994. An efficient differential "
     "box-counting approach to compute fractal dimension of image. IEEE "
     "Transactions on Systems, Man, and Cybernetics 24(1):115-120 "
-    "(https://doi.org/10.1109/21.259692). Improved box height / count: Li, "
+    "(https://doi.org/10.1109/21.259692). Box-counting rule: Li, "
     "J., Q. Du, and C. Sun. 2009. An improved box-counting method for image "
-    "fractal dimension estimation. Pattern Recognition 42(11):2460-2469; and "
-    "Liu, Y., et al. 2014. An improved differential box counting method to "
-    "estimate fractal dimensions of gray-level images. Journal of Visual "
-    "Communication and Image Representation 25(5):1102-1111.")
+    "fractal dimension estimation. Pattern Recognition 42(11):2460-2469 "
+    "(https://doi.org/10.1016/j.patcog.2009.03.001).")
 _FD_CITATION = {0: _FD_TPM_CIT, 1: _FD_VARIO_CIT, 2: _FD_VARIO_CIT,
                 3: _FD_DBC_CIT}
 
@@ -1625,8 +1625,14 @@ def _fd_tpm(z, wsize, cell, H, W):
     return 2.0 - slope
 
 
-def _fd_variation(z, wsize, p, H, W):
-    hmax = max(2, wsize // 3)
+def _fd_default_max_lag(wsize):
+    """Default longest lag for the variogram / madogram: one third of the
+    window, so that every lag still has plenty of cell pairs inside it."""
+    return max(2, wsize // 3)
+
+
+def _fd_variation(z, wsize, p, H, W, hmax=None):
+    hmax = int(hmax) if hmax else _fd_default_max_lag(wsize)
     lags = list(range(1, hmax + 1))
     logh = np.log(np.asarray(lags, float))
     nrf, ncf = H - wsize + 1, W - wsize + 1
@@ -1650,8 +1656,7 @@ def _fd_variation(z, wsize, p, H, W):
 
 
 def _fd_dbc(z, wsize, cell, H, W):
-    box_sizes = [s for s in (2, 3, 4, 6, 8, 12, 16, 24)
-                 if s <= wsize // 2 and wsize // s >= 2]
+    box_sizes = _fd_dbc_box_sizes(wsize)
     logS = np.log(np.asarray(box_sizes, float))
     prog = _fd_progress(sum((wsize // s) ** 2 for s in box_sizes))
     logN = None
@@ -1668,8 +1673,55 @@ def _fd_dbc(z, wsize, cell, H, W):
     return -slope
 
 
+def _fd_dbc_box_sizes(wsize):
+    return [s for s in (2, 3, 4, 6, 8, 12, 16, 24)
+            if s <= wsize // 2 and wsize // s >= 2]
+
+
+def _fd_report_steps(messages, m_idx, wsize, hmax=None):
+    """Tell the user which step sizes / lags / box sizes the chosen method
+    derives from the window size, and why (the user never enters them)."""
+    def cells(v):
+        return ", ".join(str(x) for x in v)
+    if m_idx == 0:
+        steps = _fd_divisor_steps(wsize)
+        _hs._msg(messages,
+                 "Triangular prism step sizes used: {} cells ({} steps). A "
+                 "window of {} cells spans {} cell intervals, and each step "
+                 "must divide {} evenly, at least twice, so that the prisms "
+                 "tile the window exactly.".format(
+                     cells(steps), len(steps), wsize, wsize - 1, wsize - 1))
+        if len(steps) == 3:
+            _warn(messages,
+                  "Only three step sizes divide {} evenly, the fewest any "
+                  "window size gives, so each cell's dimension is fitted to "
+                  "three points and will be noisier. Window sizes of 13, 17, "
+                  "25, 33, 37, 49, or 61 give four or more.".format(wsize - 1))
+    elif m_idx in (1, 2):
+        dflt = _fd_default_max_lag(wsize)
+        if hmax and int(hmax) != dflt:
+            _hs._msg(messages,
+                     "Lag distances used: 1 through {} cells ({} lags), the "
+                     "Maximum lag you entered. (Left blank, the tool would "
+                     "use 1 through {}, one third of the {}-cell "
+                     "window.)".format(int(hmax), int(hmax), dflt, wsize))
+        else:
+            _hs._msg(messages,
+                     "Lag distances used: 1 through {} cells ({} lags), up to "
+                     "one third of the {}-cell window so that every lag has "
+                     "plenty of cell pairs inside the window. Enter a Maximum "
+                     "lag to choose a different range.".format(dflt, dflt, wsize))
+    else:
+        sizes = _fd_dbc_box_sizes(wsize)
+        _hs._msg(messages,
+                 "Box sizes used: {} cells ({} sizes), the sizes from the "
+                 "series 2, 3, 4, 6, 8, 12, 16, 24 that fit at least twice "
+                 "across the {}-cell window.".format(
+                     cells(sizes), len(sizes), wsize))
+
+
 def run_fractal_dimension(in_raster, out_raster, method=None, window_size=25,
-                          elev_units="Meters", messages=None):
+                          elev_units="Meters", messages=None, max_lag=None):
     """Per-cell local fractal dimension (surface roughness, D in [2, 3]) by a
     selectable method over a moving square window. See ``FD_METHODS`` and the
     module comment. Returns the output's default-symbology .lyrx path."""
@@ -1688,13 +1740,19 @@ def run_fractal_dimension(in_raster, out_raster, method=None, window_size=25,
         raise arcpy.ExecuteError(
             "The window size must be an odd number of cells, at least 9 "
             "(e.g. 13, 17, 25, 33, 37, 49, or 61).")
-    if is_tpm and len(_fd_divisor_steps(wsize)) < 3:
-        raise arcpy.ExecuteError(
-            "The triangular prism method needs several step sizes that divide "
-            "the window evenly, so (window size minus 1) must have several "
-            "whole-number factors; {} does not. You do not enter the step "
-            "sizes -- the tool derives them; just pick a good window size. "
-            "Try 13, 17, 25, 33, 37, 49, or 61.".format(wsize))
+    hmax = None
+    if (is_vario or is_mado) and max_lag not in (None, ""):
+        try:
+            hmax = int(max_lag)
+        except (TypeError, ValueError):
+            raise arcpy.ExecuteError("The maximum lag must be a whole number of cells.")
+        if hmax < 2 or hmax > wsize // 2:
+            raise arcpy.ExecuteError(
+                "The maximum lag must be between 2 and {} cells (half of the "
+                "{}-cell window).".format(wsize // 2, wsize))
+    # Every odd window >= 9 yields at least three prism steps (1, 2 and
+    # (wsize-1)/2 always divide wsize-1), so no window size is refused; the
+    # steps actually used are reported below, with a warning at the minimum.
     out_raster = _mh.resolve_raster_output(out_raster, messages)
 
     _mh.begin_phases([
@@ -1726,6 +1784,7 @@ def run_fractal_dimension(in_raster, out_raster, method=None, window_size=25,
                            "centre latitude." if geographic else "Projected DEM.",
                            cell_m,
                            "assumed meters" if geographic else elev_units))
+    _fd_report_steps(messages, m_idx, wsize, hmax)
 
     z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
     valid = np.isfinite(z)
@@ -1748,9 +1807,9 @@ def run_fractal_dimension(in_raster, out_raster, method=None, window_size=25,
     if is_tpm:
         Dblk = _fd_tpm(z, wsize, cell_m, height, width)
     elif is_vario:
-        Dblk = _fd_variation(z, wsize, 2.0, height, width)
+        Dblk = _fd_variation(z, wsize, 2.0, height, width, hmax)
     elif is_mado:
-        Dblk = _fd_variation(z, wsize, 1.0, height, width)
+        Dblk = _fd_variation(z, wsize, 1.0, height, width, hmax)
     else:
         Dblk = _fd_dbc(z, wsize, cell_m, height, width)
     np.clip(Dblk, 2.0, 3.0, out=Dblk)        # a surface's D is in [2, 3]
@@ -1789,8 +1848,11 @@ def run_fractal_dimension(in_raster, out_raster, method=None, window_size=25,
         out_path, out_raster, out_stats, messages,
         title=os.path.basename(str(out_raster)),
         summary=("Created by Fractal Dimension from {src}: method = {m}; "
-                 "window {w} x {w} cells; elevation units {e}.").format(
+                 "window {w} x {w} cells{lg}; elevation units {e}.").format(
                      src=str(in_raster), m=method, w=wsize,
+                     lg=("; lags 1 through {} cells".format(
+                         hmax or _fd_default_max_lag(wsize))
+                         if (is_vario or is_mado) else ""),
                      e=("Meters (geographic DEM)" if geographic else elev_units)),
         description=(
             "Local fractal dimension (surface roughness) raster: for each "

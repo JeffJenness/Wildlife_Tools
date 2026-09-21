@@ -4949,7 +4949,7 @@ class SplitLinesIntoSegments(object):
             arcpy.management.CreateFeatureclass(
                 out_ws, out_name, "POLYLINE", spatial_reference=mahalanobis.clean_sr(out_sr),
                 has_z="ENABLED")
-            null_ok = (".gdb" in out_fc.lower() or ".sde" in out_fc.lower())
+            null_ok = mahalanobis.in_gdb_container(out_fc)
 
             taken = {f.name.lower() for f in arcpy.ListFields(out_fc)}
 
@@ -6220,7 +6220,15 @@ class FractalDimension(object):
             datatype="GPString", parameterType="Optional", direction="Input")
         elev_units.filter.type = "ValueList"
         elev_units.filter.list = hillshade.ELEV_UNITS
-        params = [in_raster, out_raster, method, window_size, elev_units]
+        # Optional and LAST, so existing models and scripts are unaffected.
+        # Blank = lags 1 through one third of the window. Deliberately not a
+        # remembered default: a stale value would silently change results.
+        max_lag = arcpy.Parameter(
+            displayName="Maximum lag (cells; variogram and madogram only)",
+            name="max_lag",
+            datatype="GPLong", parameterType="Optional", direction="Input")
+        params = [in_raster, out_raster, method, window_size, elev_units,
+                  max_lag]
         saved = _load_tool_defaults("FractalDimension")
         for p in (method, window_size, elev_units):
             if p.name in saved:
@@ -6260,6 +6268,8 @@ class FractalDimension(object):
                     pass
         # Elevation units don't affect the variogram/madogram (amplitude-
         # invariant); they only rescale the prism / box-counting methods.
+        P["max_lag"].enabled = P["method"].valueAsText in (
+            topographic_tools.FD_METHODS[1], topographic_tools.FD_METHODS[2])
         return
 
     def updateMessages(self, parameters):
@@ -6281,14 +6291,26 @@ class FractalDimension(object):
                 P["window_size"].setErrorMessage(
                     "The window size must be an odd number of cells, at least "
                     "9 (e.g. 13, 17, 25, 33, 37, 49, or 61).")
-            elif (P["method"].valueAsText == topographic_tools.FD_METHODS[0]
-                  and len(topographic_tools._fd_divisor_steps(int(w))) < 3):
-                P["window_size"].setErrorMessage(
-                    "The triangular prism method needs several step sizes that "
-                    "divide the window evenly, so (window size minus 1) must "
-                    "have several whole-number factors; {} does not. You do "
-                    "not enter the step sizes -- the tool derives them. Try "
-                    "13, 17, 25, 33, 37, 49, or 61.".format(int(w)))
+            elif P["method"].valueAsText == topographic_tools.FD_METHODS[0]:
+                steps = topographic_tools._fd_divisor_steps(int(w))
+                if len(steps) == 3:
+                    P["window_size"].setWarningMessage(
+                        "The triangular prism method will use step sizes of "
+                        "{} cells, the only sizes that divide the window's {} "
+                        "cell intervals evenly. Three steps is the fewest any "
+                        "window size gives, so the result will be noisier. "
+                        "Window sizes of 13, 17, 25, 33, 37, 49, or 61 give "
+                        "four or more.".format(
+                            ", ".join(str(s) for s in steps), int(w) - 1))
+        ml = P["max_lag"]
+        if ml.enabled and ml.value is not None and w is not None and w >= 9:
+            if ml.value < 2 or ml.value > int(w) // 2:
+                ml.setErrorMessage(
+                    "The maximum lag must be between 2 and {} cells (half of "
+                    "the {}-cell window). Leave it blank to use lags 1 "
+                    "through {}, one third of the window.".format(
+                        int(w) // 2, int(w),
+                        topographic_tools._fd_default_max_lag(int(w))))
         return
 
     def execute(self, parameters, messages):
@@ -6302,7 +6324,8 @@ class FractalDimension(object):
                 method=P["method"].valueAsText or topographic_tools.FD_METHODS[1],
                 window_size=P["window_size"].value,
                 elev_units=P["elev_units"].valueAsText or "Meters",
-                messages=messages)
+                messages=messages,
+                max_lag=(P["max_lag"].value if "max_lag" in P else None))
             _writeback_resolved_raster(P, "out_raster")
             if out_lyrx:
                 try:
