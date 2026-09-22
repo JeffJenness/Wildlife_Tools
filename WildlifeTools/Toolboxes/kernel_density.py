@@ -369,12 +369,31 @@ def _contour_value_field(fc):
     return "Contour"
 
 
+def _cum_field(fc):
+    """'CumProportion', or the 10-character 'CumProport' when ``fc`` is (or
+    will be) a shapefile -- the same name ArcGIS itself produces when it
+    copies the geodatabase field to a shapefile, so lines and polygons
+    agree."""
+    return "CumProport" if mh.is_shapefile_target(str(fc)) else "CumProportion"
+
+
+def _contour_fields_for(fc):
+    """The field-metadata list with the cumulative-proportion field named as
+    it actually is in ``fc``."""
+    cum = _cum_field(fc)
+    return [dict(d, name=cum) if d["name"] == "CumProportion" else d
+            for d in _CONTOUR_FIELDS]
+
+
 def _add_level_fields(fc):
+    """Add the level fields; returns the name of the cumulative-proportion
+    field, which depends on the output format."""
     existing = {f.name for f in arcpy.ListFields(fc)}
+    cum = _cum_field(fc)
     #   name             type      length  alias
     specs = [("Density", "DOUBLE", None, "Density level"),
              ("Isopleth", "DOUBLE", None, "Proportion of volume enclosed (isopleth level)"),
-             ("CumProportion", "DOUBLE", None, "Cumulative proportion (raster value)"),
+             (cum, "DOUBLE", None, "Cumulative proportion (raster value)"),
              ("Label", "TEXT", 5, None),
              ("Primary", "TEXT", 5, None)]
     # one AddFields call, not one AddField per field (standing rule)
@@ -382,6 +401,7 @@ def _add_level_fields(fc):
             for name, ftype, length, alias in specs if name not in existing]
     if todo:
         arcpy.management.AddFields(fc, todo)
+    return cum
 
 
 def _match_index(levels, value):
@@ -458,11 +478,11 @@ def _build_contours(kd, out_lines, out_polys, messages):
     mh._set_label("Generating probability contours...")
     arcpy.ddd.ContourList(kd, tmp_lines, densities)
     cfield = _contour_value_field(tmp_lines)
-    _add_level_fields(tmp_lines)
+    cum_lines = _add_level_fields(tmp_lines)
     arcpy.management.AddField(tmp_lines, "LevelID", "LONG")
     with arcpy.da.UpdateCursor(
             tmp_lines,
-            [cfield, "Density", "Isopleth", "CumProportion", "Label", "Primary", "LevelID"]) as cur:
+            [cfield, "Density", "Isopleth", cum_lines, "Label", "Primary", "LevelID"]) as cur:
         for row in cur:
             i = _match_index(levels, row[0])
             lv = levels[i]
@@ -491,8 +511,8 @@ def _build_contours(kd, out_lines, out_polys, messages):
         arcpy.management.CreateFeatureclass(
             os.path.dirname(out_polys), os.path.basename(out_polys),
             "POLYGON", spatial_reference=mh.clean_sr(sr))
-        _add_level_fields(out_polys)
-        ins_fields = ["SHAPE@", "Density", "Isopleth", "CumProportion", "Label", "Primary"]
+        cum_polys = _add_level_fields(out_polys)
+        ins_fields = ["SHAPE@", "Density", "Isopleth", cum_polys, "Label", "Primary"]
         delim = arcpy.AddFieldDelimiters(tmp_lines, "LevelID")
         with arcpy.da.InsertCursor(out_polys, ins_fields) as ins:
             for i, lv in enumerate(levels):
@@ -599,7 +619,7 @@ def run_probability_contours(kd, out_lines, out_polys, messages):
         if not mh.is_memory_workspace(str(fc)):
             # memory outputs cannot hold metadata (see _kd_write_meta)
             tmeta.set_entity_and_fields(fc, entity=_CONTOUR_ENTITY,
-                                        fields=_CONTOUR_FIELDS,
+                                        fields=_contour_fields_for(fc),
                                         messages=messages)
         try:
             title = arcpy.Describe(fc).baseName

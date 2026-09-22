@@ -190,19 +190,73 @@ _FIELD_NAME_OVERRIDE = {
 }
 
 
-def default_field_name(key):
+# Default names for a SHAPEFILE (dBASE) target: at most 10 characters, all
+# distinct, so nothing truncates and nothing collides. The geodatabase names
+# above are the readable ones; these are what the dialog fills in instead
+# when the input (or, for the segment tool, the output) is a shapefile, and
+# the dialog swaps between the two sets when the dataset's format changes
+# (Jeff, 2026-09-22: with a shapefile input, the long defaults truncated to
+# duplicates and the tool refused to run on names the user never typed).
+SHP_FIELD_NAME = {
+    "plan_length": "PlanLen", "surf_length": "SurfLen", "surf_ratio": "SurfRatio",
+    "length_uphill": "LenUp", "prop_uphill": "PropUp", "elev_gain": "ElevGain",
+    "length_downhill": "LenDown", "prop_downhill": "PropDown", "elev_loss": "ElevLoss",
+    "length_flat": "LenFlat", "prop_flat": "PropFlat", "net_elev": "NetElev",
+    "avg_slope": "AvgSlope", "slope_sd": "SlopeSD", "min_slope": "MinSlope",
+    "max_slope": "MaxSlope", "rms_slope": "RMSSlope",
+    "mean_dir": "MeanDir", "resultant": "MeanResLen", "circ_var": "CircVar",
+    "ang_var": "AngVar", "circ_sd": "CircSD", "ang_dev": "AngDev",
+    "rayleigh_p": "RayleighP", "total_curv": "TotCurv", "fractal_d": "FractalD",
+    "sinuosity": "Sinuosity", "min_elev": "MinElev", "min_elev_x": "MinElevX",
+    "min_elev_y": "MinElevY", "max_elev": "MaxElev", "max_elev_x": "MaxElevX",
+    "max_elev_y": "MaxElevY", "elev_range": "ElevRange", "vert_relief": "VertRelief",
+    "reversals": "Reversals",
+}
+SEG_SHP_FIELD_NAME = {
+    "begin_x": "SgBeginX", "begin_y": "SgBeginY", "begin_z": "SgBeginZ",
+    "end_x": "SgEndX", "end_y": "SgEndY", "end_z": "SgEndZ",
+    "plan_length": "SgPlanLen", "surf_length": "SgSurfLen", "surf_ratio": "SgSurfRat",
+    "rel_elev": "SgRelElev", "net_elev": "SgNetElev", "rel_slope": "SgRelSlope",
+    "abs_slope": "SgAbsSlope", "bearing": "SgBearing", "deflection": "SgDeflect",
+    "abs_deflection": "SgAbsDefl", "inclination": "SgInclin",
+    "abs_inclination": "SgAbsIncl", "defl3d": "SgDefl3D", "source_id": "SgSourceID",
+    "seg_num": "SgSegNum", "part_index": "SgPartIdx", "slope_class": "SgSlopeCls",
+    "station": "SgStation", "mid_x": "SgMidX", "mid_y": "SgMidY", "mid_z": "SgMidZ",
+    "mean_elev": "SgMeanElev",
+}
+assert set(SHP_FIELD_NAME) == set(STAT_KEYS)
+assert set(SEG_SHP_FIELD_NAME) == set(SEG_LABEL)
+for _tbl in (SHP_FIELD_NAME, SEG_SHP_FIELD_NAME):
+    assert all(len(v) <= 10 for v in _tbl.values())
+    assert len({v.lower() for v in _tbl.values()}) == len(_tbl)
+
+
+def default_field_name(key, shapefile=False):
     """Default output field name for an along-line statistic (e.g. 'Surface
-    Length (geodesic)' -> 'Surface_Length')."""
+    Length (geodesic)' -> 'Surface_Length'; -> 'SurfLen' for a shapefile)."""
+    if shapefile:
+        return SHP_FIELD_NAME[key]
     if key in _FIELD_NAME_OVERRIDE:
         return _FIELD_NAME_OVERRIDE[key]
     return _label_to_field(STAT_LABEL[key]) or key
 
 
-def seg_default_field_name(key):
+def seg_default_field_name(key, shapefile=False):
     """Default output field name for a SEGMENT statistic -- prefixed 'Seg_' so it
     never collides with the along-line tool's field names or copied source
-    fields (e.g. 'Surface Length (geodesic)' -> 'Seg_Surface_Length')."""
+    fields (e.g. 'Surface Length (geodesic)' -> 'Seg_Surface_Length'; ->
+    'SgSurfLen' for a shapefile)."""
+    if shapefile:
+        return SEG_SHP_FIELD_NAME[key]
     return "Seg_" + (_label_to_field(SEG_LABEL[key]) or key)
+
+
+def is_shapefile_target(path):
+    """True when ``path`` names a shapefile, or a dataset that will be created
+    as one. The canonical test lives in mahalanobis (shared by every tool that
+    chooses field names before creating a dataset)."""
+    import mahalanobis as _mh
+    return _mh.is_shapefile_target(path)
 
 
 def field_units_phrase(key, length_unit, elev_unit, slope_unit):
@@ -223,21 +277,66 @@ def field_units_phrase(key, length_unit, elev_unit, slope_unit):
     return "unitless"
 
 
+# What each statistic IS, for the field metadata written into the input feature
+# class. The same wording as the Topography along Lines help page (Jeff,
+# 2026-09-22: the label-plus-units description alone told a reader nothing).
+# Plain ASCII: the metadata XML is fine with Unicode, but Pro's metadata view
+# renders these in a plain font where R-bar and radicals read poorly.
+STAT_DESC = {
+    "plan_length": "The sum of the segments' horizontal lengths: the length of the line on the map, measured on the spheroid.",
+    "surf_length": "The sum of the segments' three-dimensional lengths: the distance actually traveled over the ground.",
+    "surf_ratio": "Surface length divided by planimetric length. Exactly 1 on flat ground, larger over rough or steep terrain; the line-based cousin of the surface ratio in the Surface Area and Ratio tool.",
+    "length_uphill": "The summed surface length of the segments that climb, in the direction of travel.",
+    "length_downhill": "The summed surface length of the segments that descend, in the direction of travel.",
+    "length_flat": "The summed surface length of the segments with exactly zero elevation change.",
+    "prop_uphill": "Length Uphill divided by the total surface length. The uphill, downhill and flat proportions sum to 1.",
+    "prop_downhill": "Length Downhill divided by the total surface length. The uphill, downhill and flat proportions sum to 1.",
+    "prop_flat": "Length Perfectly Flat divided by the total surface length. The uphill, downhill and flat proportions sum to 1.",
+    "elev_gain": "The sum of every segment's rise, ignoring the falls: the total climbing.",
+    "elev_loss": "The sum of every segment's fall, as a positive number: the total descending.",
+    "net_elev": "Gain minus loss: the elevation of the last vertex minus the first, when the chain is unbroken. Otherwise the sum of all such net elevation changes in the multiple pieces of a multipart polyline, or of a line broken by a NoData gap.",
+    "vert_relief": "Gain plus loss: all the climbing and all the descending together.",
+    "min_elev": "The lowest sampled elevation along the line.",
+    "max_elev": "The highest sampled elevation along the line.",
+    "elev_range": "The highest sampled elevation along the line minus the lowest.",
+    "min_elev_x": "The X coordinate of the lowest sampled point along the line, in the polyline dataset's own coordinate system even when the DEM is in another one.",
+    "min_elev_y": "The Y coordinate of the lowest sampled point along the line, in the polyline dataset's own coordinate system even when the DEM is in another one.",
+    "max_elev_x": "The X coordinate of the highest sampled point along the line, in the polyline dataset's own coordinate system even when the DEM is in another one.",
+    "max_elev_y": "The Y coordinate of the highest sampled point along the line, in the polyline dataset's own coordinate system even when the DEM is in another one.",
+    "reversals": "How many times the line switches between climbing and descending, counted within each part; perfectly flat segments are skipped rather than counted as a switch.",
+    "avg_slope": "The mean of the segments' absolute slopes, each weighted by its surface length, so a long steep pitch counts for more than a short one.",
+    "min_slope": "The shallowest segment slope. Absolute steepness: a segment falling at 20 degrees and one rising at 20 degrees have the same slope.",
+    "max_slope": "The steepest segment slope. Absolute steepness: a segment falling at 20 degrees and one rising at 20 degrees have the same slope.",
+    "slope_sd": "The surface-length-weighted standard deviation of the segment slopes: how variable the steepness is along the line.",
+    "rms_slope": "The surface-length-weighted root mean square of the segment slopes, a measure that emphasizes the steep pitches more than the plain average does.",
+    "mean_dir": "The bearing of the resultant of the segment headings (each weighted by its surface length), atan2(S, C), as a compass azimuth.",
+    "resultant": "The mean resultant length R-bar of the segment headings, from 0 to 1. A value of 1 means every segment points the same way (a straight line); a value near 0 means the headings cancel out.",
+    "circ_var": "Circular variance, 1 - R-bar (Mardia and Jupp 2000; Fisher 1993). 0 for a straight line, up to 1.",
+    "ang_var": "Angular variance, 2(1 - R-bar) (Batschelet 1981). 0 up to 2.",
+    "circ_sd": "Circular standard deviation, sqrt(-2 ln R-bar) (Mardia and Jupp 2000; Fisher 1993), converted from radians to degrees. Undefined when R-bar = 0.",
+    "ang_dev": "Angular deviation, sqrt(2(1 - R-bar)) (Batschelet 1981), converted to degrees; it tops out at 81.03 degrees.",
+    "rayleigh_p": "The Rayleigh test of whether the line has a preferred direction at all, calculated with equation 27.4 of Zar (1999) and using the segment count as the sample size. A small p-value means the headings are not uniformly scattered.",
+    "total_curv": "The sum of the absolute turning angles between consecutive segments, within each part. A straight line has 0; a line that turns left 30 degrees and then right 30 degrees has 60.",
+    "sinuosity": "Surface length divided by the straight three-dimensional distance between the part's first and last vertex (summed over parts for multipart lines). Exactly 1 for a straight line on any slope; larger the more the line meanders. It is the reciprocal of the straightness index of Batschelet (1981) discussed by Benhamou (2004).",
+    "fractal_d": "How the measured length of the line grows as you measure it with a finer ruler, by the divider method (Mandelbrot 1967; Nams 2005). 1 for a straight line, approaching 2 for a path so tortuous it fills the plane.",
+}
+assert set(STAT_DESC) == set(STAT_KEYS)
+
+
 def field_description(key, length_unit, elev_unit, slope_unit):
-    """Field-metadata description for one statistic, stating its units and (for
-    direction-dependent statistics) the direction-of-travel convention."""
-    txt = "{}, computed by the Topography along Lines tool. Units: {}.".format(
-        STAT_LABEL[key], field_units_phrase(key, length_unit, elev_unit, slope_unit))
+    """Field-metadata description for one statistic: what it is (the help
+    page's definition), its units, and (for direction-dependent statistics)
+    the direction-of-travel convention."""
+    txt = "{}. {} Units: {}. Computed by the Topography along Lines tool.".format(
+        STAT_LABEL[key], STAT_DESC[key],
+        field_units_phrase(key, length_unit, elev_unit, slope_unit))
     if key in DIRECTION_DEPENDENT:
         txt += (" This value describes the line travelling in the direction of "
                 "its geometry, from the first vertex to the last (reversing the "
                 "line reverses this value).")
     if key in ("min_elev_x", "min_elev_y", "max_elev_x", "max_elev_y"):
-        txt += (" The coordinate of the sampled point along the line with the "
-                "{} elevation; if that elevation occurs at more than one "
-                "sampled point, the first such point along the line is "
-                "reported.".format("lowest" if key.startswith("min") else
-                                   "highest"))
+        txt += (" If that elevation occurs at more than one sampled point, the "
+                "first such point along the line is reported.")
     return txt
 
 # Length units -> meters (the chosen Length Unit; matches Calculate Geometry's

@@ -1234,6 +1234,38 @@ def split_gdb_dataset(path):
     return (gdb, name) if name else None
 
 
+def is_shapefile_target(path):
+    """True when ``path`` names a shapefile, or a dataset that will be created
+    as one: a ``.shp`` path, or a bare name inside a plain folder rather than
+    a geodatabase, geopackage, SQLite database or the memory workspace. Use it
+    to decide field names BEFORE creating the dataset -- a shapefile truncates
+    field names to 10 characters, and two long names that truncate alike
+    collide (2026-09-22 sweep: Topography along Lines, Split Lines, Shadow
+    Polygons, Kernel Density Contours, LoCoH)."""
+    s = str(path or "").strip().replace("/", "\\").rstrip("\\")
+    if not s:
+        return False
+    low = s.lower()
+    if low.endswith(".shp"):
+        return True
+    if low.split("\\", 1)[0] in ("memory", "in_memory"):
+        return False
+    for ext in (".gdb", ".sde", ".gpkg", ".sqlite"):
+        if low.endswith(ext) or (ext + "\\") in low:
+            return False
+    return "\\" in s      # a path in a plain folder -> dBASE naming rules
+
+
+def dbf_table_path(path):
+    """A table written to a plain FOLDER must carry the ``.dbf`` extension
+    (standing rule); inside a geodatabase or the memory workspace the name
+    stays extensionless. Returns the path to create."""
+    s = str(path or "")
+    if is_shapefile_target(s) and not s.lower().endswith(".dbf"):
+        return s + ".dbf"
+    return s
+
+
 def lyrx_dir_for(ws):
     """The directory that should receive a dataset's side ``.lyrx`` file:
     next to the geodatabase for gdb datasets, the folder itself otherwise,
@@ -2049,6 +2081,9 @@ def _matrix_to_table(matrix, out_table, variables, is_vector, source_extra, mess
     Embeds the ordered-variable JSON block in the table metadata so the raster tool
     can round-trip it.
     """
+    # A table in a plain folder is a dBASE table and needs the .dbf extension
+    # (its field names, Variable / Mean / Col0.., already fit dBASE's limit).
+    out_table = dbf_table_path(out_table)
     out_ws, out_name = os.path.split(out_table)
     if arcpy.Exists(out_table):
         arcpy.management.Delete(out_table)
@@ -2085,6 +2120,7 @@ def _matrix_to_table(matrix, out_table, variables, is_vector, source_extra, mess
         m.save()
     except Exception as e:
         messages.addWarningMessage("Could not write table metadata: {}".format(e))
+    return out_table
 
 
 def save_optional_tables(opts, mean, cov, inv_cov, corr, variables, source_extra,
@@ -2092,18 +2128,20 @@ def save_optional_tables(opts, mean, cov, inv_cov, corr, variables, source_extra
     """Save whichever of mean/cov/inv-cov/correlation tables the user requested.
 
     ``opts`` maps {'mean','cov','invcov','corr'} -> output table path or None.
+    Each entry is updated in place to the path actually written (a folder
+    table gains the .dbf extension), so callers report and map the real one.
     """
     if opts.get("mean"):
-        _matrix_to_table(mean, opts["mean"], variables, True, source_extra, messages, kind="mean")
+        opts["mean"] = _matrix_to_table(mean, opts["mean"], variables, True, source_extra, messages, kind="mean")
         messages.addMessage("Saved mean vector table: {}".format(opts["mean"]))
     if opts.get("cov"):
-        _matrix_to_table(cov, opts["cov"], variables, False, source_extra, messages, kind="cov")
+        opts["cov"] = _matrix_to_table(cov, opts["cov"], variables, False, source_extra, messages, kind="cov")
         messages.addMessage("Saved covariance table: {}".format(opts["cov"]))
     if opts.get("invcov"):
-        _matrix_to_table(inv_cov, opts["invcov"], variables, False, source_extra, messages, kind="invcov")
+        opts["invcov"] = _matrix_to_table(inv_cov, opts["invcov"], variables, False, source_extra, messages, kind="invcov")
         messages.addMessage("Saved inverse-covariance table: {}".format(opts["invcov"]))
     if opts.get("corr") and corr is not None:
-        _matrix_to_table(corr, opts["corr"], variables, False, source_extra, messages, kind="corr")
+        opts["corr"] = _matrix_to_table(corr, opts["corr"], variables, False, source_extra, messages, kind="corr")
         messages.addMessage("Saved correlation table: {}".format(opts["corr"]))
 
 

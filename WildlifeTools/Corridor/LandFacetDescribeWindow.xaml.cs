@@ -393,8 +393,12 @@ namespace WildlifeTools.Corridor
                 Filter = "Rich Text (*.rtf)|*.rtf|Plain text (*.txt)|*.txt",
                 FileName = "LandFacetDataReport.rtf",
                 Title = "Save the report",
+                DefaultExt = ".rtf",
+                AddExtension = true,
             };
             if (dlg.ShowDialog() != true) return;
+            if (string.IsNullOrEmpty(Path.GetExtension(dlg.FileName)))
+                dlg.FileName += ".rtf";   // typed without an extension
             try
             {
                 if (dlg.FileName.EndsWith(".rtf", StringComparison.OrdinalIgnoreCase))

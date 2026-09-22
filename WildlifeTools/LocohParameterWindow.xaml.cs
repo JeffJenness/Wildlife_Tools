@@ -247,8 +247,12 @@ namespace WildlifeTools
                 Filter = "PNG image (*.png)|*.png|SVG vector (*.svg)|*.svg",
                 FileName = SafeName() + "_locoh_sweep.png",
                 InitialDirectory = ImageSaveFolder.Initial(),
+                DefaultExt = ".png",
+                AddExtension = true,
             };
             if (dlg.ShowDialog() != true) return;
+            if (string.IsNullOrEmpty(Path.GetExtension(dlg.FileName)))
+                dlg.FileName += ".png";   // typed without an extension
             ImageSaveFolder.Remember(dlg.FileName);
             try
             {
@@ -299,8 +303,12 @@ namespace WildlifeTools
                 Title = "Export the sweep table",
                 Filter = "CSV file (*.csv)|*.csv",
                 FileName = SafeName() + "_locoh_sweep.csv",
+                DefaultExt = ".csv",
+                AddExtension = true,
             };
             if (dlg.ShowDialog() != true) return;
+            if (string.IsNullOrEmpty(Path.GetExtension(dlg.FileName)))
+                dlg.FileName += ".csv";   // typed without an extension
             try
             {
                 var sb = new StringBuilder();

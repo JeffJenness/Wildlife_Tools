@@ -119,7 +119,7 @@ def _buffer_geometry(geom, dist_m, sr, geodesic):
     return out
 
 
-def _write_layer_file(out_fc, name, messages):
+def _write_layer_file(out_fc, name, messages, transp_field="Transparency"):
     """A .lyrx beside the output: black solid fill, no outline, with a
     transparency visual variable bound to the Transparency field (the CIM
     analog of the legacy ITransparencyRenderer.TransparencyField)."""
@@ -175,7 +175,7 @@ def _write_layer_file(out_fc, name, messages):
                 },
                 "visualVariables": [{
                     "type": "CIMTransparencyVisualVariable",
-                    "field": "Transparency",
+                    "field": transp_field,
                     "dataValues": [0.0, 100.0],
                     "transparencyValues": [0.0, 100.0],
                 }],
@@ -275,10 +275,16 @@ def run_shadow_polygons(in_features, out_fc, num_rings=10, size_value=0.25,
         arcpy.management.Delete(out_fc)
     arcpy.management.CreateFeatureclass(out_ws, out_name, "POLYGON",
                                         spatial_reference=_mh.clean_sr(sr))
+    # A shapefile output truncates field names to 10 characters, so use
+    # names that fit; a geodatabase keeps the descriptive ones.
+    if _mh.is_shapefile_target(out_fc):
+        f_size, f_transp = "BufferSize", "Transp_Pct"
+    else:
+        f_size, f_transp = "Buffer_Size", "Transparency"
     arcpy.management.AddFields(out_fc, [
-        ["Buffer_Size", "DOUBLE", "", "", "", ""],
-        ["Transparency", "DOUBLE", "", "", "", ""]])
-    with arcpy.da.InsertCursor(out_fc, ["SHAPE@", "Buffer_Size", "Transparency"]) as cur:
+        [f_size, "DOUBLE", "Buffer_Size", "", "", ""],
+        [f_transp, "DOUBLE", "Transparency", "", "", ""]])
+    with arcpy.da.InsertCursor(out_fc, ["SHAPE@", f_size, f_transp]) as cur:
         for geom, dist, transp in rows:
             cur.insertRow((geom, dist, transp))
     _msg(messages, "Wrote {} polygons (source + {} rings).".format(len(rows), num_rings))
@@ -315,11 +321,11 @@ def run_shadow_polygons(in_features, out_fc, num_rings=10, size_value=0.25,
             out_fc,
             entity="One shadow ring per record, plus the dissolved source polygon.",
             fields=[
-                {"name": "Buffer_Size",
+                {"name": f_size,
                  "description": "Outer distance of this ring from the source "
                                 "polygon, in meters. 0 for the source polygon "
                                 "itself."},
-                {"name": "Transparency",
+                {"name": f_transp,
                  "description": "Percent transparency (0-100) to render this "
                                 "polygon with, when the layer varies "
                                 "transparency by this field. The source polygon "
@@ -329,7 +335,7 @@ def run_shadow_polygons(in_features, out_fc, num_rings=10, size_value=0.25,
     except Exception:
         pass
 
-    return _write_layer_file(out_fc, out_name, messages)
+    return _write_layer_file(out_fc, out_name, messages, transp_field=f_transp)
 
 
 # ----------------------------------------------------------------------------

@@ -1810,9 +1810,9 @@ def run_aspect_zonal(in_zone_data, zone_field, in_raster, out_table,
               "raster.".format(total_bad))
 
     _mh.phase_advance("Writing the output table...")
-    _write_zonal_table(out_table, in_zone_data, zone_field, zone_is_raster,
-                       acc, zone_order, keys, ignore_nodata, in_raster,
-                       statistics_type, messages)
+    out_table = _write_zonal_table(
+        out_table, in_zone_data, zone_field, zone_is_raster, acc, zone_order,
+        keys, ignore_nodata, in_raster, statistics_type, messages)
     _mh.end_phases()
     return out_table
 
@@ -2185,6 +2185,10 @@ def _write_zonal_table(out_table, in_zone_data, zone_field, zone_is_raster,
                        statistics_type, messages):
     """Create the output table, write one row per zone, and stamp metadata."""
     import arcpy
+    # A table in a plain folder is a dBASE table and needs the .dbf extension
+    # (its field names already fit dBASE's 10-character limit).
+    out_table = _mh.dbf_table_path(out_table)
+    dbf = _mh.is_shapefile_target(out_table)
     ws, name = os.path.split(str(out_table))
     arcpy.management.CreateTable(ws, name)
 
@@ -2235,6 +2239,9 @@ def _write_zonal_table(out_table, in_zone_data, zone_field, zone_is_raster,
         ordered = zone_order
 
     big = False
+    # A dBASE table cannot hold NULL: statistics that cannot be computed
+    # for a zone are written as -999 there (the toolbox's convention).
+    nul = -999.0 if dbf else None
     with arcpy.da.InsertCursor(
             out_table, [zf_name, "COUNT", "FLAT_COUNT", "FLAT_PCT"]
             + stat_fields) as cur:
@@ -2243,13 +2250,16 @@ def _write_zonal_table(out_table, in_zone_data, zone_field, zone_is_raster,
             stats = _zone_stats_row(z, ignore_nodata)
             n, flat = z["n"], z["flat"]
             denom = n + flat
-            fpct = (100.0 * flat / denom) if denom > 0 else None
+            fpct = (100.0 * flat / denom) if denom > 0 else nul
             if n > 2147483647 or flat > 2147483647:
                 big = True
             row = [key,
                    min(n, 2147483647), min(flat, 2147483647), fpct]
-            row += [stats[f] for f in stat_fields]
+            row += [nul if stats[f] is None else stats[f] for f in stat_fields]
             cur.insertRow(row)
+    if dbf:
+        _say(messages, "Statistics that could not be computed are -999 (a "
+                       "dBASE table cannot hold NULL).")
     if big:
         _warn(messages, "A zone exceeded the 32-bit COUNT limit; its count "
                         "was clamped to 2,147,483,647.")
@@ -2280,3 +2290,4 @@ def _write_zonal_table(out_table, in_zone_data, zone_field, zone_is_raster,
         md.save()
     except Exception:
         pass
+    return out_table

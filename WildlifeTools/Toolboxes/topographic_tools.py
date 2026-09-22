@@ -2727,10 +2727,10 @@ def run_slope_zonal(in_zone_data, zone_field, in_raster, out_table,
                        "(see NEG_COUNT).".format(total_neg))
 
     _mh.phase_advance("Writing the output table...")
-    _write_slope_zonal_table(out_table, in_zone_data, zone_field,
-                             zone_is_raster, acc, zone_order, keys, unit,
-                             ignore_nodata, in_raster, statistics_type,
-                             use_absolute, messages)
+    out_table = _write_slope_zonal_table(
+        out_table, in_zone_data, zone_field, zone_is_raster, acc, zone_order,
+        keys, unit, ignore_nodata, in_raster, statistics_type, use_absolute,
+        messages)
     _mh.end_phases()
     return out_table
 
@@ -2846,6 +2846,10 @@ def _write_slope_zonal_table(out_table, in_zone_data, zone_field,
                              use_absolute, messages):
     import arcpy
     uw = _slope_unit_word(unit)
+    # A table in a plain folder is a dBASE table: it needs the .dbf extension
+    # and field names of at most 10 characters.
+    out_table = _mh.dbf_table_path(out_table)
+    dbf = _mh.is_shapefile_target(out_table)
     ws, name = os.path.split(str(out_table))
     arcpy.management.CreateTable(ws, name)
 
@@ -2893,11 +2897,13 @@ def _write_slope_zonal_table(out_table, in_zone_data, zone_field,
                    ("CI95_LO", "95% CI Lower Bound ({})".format(uw)),
                    ("CI95_HI", "95% CI Upper Bound ({})".format(uw))],
     }
-    stat_fields = []
+    stat_fields, stat_keys = [], []
     for k in keys:
-        for fname, alias in fields_for[k]:
+        for fkey, alias in fields_for[k]:
+            fname = "CI95_HALF" if (dbf and fkey == "CI95_HALF_DEG") else fkey
             fdesc.append([fname, "DOUBLE", alias, "", "", ""])
             stat_fields.append(fname)
+            stat_keys.append(fkey)
     arcpy.management.AddFields(out_table, fdesc)
 
     try:
@@ -2905,6 +2911,9 @@ def _write_slope_zonal_table(out_table, in_zone_data, zone_field,
     except TypeError:
         ordered = zone_order
 
+    # A dBASE table cannot hold NULL: statistics that cannot be computed
+    # for a zone are written as -999 there (the toolbox's convention).
+    nul = -999.0 if dbf else None
     with arcpy.da.InsertCursor(
             out_table, [zf_name, "COUNT", "NEG_COUNT"] + stat_fields) as cur:
         for key in ordered:
@@ -2912,9 +2921,12 @@ def _write_slope_zonal_table(out_table, in_zone_data, zone_field,
             row_stats = _slope_zone_row(z, unit, ignore_nodata)
             cur.insertRow([key, min(z["n"], 2147483647),
                            min(z["neg"], 2147483647)]
-                          + [row_stats[f] for f in stat_fields])
-    _say(messages, "Wrote {:,} zone row(s) to {}.".format(
-        len(ordered), out_table))
+                          + [nul if row_stats[f] is None else row_stats[f]
+                             for f in stat_keys])
+    _say(messages, "Wrote {:,} zone row(s) to {}.{}".format(
+        len(ordered), out_table,
+        " Statistics that could not be computed are -999 (a dBASE table "
+        "cannot hold NULL)." if dbf else ""))
 
     try:
         md = arcpy.metadata.Metadata(out_table)
@@ -2942,3 +2954,4 @@ def _write_slope_zonal_table(out_table, in_zone_data, zone_field,
         md.save()
     except Exception:
         pass
+    return out_table

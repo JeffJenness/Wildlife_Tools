@@ -410,8 +410,12 @@ namespace WildlifeTools.Corridor
                 Filter = "PNG image (*.png)|*.png|SVG vector (*.svg)|*.svg",
                 FileName = "Crosstab_Table.png",
                 InitialDirectory = ImageSaveFolder.Initial(),
+                DefaultExt = ".png",
+                AddExtension = true,
             };
             if (dlg.ShowDialog() != true) return;
+            if (string.IsNullOrEmpty(Path.GetExtension(dlg.FileName)))
+                dlg.FileName += ".png";   // typed without an extension
             try
             {
                 if (Path.GetExtension(dlg.FileName)

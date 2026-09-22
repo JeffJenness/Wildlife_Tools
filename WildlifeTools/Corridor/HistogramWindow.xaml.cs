@@ -509,8 +509,12 @@ namespace WildlifeTools.Corridor
                 InitialDirectory = DefaultDir(),
                 FileName = "MyHistogramDatasets.json",
                 Title = "Save histogram datasets",
+                DefaultExt = ".json",
+                AddExtension = true,
             };
             if (dlg.ShowDialog() != true) return;
+            if (string.IsNullOrEmpty(Path.GetExtension(dlg.FileName)))
+                dlg.FileName += ".json";   // typed without an extension
             try
             {
                 HistogramStore.Save(dlg.FileName, _datasets);
@@ -640,8 +644,12 @@ namespace WildlifeTools.Corridor
                 Filter = "PNG image (*.png)|*.png|SVG vector (*.svg)|*.svg",
                 FileName = "Habitat_Histogram.png",
                 InitialDirectory = ImageSaveFolder.Initial(),
+                DefaultExt = ".png",
+                AddExtension = true,
             };
             if (dlg.ShowDialog() != true) return;
+            if (string.IsNullOrEmpty(Path.GetExtension(dlg.FileName)))
+                dlg.FileName += ".png";   // typed without an extension
             ImageSaveFolder.Remember(dlg.FileName);
             try
             {

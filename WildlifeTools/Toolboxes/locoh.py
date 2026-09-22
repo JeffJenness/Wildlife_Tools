@@ -238,7 +238,10 @@ FIXEDSPHERE_FIELDS = [
 
 
 def _is_shapefile(out_path):
-    return str(out_path).lower().endswith(".shp")
+    # A bare name in a plain folder becomes a shapefile too, not only a path
+    # that already ends in .shp (shared, boundary-aware test).
+    import mahalanobis as _mh
+    return _mh.is_shapefile_target(out_path)
 
 
 def _field_names(out_path, field_defs):

@@ -285,6 +285,19 @@ def _detrend_check(P):
                 "The smoothing (detrending) radius must be positive.")
 
 
+def _writeback_dbf_tables(P, names):
+    """A table output typed as a bare name in a FOLDER is created as a dBASE
+    table with the .dbf extension: point the parameter at that real path, so
+    Pro adds the table that exists rather than the extensionless name."""
+    for n in names:
+        p = P.get(n)
+        if p is not None and p.valueAsText:
+            try:
+                p.value = mahalanobis.dbf_table_path(p.valueAsText)
+            except Exception:
+                pass
+
+
 def _add_tables_to_map(P, names, messages=None):
     """Add secondary table outputs to the active map. Pro's GP pane adds only
     the FIRST output parameter of a tool to the map (Jeff's run, 2026-09-08:
@@ -1358,8 +1371,10 @@ class MahalanobisRaster(object):
             _writeback_resolved_raster(P, "out_raster")
             # The GP pane adds only the first output (the raster) itself; add
             # any generated statistics tables explicitly.
-            _add_tables_to_map(P, [tbl for gen, tbl, _s, _k in _MAHAL_TABLE_SPECS
-                                   if P[gen].value and P[tbl].valueAsText], messages)
+            _tbls = [tbl for gen, tbl, _s, _k in _MAHAL_TABLE_SPECS
+                     if P[gen].value and P[tbl].valueAsText]
+            _writeback_dbf_tables(P, _tbls)
+            _add_tables_to_map(P, _tbls, messages)
             if out_lyrx:
                 try:
                     P["out_raster"].symbology = out_lyrx
@@ -1491,8 +1506,10 @@ class MahalanobisPoints(object):
                 messages=messages)
             # The GP pane adds only the first output (the points) itself; add
             # any generated statistics tables explicitly.
-            _add_tables_to_map(P, [tbl for gen, tbl, _s, _k in _MAHAL_TABLE_SPECS
-                                   if P[gen].value and P[tbl].valueAsText], messages)
+            _tbls = [tbl for gen, tbl, _s, _k in _MAHAL_TABLE_SPECS
+                     if P[gen].value and P[tbl].valueAsText]
+            _writeback_dbf_tables(P, _tbls)
+            _add_tables_to_map(P, _tbls, messages)
         except arcpy.ExecuteError as e:
             # Clean, expected failure (bad input, a validation check that
             # correctly caught something -- not a code bug). e's message
@@ -1662,6 +1679,7 @@ class MahalanobisCovariance(object):
             # The GP pane adds only the FIRST output table itself; add the rest.
             filled = [name for _key, name, _base in self._OUT_SPECS
                       if P[name].valueAsText]
+            _writeback_dbf_tables(P, filled)
             _add_tables_to_map(P, filled[1:], messages)
         except arcpy.ExecuteError as e:
             # Clean, expected failure (bad input, a validation check that
@@ -4366,16 +4384,31 @@ class TopographyAlongLines(object):
             fields = self._numeric_fields(lines.valueAsText) if lines.valueAsText else []
             use_al = bool(P["use_aliases"].value)
             # Auto-fill a reasonable field name from the chosen property when the
-            # field cell is left blank (e.g. Surface Length -> Surface_Length).
+            # field cell is left blank (e.g. Surface Length -> Surface_Length),
+            # using 10-character names when the input is a shapefile. A name
+            # the tool itself filled in earlier is swapped to the other set if
+            # the input's format has changed since; names the user typed are
+            # left alone.
+            shp = False
+            if lines.valueAsText:
+                try:
+                    shp = line_surface_tools.is_shapefile_target(
+                        arcpy.Describe(lines.valueAsText).catalogPath)
+                except Exception:
+                    shp = line_surface_tools.is_shapefile_target(lines.valueAsText)
             rows = attrs.value or []
             new_rows, changed = [], False
             for row in rows:
                 lbl = str(row[0]).strip() if row[0] is not None else ""
                 fld = str(row[1]).strip() if row[1] is not None else ""
                 key = line_surface_tools.LABEL_STAT.get(lbl)
-                if not fld and key:
-                    fld = line_surface_tools.default_field_name(key)
-                    changed = True
+                if key:
+                    want = line_surface_tools.default_field_name(key, shp)
+                    other = line_surface_tools.default_field_name(key, not shp)
+                    if not fld or fld == other:
+                        if fld != want:
+                            fld = want
+                            changed = True
                 new_rows.append([lbl, fld])
             if changed:
                 attrs.value = new_rows
@@ -4827,17 +4860,24 @@ class SplitLinesIntoSegments(object):
             except Exception:
                 pass
 
-        # Auto-fill blank field names (Seg_ prefixed) from the chosen property.
+        # Auto-fill blank field names (Seg_ prefixed) from the chosen property,
+        # using 10-character names when the OUTPUT will be a shapefile; a name
+        # the tool filled in earlier is swapped if the output's format changes.
         attrs = P["surface_attributes"]
+        shp = line_surface_tools.is_shapefile_target(outp.valueAsText)
         rows = attrs.value or []
         new_rows, changed = [], False
         for row in rows:
             lbl = str(row[0]).strip() if row[0] is not None else ""
             fld = str(row[1]).strip() if row[1] is not None else ""
             key = line_surface_tools.SEG_LABEL_KEY.get(lbl)
-            if not fld and key:
-                fld = line_surface_tools.seg_default_field_name(key)
-                changed = True
+            if key:
+                want = line_surface_tools.seg_default_field_name(key, shp)
+                other = line_surface_tools.seg_default_field_name(key, not shp)
+                if not fld or fld == other:
+                    if fld != want:
+                        fld = want
+                        changed = True
             new_rows.append([lbl, fld])
         if changed:
             attrs.value = new_rows
@@ -5894,7 +5934,7 @@ class AspectZonalStatisticsAsTable(object):
                     P["in_zone_data"].valueAsText
             else:
                 in_zone = P["in_zone_data"].valueAsText
-            aspect_tools.run_aspect_zonal(
+            out_tbl = aspect_tools.run_aspect_zonal(
                 in_zone_data=in_zone,
                 zone_field=P["zone_field"].valueAsText or "Value",
                 in_raster=in_raster,
@@ -5905,6 +5945,8 @@ class AspectZonalStatisticsAsTable(object):
                 input_convention=(P["input_convention"].valueAsText
                                   or aspect_tools.INPUT_CONVENTIONS[0]),
                 messages=messages)
+            if out_tbl:
+                P["out_table"].value = out_tbl   # may have gained .dbf in a folder
             _save_tool_defaults("AspectZonalStatisticsAsTable", {
                 "ignore_nodata": P["ignore_nodata"].value is not False,
                 "statistics_type": P["statistics_type"].valueAsText,
@@ -6134,7 +6176,7 @@ class SlopeZonalStatisticsAsTable(object):
                     P["in_zone_data"].valueAsText
             else:
                 in_zone = P["in_zone_data"].valueAsText
-            topographic_tools.run_slope_zonal(
+            out_tbl = topographic_tools.run_slope_zonal(
                 in_zone_data=in_zone,
                 zone_field=P["zone_field"].valueAsText or "Value",
                 in_raster=in_raster,
@@ -6146,6 +6188,8 @@ class SlopeZonalStatisticsAsTable(object):
                              or topographic_tools.SLOPE_UNITS_Z[0]),
                 use_absolute=(P["use_absolute"].value is not False),
                 messages=messages)
+            if out_tbl:
+                P["out_table"].value = out_tbl   # may have gained .dbf in a folder
             _save_tool_defaults("SlopeZonalStatisticsAsTable", {
                 "ignore_nodata": P["ignore_nodata"].value is not False,
                 "statistics_type": P["statistics_type"].valueAsText,
