@@ -4768,6 +4768,26 @@ class SplitLinesIntoSegments(object):
     _LANDSCAPE_STATS = {"land_slope", "land_aspect", "traverse"}   # read from a DEM
     _SEG_INTERVAL = "At the DEM sampling interval (keeping every vertex)"
     _SEG_VERTICES = "At the vertices only (one segment per vertex pair)"
+    # Advanced: alternative (available) steps for a step-selection analysis
+    _ALT_CATEGORY = "Advanced: alternative steps for step-selection analysis"
+    _ALT_EVEN = "Evenly spaced around the compass"
+    _ALT_RANDOM = "Random"
+    _ALT_SAME = "Same as the real step"
+    _ALT_DRAWN = "Drawn at random from the line's own step lengths"
+    # (gdb name, shapefile name, type, description)
+    _ALT_FIELDS = [
+        ("Seg_Used", "SgUsed", "SHORT",
+         "1 for a real step of the input line, 0 for an alternative step cast "
+         "from the same start point for a step-selection analysis. A definition "
+         "query Seg_Used = 1 shows the track alone."),
+        ("Seg_Step_ID", "SgStepID", "LONG",
+         "One number per real step, shared by that step and all of its "
+         "alternative steps: the stratum of a step-selection (conditional "
+         "logistic) model."),
+        ("Seg_Alt_Number", "SgAltNum", "SHORT",
+         "0 for the real step, 1 to K for its alternative steps in the order "
+         "they were cast."),
+    ]
     _SYM_PRIORITY = ["mean_elev", "begin_x", "end_x", "abs_slope", "rel_slope"]
     _RAMP = [(95, 135, 193), (249, 254, 204), (224, 70, 53)]
     _RESERVED = {"objectid", "fid", "shape", "shape_length", "shape_area",
@@ -4850,8 +4870,32 @@ class SplitLinesIntoSegments(object):
         slope_unit.filter.list = line_surface_tools.SLOPE_UNITS
         slope_unit.value = "Degrees"
 
+        alt_count = arcpy.Parameter(
+            displayName="Alternative steps per real step", name="alt_count",
+            datatype="GPLong", parameterType="Optional", direction="Input",
+            category=self._ALT_CATEGORY)
+        alt_count.value = 0
+        alt_headings = arcpy.Parameter(
+            displayName="Headings of the alternative steps", name="alt_headings",
+            datatype="GPString", parameterType="Optional", direction="Input",
+            category=self._ALT_CATEGORY)
+        alt_headings.filter.type = "ValueList"
+        alt_headings.filter.list = [self._ALT_EVEN, self._ALT_RANDOM]
+        alt_headings.value = self._ALT_EVEN
+        alt_length = arcpy.Parameter(
+            displayName="Length of the alternative steps", name="alt_length",
+            datatype="GPString", parameterType="Optional", direction="Input",
+            category=self._ALT_CATEGORY)
+        alt_length.filter.type = "ValueList"
+        alt_length.filter.list = [self._ALT_SAME, self._ALT_DRAWN]
+        alt_length.value = self._ALT_SAME
+        alt_seed = arcpy.Parameter(
+            displayName="Random seed (optional, for a reproducible run)",
+            name="alt_seed", datatype="GPLong", parameterType="Optional",
+            direction="Input", category=self._ALT_CATEGORY)
         params = [in_lines, out_fc, elev_source, in_dem, elev_units,
-                  segmentation, attrs, copy_fields, length_unit, slope_unit]
+                  segmentation, attrs, copy_fields, length_unit, slope_unit,
+                  alt_count, alt_headings, alt_length, alt_seed]
         saved = _load_tool_defaults("SplitLinesIntoSegments")
         for p in (length_unit, slope_unit):
             if p.name in saved:
@@ -4897,6 +4941,9 @@ class SplitLinesIntoSegments(object):
                          & self._LANDSCAPE_STATS)
         dem.enabled = use_dem or want_land   # landscape slope/aspect need a DEM
         P["segmentation"].enabled = use_dem  # own-Z lines are vertex-to-vertex already
+        alt_ok = use_dem and P["segmentation"].valueAsText == self._SEG_VERTICES
+        for nm in ("alt_count", "alt_headings", "alt_length", "alt_seed"):
+            P[nm].enabled = alt_ok
 
         detected, locked = None, False
         if use_dem and dem.valueAsText:
@@ -5016,6 +5063,19 @@ class SplitLinesIntoSegments(object):
                         "> Transformation.".format(lsr.GCS.name, dsr.GCS.name))
             except Exception:
                 pass
+        ac = P["alt_count"]
+        if ac.valueAsText:
+            try:
+                k = int(ac.value)
+            except Exception:
+                k = -1
+            if k < 0:
+                ac.setErrorMessage("The number of alternative steps cannot be negative.")
+            elif k > 0 and not ac.enabled:
+                ac.setWarningMessage(
+                    "Alternative steps are cast only when the elevation comes "
+                    "from a DEM and Segmentation is 'At the vertices only'; "
+                    "this value will be ignored.")
         # Duplicate output field names among the segment attributes (copied
         # source fields are auto-renamed at run time if they would collide).
         seen = set()
@@ -5052,6 +5112,18 @@ class SplitLinesIntoSegments(object):
             need_dem = use_dem or want_land
             vertex_only = (use_dem and
                            P["segmentation"].valueAsText == self._SEG_VERTICES)
+            # Alternative steps (Advanced): only for vertices-only DEM runs.
+            alt_k = 0
+            if vertex_only and P["alt_count"].valueAsText:
+                try:
+                    alt_k = max(0, int(P["alt_count"].value))
+                except Exception:
+                    alt_k = 0
+            alt_even = (P["alt_headings"].valueAsText or self._ALT_EVEN) != self._ALT_RANDOM
+            alt_same = (P["alt_length"].valueAsText or self._ALT_SAME) != self._ALT_DRAWN
+            import random as _random
+            alt_rng = _random.Random(
+                int(P["alt_seed"].value) if P["alt_seed"].valueAsText else None)
             copy_names = [str(r[0]).strip() for r in (P["copy_fields"].value or [])
                           if r[0] is not None and str(r[0]).strip()]
 
@@ -5140,6 +5212,13 @@ class SplitLinesIntoSegments(object):
                 length = 16 if ftype == "TEXT" else None
                 key_field.append((key, make_field(fld, ftype, length)))
 
+            # Step-selection bookkeeping fields (only when alternatives are cast).
+            alt_field = []                       # (gdb name, actual field name)
+            if alt_k > 0:
+                shp_out = mahalanobis.is_shapefile_target(out_fc)
+                for gname, sname, ftype, _d in self._ALT_FIELDS:
+                    alt_field.append((gname, make_field(sname if shp_out else gname, ftype)))
+
             # Copied source fields (type from source; sanitized name).
             src_fields = {f.name: f for f in arcpy.ListFields(in_lines)}
             copy_map = []                        # (source name, target name)
@@ -5164,6 +5243,11 @@ class SplitLinesIntoSegments(object):
             if need_dem:
                 mahalanobis.phase_advance()          # -> "Reading the DEM..."
                 window = lst.lines_window_in_dem_crs(in_lines, dem_sr)
+                if alt_k > 0 and window is not None:
+                    # alternatives reach up to the longest step from any vertex,
+                    # in every direction: widen the DEM window to cover them
+                    reach_m = lst.longest_vertex_step_m(in_lines) * 1.02 + 2.0 * dem_sr.metersPerUnit                         if dem_sr.type == "Projected" else lst.longest_vertex_step_m(in_lines) * 1.02 + 60.0
+                    window = lst.pad_window(window, reach_m, dem_sr)
                 dem = lst.load_dem(dem_path, window=window)
                 messages.addMessage(
                     "DEM read over the lines' extent ({:,} x {:,} cells); "
@@ -5172,12 +5256,31 @@ class SplitLinesIntoSegments(object):
 
             null_val = None if null_ok else -999
             out_flds = ["SHAPE@"] + [fn for _, fn in key_field] + \
-                       [tgt for _, tgt in copy_map]
+                       [fn for _, fn in alt_field] + [tgt for _, tgt in copy_map]
             in_flds = ["SHAPE@", "OID@"] + [src for src, _ in copy_map]
 
             mahalanobis.phase_advance()              # -> "Splitting ... segments..."
             label_every = max(1, (n_total // 200) or 1)
             n_lines = n_segs = nodata_segs = 0
+            n_alt = n_alt_dropped = 0
+            step_id = 0
+
+            def write_rec(rec, copied_vals, used, sid, alt_no):
+                pts = arcpy.Array([arcpy.Point(x, y, z)
+                                   for (x, y, z) in rec["geom"]])
+                geom = arcpy.Polyline(pts, source_sr, True)
+                vals = [geom]
+                for key, _ in key_field:
+                    v = lst.seg_value(rec, key, length_unit,
+                                      elev_units, slope_unit)
+                    if v is None:
+                        v = null_val
+                    vals.append(v)
+                if alt_field:
+                    vals.extend([used, sid, alt_no])
+                vals.extend(copied_vals)
+                icur.insertRow(vals)
+
             icur = arcpy.da.InsertCursor(out_fc, out_flds)
             try:
                 with arcpy.da.SearchCursor(in_lines, in_flds) as scur:
@@ -5198,37 +5301,76 @@ class SplitLinesIntoSegments(object):
                         recs = lst.build_segments(
                             shp, source, dem, elev_mpu, source_sr, oid,
                             landscape=want_land, vertex_only=vertex_only)
+                        step_lengths = [r["plan_m"] for r in recs if r["plan_m"] > 0]
                         for rec in recs:
-                            pts = arcpy.Array([arcpy.Point(x, y, z)
-                                               for (x, y, z) in rec["geom"]])
-                            geom = arcpy.Polyline(pts, source_sr, True)
-                            vals = [geom]
-                            for key, _ in key_field:
-                                v = lst.seg_value(rec, key, length_unit,
-                                                  elev_units, slope_unit)
-                                if v is None:
-                                    v = null_val
-                                vals.append(v)
-                            vals.extend(copied_vals)
-                            icur.insertRow(vals)
+                            step_id += 1
+                            write_rec(rec, copied_vals, 1, step_id, 0)
                             n_segs += 1
+                            if alt_k <= 0:
+                                continue
+                            # Alternative steps: cast from the real step's start
+                            # point, geodesically, at K headings (evenly spaced
+                            # from a random offset, or random) and at the real
+                            # step's length or one drawn from this line's steps;
+                            # each is run through the same engine, so its Z and
+                            # every attribute come from the ground it crosses.
+                            start = arcpy.Point(rec["begin_x"], rec["begin_y"])
+                            offset = (alt_rng.uniform(0.0, 360.0 / alt_k) if alt_even
+                                      else None)
+                            for k in range(1, alt_k + 1):
+                                heading = ((offset + (k - 1) * 360.0 / alt_k) % 360.0
+                                           if alt_even else alt_rng.uniform(0.0, 360.0))
+                                length_m = (rec["plan_m"] if alt_same or not step_lengths
+                                            else alt_rng.choice(step_lengths))
+                                if length_m <= 0:
+                                    n_alt_dropped += 1
+                                    continue
+                                end = arcpy.PointGeometry(start, source_sr) \
+                                    .pointFromAngleAndDistance(heading, length_m, "GEODESIC") \
+                                    .firstPoint
+                                alt_line = arcpy.Polyline(arcpy.Array([start, end]), source_sr)
+                                alt_recs = lst.build_segments(
+                                    alt_line, "DEM", dem, elev_mpu, source_sr, oid,
+                                    landscape=want_land, vertex_only=True)
+                                if not alt_recs:
+                                    n_alt_dropped += 1     # end on NoData / off the DEM
+                                    continue
+                                write_rec(alt_recs[0], copied_vals, 0, step_id, k)
+                                n_alt += 1
             finally:
                 del icur
 
             messages.addMessage(
                 "Created {:,} segment feature(s) from {:,} line(s).".format(
                     n_segs, n_lines))
+            if alt_k > 0:
+                messages.addMessage(
+                    "Alternative steps: {} per real step, headings {}, lengths {}"
+                    "{}; {:,} written, {:,} dropped (end on NoData or off the DEM). "
+                    "Seg_Used = 1 marks the real steps and Seg_Step_ID ties each "
+                    "alternative to its step; a definition query Seg_Used = 1 "
+                    "shows the track alone.".format(
+                        alt_k, "evenly spaced" if alt_even else "random",
+                        "same as the real step" if alt_same
+                        else "drawn from the line's own step lengths",
+                        ", seed {}".format(int(P["alt_seed"].value))
+                        if P["alt_seed"].valueAsText else "",
+                        n_alt, n_alt_dropped))
 
             # Per-field metadata: what each attribute is, its units, and the
             # direction-of-travel convention where it matters.
-            if key_field:
-                tool_metadata.set_entity_and_fields(
-                    out_fc,
-                    fields=[{"name": fn,
-                             "description": lst.seg_field_description(
-                                 key, length_unit, elev_units, slope_unit)}
-                            for key, fn in key_field],
-                    messages=messages)
+            if key_field or alt_field:
+                fmeta = [{"name": fn,
+                          "description": lst.seg_field_description(
+                              key, length_unit, elev_units, slope_unit)}
+                         for key, fn in key_field]
+                desc = {g: d for g, _s, _t, d in self._ALT_FIELDS}
+                fmeta += [{"name": fn,
+                           "description": "{}. {} Computed by the Split Lines into "
+                                          "Topography Segments tool.".format(g, desc[g])}
+                          for g, fn in alt_field]
+                tool_metadata.set_entity_and_fields(out_fc, fields=fmeta,
+                                                    messages=messages)
 
             # Output symbology: Unclassed Colors on the highest-priority field the
             # user calculated (else the first one), blue -> yellow -> red.

@@ -718,6 +718,57 @@ def project_geometry(geom, dst_sr, extent=None):
     return _ct.project_geometry(geom, dst_sr, extent)
 
 
+def longest_vertex_step_m(in_lines):
+    """The longest vertex-to-vertex step (meters) over every line of
+    ``in_lines``: how far an alternative step cast from a vertex can reach,
+    so the DEM window can be padded to cover it. Planar for projected data,
+    geodesic for geographic. 0.0 if nothing can be measured."""
+    import arcpy
+    best = 0.0
+    try:
+        d = arcpy.Describe(in_lines)
+        sr = d.spatialReference
+        geo = (sr.type != "Projected")
+        mpu = 1.0 if geo else float(sr.metersPerUnit or 1.0)
+        with arcpy.da.SearchCursor(in_lines, ["SHAPE@"]) as cur:
+            for (shp,) in cur:
+                if shp is None:
+                    continue
+                for pi in range(shp.partCount):
+                    pts = [q for q in shp.getPart(pi) if q is not None]
+                    for i in range(len(pts) - 1):
+                        a, b = pts[i], pts[i + 1]
+                        if geo:
+                            _ang, dist = arcpy.PointGeometry(a, sr).angleAndDistanceTo(
+                                arcpy.PointGeometry(b, sr), "GEODESIC")
+                        else:
+                            dist = math.hypot(b.X - a.X, b.Y - a.Y) * mpu
+                        if dist > best:
+                            best = dist
+    except Exception:
+        pass
+    return best
+
+
+def pad_window(window, pad_m, dem_sr):
+    """Grow a (xmin, ymin, xmax, ymax) window in the DEM's units by ``pad_m``
+    meters on every side (degrees for a geographic DEM, sized at the window's
+    latitude so the padding is never short)."""
+    if window is None or not pad_m or pad_m <= 0:
+        return window
+    xmin, ymin, xmax, ymax = window
+    try:
+        if dem_sr.type == "Projected":
+            pad = pad_m / float(dem_sr.metersPerUnit or 1.0)
+            return (xmin - pad, ymin - pad, xmax + pad, ymax + pad)
+        lat = math.radians((ymin + ymax) / 2.0)
+        pad_lat = pad_m / 111132.0
+        pad_lon = pad_m / (111320.0 * max(math.cos(lat), 0.2))
+        return (xmin - pad_lon, ymin - pad_lat, xmax + pad_lon, ymax + pad_lat)
+    except Exception:
+        return window
+
+
 def lines_window_in_dem_crs(in_lines, dem_sr):
     """Bounding box of the input lines' extent expressed in the DEM's coordinate
     system, for use as ``load_dem``'s window so only the relevant part of a

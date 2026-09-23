@@ -268,5 +268,60 @@ check("pyt: output carries no vertical CS (DEM has none)", arcpy.Describe(out27)
 z_out = next(iter(arcpy.da.SearchCursor(out27, ["Seg_Begin_Z"])))[0]
 check("pyt: Begin Z at the transformed position", close(z_out, exp_z, 0.2), (z_out, exp_z))
 
+# ---------------------------------------------------------------- alternative steps (Advanced)
+dem_big = write_plane(os.path.join(TMP, "north_up_big.tif"), 26912, X0 - 900.0, Y0 + 900.0, 10.0, 240, 240, 0.0, -0.20)
+# a two-vertex line -> one real step; 6 evenly spaced alternatives of the same length
+out_a = os.path.join(GDB, "segs_alt")
+arcpy.jenness.SplitLinesIntoSegments(
+    in_lines=fc, out_fc=out_a, elev_source="DEM raster", in_dem=dem_big, elev_units="Meters",
+    segmentation="At the vertices only (one segment per vertex pair)",
+    surface_attributes=[["Bearing", "Seg_Bearing"], ["Planimetric Length (geodesic)", "Seg_Planimetric_Length"],
+                        ["Begin X", "Seg_Begin_X"], ["Begin Y", "Seg_Begin_Y"], ["Traverse Angle", "Seg_Traverse_Angle"]],
+    copy_fields=[], length_unit="Meters", slope_unit="Degrees",
+    alt_count=6, alt_headings="Evenly spaced around the compass", alt_length="Same as the real step", alt_seed=7)
+flds = ["Seg_Used", "Seg_Step_ID", "Seg_Alt_Number", "Seg_Bearing", "Seg_Planimetric_Length", "Seg_Begin_X", "Seg_Begin_Y", "Seg_Traverse_Angle"]
+rows = [r for r in arcpy.da.SearchCursor(out_a, flds)]
+real = [r for r in rows if r[0] == 1]; alts = [r for r in rows if r[0] == 0]
+check("alt: one real step + 6 alternatives", len(real) == 1 and len(alts) == 6, (len(real), len(alts)))
+check("alt: all share the real step's Seg_Step_ID", len({r[1] for r in rows}) == 1, {r[1] for r in rows})
+check("alt: Seg_Alt_Number 0 for real, 1..6 for alternatives",
+      real[0][2] == 0 and sorted(r[2] for r in alts) == [1, 2, 3, 4, 5, 6], sorted(r[2] for r in alts))
+check("alt: alternatives start at the real step's start point",
+      all(close(r[5], real[0][5], 1e-3) and close(r[6], real[0][6], 1e-3) for r in alts))
+check("alt: same length as the real step (300 m)", all(close(r[4], 300.0, 0.5) for r in alts), [round(r[4], 2) for r in alts])
+b = sorted(r[3] for r in alts); gaps = [(b[(i + 1) % 6] - b[i]) % 360 for i in range(6)]
+check("alt: headings evenly spaced 60 degrees apart", all(close(g, 60.0, 0.6) for g in gaps), [round(g, 2) for g in gaps])
+check("alt: traverse angle defined on every alternative", all(r[7] is not None for r in alts))
+# reproducible with the seed
+out_b = os.path.join(GDB, "segs_alt2")
+arcpy.jenness.SplitLinesIntoSegments(
+    in_lines=fc, out_fc=out_b, elev_source="DEM raster", in_dem=dem_big, elev_units="Meters",
+    segmentation="At the vertices only (one segment per vertex pair)",
+    surface_attributes=[["Bearing", "Seg_Bearing"]], copy_fields=[], length_unit="Meters", slope_unit="Degrees",
+    alt_count=6, alt_headings="Evenly spaced around the compass", alt_length="Same as the real step", alt_seed=7)
+b2 = sorted(r[0] for r in arcpy.da.SearchCursor(out_b, ["Seg_Bearing"], where_clause="Seg_Used = 0"))
+check("alt: the same seed reproduces the same headings", all(close(x, y, 1e-6) for x, y in zip(b, b2)), (b[:2], b2[:2]))
+# drawn lengths: a 3-vertex line with steps of 100 m and 300 m -> every alternative is 100 or 300
+fc3 = arcpy.management.CreateFeatureclass(GDB, "line3", "POLYLINE", spatial_reference=SR).getOutput(0)
+with arcpy.da.InsertCursor(fc3, ["SHAPE@"]) as ic:
+    ic.insertRow([arcpy.Polyline(arcpy.Array([arcpy.Point(X0 + 100, Y0 - 300), arcpy.Point(X0 + 200, Y0 - 300),
+                                              arcpy.Point(X0 + 500, Y0 - 300)]), SR)])
+out_c = os.path.join(GDB, "segs_alt3")
+arcpy.jenness.SplitLinesIntoSegments(
+    in_lines=fc3, out_fc=out_c, elev_source="DEM raster", in_dem=dem_big, elev_units="Meters",
+    segmentation="At the vertices only (one segment per vertex pair)",
+    surface_attributes=[["Planimetric Length (geodesic)", "Seg_Planimetric_Length"]], copy_fields=[],
+    length_unit="Meters", slope_unit="Degrees",
+    alt_count=8, alt_headings="Random", alt_length="Drawn at random from the line's own step lengths", alt_seed=3)
+rows3 = [r for r in arcpy.da.SearchCursor(out_c, ["Seg_Used", "Seg_Step_ID", "Seg_Planimetric_Length"])]
+check("alt drawn: 2 real steps + 16 alternatives", sum(1 for r in rows3 if r[0] == 1) == 2 and sum(1 for r in rows3 if r[0] == 0) == 16,
+      (sum(1 for r in rows3 if r[0] == 1), sum(1 for r in rows3 if r[0] == 0)))
+check("alt drawn: two step ids, 9 rows each", sorted(sum(1 for r in rows3 if r[1] == s) for s in {r[1] for r in rows3}) == [9, 9])
+check("alt drawn: every alternative length is one of the line's step lengths (100 or 300)",
+      all(close(r[2], 100.0, 0.5) or close(r[2], 300.0, 0.5) for r in rows3 if r[0] == 0), sorted(round(r[2]) for r in rows3 if r[0] == 0))
+# field metadata for the bookkeeping fields
+from arcpy import metadata as md
+check("alt: field metadata describes Seg_Used", "stratum" in md.Metadata(out_a).xml or "real step" in md.Metadata(out_a).xml)
+
 print("\n{} passed, {} failed".format(PASS, FAIL))
 sys.exit(1 if FAIL else 0)

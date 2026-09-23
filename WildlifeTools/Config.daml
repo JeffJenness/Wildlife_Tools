@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.99.16" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.99.17" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>Wildlife and Forestry Tools</Name>
     <Description>Wildlife and forestry analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -348,7 +348,7 @@
                 largeImage="Images\PolygonBackground_32.png"
                 keytip="PB">
           <tooltip heading="Polygon">
-            Draws a polygon graphic that fits the actual shape of the selected element or elements — traced from each element's geometry or its symbolized shape, with an optional buffer — then groups the polygon and the selection into a new group with the polygon underneath. On a map the buffer is in map units; on a layout choose millimeters, centimeters, inches, or points. Works on selected elements, not on features in a dataset.<disabledText />
+            Draws a polygon graphic that fits the actual shape of the selected element or elements â€” traced from each element's geometry or its symbolized shape, with an optional buffer â€” then groups the polygon and the selection into a new group with the polygon underneath. On a map the buffer is in map units; on a layout choose millimeters, centimeters, inches, or points. Works on selected elements, not on features in a dataset.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_McpBackground"
@@ -359,7 +359,7 @@
                 largeImage="Images\McpBackground_32.png"
                 keytip="MB">
           <tooltip heading="Minimum Convex Polygon">
-            Draws a minimum convex polygon around the selected element or elements — hulled from each element's geometry or its symbolized shape, with an optional buffer — then groups the polygon and the selection into a new group with the polygon underneath. On a map the buffer is in map units; on a layout choose millimeters, centimeters, inches, or points. Works on selected elements, not on features in a dataset.<disabledText />
+            Draws a minimum convex polygon around the selected element or elements â€” hulled from each element's geometry or its symbolized shape, with an optional buffer â€” then groups the polygon and the selection into a new group with the polygon underneath. On a map the buffer is in map units; on a layout choose millimeters, centimeters, inches, or points. Works on selected elements, not on features in a dataset.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_RemoveSlc"
@@ -569,7 +569,7 @@
                 largeImage="Images\SlopeZonal_32.png"
                 keytip="SZ">
           <tooltip heading="Slope Zonal Statistics as Table">
-            Opens the Slope Zonal Statistics as Table tool from the Jenness Enterprises toolbox: summarizes a slope raster per zone into a table (count, mean, median, standard deviation, min, max, range, 5th/95th percentiles, and the 95% confidence interval of the mean). Very similar to Esri’s Zonal Statistics as Table, but built for slope -- the mean, SD and CI are computed on the slope ANGLES, because percent slope is the tangent of the angle and averaging raw percent values biases steepness statistics high -- and it requires no Spatial Analyst or Image Analyst extension. Slope units (degrees, percent, rise:run, gradians) default automatically from the raster’s geoprocessing history; results are reported in the source unit. Negative slopes can be treated as positive (absolute steepness) or keep their sign so downhill balances uphill. Zones come from an integer raster or point / polyline / polygon features; overlapping features in different zones are each analyzed in full. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
+            Opens the Slope Zonal Statistics as Table tool from the Jenness Enterprises toolbox: summarizes a slope raster per zone into a table (count, mean, median, standard deviation, min, max, range, 5th/95th percentiles, and the 95% confidence interval of the mean). Very similar to Esriâ€™s Zonal Statistics as Table, but built for slope -- the mean, SD and CI are computed on the slope ANGLES, because percent slope is the tangent of the angle and averaging raw percent values biases steepness statistics high -- and it requires no Spatial Analyst or Image Analyst extension. Slope units (degrees, percent, rise:run, gradians) default automatically from the rasterâ€™s geoprocessing history; results are reported in the source unit. Negative slopes can be treated as positive (absolute steepness) or keep their sign so downhill balances uphill. Zones come from an integer raster or point / polyline / polygon features; overlapping features in different zones are each analyzed in full. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_ExtractAspectValuesToPoints"
@@ -646,7 +646,7 @@
                 largeImage="Images\FindExtremes_32.png"
                 keytip="FE">
           <tooltip heading="Find Raster Extreme Values">
-            Opens the Find Raster Extreme Values tool from the Jenness Enterprises toolbox: finds the regional extremes of ANY raster surface and writes one point per extreme. On a DEM those are summits and sinks — a low point is a cell (or connected flat) with no lower neighbor, a peak is the same thing on the inverted surface — but the tool works identically on any continuous raster: run it on a slope raster to find the steepest and flattest points on the landscape, on a habitat-suitability surface to pin the locations of best and worst habitat, on temperature, wetness, density, or any other modeled surface. Flat tops and flat-bottomed basins yield one point each; flats that drain (benches) are excluded. Each point carries the source raster name and workspace, the cell value, X and Y (honoring the Output Coordinates environment), its prominence — for a DEM, true topographic prominence or depression depth; for any other surface, how far the value stands above or below its surroundings — and an edge-of-data flag for extremes whose neighbors are unknown. Optional minimum-prominence and dominance-window filters screen out noise. Needs no Spatial Analyst. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
+            Opens the Find Raster Extreme Values tool from the Jenness Enterprises toolbox: finds the regional extremes of ANY raster surface and writes one point per extreme. On a DEM those are summits and sinks â€” a low point is a cell (or connected flat) with no lower neighbor, a peak is the same thing on the inverted surface â€” but the tool works identically on any continuous raster: run it on a slope raster to find the steepest and flattest points on the landscape, on a habitat-suitability surface to pin the locations of best and worst habitat, on temperature, wetness, density, or any other modeled surface. Flat tops and flat-bottomed basins yield one point each; flats that drain (benches) are excluded. Each point carries the source raster name and workspace, the cell value, X and Y (honoring the Output Coordinates environment), its prominence â€” for a DEM, true topographic prominence or depression depth; for any other surface, how far the value stands above or below its surroundings â€” and an edge-of-data flag for extremes whose neighbors are unknown. Optional minimum-prominence and dominance-window filters screen out noise. Needs no Spatial Analyst. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_IdentifyTermini"
