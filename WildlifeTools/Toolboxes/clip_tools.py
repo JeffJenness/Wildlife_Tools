@@ -168,6 +168,48 @@ def transformation_for(in_sr, out_sr, chosen, extent=None):
     return (cands[0], True) if cands else (None, False)
 
 
+def env_transformations():
+    """The Geographic Transformations environment as a list of names."""
+    return [s for s in str(arcpy.env.geographicTransformations or "").split(";")
+            if s]
+
+
+_PG_CACHE = {}
+
+
+def transformation_name(in_sr, out_sr, extent=None):
+    """The datum transformation to use between two spatial references, or
+    None when they share a datum: the user's choice from the Geographic
+    Transformations environment when it applies, else Esri's recommended
+    one for the pair (extent-aware on the first call for a datum pair;
+    cached after that so every projection in a run uses the same name and a
+    round trip returns exactly to its starting coordinates)."""
+    try:
+        if in_sr is None or out_sr is None or _same_datum(in_sr, out_sr):
+            return None
+        key = frozenset((in_sr.GCS.datumName, out_sr.GCS.datumName))
+        if key not in _PG_CACHE:
+            _PG_CACHE[key] = transformation_for(
+                in_sr, out_sr, env_transformations(), extent)[0]
+        return _PG_CACHE[key]
+    except Exception:                                            # noqa: BLE001
+        return None
+
+
+def project_geometry(geom, out_sr, extent=None):
+    """``geom.projectAs(out_sr)`` WITH the datum transformation that
+    ``transformation_name`` chooses. A bare projectAs applies NONE in ArcGIS
+    Pro (Esri: "if you do not specify a transformation, none will be
+    applied"), which put NAD27 data 100-200 m off NAD83/WGS84 targets
+    (2026-09-23). ``geom`` may be a Geometry or an Extent. Same datum, or no
+    spatial reference on the geometry: a plain projectAs."""
+    sr = getattr(geom, "spatialReference", None)
+    if sr is None or out_sr is None:
+        return geom.projectAs(out_sr)
+    tfm = transformation_name(sr, out_sr, extent)
+    return geom.projectAs(out_sr, tfm) if tfm else geom.projectAs(out_sr)
+
+
 def _out_name(base, workspace, is_folder, raster, prefix="", suffix=""):
     """(target_path, safe_name) for one output, honoring the workspace
     kind (the standing folder-format rule: shapefiles and GeoTIFFs in a

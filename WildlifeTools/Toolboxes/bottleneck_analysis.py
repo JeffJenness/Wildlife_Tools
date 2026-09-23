@@ -83,6 +83,7 @@ azimuthal equidistant working space; all lengths and widths are reported
 in meters. Every output is stamped with a ``bottleneck`` linkage record.
 """
 import math
+import clip_tools as _ct
 import os
 
 import numpy as np
@@ -355,7 +356,7 @@ def _read_block(dataset, where, label, target_sr, corridor, step_m,
         raise arcpy.ExecuteError(
             "{}: no polygon features matched{}.".format(
                 label, " '{}'".format(where) if where else ""))
-    merged = _pa._union_all(geoms).projectAs(target_sr)
+    merged = _ct.project_geometry(_pa._union_all(geoms), target_sr)
     if getattr(merged, "hasCurves", False):
         # curve step in the target SR's own units (degrees on a GCS)
         try:
@@ -452,7 +453,7 @@ def run_bottleneck(corridor, block_a, block_b,
                        "unit of {:.6g} m; widths and lengths are "
                        "converted to METERS for every result.".format(
                            unit_m))
-    cor_w = cor_union.projectAs(working_sr)
+    cor_w = _ct.project_geometry(cor_union, working_sr)
     ext = cor_w.extent
     diag = math.hypot(ext.width, ext.height)
     if diag <= 0:
@@ -475,10 +476,10 @@ def run_bottleneck(corridor, block_a, block_b,
                         "route the corridor offers, but check the "
                         "inputs.")
 
-    habitat = cor_union.union(shell_a).union(shell_b) \
-        .projectAs(working_sr)
-    shell_a_w = shell_a.projectAs(working_sr)
-    shell_b_w = shell_b.projectAs(working_sr)
+    habitat = _ct.project_geometry(
+        cor_union.union(shell_a).union(shell_b), working_sr)
+    shell_a_w = _ct.project_geometry(shell_a, working_sr)
+    shell_b_w = _ct.project_geometry(shell_b, working_sr)
     pinch = min(1.0, max(0.05, diag * 2e-5))
     try:
         buffered = habitat.buffer(pinch)
@@ -713,7 +714,7 @@ def run_bottleneck(corridor, block_a, block_b,
     def _line(coords):
         arr = arcpy.Array([arcpy.Point(float(x), float(y))
                            for x, y in coords])
-        return arcpy.Polyline(arr, working_sr).projectAs(out_sr)
+        return _ct.project_geometry(arcpy.Polyline(arr, working_sr), out_sr)
 
     written = {}
     if out_route:
@@ -757,9 +758,9 @@ def run_bottleneck(corridor, block_a, block_b,
                 out_points,
                 ["SHAPE@", "Station_m", "Width_m", "Below"]) as cur:
             for s, w, (x, y) in zip(stations_g, widths, pts):
-                pt = arcpy.PointGeometry(
+                pt = _ct.project_geometry(arcpy.PointGeometry(
                     arcpy.Point(float(x), float(y)),
-                    working_sr).projectAs(out_sr)
+                    working_sr), out_sr)
                 flag = (-1 if threshold is None
                         else int(w < threshold))
                 cur.insertRow((pt, float(s), float(w), flag))

@@ -542,7 +542,9 @@ def _reproject_in_place(fc, src_sr, messages=None):
     try:
         base = arcpy.Describe(fc).baseName
         tmp = arcpy.CreateUniqueName("loc_reproj", "memory")
-        arcpy.management.Project(fc, tmp, target)   # geometry-only reprojection
+        import clip_tools as _ct
+        arcpy.management.Project(fc, tmp, target,
+                                 _ct.transformation_name(src_sr, target) or "")
         arcpy.management.Delete(fc)
         arcpy.management.CopyFeatures(tmp, fc)       # rebuild at the original path/format
         arcpy.management.Delete(tmp)

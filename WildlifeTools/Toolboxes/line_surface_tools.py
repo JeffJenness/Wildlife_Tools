@@ -162,6 +162,9 @@ SEG_STATS = [
     ("net_elev", "Net Elevation Change", "DOUBLE", "elevation"),
     ("rel_slope", "Relative Slope", "DOUBLE", "slope"),
     ("abs_slope", "Absolute Slope", "DOUBLE", "slope"),
+    ("land_slope", "Average Landscape Slope", "DOUBLE", "slope"),
+    ("land_aspect", "Average Landscape Compass Direction", "DOUBLE", "degrees"),
+    ("traverse", "Traverse Angle", "DOUBLE", "degrees"),
     ("bearing", "Bearing", "DOUBLE", "degrees"),
     ("deflection", "Deflection Angle", "DOUBLE", "degrees"),
     ("abs_deflection", "Absolute Deflection Angle", "DOUBLE", "degrees"),
@@ -187,6 +190,82 @@ SEG_KIND = {k: kd for k, _, _, kd in SEG_STATS}
 # segment of each part.
 SEG_NEEDS_PREV = {"deflection", "abs_deflection", "inclination",
                   "abs_inclination", "defl3d"}
+# Attributes read from the terrain around the segment rather than from the
+# segment itself; they need a DEM even when the elevations come from the
+# polylines' own Z values.
+SEG_LANDSCAPE = {"land_slope", "land_aspect", "traverse"}
+
+# What each segment attribute IS, for the field metadata written into the
+# output feature class (same wording as the Split Lines into Topography
+# Segments help page). Plain ASCII, as for STAT_DESC.
+SEG_DESC = {
+    "begin_x": "The X coordinate of the segment's start, in the dataset's coordinate system.",
+    "begin_y": "The Y coordinate of the segment's start, in the dataset's coordinate system.",
+    "begin_z": "The elevation at the segment's start.",
+    "end_x": "The X coordinate of the segment's end, in the dataset's coordinate system.",
+    "end_y": "The Y coordinate of the segment's end, in the dataset's coordinate system.",
+    "end_z": "The elevation at the segment's end.",
+    "mid_x": "The X coordinate of the segment's midpoint, in the dataset's coordinate system.",
+    "mid_y": "The Y coordinate of the segment's midpoint, in the dataset's coordinate system.",
+    "mid_z": "The elevation at the segment's midpoint (the mean of its two end elevations).",
+    "mean_elev": "The mean of the segment's two end elevations.",
+    "plan_length": "The horizontal length of the segment, measured on the spheroid.",
+    "surf_length": "The true three-dimensional length of the segment: the hypotenuse of the planimetric length and the elevation change.",
+    "surf_ratio": "Surface length divided by planimetric length; exactly 1 on a level segment.",
+    "rel_elev": "End elevation minus start elevation: positive uphill, negative downhill, in the direction of travel.",
+    "net_elev": "The absolute value of the elevation change over the segment.",
+    "rel_slope": "The segment's slope with its sign: positive climbing, negative descending, in the direction of travel.",
+    "abs_slope": "The segment's steepness regardless of direction.",
+    "land_slope": "The slope of the terrain itself under the segment (not the slope of the segment): the DEM's slope from a 3 x 3 cell neighborhood, sampled along the segment (its two ends and points at the DEM's cell interval between them) and averaged.",
+    "land_aspect": "The aspect of the terrain under the segment: the downslope compass direction of the DEM's surface, 0 to 360 degrees clockwise from north, from a 3 x 3 cell neighborhood sampled along the segment and averaged as directions. Undefined (null) where the terrain is flat.",
+    "traverse": "The angle between the segment's direction of travel and the fall line of the terrain under it, 0 to 90 degrees: 0 when the segment runs straight up or down the slope, 90 when it follows the contour. Computed from the Bearing and the Average Landscape Compass Direction. Undefined (null) where the terrain is flat.",
+    "bearing": "The segment's compass azimuth, 0 to 360 degrees clockwise from north, in the direction of travel.",
+    "deflection": "The horizontal turn from the previous segment: this segment's bearing minus the previous one's, wrapped to -180 to +180 degrees; a right turn is positive, a left turn negative. Null on the first segment of a line, part or run.",
+    "abs_deflection": "The absolute value of the Deflection Angle. Null on the first segment of a line, part or run.",
+    "inclination": "The vertical turn from the previous segment: this segment's pitch (signed slope angle) minus the previous one's. Null on the first segment of a line, part or run.",
+    "abs_inclination": "The absolute value of the Inclination Angle. Null on the first segment of a line, part or run.",
+    "defl3d": "The full three-dimensional angle between the previous segment's vector and this one's: 0 when the route continues straight at the same pitch, 180 for an exact reversal. Always positive; null on the first segment of a line, part or run.",
+    "source_id": "The ObjectID of the polyline this segment came from.",
+    "seg_num": "The segment's order within its part, counted from 1.",
+    "part_index": "Which part of a multipart line the segment belongs to, counted from 0.",
+    "slope_class": "Uphill, Downhill or Flat (exactly zero elevation change), in the direction of travel.",
+    "station": "The cumulative planimetric distance from the start of the part to the start of this segment.",
+}
+assert set(SEG_DESC) == set(SEG_LABEL)
+
+
+def seg_units_phrase(key, length_unit, elev_unit, slope_unit):
+    """Human-readable units for one segment attribute's output field."""
+    kind = SEG_KIND[key]
+    if kind == "length":
+        return length_unit
+    if kind == "elevation":
+        return "{} (elevation)".format(elev_unit)
+    if kind == "degrees":
+        return "degrees (azimuth)" if key in ("bearing", "land_aspect") else "degrees"
+    if kind == "slope":
+        return "degrees" if slope_unit == "Degrees" else "percent"
+    if kind in ("count", "id"):
+        return "integer"
+    if kind == "coord":
+        return "coordinate system units of the polyline dataset"
+    if kind == "text":
+        return "text"
+    return "unitless"
+
+
+def seg_field_description(key, length_unit, elev_unit, slope_unit):
+    """Field-metadata description for one segment attribute: what it is, its
+    units, and the direction-of-travel convention where that matters."""
+    txt = "{}. {} Units: {}. Computed by the Split Lines into Topography Segments tool.".format(
+        SEG_LABEL[key], SEG_DESC[key],
+        seg_units_phrase(key, length_unit, elev_unit, slope_unit))
+    if key in ("rel_elev", "rel_slope", "bearing", "deflection", "inclination",
+               "slope_class"):
+        txt += (" The direction of travel is the direction of the line's geometry, "
+                "from its first vertex to its last (reversing the line reverses "
+                "this value).")
+    return txt
 
 
 def _label_to_field(label):
@@ -236,7 +315,9 @@ SEG_SHP_FIELD_NAME = {
     "end_x": "SgEndX", "end_y": "SgEndY", "end_z": "SgEndZ",
     "plan_length": "SgPlanLen", "surf_length": "SgSurfLen", "surf_ratio": "SgSurfRat",
     "rel_elev": "SgRelElev", "net_elev": "SgNetElev", "rel_slope": "SgRelSlope",
-    "abs_slope": "SgAbsSlope", "bearing": "SgBearing", "deflection": "SgDeflect",
+    "abs_slope": "SgAbsSlope", "land_slope": "SgLandSlp", "land_aspect": "SgLandAsp",
+    "traverse": "SgTravAng",
+    "bearing": "SgBearing", "deflection": "SgDeflect",
     "abs_deflection": "SgAbsDefl", "inclination": "SgInclin",
     "abs_inclination": "SgAbsIncl", "defl3d": "SgDefl3D", "source_id": "SgSourceID",
     "seg_num": "SgSegNum", "part_index": "SgPartIdx", "slope_class": "SgSlopeCls",
@@ -378,14 +459,6 @@ ELEV_METERS = {"Meters": 1.0, "Feet": 0.3048}
 # PolylineZ output still draws correctly in a Scene instead of warning that it
 # "has no vertical coordinate system." The unit matches the tool's elevation
 # units; the datum is left unknown because we genuinely don't know it.
-_VERTCS_GENERIC = {
-    "Meters": ('VERTCS["Elevation (meters)",VDATUM["Unknown vertical datum"],'
-               'PARAMETER["Vertical_Shift",0.0],PARAMETER["Direction",1.0],'
-               'UNIT["Meter",1.0]]'),
-    "Feet": ('VERTCS["Elevation (feet)",VDATUM["Unknown vertical datum"],'
-             'PARAMETER["Vertical_Shift",0.0],PARAMETER["Direction",1.0],'
-             'UNIT["Foot",0.3048]]'),
-}
 
 
 def _vertcs_wkt(sr):
@@ -398,7 +471,18 @@ def _vertcs_wkt(sr):
             return None
         tok = sr.exportToString().split(";")[0]
         i = tok.find("VERTCS[")
-        return tok[i:] if i >= 0 else None
+        if i < 0:
+            return None
+        vert = tok[i:]
+        # An "unknown" vertical CS carries no information, and a layer with
+        # ANY vertical CS is filed by a map under a 3-D transformation, which
+        # the map cannot build for an unknown vertical datum -- the layer then
+        # draws with NO datum transformation at all (2026-09-23, NAD27 lines
+        # in a NAD83 map: 200 m off). So an unknown VCS is treated as none.
+        head = vert[:200].lower()
+        if 'vertcs["unknown' in head or 'vdatum["unknown' in head:
+            return None
+        return vert
     except Exception:
         return None
 
@@ -415,13 +499,15 @@ def output_spatial_reference(source_sr, z_source_sr, elev_units):
     # Drop any VERTCS already baked into the horizontal token (source was
     # already compound) so we don't end up with two.
     j = horiz.find(",VERTCS[")
-    src_vert = horiz[j + 1:] if j >= 0 else None
     if j >= 0:
         horiz = horiz[:j]
-    vert = _vertcs_wkt(z_source_sr) or src_vert \
-        or _VERTCS_GENERIC.get(elev_units, _VERTCS_GENERIC["Meters"])
+    # A vertical CS is attached only when one is KNOWN (the DEM's, else the
+    # source lines' own); an unknown one is dropped (see _vertcs_wkt), and
+    # no generic stand-in is invented, because a layer with a vertical CS
+    # that the map cannot transform draws with no datum shift at all.
+    vert = _vertcs_wkt(z_source_sr) or _vertcs_wkt(source_sr)
     out = arcpy.SpatialReference()
-    out.loadFromString(horiz + ";" + vert)
+    out.loadFromString(horiz + (";" + vert if vert else ""))
     return out
 
 
@@ -604,6 +690,34 @@ def load_dem(dem_path, window=None):
             "interval_m": max(min(cellw_m, cellh_m), 1e-6)}
 
 
+def same_datum(a, b):
+    """True when two spatial references share a datum."""
+    try:
+        return a.GCS.datumName == b.GCS.datumName
+    except Exception:
+        return True
+
+
+def datum_transformation(src_sr, dst_sr, extent=None):
+    """The datum transformation used between the lines and the DEM (None when
+    they share a datum): the toolbox-wide choice from clip_tools."""
+    import clip_tools as _ct
+    return _ct.transformation_name(src_sr, dst_sr, extent)
+
+
+def _same_sr(a, b):
+    try:
+        return a.name == b.name and a.factoryCode == b.factoryCode
+    except Exception:
+        return False
+
+
+def project_geometry(geom, dst_sr, extent=None):
+    """projectAs WITH the datum transformation (see clip_tools.project_geometry)."""
+    import clip_tools as _ct
+    return _ct.project_geometry(geom, dst_sr, extent)
+
+
 def lines_window_in_dem_crs(in_lines, dem_sr):
     """Bounding box of the input lines' extent expressed in the DEM's coordinate
     system, for use as ``load_dem``'s window so only the relevant part of a
@@ -620,16 +734,24 @@ def lines_window_in_dem_crs(in_lines, dem_sr):
         lsr = d.spatialReference
         if (lsr and dem_sr and lsr.name and dem_sr.name
                 and lsr.name != dem_sr.name):
+            # Pad the box so a single straight east-west or north-south
+            # line (a zero-height or zero-width extent) still makes a real
+            # polygon; a degenerate one projects to a NaN extent.
+            pad = max(ext.width, ext.height, 1.0) * 0.01
+            x0, y0, x1, y1 = ext.XMin - pad, ext.YMin - pad, ext.XMax + pad, ext.YMax + pad
             poly = arcpy.Polygon(arcpy.Array([
-                ext.lowerLeft, ext.lowerRight, ext.upperRight,
-                ext.upperLeft, ext.lowerLeft]), lsr)
-            step = max((ext.width + ext.height) / 40.0, 1e-9)
+                arcpy.Point(x0, y0), arcpy.Point(x1, y0), arcpy.Point(x1, y1),
+                arcpy.Point(x0, y1), arcpy.Point(x0, y0)]), lsr)
+            step = max((x1 - x0 + y1 - y0) / 40.0, 1e-9)
             try:
                 poly = poly.densify("DISTANCE", step, step)
             except Exception:
                 pass
-            ext = poly.projectAs(dem_sr).extent
-        return (ext.XMin, ext.YMin, ext.XMax, ext.YMax)
+            ext = project_geometry(poly, dem_sr, ext).extent
+        vals = (ext.XMin, ext.YMin, ext.XMax, ext.YMax)
+        if any(v is None or not math.isfinite(v) for v in vals):
+            return None
+        return vals
     except Exception:
         return None
 
@@ -656,6 +778,69 @@ def _bilinear(arr, gt, x, y):
     top = v00 * (1 - tx) + v01 * tx
     bot = v10 * (1 - tx) + v11 * tx
     return float(top * (1 - ty) + bot * ty)
+
+
+def _landscape_grids(dem, elev_m_per_unit):
+    """Slope (degrees) and aspect (as unit-vector sin/cos grids) of the loaded
+    DEM window by Horn's 3 x 3 method, the same formulation as Esri's Slope and
+    Aspect tools: dz/dx = ((c + 2f + i) - (a + 2d + g)) / (8 * cell width),
+    dz/dy = ((g + 2h + i) - (a + 2b + c)) / (8 * cell height), with a..c the
+    northern row. Cell sizes are ground meters; for a geographic DEM the cell
+    width is computed per row from its latitude. Cached on the ``dem`` dict.
+    Aspect is undefined (NaN) where the surface is flat."""
+    if "land_slope_deg" in dem:
+        return
+    arr, gt = dem["arr"], dem["gt"]
+    H, W = arr.shape
+    z = arr * float(elev_m_per_unit)          # NaN stays NaN
+    if dem["sr"].type == "Projected":
+        cw = np.full(H, float(dem["cellw_m"]))
+    else:
+        lat = gt[3] + (np.arange(H) + 0.5) * gt[5]
+        cw = abs(gt[1]) * 111320.0 * np.maximum(np.cos(np.radians(lat)), 1e-6)
+    ch = float(dem["cellh_m"])
+    pad = np.pad(z, 1, mode="edge")
+    a, b, c = pad[:-2, :-2], pad[:-2, 1:-1], pad[:-2, 2:]
+    d, f = pad[1:-1, :-2], pad[1:-1, 2:]
+    g, h, i = pad[2:, :-2], pad[2:, 1:-1], pad[2:, 2:]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        dzdx = ((c + 2.0 * f + i) - (a + 2.0 * d + g)) / (8.0 * cw[:, None])
+        dzdy = ((g + 2.0 * h + i) - (a + 2.0 * b + c)) / (8.0 * ch)
+        slope = np.degrees(np.arctan(np.hypot(dzdx, dzdy)))
+        asp = np.degrees(np.arctan2(dzdy, -dzdx))
+        asp = np.where(asp < 0.0, 90.0 - asp,
+                       np.where(asp > 90.0, 360.0 - asp + 90.0, 90.0 - asp))
+        flat = (dzdx == 0.0) & (dzdy == 0.0)
+        asp = np.where(flat, np.nan, asp)
+        rad = np.radians(asp)
+        dem["land_slope_deg"] = slope
+        dem["land_asp_sin"] = np.sin(rad)
+        dem["land_asp_cos"] = np.cos(rad)
+
+
+def _landscape_at(dem, pts):
+    """Average landscape slope (degrees) and compass aspect (degrees) over the
+    given (x, y) points in the DEM's coordinate system: slope is the mean of
+    the finite bilinear samples, aspect the vector mean of the finite samples.
+    Either is None when no sample is defined."""
+    gt = dem["gt"]
+    slopes, sins, coss = [], [], []
+    for x, y in pts:
+        s = _bilinear(dem["land_slope_deg"], gt, x, y)
+        if np.isfinite(s):
+            slopes.append(s)
+        sn = _bilinear(dem["land_asp_sin"], gt, x, y)
+        cs = _bilinear(dem["land_asp_cos"], gt, x, y)
+        if np.isfinite(sn) and np.isfinite(cs):
+            sins.append(sn)
+            coss.append(cs)
+    slope = (sum(slopes) / len(slopes)) if slopes else None
+    aspect = None
+    if sins:
+        ms, mc = sum(sins) / len(sins), sum(coss) / len(coss)
+        if math.hypot(ms, mc) > 1e-9:
+            aspect = math.degrees(math.atan2(ms, mc)) % 360.0
+    return slope, aspect
 
 
 def _local_xy_m(points, sr):
@@ -731,8 +916,9 @@ def build_parts(shape, source, dem=None, elev_m_per_unit=1.0):
     if source == "DEM":
         work_sr = dem["sr"]
         interval_m = dem["interval_m"]
-        geom = shape.projectAs(work_sr) if shape.spatialReference and \
-            shape.spatialReference.factoryCode != work_sr.factoryCode else shape
+        geom = (project_geometry(shape, work_sr)
+                if shape.spatialReference and not _same_sr(shape.spatialReference, work_sr)
+                else shape)
     else:
         work_sr = shape.spatialReference
         interval_m = None
@@ -915,10 +1101,9 @@ def compute_line_statistics(parts, length_unit="Meters", elev_unit="Meters",
                     wsr, dsr = p.get("work_sr"), p.get("dataset_sr")
                     try:
                         if (wsr is not None and dsr is not None
-                                and getattr(wsr, "factoryCode", 0)
-                                != getattr(dsr, "factoryCode", 0)):
+                                and not _same_sr(wsr, dsr)):
                             import arcpy
-                            g = arcpy.PointGeometry(pt, wsr).projectAs(dsr)
+                            g = project_geometry(arcpy.PointGeometry(pt, wsr), dsr)
                             return (float(g.centroid.X), float(g.centroid.Y))
                     except Exception:
                         pass
@@ -1058,21 +1243,33 @@ def compute_line_statistics(parts, length_unit="Meters", elev_unit="Meters",
 #  Per-segment records for the companion segment-feature-class tool
 # --------------------------------------------------------------------------
 
-def build_segments(shape, source, dem, elev_m_per_unit, source_sr, parent_oid):
+def build_segments(shape, source, dem, elev_m_per_unit, source_sr, parent_oid,
+                   landscape=False, vertex_only=False):
     """Ordered per-segment records for ONE polyline feature, for the segment
     tool. Coordinates are in the SOURCE dataset's coordinate system; lengths and
     elevation change are carried in METERS (converted at write time by
     ``seg_value``); the three angle fields (deflection, inclination, 3D
     deflection) are None on the first segment of each part (no predecessor).
     Each record's ``geom`` is [(x, y, z), (x, y, z)] for a Z-aware output line.
-    Segments touching NoData elevation are dropped and break the angle chain."""
+    Segments touching NoData elevation are dropped and break the angle chain.
+    With ``landscape`` True (and a DEM given, whatever the elevation source),
+    each record also carries ``land_slope`` / ``land_aspect`` / ``traverse``:
+    the terrain's own slope and downslope direction under the segment,
+    averaged over points along it (both ends plus interior points at the
+    DEM's cell interval), and the angle between the travel direction and the
+    fall line (0 straight up/down, 90 along the contour); None where undefined.
+    With ``vertex_only`` True the DEM is sampled at the original vertices only,
+    giving one segment per vertex pair (e.g. one per GPS step) instead of one
+    per DEM cell crossed."""
     import arcpy
+    if landscape and dem is not None:
+        _landscape_grids(dem, elev_m_per_unit)
     if source == "DEM":
         work_sr = dem["sr"]
         interval_m = dem["interval_m"]
-        geom = (shape.projectAs(work_sr)
+        geom = (project_geometry(shape, work_sr)
                 if (shape.spatialReference
-                    and shape.spatialReference.factoryCode != work_sr.factoryCode)
+                    and not _same_sr(shape.spatialReference, work_sr))
                 else shape)
     else:
         work_sr = source_sr
@@ -1088,7 +1285,8 @@ def build_segments(shape, source, dem, elev_m_per_unit, source_sr, parent_oid):
         if len(pts_in) < 2:
             continue
         if source == "DEM":
-            samples_w = _densify_geodesic(pts_in, work_sr, interval_m)
+            samples_w = (list(pts_in) if vertex_only
+                         else _densify_geodesic(pts_in, work_sr, interval_m))
             z_elev = [_bilinear(dem["arr"], dem["gt"], p.X, p.Y) for p in samples_w]
         else:
             samples_w = pts_in
@@ -1096,12 +1294,22 @@ def build_segments(shape, source, dem, elev_m_per_unit, source_sr, parent_oid):
 
         # Sample coordinates in the SOURCE CRS (project the whole vertex string
         # at once when the sampling frame differs).
-        if work_sr.factoryCode != source_sr.factoryCode:
-            proj = arcpy.Polyline(arcpy.Array(samples_w), work_sr).projectAs(source_sr)
+        if not _same_sr(work_sr, source_sr):
+            proj = project_geometry(arcpy.Polyline(arcpy.Array(samples_w), work_sr), source_sr)
             parr = proj.getPart(0)
             samples_s = [parr[k] for k in range(len(parr))]
         else:
             samples_s = samples_w
+        # Sample coordinates in the DEM's CRS, for the landscape attributes
+        # (identical to samples_w when the DEM is the sampling frame).
+        samples_d = None
+        if landscape and dem is not None:
+            if not _same_sr(work_sr, dem["sr"]):
+                projd = project_geometry(arcpy.Polyline(arcpy.Array(samples_w), work_sr), dem["sr"])
+                darr = projd.getPart(0)
+                samples_d = [(darr[k].X, darr[k].Y) for k in range(len(darr))]
+            else:
+                samples_d = [(p.X, p.Y) for p in samples_w]
 
         station_m = 0.0
         prev = None                       # (bearing, pitch, vx, vy, vz)
@@ -1131,8 +1339,23 @@ def build_segments(shape, source, dem, elev_m_per_unit, source_sr, parent_oid):
                 if m1 > 0 and m2 > 0:
                     c = max(-1.0, min(1.0, (pvx * vx + pvy * vy + pvz * vz) / (m1 * m2)))
                     defl3d = math.degrees(math.acos(c))
+            land_slope = land_aspect = traverse = None
+            if samples_d is not None:
+                (dx0, dy0), (dx1, dy1) = samples_d[i], samples_d[i + 1]
+                # both ends plus interior points at the DEM interval (at least
+                # the midpoint), so a long vertex-to-vertex step is averaged
+                # along its length rather than judged by three points.
+                n = max(2, int(math.ceil(plan_m / dem["interval_m"])))
+                pts_l = [(dx0 + (dx1 - dx0) * k / n, dy0 + (dy1 - dy0) * k / n)
+                         for k in range(n + 1)]
+                land_slope, land_aspect = _landscape_at(dem, pts_l)
+                if land_aspect is not None:
+                    d = abs((bearing - land_aspect + 180.0) % 360.0 - 180.0)   # 0..180
+                    traverse = min(d, 180.0 - d)                             # 0..90
             seg_num += 1
             segs.append({
+                "land_slope": land_slope, "land_aspect": land_aspect,
+                "traverse": traverse,
                 "begin_x": p0.X, "begin_y": p0.Y, "begin_z": z0,
                 "end_x": p1.X, "end_y": p1.Y, "end_z": z1,
                 "plan_m": plan_m, "surf_m": surf_m, "dz_m": dz_m,
@@ -1182,6 +1405,13 @@ def seg_value(rec, key, length_unit="Meters", elev_unit="Meters",
         return _slope_convert(rec["pitch"], slope_unit)
     if key == "abs_slope":
         return _slope_convert(abs(rec["pitch"]), slope_unit)
+    if key == "land_slope":
+        v = rec.get("land_slope")
+        return None if v is None else _slope_convert(v, slope_unit)
+    if key == "land_aspect":
+        return rec.get("land_aspect")
+    if key == "traverse":
+        return rec.get("traverse")
     if key == "bearing":
         return rec["bearing"]
     if key == "deflection":

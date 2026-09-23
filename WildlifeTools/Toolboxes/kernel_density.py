@@ -44,6 +44,7 @@ import math
 import datetime
 
 import arcpy
+import clip_tools as _ct
 import numpy as np
 
 import mahalanobis as mh   # reuse the fast stats+histogram raster helpers (standing rule)
@@ -439,7 +440,8 @@ def _reproject_in_place(fc, out_cs, messages):
     if not out_cs or _same_cs(sr, out_cs):
         return
     tmp = arcpy.CreateUniqueName("kd_reproj", arcpy.env.scratchGDB)
-    arcpy.management.Project(fc, tmp, out_cs)
+    arcpy.management.Project(fc, tmp, out_cs,
+                             _ct.transformation_name(sr, out_cs) or "")
     arcpy.management.Delete(fc)
     arcpy.management.CopyFeatures(tmp, fc)
     arcpy.management.Delete(tmp)
@@ -937,7 +939,7 @@ def default_cell_size(in_features):
         ext = d.extent
         out_cs = arcpy.env.outputCoordinateSystem
         if out_cs and not _same_cs(d.spatialReference, out_cs):
-            ext = ext.projectAs(out_cs)
+            ext = _ct.project_geometry(ext, out_cs)
         return _span_over_250(float(ext.width), float(ext.height))
     except Exception:
         return None

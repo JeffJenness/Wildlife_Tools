@@ -81,6 +81,7 @@ Every output is stamped with a ``patch_analysis`` linkage record so the
 Corridor Analysis Data Report can render the full analysis later.
 """
 import json
+import clip_tools as _ct
 import math
 import os
 
@@ -971,7 +972,7 @@ def run_patch_analysis(corridor, termini, out_fc, name_field=None,
                        "paths are computed in a corridor-centered azimuthal "
                        "equidistant projection and all lengths reported "
                        "geodesically.")
-    cor_w = cor_union.projectAs(working_sr)
+    cor_w = _ct.project_geometry(cor_union, working_sr)
 
     ext = cor_w.extent
     diag = math.hypot(ext.width, ext.height)
@@ -1099,7 +1100,7 @@ def run_patch_analysis(corridor, termini, out_fc, name_field=None,
     groups = {}          # key -> {"label", "kind", "geom"(working, clipped)}
     unplaced_termini = []
     for label in sorted(term_feats):
-        merged = _union_all(term_feats[label]).projectAs(working_sr)
+        merged = _ct.project_geometry(_union_all(term_feats[label]), working_sr)
         merged = _outer_rings_only(merged, working_sr)
         merged = _densify(merged, step)
         clipped = merged.intersect(cor_w, 4)
@@ -1141,7 +1142,7 @@ def run_patch_analysis(corridor, termini, out_fc, name_field=None,
                                 or (psr.factoryCode == out_sr.factoryCode
                                     and psr.name == out_sr.name))
                         cor_ext = (cor_union.extent if same
-                                   else cor_union.projectAs(psr).extent)
+                                   else _ct.project_geometry(cor_union, psr).extent)
                     except Exception:                            # noqa: BLE001
                         cor_ext = False        # unknown: keep everything
                 if cor_ext:
@@ -1169,7 +1170,7 @@ def run_patch_analysis(corridor, termini, out_fc, name_field=None,
                                     " the expression '{}'".format(patch_where)
                                     if patch_where else ""))
         else:
-            merged = _union_all([g.projectAs(working_sr) for g in pat_geoms])
+            merged = _union_all([_ct.project_geometry(g, working_sr) for g in pat_geoms])
             merged = _densify(merged, step)
             clipped = merged.intersect(cor_w, 4)
             pieces = _explode(clipped) if (clipped and clipped.area > 0) else []
@@ -1496,7 +1497,7 @@ def run_patch_analysis(corridor, termini, out_fc, name_field=None,
             except Exception:                                    # noqa: BLE001
                 pass
             icur.insertRow((
-                line_w.projectAs(sr_out), groups[ka]["label"],
+                _ct.project_geometry(line_w, sr_out), groups[ka]["label"],
                 groups[kb]["label"],
                 payload["length_m"], rank,
                 _clip_text(payload.get("used_by", []), "Used_By"),

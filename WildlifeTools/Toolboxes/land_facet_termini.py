@@ -24,6 +24,7 @@ A modernized port of the Land Facet Corridor Designer's ArcMap "Identify
 Termini Polygons" tool (``cmdTermini.cls`` / ``LandFacetFunctions.bas``
 ``CalcLandFacetTermini``; manual pp. 44-46). Land facet corridors do not run
 from the edge of one Wildland Block to the edge of the other -- they run
+import clip_tools as _ct
 between the concentrations of the facet INSIDE the blocks. This tool finds
 those concentrations:
 
@@ -169,7 +170,7 @@ def _prepare_blocks(blocks, rast_sr, scratch, messages):
                or blk_sr.factoryCode == rast_sr.factoryCode
                and blk_sr.name == rast_sr.name)
     if not same_sr:
-        geoms = [g.projectAs(rast_sr) for g in geoms]
+        geoms = [_ct.project_geometry(g, rast_sr) for g in geoms]
         shp2 = arcpy.CreateUniqueName("termini_blocks_prj.shp", scratch)
         with _mh.neutral_grid_env():
             arcpy.management.CopyFeatures(geoms, shp2)

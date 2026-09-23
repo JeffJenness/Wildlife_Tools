@@ -245,7 +245,7 @@ def _projected_extent(d, out_sr, path=None):
             poly = poly.densify("DISTANCE", step, step)
         except Exception:                                        # noqa: BLE001
             pass
-    pext = poly.projectAs(out_sr).extent
+    pext = _ct.project_geometry(poly, out_sr).extent
     return pext.XMin, pext.YMin, pext.XMax, pext.YMax
 
 
@@ -409,7 +409,7 @@ def _polygon_geoms(ds, path, name, use_selected, out_sr, densify_step,
             gsr = g.spatialReference
             if gsr is not None and not _kd._same_cs(gsr, out_sr):
                 try:
-                    g = g.projectAs(out_sr)
+                    g = _ct.project_geometry(g, out_sr)
                 except Exception:                                # noqa: BLE001
                     pass
             if getattr(g, "hasCurves", False):
@@ -442,7 +442,7 @@ def _rasterize_counts(gdal, geoms, out_sr, gt, proj, w, h, scratch):
             or (sample_sr.factoryCode == out_sr.factoryCode
                 and sample_sr.name == out_sr.name))
     if not same:
-        geoms = [g.projectAs(out_sr) for g in geoms]
+        geoms = [_ct.project_geometry(g, out_sr) for g in geoms]
     shp = arcpy.CreateUniqueName("cum_feat.shp", scratch)
     with _mh.neutral_grid_env():
         arcpy.management.CopyFeatures(geoms, shp)

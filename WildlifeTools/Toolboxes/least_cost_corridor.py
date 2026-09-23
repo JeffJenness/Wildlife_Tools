@@ -90,6 +90,7 @@ every category, block pair and percentile -- filter or group by Category,
 Block_A/Block_B and Percentile to recover any single corridor.
 """
 import itertools
+import clip_tools as _ct
 import math
 import os
 
@@ -344,7 +345,7 @@ def _rasterize_source_mask(geoms, rast_sr, gdal, ogr, gt, proj, w, h, scratch):
             or (sample_sr.factoryCode == rast_sr.factoryCode
                 and sample_sr.name == rast_sr.name))
     if not same:
-        geoms = [g.projectAs(rast_sr) for g in geoms]
+        geoms = [_ct.project_geometry(g, rast_sr) for g in geoms]
 
     shp = arcpy.CreateUniqueName("lcc_src.shp", scratch)
     # The scratch features must stay in the RASTER's coordinate system --
@@ -696,7 +697,7 @@ def run_least_cost_corridor(in_termini, cost_raster=None, cost_workspace=None,
             if geom is None:
                 continue
             if reproj:
-                geom = geom.projectAs(fc_state["sr"])
+                geom = _ct.project_geometry(geom, fc_state["sr"])
             area, _geo = _term._geodesic_area_m2(geom)
             if area <= 0:
                 continue

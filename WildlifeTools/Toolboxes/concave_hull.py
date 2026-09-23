@@ -69,6 +69,7 @@ the QGIS concave-hull processing algorithms. Esri's closest analog
 every license level.
 """
 import heapq
+import clip_tools as _ct
 import math
 import os
 
@@ -890,8 +891,8 @@ def run_concave_hull(in_features, method, out_features,
                      for x, y in esri]
                     + [arcpy.Point(float(esri[0][0]),
                                    float(esri[0][1]))]))
-            shp = arcpy.Polygon(arcpy.Array(arrs), wsr) \
-                .projectAs(out_sr)
+            shp = _ct.project_geometry(
+                arcpy.Polygon(arcpy.Array(arrs), wsr), out_sr)
             if shp is None or shp.area == 0:
                 continue
             try:

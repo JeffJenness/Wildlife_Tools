@@ -28,6 +28,7 @@ spatially balanced sample and replacements are consumed from the
 tail in order."""
 
 import math
+import clip_tools as _ct
 import os
 
 import numpy as np
@@ -289,7 +290,7 @@ def run_grts_sample(in_frame, out_fc, n_base, n_over=0,
             if desc.spatialReference is not None \
                     and desc.spatialReference.factoryCode \
                     != out_sr.factoryCode:
-                e = e.projectAs(out_sr)
+                e = _ct.project_geometry(e, out_sr)
         except Exception:                                # noqa: BLE001
             pass
         cx = 0.5 * (e.XMin + e.XMax)

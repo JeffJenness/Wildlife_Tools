@@ -64,6 +64,7 @@ a planar solve may err by a fraction of a percent (the spherical
 great-circle mode is a planned follow-up).
 """
 import math
+import clip_tools as _ct
 import os
 
 import numpy as np
@@ -566,7 +567,7 @@ def run_longest_line(in_features, out_lines, transfer_fields=None,
                            or 1.0)
         except Exception:                                        # noqa: BLE001
             unit_m = 1.0
-        gw = geom.projectAs(working_sr)
+        gw = _ct.project_geometry(geom, working_sr)
         ext = gw.extent
         diag_m = math.hypot(ext.width, ext.height) * unit_m
         if is_custom and diag_m > _BIG_EXTENT_M and not warned_big:
@@ -676,12 +677,12 @@ def run_longest_line(in_features, out_lines, transfer_fields=None,
     with arcpy.da.InsertCursor(out_lines, cols) as ins:
         for r in results:
             wsr = r["working_sr"]
-            g1 = arcpy.PointGeometry(
+            g1 = _ct.project_geometry(arcpy.PointGeometry(
                 arcpy.Point(float(r["p1"][0]), float(r["p1"][1])),
-                wsr).projectAs(out_sr)
-            g2 = arcpy.PointGeometry(
+                wsr), out_sr)
+            g2 = _ct.project_geometry(arcpy.PointGeometry(
                 arcpy.Point(float(r["p2"][0]), float(r["p2"][1])),
-                wsr).projectAs(out_sr)
+                wsr), out_sr)
             x1, y1 = g1.firstPoint.X, g1.firstPoint.Y
             x2, y2 = g2.firstPoint.X, g2.firstPoint.Y
             if geographic:
@@ -843,7 +844,7 @@ def run_station_fetch(stations, in_features, out_radials,
     station_rows = []
     for si, (oid, pgeom, attrs) in enumerate(pts):
         # everything happens in the WATER polygons' coordinate system
-        pw = pgeom.projectAs(water_sr).firstPoint
+        pw = _ct.project_geometry(pgeom, water_sr).firstPoint
         px, py = float(pw.X), float(pw.Y)
         nx, ny, shifted = nudge_inside(
             px, py, edges_nat, bands_nat, span_nat,
@@ -954,18 +955,18 @@ def run_station_fetch(stations, in_features, out_radials,
         # radial + exact-line geometries
         def _line_loc(pa_xy, pb_xy):
             if geographic:
-                pA = arcpy.PointGeometry(
+                pA = _ct.project_geometry(arcpy.PointGeometry(
                     arcpy.Point(float(pa_xy[0]), float(pa_xy[1])),
-                    wsr).projectAs(out_sr)
-                pB = arcpy.PointGeometry(
+                    wsr), out_sr)
+                pB = _ct.project_geometry(arcpy.PointGeometry(
                     arcpy.Point(float(pb_xy[0]), float(pb_xy[1])),
-                    wsr).projectAs(out_sr)
+                    wsr), out_sr)
                 return arcpy.Polyline(arcpy.Array(
                     [pA.firstPoint, pB.firstPoint]), out_sr)
-            return arcpy.Polyline(arcpy.Array(
+            return _ct.project_geometry(arcpy.Polyline(arcpy.Array(
                 [arcpy.Point(float(pa_xy[0]), float(pa_xy[1])),
                  arcpy.Point(float(pb_xy[0]), float(pb_xy[1]))]),
-                water_sr).projectAs(out_sr)
+                water_sr), out_sr)
 
         brad = np.radians(bearings)
         exs = sx + dists * np.sin(brad)
@@ -990,8 +991,8 @@ def run_station_fetch(stations, in_features, out_radials,
                 + list(attrs)))
         k_max = int(np.argmax(dists_m))
         station_rows.append(tuple(
-            [arcpy.PointGeometry(arcpy.Point(nx, ny),
-                                 water_sr).projectAs(out_sr),
+            [_ct.project_geometry(arcpy.PointGeometry(arcpy.Point(nx, ny),
+                                                      water_sr), out_sr),
              oid, float(dists_m.mean()), float(dists_m.min()),
              float(dists_m.max()),
              float(dists_m.std(ddof=1)) if len(dists_m) > 1 else 0.0,

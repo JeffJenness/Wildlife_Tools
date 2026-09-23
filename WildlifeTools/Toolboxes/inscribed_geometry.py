@@ -69,6 +69,7 @@ true-curve boundaries are densified automatically; multipart features
 report the best shape over their parts.
 """
 import math
+import clip_tools as _ct
 import os
 from collections import deque
 
@@ -1270,7 +1271,7 @@ def run_inscribed_geometry(in_features, geometry_type, out_features,
                            or 1.0)
         except Exception:                                        # noqa: BLE001
             unit_m = 1.0
-        gw = geom.projectAs(working_sr)
+        gw = _ct.project_geometry(geom, working_sr)
         ext = gw.extent
         diag_m = math.hypot(ext.width, ext.height) * unit_m
         if is_custom and diag_m > _BIG_EXTENT_M and not warned_big:
@@ -1443,7 +1444,7 @@ def run_inscribed_geometry(in_features, geometry_type, out_features,
                                    for x, y in ring] +
                                   [arcpy.Point(float(ring[0][0]),
                                                float(ring[0][1]))])
-                shp = arcpy.Polygon(pts, wsr).projectAs(out_sr)
+                shp = _ct.project_geometry(arcpy.Polygon(pts, wsr), out_sr)
                 if shp is None or shp.area == 0:
                     continue
                 try:
@@ -1451,9 +1452,9 @@ def run_inscribed_geometry(in_features, geometry_type, out_features,
                                               "SQUAREMETERS"))
                 except Exception:                                # noqa: BLE001
                     area_m2 = abs(shp.area)
-                cpt = arcpy.PointGeometry(
+                cpt = _ct.project_geometry(arcpy.PointGeometry(
                     arcpy.Point(float(cx), float(cy)),
-                    wsr).projectAs(out_sr).firstPoint
+                    wsr), out_sr).firstPoint
                 ins.insertRow(tuple(
                     [shp, oid, part_n, kind, float(area_m2),
                      float(cpt.X), float(cpt.Y),

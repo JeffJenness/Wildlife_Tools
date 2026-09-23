@@ -2083,16 +2083,61 @@ def _zone_cursor(in_zone, fields, rsr, gt, W, H, messages, what):
     do not appear in the output table (matching Esri's
     intersection-of-extents behavior)."""
     import arcpy
+    import clip_tools as _ct
+    # A cursor's spatial_reference= reprojects WITHOUT a datum transformation
+    # (verified 2026-09-23: NAD27 zones on a NAD83 raster landed ~200 m off),
+    # so read the geometry natively and project it here with the datum shift.
+    zsr = arcpy.Describe(in_zone).spatialReference
+    native = ["SHAPE@" if f in ("SHAPE@XY", "SHAPE@") else f for f in fields]
+    want_xy = [f == "SHAPE@XY" for f in fields]
+    same = _ct._same_datum(zsr, rsr) if zsr else True
     try:
         cur = arcpy.da.SearchCursor(
-            in_zone, fields, spatial_reference=rsr,
+            in_zone, native, spatial_reference=(rsr if same else None),
             spatial_filter=_raster_extent_polygon(gt, W, H, rsr))
         _say(messages, "Only zone {} intersecting the raster extent are "
                        "analyzed (others are skipped and do not appear in "
                        "the output).".format(what))
-        return cur
     except Exception:
-        return arcpy.da.SearchCursor(in_zone, fields, spatial_reference=rsr)
+        cur = arcpy.da.SearchCursor(in_zone, native,
+                                    spatial_reference=(rsr if same else None))
+    return _ProjectingCursor(cur, rsr, want_xy, same)
+
+
+class _ProjectingCursor(object):
+    """Wraps a SearchCursor so its geometry columns come back in the raster's
+    spatial reference WITH the datum transformation applied (and as (x, y)
+    tuples where SHAPE@XY was asked for)."""
+
+    def __init__(self, cur, rsr, want_xy, same):
+        self._cur, self._rsr, self._xy, self._same = cur, rsr, want_xy, same
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        try:
+            del self._cur
+        except Exception:
+            pass
+        return False
+
+    def __iter__(self):
+        import clip_tools as _ct
+        for row in self._cur:
+            out = list(row)
+            for i, xy in enumerate(self._xy):
+                g = out[i]
+                if g is None or not hasattr(g, "spatialReference"):
+                    continue
+                if not self._same:
+                    g = _ct.project_geometry(g, self._rsr)
+                if xy:
+                    c = g.centroid if g.type != "point" else g.firstPoint
+                    out[i] = (c.X, c.Y) if c is not None else None
+                else:
+                    out[i] = g
+            yield tuple(out)
 
 
 def _run_zonal_shapes(in_zone, zone_field, shape_type, band, gt, W, H,

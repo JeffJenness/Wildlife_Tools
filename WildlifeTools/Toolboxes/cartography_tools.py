@@ -222,8 +222,10 @@ def _reproject_in_place(fc, messages):
         return
     if arcpy.Exists(_MEM_PRJ):
         arcpy.management.Delete(_MEM_PRJ)
+    import clip_tools as _ct
     with arcpy.EnvManager(outputCoordinateSystem=None):
-        arcpy.management.Project(fc, _MEM_PRJ, out_cs)
+        arcpy.management.Project(fc, _MEM_PRJ, out_cs,
+                                 _ct.transformation_name(src_sr, out_cs) or "")
         arcpy.management.Delete(fc)
         arcpy.management.CopyFeatures(_MEM_PRJ, fc)
         arcpy.management.Delete(_MEM_PRJ)

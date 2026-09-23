@@ -4482,6 +4482,26 @@ class TopographyAlongLines(object):
         if units.enabled and not units.valueAsText:
             units.setErrorMessage(
                 "The elevation units are not defined; choose Meters or Feet.")
+        # Different datums between the polylines and the DEM: say what the
+        # tool will do, and warn about the map's display transformation.
+        if dem.enabled and dem.valueAsText and lines.valueAsText:
+            try:
+                lsr = arcpy.Describe(lines.valueAsText).spatialReference
+                dsr = arcpy.Describe(_resolve_raster_path(dem)).spatialReference
+                if lsr.GCS and dsr.GCS and lsr.GCS.name != dsr.GCS.name:
+                    dem.setWarningMessage(
+                        "The polylines ({}) and the DEM ({}) are on different "
+                        "datums. The tool will place its sample points on the DEM "
+                        "with the transformation set in the Geographic "
+                        "Transformations environment, or Esri's recommended "
+                        "transformation for this pair when none is set, and will "
+                        "report the one it used. Be warned that a map does not "
+                        "always have a vertical transformation in place: if the "
+                        "output draws shifted from the input, look at the "
+                        "transformations currently in place under Map Properties "
+                        "> Transformation.".format(lsr.GCS.name, dsr.GCS.name))
+            except Exception:
+                pass
         attrs = P["surface_attributes"]
         if attrs.value:
             int_types = ("SmallInteger", "Integer", "BigInteger")
@@ -4547,6 +4567,7 @@ class TopographyAlongLines(object):
     def execute(self, parameters, messages):
         try:
             _scripting_hint(messages, type(self).__name__)
+            importlib.reload(clip_tools)          # datum-transformation helper (hot-patchable)
             importlib.reload(line_surface_tools)
             importlib.reload(tool_metadata)
             lst = line_surface_tools
@@ -4617,6 +4638,19 @@ class TopographyAlongLines(object):
                 mahalanobis.phase_advance()          # -> "Reading the DEM..."
                 dem_path = _resolve_raster_path(P["in_dem"])
                 dem_sr = arcpy.Describe(dem_path).spatialReference
+                tx_note = lst.datum_transformation(
+                    source_sr, dem_sr, arcpy.Describe(in_lines).extent)
+                if not lst.same_datum(source_sr, dem_sr):
+                    messages.addWarningMessage(
+                        "The polylines ({}) and the DEM ({}) are on different "
+                        "datums. Sample points were placed on the DEM with the "
+                        "transformation {}. A map does not always have a vertical "
+                        "transformation in place: if the output draws shifted "
+                        "from the input, look at the transformations currently in "
+                        "place under Map Properties > Transformation.".format(
+                            source_sr.GCS.name, dem_sr.GCS.name,
+                            tx_note or "(none available: coordinates were "
+                                       "re-projected without a datum shift)"))
                 window = lst.lines_window_in_dem_crs(in_lines, dem_sr)
                 dem = lst.load_dem(dem_path, window=window)
                 messages.addMessage(
@@ -4730,7 +4764,10 @@ class SplitLinesIntoSegments(object):
 
     _Z_SOURCE = "Z values from the polylines"
     _DEM_SOURCE = "DEM raster"
-    _SLOPE_STATS = {"rel_slope", "abs_slope"}
+    _SLOPE_STATS = {"rel_slope", "abs_slope", "land_slope"}
+    _LANDSCAPE_STATS = {"land_slope", "land_aspect", "traverse"}   # read from a DEM
+    _SEG_INTERVAL = "At the DEM sampling interval (keeping every vertex)"
+    _SEG_VERTICES = "At the vertices only (one segment per vertex pair)"
     _SYM_PRIORITY = ["mean_elev", "begin_x", "end_x", "abs_slope", "rel_slope"]
     _RAMP = [(95, 135, 193), (249, 254, 204), (224, 70, 53)]
     _RESERVED = {"objectid", "fid", "shape", "shape_length", "shape_area",
@@ -4778,6 +4815,12 @@ class SplitLinesIntoSegments(object):
             datatype="GPString", parameterType="Optional", direction="Input")
         elev_units.filter.type = "ValueList"
         elev_units.filter.list = ["Meters", "Feet"]
+        segmentation = arcpy.Parameter(
+            displayName="Segmentation", name="segmentation",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        segmentation.filter.type = "ValueList"
+        segmentation.filter.list = [self._SEG_INTERVAL, self._SEG_VERTICES]
+        segmentation.value = self._SEG_INTERVAL
 
         attrs = arcpy.Parameter(
             displayName="Segment Attributes", name="surface_attributes",
@@ -4808,7 +4851,7 @@ class SplitLinesIntoSegments(object):
         slope_unit.value = "Degrees"
 
         params = [in_lines, out_fc, elev_source, in_dem, elev_units,
-                  attrs, copy_fields, length_unit, slope_unit]
+                  segmentation, attrs, copy_fields, length_unit, slope_unit]
         saved = _load_tool_defaults("SplitLinesIntoSegments")
         for p in (length_unit, slope_unit):
             if p.name in saved:
@@ -4850,7 +4893,10 @@ class SplitLinesIntoSegments(object):
         else:
             src.enabled = True
         use_dem = (src.valueAsText == self._DEM_SOURCE)
-        dem.enabled = use_dem
+        want_land = bool({k for k, _ in self._seg_pairs(P["surface_attributes"])}
+                         & self._LANDSCAPE_STATS)
+        dem.enabled = use_dem or want_land   # landscape slope/aspect need a DEM
+        P["segmentation"].enabled = use_dem  # own-Z lines are vertex-to-vertex already
 
         detected, locked = None, False
         if use_dem and dem.valueAsText:
@@ -4944,9 +4990,34 @@ class SplitLinesIntoSegments(object):
         if units.enabled and not units.valueAsText:
             units.setErrorMessage(
                 "The elevation units are not defined; choose Meters or Feet.")
+        attrs = P["surface_attributes"]
+        if ({k for k, _ in self._seg_pairs(attrs)} & self._LANDSCAPE_STATS
+                and not P["in_dem"].valueAsText):
+            P["in_dem"].setErrorMessage(
+                "Average Landscape Slope and Average Landscape Compass Direction "
+                "are read from a DEM; choose one.")
+        # Different datums between the polylines and the DEM: say what the
+        # tool will do, and warn about the map's display transformation.
+        if dem.enabled and dem.valueAsText and lines.valueAsText:
+            try:
+                lsr = arcpy.Describe(lines.valueAsText).spatialReference
+                dsr = arcpy.Describe(_resolve_raster_path(dem)).spatialReference
+                if lsr.GCS and dsr.GCS and lsr.GCS.name != dsr.GCS.name:
+                    dem.setWarningMessage(
+                        "The polylines ({}) and the DEM ({}) are on different "
+                        "datums. The tool will place its sample points on the DEM "
+                        "with the transformation set in the Geographic "
+                        "Transformations environment, or Esri's recommended "
+                        "transformation for this pair when none is set, and will "
+                        "report the one it used. Be warned that a map does not "
+                        "always have a vertical transformation in place: if the "
+                        "output draws shifted from the input, look at the "
+                        "transformations currently in place under Map Properties "
+                        "> Transformation.".format(lsr.GCS.name, dsr.GCS.name))
+            except Exception:
+                pass
         # Duplicate output field names among the segment attributes (copied
         # source fields are auto-renamed at run time if they would collide).
-        attrs = P["surface_attributes"]
         seen = set()
         for _, fld in self._seg_pairs(attrs):
             n = fld.lower()
@@ -4960,6 +5031,7 @@ class SplitLinesIntoSegments(object):
     def execute(self, parameters, messages):
         try:
             _scripting_hint(messages, type(self).__name__)
+            importlib.reload(clip_tools)          # datum-transformation helper (hot-patchable)
             importlib.reload(line_surface_tools)
             importlib.reload(mahalanobis)
             lst = line_surface_tools
@@ -4976,6 +5048,10 @@ class SplitLinesIntoSegments(object):
             source_sr = arcpy.Describe(in_lines).spatialReference
 
             pairs = self._seg_pairs(P["surface_attributes"])       # (key, field)
+            want_land = bool({k for k, _ in pairs} & self._LANDSCAPE_STATS)
+            need_dem = use_dem or want_land
+            vertex_only = (use_dem and
+                           P["segmentation"].valueAsText == self._SEG_VERTICES)
             copy_names = [str(r[0]).strip() for r in (P["copy_fields"].value or [])
                           if r[0] is not None and str(r[0]).strip()]
 
@@ -4984,7 +5060,7 @@ class SplitLinesIntoSegments(object):
             except Exception:
                 n_total = 0
             phases = [("Preparing the output feature class...", 1)]
-            if use_dem:
+            if need_dem:
                 phases.append(("Reading the DEM...", 2))
             phases.append(
                 ("Splitting {:,} line(s) into 3-D segments...".format(n_total)
@@ -4996,11 +5072,38 @@ class SplitLinesIntoSegments(object):
             # inherit a real vertical CS (the Z comes from the DEM). Without a
             # vertical CS the PolylineZ warns and mis-draws in a 3-D Scene.
             dem_path = dem_sr = None
-            if use_dem:
+            if need_dem:
                 dem_path = _resolve_raster_path(P["in_dem"])
                 dem_sr = arcpy.Describe(dem_path).spatialReference
+                tx_note = lst.datum_transformation(
+                    source_sr, dem_sr, arcpy.Describe(in_lines).extent)
+                if not lst.same_datum(source_sr, dem_sr):
+                    messages.addWarningMessage(
+                        "The polylines ({}) and the DEM ({}) are on different "
+                        "datums. Sample points were placed on the DEM with the "
+                        "transformation {}. A map does not always have a vertical "
+                        "transformation in place: if the output draws shifted "
+                        "from the input, look at the transformations currently in "
+                        "place under Map Properties > Transformation.".format(
+                            source_sr.GCS.name, dem_sr.GCS.name,
+                            tx_note or "(none available: coordinates were "
+                                       "re-projected without a datum shift)"))
             out_sr = lst.output_spatial_reference(
                 source_sr, dem_sr if use_dem else source_sr, elev_units)
+            if out_sr.VCS:
+                messages.addMessage(
+                    "Output vertical coordinate system: {} (from the {}). Note: in "
+                    "a map whose datum differs from the polylines', a layer WITH a "
+                    "vertical coordinate system needs a 3-D transformation under "
+                    "Map Properties > Transformation; without one the map draws "
+                    "it with no datum shift.".format(
+                        out_sr.VCS.name, "DEM" if use_dem else "polylines"))
+            else:
+                messages.addMessage(
+                    "No vertical coordinate system attached to the output: the {} "
+                    "does not define a known one. (An unknown vertical CS is not "
+                    "carried over, because a map cannot transform a layer that "
+                    "has one.)".format("DEM" if use_dem else "polylines' Z"))
 
             # Create the output PolylineZ feature class (source horizontal CS +
             # an elevation vertical CS).
@@ -5051,10 +5154,14 @@ class SplitLinesIntoSegments(object):
                     continue
                 length = f.length if ftype == "TEXT" else None
                 tgt = make_field(cn, ftype, length, alias=f.aliasName)
+                if tgt.lower() != cn.lower():
+                    messages.addMessage(
+                        "Source field '{}' copied as '{}' (the original name was "
+                        "invalid, reserved or already in use).".format(cn, tgt))
                 copy_map.append((cn, tgt))
 
             dem = None
-            if use_dem:
+            if need_dem:
                 mahalanobis.phase_advance()          # -> "Reading the DEM..."
                 window = lst.lines_window_in_dem_crs(in_lines, dem_sr)
                 dem = lst.load_dem(dem_path, window=window)
@@ -5089,7 +5196,8 @@ class SplitLinesIntoSegments(object):
                             continue
                         n_lines += 1
                         recs = lst.build_segments(
-                            shp, source, dem, elev_mpu, source_sr, oid)
+                            shp, source, dem, elev_mpu, source_sr, oid,
+                            landscape=want_land, vertex_only=vertex_only)
                         for rec in recs:
                             pts = arcpy.Array([arcpy.Point(x, y, z)
                                                for (x, y, z) in rec["geom"]])
@@ -5110,6 +5218,17 @@ class SplitLinesIntoSegments(object):
             messages.addMessage(
                 "Created {:,} segment feature(s) from {:,} line(s).".format(
                     n_segs, n_lines))
+
+            # Per-field metadata: what each attribute is, its units, and the
+            # direction-of-travel convention where it matters.
+            if key_field:
+                tool_metadata.set_entity_and_fields(
+                    out_fc,
+                    fields=[{"name": fn,
+                             "description": lst.seg_field_description(
+                                 key, length_unit, elev_units, slope_unit)}
+                            for key, fn in key_field],
+                    messages=messages)
 
             # Output symbology: Unclassed Colors on the highest-priority field the
             # user calculated (else the first one), blue -> yellow -> red.

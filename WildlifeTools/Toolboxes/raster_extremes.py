@@ -46,6 +46,7 @@ toolbox (shared with the TWI tool; Barnes et al. 2014) gives, at the bottom of
 every closed depression, the depth to its spill point. Run on the INVERTED
 DEM, that same number at a summit is its TOPOGRAPHIC PROMINENCE -- the drop
 from the summit to the key saddle separating it from higher ground, the
+import clip_tools as _ct
 standard measure of whether a bump is a mountain. Both are written to the
 output (one Prominence field: depression depth for low points, saddle
 prominence for peaks) and drive the optional minimum-prominence filter.
@@ -394,7 +395,7 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
             # ...projected so the geometry AND the X/Y fields agree with the
             # output feature class's coordinate system.
             if reproject:
-                pg = pg.projectAs(out_sr)
+                pg = _ct.project_geometry(pg, out_sr)
             pt = pg.centroid
             if r["edge"]:
                 n_edge += 1

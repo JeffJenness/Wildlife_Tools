@@ -97,6 +97,7 @@ two Modify tools carry the source's own record forward with a
 output is the SAME analysis product, just modified.
 """
 import os
+import clip_tools as _ct
 
 import numpy as np
 
@@ -889,7 +890,7 @@ def _read_feature_geoms(in_features, rast_sr, densify_step, messages):
                         and gsr.name == rast_sr.name))
             if not same:
                 try:
-                    g = g.projectAs(rast_sr)
+                    g = _ct.project_geometry(g, rast_sr)
                 except Exception:                                # noqa: BLE001
                     pass
             if getattr(g, "hasCurves", False):
@@ -923,7 +924,7 @@ def _rasterize_mask(gdal, geoms, rast_sr, gt, proj, w, h, scratch,
             or (sample_sr.factoryCode == rast_sr.factoryCode
                 and sample_sr.name == rast_sr.name))
     if not same:
-        geoms = [g.projectAs(rast_sr) for g in geoms]
+        geoms = [_ct.project_geometry(g, rast_sr) for g in geoms]
 
     shp = arcpy.CreateUniqueName("hsm_feat.shp", scratch)
     # The scratch features must stay in the RASTER's coordinate system --

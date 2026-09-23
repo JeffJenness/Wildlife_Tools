@@ -505,8 +505,11 @@ def _grid_from_predictors(variables, sample_method, scratch, messages):
                 if snap is not None:
                     arcpy.env.snapRaster = snap
                 try:
+                    import clip_tools as _ct
                     arcpy.management.ProjectRaster(
-                        v["path"], out_tif, grid_sr, _resamp_arcpy(sample_method), cell)
+                        v["path"], out_tif, grid_sr, _resamp_arcpy(sample_method), cell,
+                        geographic_transform=_ct.transformation_name(
+                            rdesc.spatialReference, grid_sr, rdesc.extent) or "")
                 finally:
                     arcpy.env.snapRaster = prev_snap
         else:
@@ -2583,13 +2586,24 @@ def run_mahalanobis_points(target_points, var_rows, sample_method, stats_source,
     except Exception:
         pass
     cols = ["SHAPE@XY"] + [f for _t, f in fields]
-    with arcpy.da.UpdateCursor(out_points, cols, spatial_reference=geo["sr"]) as cur:
+    # Read the points natively and project each to the grid's coordinate
+    # system HERE with the datum transformation: a cursor's spatial_reference=
+    # reprojects without one (verified 2026-09-23).
+    import clip_tools as _ct
+    pts_sr = arcpy.Describe(out_points).spatialReference
+    same_datum = _ct._same_datum(pts_sr, geo["sr"]) if pts_sr else True
+    with arcpy.da.UpdateCursor(out_points, cols,
+                               spatial_reference=(geo["sr"] if same_datum else None)) as cur:
         for row in cur:
             try:
                 arcpy.SetProgressorPosition(n_val + n_null + 1)
             except Exception:
                 pass
             xy = row[0]
+            if xy is not None and xy[0] is not None and not same_datum:
+                p = _ct.project_geometry(
+                    arcpy.PointGeometry(arcpy.Point(xy[0], xy[1]), pts_sr), geo["sr"]).firstPoint
+                xy = (p.X, p.Y)
             vals = None
             if xy is not None and xy[0] is not None:
                 vec = sample_point_vector(bands, geo, xy[0], xy[1], interp)

@@ -56,6 +56,7 @@ their mouths. Smoothing (optional) relaxes the raw Voronoi jaggedness
 without letting the line leave the polygon.
 """
 import math
+import clip_tools as _ct
 import os
 
 import numpy as np
@@ -521,7 +522,7 @@ def run_centerline(in_features, out_lines, mode=None,
                            or 1.0)
         except Exception:                                        # noqa: BLE001
             unit_m = 1.0
-        gw = geom.projectAs(working_sr)
+        gw = _ct.project_geometry(geom, working_sr)
         if getattr(gw, "hasCurves", False):
             d = max(gw.length / 500.0, 1e-9)
             try:
@@ -727,10 +728,10 @@ def run_centerline(in_features, out_lines, mode=None,
         if gtype == "line":
             arr = arcpy.Array([arcpy.Point(float(x), float(y))
                                for x, y in coords])
-            return arcpy.Polyline(arr, working_sr).projectAs(out_sr)
-        return arcpy.PointGeometry(
+            return _ct.project_geometry(arcpy.Polyline(arr, working_sr), out_sr)
+        return _ct.project_geometry(arcpy.PointGeometry(
             arcpy.Point(float(coords[0]), float(coords[1])),
-            working_sr).projectAs(out_sr)
+            working_sr), out_sr)
 
     line_cols = ["SHAPE@", "Line_ID", "Src_FID", "Part", "IsTrunk",
                  "Length_m", "MinW_m", "MeanW_m",

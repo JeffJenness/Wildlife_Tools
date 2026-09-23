@@ -128,11 +128,12 @@ namespace WildlifeTools
                 result.GeographicInput = true;
                 double lon0 = raw.Average(p => p.X);
                 double lat0 = raw.Average(p => p.Y);
+                // The equal-area working projection is built on the data's
+                // OWN geographic coordinate system, so no datum transformation
+                // is involved in going to it and back (2026-09-23: it used to
+                // hard-code WGS 1984, a datum change for NAD27 or NAD83 data).
                 string wkt = string.Format(CultureInfo.InvariantCulture,
-                    "PROJCS[\"LoCoH_Sweep_LAEA\",GEOGCS[\"GCS_WGS_1984\"," +
-                    "DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\"," +
-                    "6378137.0,298.257223563]],PRIMEM[\"Greenwich\",0.0]," +
-                    "UNIT[\"Degree\",0.0174532925199433]]," +
+                    "PROJCS[\"LoCoH_Sweep_LAEA\"," + sr.Wkt + "," +
                     "PROJECTION[\"Lambert_Azimuthal_Equal_Area\"]," +
                     "PARAMETER[\"False_Easting\",0.0]," +
                     "PARAMETER[\"False_Northing\",0.0]," +

@@ -67,6 +67,7 @@ area of interest -- is the default, with two additions: keep only shapes
 whose center is inside, or CLIP shapes to the area.
 """
 import math
+import clip_tools as _ct
 import os
 
 import numpy as np
@@ -944,7 +945,7 @@ def run_repeating_shapes(shape_type, out_fc, boundary=None, extent=None,
                         continue
                     n_clipped += 1
                 if geographic:
-                    geom = geom.projectAs(out_sr)
+                    geom = _ct.project_geometry(geom, out_sr)
                 n += 1
                 try:
                     ha = geom.getArea("GEODESIC", "HECTARES")
