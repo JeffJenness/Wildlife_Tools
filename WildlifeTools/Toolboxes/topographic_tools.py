@@ -1934,6 +1934,28 @@ def run_fractal_dimension(in_raster, out_raster, method=None, window_size=25,
 
 SLOPE_METHODS = ["Planar", "Geodesic"]
 
+# Flow routing on the filled surface. D8 sends each cell's water to its single
+# steepest lower neighbor; D-Infinity (Tarboton 1997) to the two neighbors
+# that bracket the steepest facet direction, in proportion to the angle; MFD
+# (Quinn et al. 1991, with the adaptive partition exponent of Qin et al. 2007
+# that Esri's MFD option implements) to every lower neighbor, weighted by
+# slope^p and the contour length toward that neighbor. The specific catchment
+# area is (accumulation + 1) x cell size for all three: the divisor is the
+# width of the cell whose value is being computed (Tarboton 1997, p. 3:
+# "a = A/L, taking L as the pixel width"), not the number of receivers.
+FLOW_METHODS = ["D8 (single flow direction)",
+                "MFD (multiple flow direction; Qin et al. 2007)",
+                "DINF (D-Infinity; Tarboton 1997)"]
+
+
+def _flow_key(method):
+    m = str(method or "").strip().upper()
+    if m.startswith("MFD"):
+        return "MFD"
+    if m.startswith("DINF") or m.startswith("D-INF") or m.startswith("D_INF"):
+        return "DINF"
+    return "D8"
+
 _TWI_CIT_TWI = (
     "Beven, K. J., and M. J. Kirkby. 1979. A physically based, variable "
     "contributing area model of basin hydrology. Hydrological Sciences "
@@ -1943,6 +1965,19 @@ _TWI_CIT_FILL = (
     "depression-filling and watershed-labeling algorithm for digital "
     "elevation models. Computers & Geosciences 62:117-127. "
     "https://doi.org/10.1016/j.cageo.2013.04.024")
+_TWI_CIT_DINF = (
+    "Tarboton, D. G. 1997. A new method for the determination of flow "
+    "directions and upslope areas in grid digital elevation models. Water "
+    "Resources Research 33(2):309-319. https://doi.org/10.1029/96WR03137")
+_TWI_CIT_MFD = (
+    "Quinn, P., K. Beven, P. Chevallier, and O. Planchon. 1991. The prediction "
+    "of hillslope flow paths for distributed hydrological modelling using "
+    "digital terrain models. Hydrological Processes 5(1):59-79. "
+    "https://doi.org/10.1002/hyp.3360050106; Qin, C., A.-X. Zhu, T. Pei, "
+    "B. Li, C. Zhou, and L. Yang. 2007. An adaptive approach to selecting a "
+    "flow-partition exponent for a multiple-flow-direction algorithm. "
+    "International Journal of Geographical Information Science 21(4):443-458. "
+    "https://doi.org/10.1080/13658810601073240")
 _TWI_CIT_D8 = (
     "O'Callaghan, J. F., and D. M. Mark. 1984. The extraction of drainage "
     "networks from digital elevation data. Computer Vision, Graphics, and "
@@ -2073,24 +2108,83 @@ def _twi_priority_flood(z, valid, messages=None):
     return filled, order
 
 
-def _twi_receivers(filled, order, valid, geom):
+def _twi_flat_distance(fp, valid, has):
+    """Flat handling shared by every router. A flat cell (valid, no strictly
+    lower neighbor) drains across cells of equal filled elevation to the
+    nearest EXIT: a non-flat cell of the same elevation (the spill), or the
+    raster edge / NoData, which flat cells touching it drain into directly
+    (as Esri's Flow Direction does). Returns (dist, terminal, order):
+    ``dist`` = steps to the nearest exit (0 for non-flat cells and edge
+    terminals, inf where unreachable), ``terminal`` = flat cells that drain
+    off the map, ``order`` = the accumulation processing rank (higher first:
+    elevation descending, then distance descending, so every cell is summed
+    before the cell it drains to)."""
+    from collections import deque
+    from scipy import ndimage
+    H, W = valid.shape
+    fc = fp[1:-1, 1:-1]
+    flat = valid & (~has)
+    interior = ndimage.binary_erosion(valid, structure=np.ones((3, 3), bool),
+                                      border_value=0)
+    terminal = flat & ~interior
+    dist = np.full((H + 2, W + 2), np.inf)
+    dist[1:-1, 1:-1] = np.where(valid & (~flat | terminal), 0.0, np.inf)
+    Wp = W + 2
+    # multi-source BFS across flat cells of equal elevation, seeded by the
+    # flat cells that touch an exit
+    todo = flat & ~terminal
+    seed = np.zeros((H, W), bool)
+    for dr, dc in _FLOW_DIRS:
+        nd = dist[1 + dr:1 + dr + H, 1 + dc:1 + dc + W]
+        ne = fp[1 + dr:1 + dr + H, 1 + dc:1 + dc + W]
+        seed |= todo & (nd == 0) & (ne == fc)
+    dl = dist.ravel().tolist()
+    fl = fp.ravel().tolist()
+    tl = np.pad(todo, 1, constant_values=False).ravel().tolist()
+    deltas = [dr * Wp + dc for dr, dc in _FLOW_DIRS]
+    q = deque()
+    for idx in np.flatnonzero(np.pad(seed, 1, constant_values=False).ravel()).tolist():
+        dl[idx] = 1.0
+        q.append(idx)
+    while q:
+        idx = q.popleft()
+        d1 = dl[idx] + 1.0
+        e = fl[idx]
+        for dd in deltas:
+            n = idx + dd
+            if tl[n] and dl[n] == np.inf and fl[n] == e:
+                dl[n] = d1
+                q.append(n)
+    dist = np.array(dl).reshape(H + 2, Wp)
+    dc_ = dist[1:-1, 1:-1]
+    key_d = np.where(np.isfinite(dc_), dc_, 0.0)
+    rank = np.empty(H * W, np.int64)
+    sort_idx = np.lexsort((key_d.ravel(), np.where(valid, fc, np.inf).ravel()))
+    rank[sort_idx] = np.arange(H * W)
+    order = np.where(valid, rank.reshape(H, W), -1)
+    return dist, terminal, order
+
+
+def _twi_receivers(filled, valid, geom):
     """D8 receiver (flat downstream index, -1 = terminal) for every cell:
-    steepest descent on the FILLED surface; flats route to the valid neighbor
-    with the smallest flood ``order`` (toward the spill).  ``geom`` supplies
-    the true per-row ground distances (planar projected / geodesic
-    geographic)."""
+    steepest descent on the FILLED surface; flats drain to the neighbor
+    nearest the exit (``_twi_flat_distance``). ``geom`` supplies the true
+    per-row ground distances (planar projected / geodesic geographic).
+    Returns (recv, order): ``order`` is the accumulation processing rank."""
     H, W = filled.shape
     fp = np.full((H + 2, W + 2), np.inf)
     fp[1:-1, 1:-1] = np.where(valid, filled, np.inf)
-    BIG = np.iinfo(np.int64).max
-    op = np.full((H + 2, W + 2), BIG, dtype=np.int64)
-    op[1:-1, 1:-1] = np.where(valid, order, BIG)
     fc = fp[1:-1, 1:-1]
-    oc = op[1:-1, 1:-1]
     h = geom["h"]; vU = geom["vA"]; vB = geom["vB"]
     dU = np.hypot(h, vU); dB = np.hypot(h, vB)
-    dirs = [(0, 1, h), (0, -1, h), (-1, 0, vU), (1, 0, vB),
-            (-1, 1, dU), (-1, -1, dU), (1, 1, dB), (1, -1, dB)]
+    # Evaluation order = tie-breaking order. When two or more neighbors are
+    # equally steep (common on integer DEMs: 7 percent of the cells of a
+    # 30 m integer DEM), the FIRST one evaluated wins (strict >). This order
+    # -- W, N, S, E, SW, NW, NE, SE -- reproduces Esri's Flow Direction choice
+    # on 97-98 percent of tied cells (checked on four windows of an integer
+    # DEM, 2026-09-23); the previous E-first order matched about half.
+    dirs = [(0, -1, h), (-1, 0, vU), (1, 0, vB), (0, 1, h),
+            (1, -1, dB), (-1, -1, dU), (-1, 1, dU), (1, 1, dB)]
 
     best_s = np.zeros((H, W))
     bdr = np.zeros((H, W), np.int64)
@@ -2107,19 +2201,8 @@ def _twi_receivers(filled, order, valid, geom):
         bdc = np.where(upd, dc, bdc)
         has |= upd
 
-    flat = valid & (~has)
-    best_o = oc.copy()
-    fdr = np.zeros((H, W), np.int64)
-    fdc = np.zeros((H, W), np.int64)
-    fhas = np.zeros((H, W), bool)
-    for dr, dc, _dist in dirs:
-        no = op[1 + dr:1 + dr + H, 1 + dc:1 + dc + W]
-        cand = flat & (no < best_o)
-        best_o = np.where(cand, no, best_o)
-        fdr = np.where(cand, dr, fdr)
-        fdc = np.where(cand, dc, fdc)
-        fhas |= cand
-    take = flat & fhas
+    fdist, terminal, order = _twi_flat_distance(fp, valid, has)
+    fdr, fdc, take = _twi_flat_route(fp, fdist, valid, has, terminal)
     bdr = np.where(take, fdr, bdr)
     bdc = np.where(take, fdc, bdc)
     has = has | take
@@ -2129,7 +2212,7 @@ def _twi_receivers(filled, order, valid, geom):
     rr = rows + bdr
     cc = cols + bdc
     recv = np.where(has & valid, rr * W + cc, -1).astype(np.int64)
-    return recv.ravel()
+    return recv.ravel(), order
 
 
 def _twi_accumulate(recv, order, valid):
@@ -2149,6 +2232,188 @@ def _twi_accumulate(recv, order, valid):
         if r >= 0:
             accL[r] += accL[i] + 1.0
     return np.array(accL, dtype=np.float64).reshape(H, W)
+
+
+# Neighbor order shared by the multi-direction routers: E, W, N, S, NE, NW,
+# SE, SW as (drow, dcol).
+_FLOW_DIRS = ((0, 1), (0, -1), (-1, 0), (1, 0), (-1, 1), (-1, -1), (1, 1),
+              (1, -1))
+
+
+def _twi_flat_route(fp, fdist, valid, has, terminal):
+    """For flat cells: the neighbor of equal elevation with the smallest
+    distance to an exit. Returns (dr, dc, take); take=False = terminal (edge
+    flats, and any flat with no reachable exit)."""
+    H, W = valid.shape
+    fc = fp[1:-1, 1:-1]
+    flat = valid & (~has) & (~terminal)
+    best = np.full((H, W), np.inf)
+    fdr = np.zeros((H, W), np.int64)
+    fdc = np.zeros((H, W), np.int64)
+    fhas = np.zeros((H, W), bool)
+    for dr, dc in _FLOW_DIRS:
+        nd = fdist[1 + dr:1 + dr + H, 1 + dc:1 + dc + W]
+        ne = fp[1 + dr:1 + dr + H, 1 + dc:1 + dc + W]
+        cand = flat & (ne == fc) & (nd < best)
+        best = np.where(cand, nd, best)
+        fdr = np.where(cand, dr, fdr)
+        fdc = np.where(cand, dc, fdc)
+        fhas |= cand
+    return fdr, fdc, flat & fhas
+
+
+def _twi_flow_weights(filled, valid, geom, method):
+    """Fractional flow weights for MFD or D-Infinity on the FILLED surface.
+
+    Returns (wts, order): an (8, H, W) float64 array with the share of each
+    cell's water sent to each neighbor in ``_FLOW_DIRS`` order (shares sum to
+    1 for every routed cell; all zero for terminals), and the accumulation
+    processing rank. Flats drain to the equal-elevation neighbor nearest the
+    exit (``_twi_flat_distance``). Distances are the per-row ground spans in
+    ``geom`` (h = east-west, vA = to the row above, vB = to the row below),
+    so the routing is right on geographic DEMs too.
+    """
+    H, W = filled.shape
+    fp = np.full((H + 2, W + 2), np.inf)
+    fp[1:-1, 1:-1] = np.where(valid, filled, np.inf)
+    fc = fp[1:-1, 1:-1]
+    h = geom["h"][:, None]
+    vU = geom["vA"][:, None]
+    vB = geom["vB"][:, None]
+    nb = {}
+    for dr, dc in _FLOW_DIRS:
+        nb[(dr, dc)] = fp[1 + dr:1 + dr + H, 1 + dc:1 + dc + W]
+    wts = np.zeros((8, H, W), np.float64)
+    key = _flow_key(method)
+
+    if key == "DINF":
+        # Eight triangular facets (cardinal leg, then the leg from the cardinal
+        # neighbor to the diagonal neighbor). d1, d2 = the two leg lengths.
+        facets = [((0, 1), (-1, 1), h, vU), ((-1, 0), (-1, 1), vU, h),
+                  ((-1, 0), (-1, -1), vU, h), ((0, -1), (-1, -1), h, vU),
+                  ((0, -1), (1, -1), h, vB), ((1, 0), (1, -1), vB, h),
+                  ((1, 0), (1, 1), vB, h), ((0, 1), (1, 1), h, vB)]
+        best_s = np.zeros((H, W))
+        best_k = np.full((H, W), -1, np.int64)
+        best_p = np.zeros((H, W))
+        with np.errstate(invalid="ignore", divide="ignore"):
+            for k, (card, diag, d1, d2) in enumerate(facets):
+                e1 = nb[card]
+                e2 = nb[diag]
+                s1 = (fc - e1) / d1
+                s2 = (e1 - e2) / d2
+                r = np.arctan2(s2, s1)
+                s = np.hypot(s1, s2)
+                rmax = np.arctan2(d2, d1) * np.ones((H, W))
+                low = r < 0
+                r = np.where(low, 0.0, r)
+                s = np.where(low, s1, s)
+                high = r > rmax
+                r = np.where(high, rmax, r)
+                s = np.where(high, (fc - e2) / np.hypot(d1, d2), s)
+                s = np.where(np.isfinite(s), s, -np.inf)
+                upd = valid & (s > best_s)
+                best_s = np.where(upd, s, best_s)
+                best_k = np.where(upd, k, best_k)
+                best_p = np.where(upd, r / rmax, best_p)
+        has = best_k >= 0
+        dir_index = {d: i for i, d in enumerate(_FLOW_DIRS)}
+        for k, (card, diag, _d1, _d2) in enumerate(facets):
+            sel = has & (best_k == k)
+            if not sel.any():
+                continue
+            wts[dir_index[card]][sel] += (1.0 - best_p[sel])
+            wts[dir_index[diag]][sel] += best_p[sel]
+    else:
+        # MFD: every lower neighbor, weight = slope^p x contour length, with
+        # p = 8.9 x min(e, 1) + 1.1 from the steepest downslope gradient e
+        # (Qin et al. 2007); contour lengths 0.5 x cell span for cardinal
+        # neighbors and 0.354 x cell span for diagonals (Quinn et al. 1991).
+        v = 0.5 * (vU + vB)
+        dg = np.sqrt(h * v)
+        dist = {(0, 1): h, (0, -1): h, (-1, 0): vU, (1, 0): vB,
+                (-1, 1): np.hypot(h, vU), (-1, -1): np.hypot(h, vU),
+                (1, 1): np.hypot(h, vB), (1, -1): np.hypot(h, vB)}
+        clen = {(0, 1): 0.5 * v, (0, -1): 0.5 * v, (-1, 0): 0.5 * h,
+                (1, 0): 0.5 * h, (-1, 1): 0.354 * dg, (-1, -1): 0.354 * dg,
+                (1, 1): 0.354 * dg, (1, -1): 0.354 * dg}
+        slopes = []
+        with np.errstate(invalid="ignore"):
+            for d in _FLOW_DIRS:
+                drop = fc - nb[d]
+                s = np.where(np.isfinite(drop) & (drop > 0), drop / dist[d], 0.0)
+                slopes.append(s)
+        emax = np.max(np.stack(slopes), axis=0)
+        pexp = 8.9 * np.minimum(emax, 1.0) + 1.1
+        total = np.zeros((H, W))
+        for i, d in enumerate(_FLOW_DIRS):
+            w = np.where(slopes[i] > 0, np.power(slopes[i], pexp) * clen[d], 0.0)
+            wts[i] = w
+            total += w
+        has = valid & (total > 0)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            for i in range(8):
+                wts[i] = np.where(has, wts[i] / total, 0.0)
+
+    # flats: everything to the equal-elevation neighbor nearest the exit
+    fdist, terminal, order = _twi_flat_distance(fp, valid, has)
+    fdr, fdc, take = _twi_flat_route(fp, fdist, valid, has, terminal)
+    if take.any():
+        for i, (dr, dc) in enumerate(_FLOW_DIRS):
+            sel = take & (fdr == dr) & (fdc == dc)
+            wts[i][sel] = 1.0
+    wts[:, ~valid] = 0.0
+    return wts, order
+
+
+def _twi_accumulate_w(wts, order, valid):
+    """Fractional flow accumulation (upslope area in cells, excluding the cell
+    itself) from the (8, H, W) weights of ``_twi_flow_weights``. Cells are
+    processed in decreasing flood order, so every cell is complete before it
+    passes its area on."""
+    H, W = order.shape
+    Wp = W + 2
+    deltas = [dr * Wp + dc for dr, dc in _FLOW_DIRS]
+    wl = []
+    for k in range(8):
+        wp = np.zeros((H + 2, Wp))
+        wp[1:-1, 1:-1] = wts[k]
+        wl.append(wp.ravel().tolist())
+    op = np.full((H + 2, Wp), -1, np.int64)
+    op[1:-1, 1:-1] = np.where(valid, order, -1)
+    of = op.ravel()
+    idx = np.flatnonzero(of >= 0)
+    idx_sorted = idx[np.argsort(of[idx], kind="stable")[::-1]].tolist()
+    accL = [0.0] * ((H + 2) * Wp)
+    w0, w1, w2, w3, w4, w5, w6, w7 = wl
+    d0, d1, d2, d3, d4, d5, d6, d7 = deltas
+    for i in idx_sorted:
+        a = accL[i] + 1.0
+        w = w0[i]
+        if w:
+            accL[i + d0] += w * a
+        w = w1[i]
+        if w:
+            accL[i + d1] += w * a
+        w = w2[i]
+        if w:
+            accL[i + d2] += w * a
+        w = w3[i]
+        if w:
+            accL[i + d3] += w * a
+        w = w4[i]
+        if w:
+            accL[i + d4] += w * a
+        w = w5[i]
+        if w:
+            accL[i + d5] += w * a
+        w = w6[i]
+        if w:
+            accL[i + d6] += w * a
+        w = w7[i]
+        if w:
+            accL[i + d7] += w * a
+    return np.array(accL, dtype=np.float64).reshape(H + 2, Wp)[1:-1, 1:-1]
 
 
 def _twi_read_aligned(path, width, height, scratch, messages, what):
@@ -2185,11 +2450,18 @@ def _twi_read_aligned(path, width, height, scratch, messages, what):
 
 def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
             slope_epsilon=0.0001, in_filled_dem=None, in_flow_accumulation=None,
-            out_filled_dem=None, out_flow_accumulation=None, messages=None):
+            out_filled_dem=None, out_flow_accumulation=None, messages=None,
+            flow_method="D8"):
     """Topographic Wetness Index (TWI / CTI): TWI = ln(SCA / (tan(beta) +
-    eps)).  See the section header for the full method and citations."""
+    eps)).  See the section header for the full method and citations.
+    ``flow_method`` (D8 / MFD / DINF, see FLOW_METHODS) selects the routing
+    used when the tool computes the flow accumulation itself."""
     gdal = _mh._gdal()
     eps = float(slope_epsilon)
+    fkey = _flow_key(flow_method)
+    flabel = {"D8": "D8", "MFD": "MFD (multiple flow direction)",
+              "DINF": "D-Infinity"}[fkey]
+    fcit = {"D8": _TWI_CIT_D8, "MFD": _TWI_CIT_MFD, "DINF": _TWI_CIT_DINF}[fkey]
     if eps <= 0:
         raise arcpy.ExecuteError("The slope epsilon must be positive.")
     have_fac = bool(in_flow_accumulation)
@@ -2206,7 +2478,7 @@ def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
     phases = [("Reading the DEM...", 1)]
     if not have_fac:
         phases += [("Filling sinks (priority-flood)...", 6),
-                   ("Tracing D8 flow directions...", 2),
+                   ("Tracing {} flow directions...".format(flabel), 2),
                    ("Accumulating flow...", 2)]
     phases += [("Computing slope and TWI...", 2),
                ("Saving the TWI raster...", 1),
@@ -2256,8 +2528,10 @@ def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
     if nvalid == 0:
         raise arcpy.ExecuteError("The DEM has no valid cells.")
     _hs._msg(messages, "DEM: {:,} x {:,} cells ({:,} valid); {}; slope "
-             "method: {}.".format(width, height, nvalid,
-             "geographic" if geographic else "projected", slope_used))
+             "method: {}; flow routing: {}.".format(
+                 width, height, nvalid,
+                 "geographic" if geographic else "projected", slope_used,
+                 "supplied accumulation" if have_fac else flabel))
 
     # ---- flow accumulation (supplied, or fill -> D8 -> accumulate) ----
     filled = None
@@ -2280,11 +2554,19 @@ def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
                      "surface.")
         _mh.phase_advance("Filling sinks (priority-flood)...")
         filled, order = _twi_priority_flood(fill_input, valid, messages)
-        _mh.phase_advance("Tracing D8 flow directions...")
-        recv = _twi_receivers(filled, order, valid, base_geom)
-        _mh.phase_advance("Accumulating flow...")
-        acc = _twi_accumulate(recv, order, valid)
-        del recv, order
+        _mh.phase_advance("Tracing {} flow directions...".format(flabel))
+        del order                      # routing computes its own order
+        if fkey == "D8":
+            recv, porder = _twi_receivers(filled, valid, base_geom)
+            _mh.phase_advance("Accumulating flow...")
+            acc = _twi_accumulate(recv, porder, valid)
+            del recv
+        else:
+            wts, porder = _twi_flow_weights(filled, valid, base_geom, fkey)
+            _mh.phase_advance("Accumulating flow...")
+            acc = _twi_accumulate_w(wts, porder, valid)
+            del wts
+        del porder
 
     # ---- slope (original DEM) and TWI ----
     _mh.phase_advance("Computing slope and TWI...")
@@ -2297,8 +2579,9 @@ def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
     out_valid = valid & np.isfinite(twi)
     twi = np.where(out_valid, twi, NODATA_OUT).astype(np.float32)
     _hs._msg(messages, "TWI ({}): {:,} cells; SCA = (flow accumulation + 1) x "
-             "cell size, slope epsilon {:g}.".format(
-                 _TWI_CITATION, int(out_valid.sum()), eps))
+             "cell size, slope epsilon {:g}, flow routing {}.".format(
+                 _TWI_CITATION, int(out_valid.sum()), eps,
+                 "supplied accumulation" if have_fac else flabel))
 
     def _write(arr, path, valid_mask, kind):
         op = arcpy.CreateUniqueName("twi_%s.tif" % kind, scratch)
@@ -2324,7 +2607,7 @@ def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
                  "slope method {sm}. Flow: {fl}.").format(
                      src=str(in_raster), e=eps, sm=slope_used,
                      fl=("supplied flow accumulation" if have_fac else
-                         "internal priority-flood fill + D8")),
+                         "internal priority-flood fill + " + flabel)),
         description=(
             "Topographic Wetness Index (TWI), also called the Compound "
             "Topographic Index (CTI): ln( specific catchment area / (tan(slope)"
@@ -2345,15 +2628,20 @@ def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
         _deliver_output(
             fp, out_flow_accumulation, fs, messages,
             title=os.path.basename(str(out_flow_accumulation)),
-            summary=("Created by Topographic Wetness Index from {src}: D8 flow "
-                     "accumulation (upstream cell count, excl. self).").format(
-                         src=str(in_raster)),
-            description=("D8 flow accumulation (number of upstream cells "
-                         "draining to each cell, excluding the cell itself), "
-                         "from a priority-flood-filled DEM. " + _TWI_CIT_D8),
-            tags=("flow accumulation, D8, upslope area, hydrology, topography, "
-                  "Jenness Enterprises"),
-            citation=_TWI_CIT_D8)
+            summary=("Created by Topographic Wetness Index from {src}: {fl} "
+                     "flow accumulation (upslope area in cells, excl. "
+                     "self).").format(src=str(in_raster), fl=flabel),
+            description=("{fl} flow accumulation (upslope area in cells "
+                         "draining to each cell, excluding the cell itself"
+                         "{frac}), from a priority-flood-filled DEM. ".format(
+                             fl=flabel,
+                             frac=("" if fkey == "D8" else
+                                   "; fractional, because each cell's area is "
+                                   "shared among its downslope neighbors")) +
+                         fcit),
+            tags=("flow accumulation, {}, upslope area, hydrology, topography, "
+                  "Jenness Enterprises".format(flabel)),
+            citation=fcit)
     if save_fill and filled is not None:
         pp, ps = _write(filled, None, valid, "fill")
         _deliver_output(

@@ -6699,10 +6699,11 @@ class TopographicWetnessIndex(object):
             "(tan(slope) + epsilon) ). High values mark cells with large "
             "upslope area and/or gentle slope (valley bottoms, convergence "
             "zones -- prone to wetness); low values mark ridges and steep, "
-            "diverging slopes. Sink filling (priority-flood), D8 flow "
-            "direction, and flow accumulation are computed internally -- no "
-            "Spatial Analyst required -- or you can supply a pre-filled DEM "
-            "and/or flow-accumulation raster. Beven & Kirkby 1979.")
+            "diverging slopes. Sink filling (priority-flood), flow direction "
+            "(D8, MFD or D-Infinity) and flow accumulation are computed "
+            "internally -- no Spatial Analyst required -- or you can supply "
+            "a pre-filled DEM and/or flow-accumulation raster. Beven & "
+            "Kirkby 1979.")
         self.category = "Topographic Analysis Tools"
         self.canRunInBackground = False
         self._auto_out = None
@@ -6732,6 +6733,14 @@ class TopographicWetnessIndex(object):
             name="slope_epsilon", datatype="GPDouble",
             parameterType="Required", direction="Input")
         slope_epsilon.value = 0.0001
+        flow_method = arcpy.Parameter(
+            displayName="Flow routing method (when the tool computes the "
+                        "flow accumulation)",
+            name="flow_method", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        flow_method.filter.type = "ValueList"
+        flow_method.filter.list = topographic_tools.FLOW_METHODS
+        flow_method.value = topographic_tools.FLOW_METHODS[0]      # D8
         in_filled_dem = arcpy.Parameter(
             displayName="Existing filled DEM (optional)", name="in_filled_dem",
             datatype=["GPRasterLayer", "DERasterDataset"],
@@ -6754,10 +6763,10 @@ class TopographicWetnessIndex(object):
             parameterType="Optional", direction="Output",
             category="Save computed intermediate rasters (optional)")
         params = [in_raster, out_raster, slope_method, elev_units,
-                  slope_epsilon, in_filled_dem, in_flow_accumulation,
-                  out_filled_dem, out_flow_accumulation]
+                  slope_epsilon, flow_method, in_filled_dem,
+                  in_flow_accumulation, out_filled_dem, out_flow_accumulation]
         saved = _load_tool_defaults("TopographicWetnessIndex")
-        for p in (slope_method, elev_units, slope_epsilon):
+        for p in (slope_method, elev_units, slope_epsilon, flow_method):
             if p.name in saved:
                 try:
                     p.value = saved[p.name]
@@ -6808,6 +6817,7 @@ class TopographicWetnessIndex(object):
         have_fac = bool(P["in_flow_accumulation"].valueAsText)
         have_fill = bool(P["in_filled_dem"].valueAsText)
         P["in_filled_dem"].enabled = not have_fac
+        P["flow_method"].enabled = not have_fac
         ofill, ofac = P["out_filled_dem"], P["out_flow_accumulation"]
         ofill.enabled = not (have_fill or have_fac)
         ofac.enabled = not have_fac
@@ -6882,6 +6892,8 @@ class TopographicWetnessIndex(object):
                 out_flow_accumulation=(P["out_flow_accumulation"].valueAsText
                                        if P["out_flow_accumulation"].enabled
                                        else None),
+                flow_method=(P["flow_method"].valueAsText
+                             or topographic_tools.FLOW_METHODS[0]),
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
             _writeback_resolved_raster(P, "out_filled_dem")
@@ -6896,6 +6908,7 @@ class TopographicWetnessIndex(object):
                 "slope_method": P["slope_method"].valueAsText,
                 "elev_units": P["elev_units"].valueAsText,
                 "slope_epsilon": P["slope_epsilon"].value,
+                "flow_method": P["flow_method"].valueAsText,
             })
         except arcpy.ExecuteError as e:
             # Clean, expected failure (bad input, a validation check that

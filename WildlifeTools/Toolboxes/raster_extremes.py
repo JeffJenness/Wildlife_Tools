@@ -41,18 +41,25 @@ feature rather than a cloud. A flat BENCH on a hillside (equal cells whose rim
 leads downhill) is correctly rejected: a region only qualifies if every known
 neighbor is strictly on the wrong side of it.
 
-PROMINENCE, nearly free: the priority-flood depression fill already in this
-toolbox (shared with the TWI tool; Barnes et al. 2014) gives, at the bottom of
-every closed depression, the depth to its spill point. Run on the INVERTED
-DEM, that same number at a summit is its TOPOGRAPHIC PROMINENCE -- the drop
-from the summit to the key saddle separating it from higher ground, the
-import clip_tools as _ct
-standard measure of whether a bump is a mountain. Both are written to the
+PROMINENCE: cells are merged in ascending order of value (union-find over the
+eight-connected grid). Each extreme region seeds its own component; when two
+components meet, the one whose extreme is less extreme is absorbed and its
+extreme is measured to the level at which they met -- the saddle. For a low
+point that is the depth below the spill point of ITS OWN basin; on the
+INVERTED DEM the same number at a summit is its TOPOGRAPHIC PROMINENCE -- the
+drop from the summit to the key saddle separating it from higher ground, the
+standard measure of whether a bump is a mountain. Every extreme gets its own
+number, including a subsidiary summit inside a larger massif and a small pit
+inside a larger bowl. (An earlier version read prominence off the fill
+depth, which only exists at the bottom of each MERGED depression, and so
+silently dropped every nested extreme -- on the Grand Canyon test DEM more
+than a third of the summits. Fixed 2026-09-23.) Both kinds are written to the
 output (one Prominence field: depression depth for low points, saddle
 prominence for peaks) and drive the optional minimum-prominence filter.
 Extremes whose saddle path leaves the raster are measured against the raster
 edge (the standard convention for a bounded map), and edge-draining low
-points have depth 0.
+points have depth 0. Of two EQUAL extremes in one basin, one is measured to
+the saddle between them and the other carries the basin's full depth.
 
 EDGE FLAG: every point records whether its region touches the raster edge or
 NoData -- where neighbors are unknown, so the extreme (and its prominence) may
@@ -64,18 +71,16 @@ to respect it): geometry AND the X/Y attribute fields are written in the
 output feature class's actual coordinate system -- the DEM's, unless the
 environment overrides it.
 
-No Spatial Analyst required. Citation: Barnes, R., C. Lehman, and D. Mulla.
-2014. Priority-flood: an optimal depression-filling and watershed-labeling
-algorithm for digital elevation models. Computers & Geosciences 62:117-127.
-https://doi.org/10.1016/j.cageo.2013.04.024
+No Spatial Analyst required. Sink definition after O'Callaghan and Mark
+(1984), Computer Vision, Graphics, and Image Processing 28:323-344.
 """
 import os
 
 import numpy as np
 
+import clip_tools as _ct
 import mahalanobis as _mh
 import hillshade as _hs
-import topographic_tools as _tt
 import tool_metadata as _tm
 
 EXTREME_TYPES = ["Both (peaks and low points)", "Peaks (high points) only",
@@ -90,11 +95,13 @@ LAYER_TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 TYPE_PEAK = "Peak"
 TYPE_LOW = "Low Point"
 
-_CITATION = (
-    "Barnes, R., C. Lehman, and D. Mulla. 2014. Priority-flood: an optimal "
-    "depression-filling and watershed-labeling algorithm for digital "
-    "elevation models. Computers & Geosciences 62:117-127. "
-    "https://doi.org/10.1016/j.cageo.2013.04.024")
+_METHOD = (
+    "Extremes are regional minima/maxima of the eight-connected grid "
+    "(plateaus grouped, benches excluded); prominence is computed by merging "
+    "cells in elevation order, each extreme measured to the saddle at which "
+    "it joins a more extreme component or the raster edge. Sink definition "
+    "after O'Callaghan and Mark (1984), Computer Vision, Graphics, and Image "
+    "Processing 28:323-344.")
 
 
 def _say(messages, text):
@@ -108,88 +115,137 @@ def _warn(messages, text):
 
 
 def find_extremes(a, valid, messages=None):
-    """Regional minima of ``a`` (masked by ``valid``), plateau-grouped.
+    """Regional minima of ``a`` (masked by ``valid``), plateau-grouped, each
+    with its prominence.
 
     Returns a list of dicts: {row, col, value, prominence, edge} -- one per
     extreme region, the (row, col) being the region cell nearest the region's
-    centroid. Run with ``-a`` for maxima (value/prominence are then negated by
-    the caller). Pure numpy/scipy; independently testable.
+    centroid. Run with ``-a`` for maxima (the caller negates ``value``;
+    prominence is the same number either way). Pure numpy/scipy;
+    independently testable.
+
+    Prominence: cells are merged in ascending order of value (union-find over
+    the eight-connected grid, with everything outside the valid area as one
+    pre-merged component of value -inf). Each extreme region seeds a
+    component; when two components meet at level v the one with the higher
+    extreme is absorbed and its extreme's prominence is v minus its value.
     """
     from scipy import ndimage
 
     H, W = a.shape
     af = np.where(valid, a.astype(np.float64), np.inf)
+    eight = np.ones((3, 3), bool)
 
     # Cells whose neighborhood is not fully known: on the array border, or
     # 8-adjacent to NoData. Regions touching these get edge=True.
-    interior = ndimage.binary_erosion(valid, structure=np.ones((3, 3), bool),
-                                      border_value=0)
+    interior = ndimage.binary_erosion(valid, structure=eight, border_value=0)
     edgezone = valid & ~interior
 
-    # Priority-flood fill: depth > 0 marks every cell of a closed depression.
-    filled, _order = _tt._twi_priority_flood(af, valid, messages)
-    depth = np.where(valid, filled - af, 0.0)
-
-    results = []
-
-    def _emit(region_mask, value, prom):
-        # One point per region: the region cell nearest the region centroid
-        # (a bare centroid can fall outside an L-shaped flat).
-        rr, cc = np.nonzero(region_mask)
-        cy, cx = rr.mean(), cc.mean()
-        k = int(np.argmin((rr - cy) ** 2 + (cc - cx) ** 2))
-        results.append({
-            "row": int(rr[k]), "col": int(cc[k]),
-            "value": float(value), "prominence": float(prom),
-            "edge": bool(np.any(edgezone[region_mask])),
-        })
-
-    # ---- bottoms of closed depressions ------------------------------------
-    dep_lab, n_dep = ndimage.label(depth > 0, structure=np.ones((3, 3), int))
-    if n_dep:
-        idx = np.arange(1, n_dep + 1)
-        dep_min = ndimage.minimum(af, labels=dep_lab, index=idx)
-        # All cells at each depression's lowest value, then re-labelled so two
-        # separate equal-elevation pits inside ONE depression each get a point.
-        min_of = np.zeros(n_dep + 1, np.float64)
-        min_of[1:] = dep_min
-        bottoms = (dep_lab > 0) & (af == min_of[dep_lab])
-        bot_lab, n_bot = ndimage.label(bottoms, structure=np.ones((3, 3), int))
-        for sl, bi in zip(ndimage.find_objects(bot_lab), range(1, n_bot + 1)):
-            if sl is None:
-                continue
-            m = np.zeros((H, W), bool)
-            m[sl] = bot_lab[sl] == bi
-            r0, c0 = np.argwhere(m)[0]
-            # Depth at the bottom = fill level minus bottom value.
-            _emit(m, af[r0, c0], float(filled[r0, c0] - af[r0, c0]))
-
-    # ---- zero-depth extremes (edge-draining) ------------------------------
-    # Candidates with no strictly-lower known neighbor but nothing to fill:
-    # their plateau reaches the raster edge / NoData. A bench (flat whose rim
-    # leads DOWN) also shows up here and is rejected by the rim test: every
-    # known neighbor outside the region must be STRICTLY higher -- an EQUAL
-    # neighbor outside the region means the flat continues into cells that do
-    # have a lower way out, i.e. the flat drains.
+    # ---- 1. the extreme regions -------------------------------------------
+    # Candidates: valid cells with no strictly lower known neighbor. Connected
+    # candidates are necessarily equal-valued, so each candidate region is a
+    # flat (or a single cell).
     minf3 = ndimage.minimum_filter(af, size=3, mode="constant", cval=np.inf)
-    cand = valid & (af == minf3) & ~(depth > 0)
-    zc_lab, n_zc = ndimage.label(cand, structure=np.ones((3, 3), int))
-    grow = np.ones((3, 3), bool)
-    for sl, zi in zip(ndimage.find_objects(zc_lab), range(1, n_zc + 1)):
-        if sl is None:
-            continue
-        sl2 = (slice(max(0, sl[0].start - 1), min(H, sl[0].stop + 1)),
-               slice(max(0, sl[1].start - 1), min(W, sl[1].stop + 1)))
-        blob = zc_lab[sl2] == zi
-        val = float(af[sl2][blob][0])
-        rim = ndimage.binary_dilation(blob, structure=grow) & ~blob \
-            & valid[sl2]
-        if rim.any() and not np.all(af[sl2][rim] > val):
-            continue                          # a bench: the flat drains
-        m = np.zeros((H, W), bool)
-        m[sl2] = blob
-        _emit(m, val, 0.0)
+    cand = valid & (af == minf3)
+    lab, n_lab = ndimage.label(cand, structure=eight.astype(int))
+    if n_lab == 0:
+        return []
+    # Bench test: a candidate region that touches an EQUAL valid cell which is
+    # not itself a candidate continues into cells that have a lower way out,
+    # i.e. the flat drains, and it is not an extreme.
+    padf = np.pad(af, 1, constant_values=np.inf)
+    padc = np.pad(cand, 1, constant_values=False)
+    padv = np.pad(valid, 1, constant_values=False)
+    drains = np.zeros(n_lab + 1, bool)
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            if dr == 0 and dc == 0:
+                continue
+            sl = (slice(1 + dr, 1 + dr + H), slice(1 + dc, 1 + dc + W))
+            hit = cand & padv[sl] & ~padc[sl] & (padf[sl] == af)
+            if hit.any():
+                drains[np.unique(lab[hit])] = True
+    drains[0] = True
+    keep_ids = np.flatnonzero(~drains)
+    m = len(keep_ids)
+    if m == 0:
+        return []
+    remap = np.zeros(n_lab + 1, np.int64)
+    remap[keep_ids] = np.arange(1, m + 1)
+    region = remap[lab]                      # 0 = not an extreme cell
+    idx = np.arange(1, m + 1)
+    reg_val = ndimage.minimum(af, labels=region, index=idx)
+    reg_edge = ndimage.maximum(edgezone.astype(np.int8), labels=region,
+                               index=idx) > 0
 
+    # ---- 2. prominence: merge cells in ascending order ---------------------
+    Wp = W + 2
+    zl = padf.ravel().tolist()
+    rl = np.pad(region, 1, constant_values=0).ravel().tolist()
+    N = len(zl)
+    parent = list(range(N))
+    bid = [0] * N                     # bottom region id at a root (0 = none)
+    bval = [float("inf")] * N         # that region's value (inf = none)
+    done = bytearray(N)
+    OUT = 0                           # padded corner: the outside component
+    for o in np.flatnonzero(~padv.ravel()).tolist():
+        parent[o] = OUT
+        done[o] = 1
+    bid[OUT] = -1
+    bval[OUT] = float("-inf")
+    prom = [0.0] * (m + 1)
+    order = np.flatnonzero(padv.ravel())
+    order = order[np.argsort(padf.ravel()[order], kind="stable")].tolist()
+    deltas = (-Wp - 1, -Wp, -Wp + 1, -1, 1, Wp - 1, Wp, Wp + 1)
+    total = len(order)
+    step = max(1, total // 40)
+    for k, i in enumerate(order):
+        done[i] = 1
+        r = rl[i]
+        if r:
+            bid[i] = r
+            bval[i] = zl[i]
+        v = zl[i]
+        for d in deltas:
+            n = i + d
+            if not done[n]:
+                continue
+            x = i
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            y = n
+            while parent[y] != y:
+                parent[y] = parent[parent[y]]
+                y = parent[y]
+            if x == y:
+                continue
+            # The component with the LOWER extreme survives; the other's
+            # extreme (if it has one) is measured to this level, the saddle.
+            if bval[y] < bval[x]:
+                x, y = y, x
+            if bid[y] > 0:
+                prom[bid[y]] = v - bval[y]
+            parent[y] = x
+        if messages is not None and k % step == 0:
+            _mh.phase_step(k, total)
+
+    # ---- 3. one point per region: the cell nearest the region centroid -----
+    rr, cc = np.nonzero(region)
+    reg = region[rr, cc]
+    cy = ndimage.mean(rr.astype(np.float64), labels=reg, index=idx)
+    cx = ndimage.mean(cc.astype(np.float64), labels=reg, index=idx)
+    d2 = (rr - cy[reg - 1]) ** 2 + (cc - cx[reg - 1]) ** 2
+    o = np.lexsort((d2, reg))
+    first = np.searchsorted(reg[o], idx)
+    sel = o[first]
+    results = []
+    for jx, s in enumerate(sel):
+        results.append({
+            "row": int(rr[s]), "col": int(cc[s]),
+            "value": float(reg_val[jx]), "prominence": float(prom[jx + 1]),
+            "edge": bool(reg_edge[jx]),
+        })
     return results
 
 
@@ -269,9 +325,9 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
 
     phases = [("Reading the DEM...", 2)]
     if want_lows:
-        phases.append(("Finding low points (priority-flood)...", 4))
+        phases.append(("Finding low points...", 4))
     if want_peaks:
-        phases.append(("Finding peaks (priority-flood, inverted)...", 4))
+        phases.append(("Finding peaks (inverted surface)...", 4))
     phases.append(("Writing the points...", 2))
     _mh.begin_phases(phases)
 
@@ -474,11 +530,9 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
             "a cell or connected flat with no lower known neighbor (a sink); "
             "a peak is the same on the inverted surface (a summit). Flats "
             "are grouped to one point each; benches (flats that drain) are "
-            "excluded. Prominence comes from priority-flood depression "
-            "depth -- on the inverted surface this is the summit's "
-            "topographic prominence. " + _CITATION)
+            "excluded. " + _METHOD)
         m.credits = ("Tool by Jeff Jenness, Jenness Enterprises "
-                     "(http://www.jennessent.com). Method: " + _CITATION)
+                     "(http://www.jennessent.com). " + _METHOD)
         m.save()
     except Exception as e:
         _warn(messages, "Could not write output metadata: {}".format(e))
