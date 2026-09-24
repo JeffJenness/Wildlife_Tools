@@ -6696,7 +6696,7 @@ class TopographicWetnessIndex(object):
         self.description = (
             "Computes the Topographic Wetness Index (TWI), also called the "
             "Compound Topographic Index (CTI): ln( specific catchment area / "
-            "(tan(slope) + epsilon) ). High values mark cells with large "
+            "(tan(slope) + added constant) ). High values mark cells with large "
             "upslope area and/or gentle slope (valley bottoms, convergence "
             "zones -- prone to wetness); low values mark ridges and steep, "
             "diverging slopes. Sink filling (priority-flood), flow direction "
@@ -6732,7 +6732,7 @@ class TopographicWetnessIndex(object):
             displayName="Value added to slope (avoids divide-by-zero)",
             name="slope_epsilon", datatype="GPDouble",
             parameterType="Required", direction="Input")
-        slope_epsilon.value = 0.0001
+        slope_epsilon.value = 0.001
         flow_method = arcpy.Parameter(
             displayName="Flow routing method (when the tool computes the "
                         "flow accumulation)",
@@ -6850,7 +6850,7 @@ class TopographicWetnessIndex(object):
         eps = P["slope_epsilon"].value
         if eps is not None and eps <= 0:
             P["slope_epsilon"].setErrorMessage(
-                "Enter a small positive number (the default 0.0001 is typical).")
+                "Enter a small positive number (the default 0.001 is the USGS HYDRO1k value).")
         for nm, lbl in (("in_filled_dem", "filled DEM"),
                         ("in_flow_accumulation", "flow-accumulation raster")):
             v = P[nm].valueAsText

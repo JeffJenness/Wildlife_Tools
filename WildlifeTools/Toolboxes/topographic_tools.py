@@ -1911,7 +1911,8 @@ def run_fractal_dimension(in_raster, out_raster, method=None, window_size=25,
 #     SCA = catchment area / unit contour length = (flowacc + 1) x cellsize
 #
 # The +1 counts the cell's own catchment (a cell drains at least itself) and
-# also keeps SCA > 0 so the log is defined; eps (default 0.0001, user set) is
+# also keeps SCA > 0 so the log is defined; eps (default 0.001, the HYDRO1k
+# value; user set) is
 # added to the slope gradient so flat cells do not divide by zero.  High TWI =
 # large upslope area and/or gentle slope (valley bottoms, converging, wet);
 # low TWI = small area and/or steep (ridges, diverging, dry).
@@ -2449,7 +2450,7 @@ def _twi_read_aligned(path, width, height, scratch, messages, what):
 
 
 def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
-            slope_epsilon=0.0001, in_filled_dem=None, in_flow_accumulation=None,
+            slope_epsilon=0.001, in_filled_dem=None, in_flow_accumulation=None,
             out_filled_dem=None, out_flow_accumulation=None, messages=None,
             flow_method="D8"):
     """Topographic Wetness Index (TWI / CTI): TWI = ln(SCA / (tan(beta) +
@@ -2463,7 +2464,7 @@ def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
               "DINF": "D-Infinity"}[fkey]
     fcit = {"D8": _TWI_CIT_D8, "MFD": _TWI_CIT_MFD, "DINF": _TWI_CIT_DINF}[fkey]
     if eps <= 0:
-        raise arcpy.ExecuteError("The slope epsilon must be positive.")
+        raise arcpy.ExecuteError("The value added to slope must be positive.")
     have_fac = bool(in_flow_accumulation)
     have_fill = bool(in_filled_dem)
     save_fill = bool(out_filled_dem) and not have_fill and not have_fac
@@ -2579,7 +2580,7 @@ def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
     out_valid = valid & np.isfinite(twi)
     twi = np.where(out_valid, twi, NODATA_OUT).astype(np.float32)
     _hs._msg(messages, "TWI ({}): {:,} cells; SCA = (flow accumulation + 1) x "
-             "cell size, slope epsilon {:g}, flow routing {}.".format(
+             "cell size, constant added to slope {:g}, flow routing {}.".format(
                  _TWI_CITATION, int(out_valid.sum()), eps,
                  "supplied accumulation" if have_fac else flabel))
 
@@ -2603,7 +2604,7 @@ def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
         out_path, out_raster, out_stats, messages,
         title=os.path.basename(str(out_raster)),
         summary=("Created by Topographic Wetness Index from {src}: SCA = "
-                 "(flow accumulation + 1) x cell size, slope epsilon {e:g}, "
+                 "(flow accumulation + 1) x cell size, constant added to slope {e:g}, "
                  "slope method {sm}. Flow: {fl}.").format(
                      src=str(in_raster), e=eps, sm=slope_used,
                      fl=("supplied flow accumulation" if have_fac else
@@ -2611,7 +2612,7 @@ def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
         description=(
             "Topographic Wetness Index (TWI), also called the Compound "
             "Topographic Index (CTI): ln( specific catchment area / (tan(slope)"
-            " + epsilon) ). High values mark cells with large upslope "
+            " + added constant) ). High values mark cells with large upslope "
             "contributing area and/or gentle slope (valley bottoms, "
             "convergence zones -- prone to wetness); low values mark small "
             "area and/or steep slope (ridges, divergence zones -- drier). "
