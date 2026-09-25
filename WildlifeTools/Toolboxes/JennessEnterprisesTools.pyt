@@ -10508,8 +10508,8 @@ class FindRasterExtremeValues(object):
             "value stands above or below its surroundings), and a flag "
             "marking extremes on the edge of the data whose neighbors are "
             "unknown. Optional filters: minimum prominence/depth, and a "
-            "dominance window keeping only the most extreme point within a "
-            "radius. Needs no Spatial Analyst.")
+            "dominance radius keeping only the most extreme point within a "
+            "circle of that many cells. Needs no Spatial Analyst.")
         self.category = "Topographic Analysis Tools"
         self.canRunInBackground = False
         self._auto_out = None
@@ -10535,10 +10535,10 @@ class FindRasterExtremeValues(object):
             datatype="GPDouble", parameterType="Optional", direction="Input")
         min_prom.value = 0.0
         window = arcpy.Parameter(
-            displayName="Dominance window radius (cells; 1 = every extreme)",
+            displayName="Dominance radius (cells; 1.5 = every extreme)",
             name="window",
-            datatype="GPLong", parameterType="Optional", direction="Input")
-        window.value = 1
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        window.value = 1.5
         return [in_raster, extreme_type, out_fc, min_prom, window]
 
     def isLicensed(self):
@@ -10577,7 +10577,8 @@ class FindRasterExtremeValues(object):
         w = P["window"].value
         if w is not None and w < 1:
             P["window"].setErrorMessage(
-                "The dominance window radius must be at least 1 cell.")
+                "The dominance radius must be at least 1 cell (1.5 = the "
+                "eight neighbors, which reports every extreme).")
         return
 
     def execute(self, parameters, messages):
@@ -10592,7 +10593,7 @@ class FindRasterExtremeValues(object):
                 out_fc=P["out_fc"].valueAsText,
                 extreme_type=P["extreme_type"].valueAsText,
                 min_prominence=P["min_prominence"].value or 0.0,
-                window=P["window"].value or 1,
+                window=P["window"].value or 1.5,
                 messages=messages)
             if out_lyrx:
                 try:

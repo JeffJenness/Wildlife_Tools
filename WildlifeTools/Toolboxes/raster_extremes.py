@@ -306,13 +306,42 @@ def write_layer_file(out_fc, messages=None):
         return None
 
 
+def disk_footprint(radius):
+    """Boolean circular footprint for the dominance filter: every cell whose
+    center lies within ``radius`` cells of the central cell's center (a
+    circle, not a square, so a diagonal neighbor counts the same as a
+    cardinal one at the same distance)."""
+    radius = float(radius)
+    r = int(np.ceil(radius))
+    yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
+    return (xx * xx + yy * yy) <= radius * radius + 1e-9
+
+
+def dominance_filter(z, valid, points, radius):
+    """Keep only the ``points`` (``(type, record)`` pairs) that are the most
+    extreme valid cell within a circle of ``radius`` cells of themselves --
+    peaks against the maximum, low points against the minimum."""
+    from scipy import ndimage
+    fp = disk_footprint(radius)
+    zi = np.where(valid, z, np.inf)
+    zx = np.where(valid, z, -np.inf)
+    minw = ndimage.minimum_filter(zi, footprint=fp, mode="constant",
+                                  cval=np.inf)
+    maxw = ndimage.maximum_filter(zx, footprint=fp, mode="constant",
+                                  cval=-np.inf)
+    return [(t, r) for t, r in points
+            if (t == TYPE_LOW and z[r["row"], r["col"]]
+                == minw[r["row"], r["col"]])
+            or (t == TYPE_PEAK and z[r["row"], r["col"]]
+                == maxw[r["row"], r["col"]])]
+
+
 def run_find_extremes(in_raster, out_fc, extreme_type=None,
-                      min_prominence=0.0, window=1, messages=None):
+                      min_prominence=0.0, window=1.5, messages=None):
     """Find the peaks and/or low points of ``in_raster`` and write them to the
     point feature class ``out_fc``. Returns the symbology .lyrx path (or
     None); set it on the tool's output parameter."""
     import arcpy
-    from scipy import ndimage
 
     extreme_type = extreme_type or EXTREME_TYPES[0]
     if extreme_type not in EXTREME_TYPES:
@@ -320,7 +349,10 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
     want_peaks = "Low points" not in extreme_type
     want_lows = "Peaks" not in extreme_type
     min_prominence = float(min_prominence or 0.0)
-    window = max(1, int(window or 1))
+    # Radius in cells. Anything under 2 reaches at most the eight immediate
+    # neighbors (1.5 = all eight, exactly 1 = the four cardinal ones), which
+    # every extreme dominates by definition -- so the filter is skipped.
+    window = max(1.0, float(window or 1.5))
     scratch = arcpy.env.scratchFolder
 
     phases = [("Reading the DEM...", 2)]
@@ -396,23 +428,12 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
                  "removed by any positive threshold).".format(
                      len(points), n0, min_prominence))
 
-    if window > 1:
-        size = 2 * window + 1
-        zi = np.where(valid, z, np.inf)
-        zx = np.where(valid, z, -np.inf)
-        minw = ndimage.minimum_filter(zi, size=size, mode="constant",
-                                      cval=np.inf)
-        maxw = ndimage.maximum_filter(zx, size=size, mode="constant",
-                                      cval=-np.inf)
+    if window >= 2:
         n0 = len(points)
-        points = [(t, r) for t, r in points
-                  if (t == TYPE_LOW and z[r["row"], r["col"]]
-                      == minw[r["row"], r["col"]])
-                  or (t == TYPE_PEAK and z[r["row"], r["col"]]
-                      == maxw[r["row"], r["col"]])]
+        points = dominance_filter(z, valid, points, window)
         _say(messages,
-             "{:,} of {:,} extremes kept as the most extreme within {} "
-             "cells.".format(len(points), n0, window))
+             "{:,} of {:,} extremes kept as the most extreme cell within a "
+             "circle of radius {:g} cells.".format(len(points), n0, window))
 
     # Most prominent first, peaks before lows -- a friendly attribute order.
     points.sort(key=lambda tr: (tr[0] != TYPE_PEAK, -tr[1]["prominence"]))
@@ -431,7 +452,7 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
     arcpy.management.CreateFeatureclass(out_ws, out_name, "POINT",
                                         spatial_reference=_mh.clean_sr(out_sr))
     fields = [("Type", "TEXT", 12), ("SrcRaster", "TEXT", 128),
-              ("SrcPath", "TEXT", 254), ("Elevation", "DOUBLE", None),
+              ("SrcPath", "TEXT", 254), ("CellValue", "DOUBLE", None),
               ("Prominence", "DOUBLE", None), ("EdgeOfData", "SHORT", None),
               ("X", "DOUBLE", None), ("Y", "DOUBLE", None)]
     # one AddFields call, not one AddField per field (standing rule)
@@ -440,7 +461,7 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
 
     n_edge = 0
     with arcpy.da.InsertCursor(
-            out_fc, ["SHAPE@", "Type", "SrcRaster", "SrcPath", "Elevation",
+            out_fc, ["SHAPE@", "Type", "SrcRaster", "SrcPath", "CellValue",
                      "Prominence", "EdgeOfData", "X", "Y"]) as cur:
         for i, (typ, r) in enumerate(points):
             # Cell-centre coordinates in the DEM's grid...
@@ -485,7 +506,7 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
                     "Name of the source raster the extremes were found on."},
                 {"name": "SrcPath", "description":
                     "Workspace path of the source raster."},
-                {"name": "Elevation", "description":
+                {"name": "CellValue", "description":
                     "The extreme cell's value, in the source raster's own "
                     "units."},
                 {"name": "Prominence", "description":
@@ -516,11 +537,12 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
                   "prominence, DEM, topography, Jenness Enterprises")
         m.summary = (
             "Created by Find Raster Extreme Values from {src}: {what}, "
-            "minimum prominence/depth {mp:g}, dominance window {w} cell{ws}. "
+            "minimum prominence/depth {mp:g}, dominance radius {w:g} "
+            "cells (circular). "
             "Coordinates are in {sr}{env}.").format(
                 src=str(in_raster),
                 what=extreme_type.lower(),
-                mp=min_prominence, w=window, ws="" if window == 1 else "s",
+                mp=min_prominence, w=window,
                 sr=(out_sr.name if out_sr is not None else "the DEM's "
                     "coordinate system"),
                 env=(" (set by the Output Coordinates environment)"

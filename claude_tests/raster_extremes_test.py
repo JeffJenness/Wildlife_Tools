@@ -219,5 +219,30 @@ if os.path.isdir(GDB):
               abs(max(P, key=lambda r: r["prominence"])["prominence"] - 564.0777587890625) < 1e-6,
               max(P, key=lambda r: r["prominence"]))
 
+# --- dominance radius: a CIRCLE, not a square (2026-09-25) -------------------
+fp = rx.disk_footprint(2)
+check("disk footprint r=2: cardinal 2 in, diagonal (1,1) in, (2,1) out",
+      fp.shape == (5, 5) and fp[2, 4] and fp[3, 3] and not fp[4, 3]
+      and int(fp.sum()) == 13, "sum={}".format(int(fp.sum())))
+z = np.zeros((15, 15)); z[4, 4] = 100.0; z[8, 8] = 50.0     # 4*sqrt2 = 5.66 apart
+v = np.ones_like(z, bool)
+pts = [(rx.TYPE_PEAK, {"row": 4, "col": 4}), (rx.TYPE_PEAK, {"row": 8, "col": 8})]
+kept5 = rx.dominance_filter(z, v, pts, 5)
+kept6 = rx.dominance_filter(z, v, pts, 6)
+check("radius 5 keeps both peaks 5.66 cells apart on a diagonal (a square "
+      "half-width 5 would have dropped the lesser)", len(kept5) == 2,
+      "kept {}".format(len(kept5)))
+check("radius 6 drops the lesser peak", len(kept6) == 1
+      and kept6[0][1]["row"] == 4, "kept {}".format(len(kept6)))
+zl = -z
+lows = [(rx.TYPE_LOW, {"row": 4, "col": 4}), (rx.TYPE_LOW, {"row": 8, "col": 8})]
+fp1 = rx.disk_footprint(1.0); fp15 = rx.disk_footprint(1.5)
+check("radius 1 = plus (5 cells), radius 1.5 = all eight neighbors (9 cells)",
+      int(fp1.sum()) == 5 and int(fp15.sum()) == 9 and fp15.shape == (5, 5),
+      "{} {}".format(int(fp1.sum()), int(fp15.sum())))
+check("low points use the minimum the same way",
+      len(rx.dominance_filter(zl, v, lows, 5)) == 2
+      and len(rx.dominance_filter(zl, v, lows, 6)) == 1)
+
 print("\n{} passed, {} failed".format(PASS, FAIL))
 sys.exit(1 if FAIL else 0)
