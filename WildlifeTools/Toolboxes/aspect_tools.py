@@ -40,7 +40,7 @@ invariant under rotation and reflection of the circle); only the two direction-
 valued outputs differ, and the tool converts those to compass when told the
 input is in the mathematical convention.
 
-Circular-statistics references (see the Directions article, Jenness 2012, and
+Circular-statistics references (see Issues with Directional Data, Jenness 2012, and
 the sources it cites): Mardia & Jupp 2000; Fisher 1993; Batschelet 1981;
 Zar 1999. The von Mises concentration estimate follows Fisher (1993) /
 Best & Fisher (1981).
@@ -155,8 +155,9 @@ _POLAR_CITATION = (
     "http://www.jennessent.com/arcgis/polar_plots.htm.")
 # Northness / Eastness: the sine/cosine decomposition of aspect.
 _NE_CITATION = (
-    "Jenness, J. 2012. Directions: dealing with directional data. Jenness "
-    "Enterprises newsletter (http://www.jennessent.com).")
+    "Jenness, J. 2012. Issues with directional data. Remotely Wild, "
+    "newsletter of the Spatial Ecology and Telemetry Working Group of The "
+    "Wildlife Society.")
 
 _KAPPA_CAP = 1.0e4                        # cap the von Mises kappa (avoids +inf)
 
@@ -175,9 +176,10 @@ _CIRC_CITATION = (
     "Directional Statistics (Wiley); Fisher, N. I. 1993. Statistical Analysis "
     "of Circular Data (Cambridge Univ. Press); Batschelet, E. 1981. Circular "
     "Statistics in Biology (Academic Press); and Zar, J. H. 1999. "
-    "Biostatistical Analysis, 4th ed. (Prentice Hall). See also Jenness, J. "
-    "2012, 'Directions: making sense of directional data' (Jenness "
-    "Enterprises).")
+    "Biostatistical Analysis, 4th ed. (Prentice Hall); the Rayleigh p is "
+    "Zar's eq. 27.4. See also Jenness, J. 2012. Issues with directional "
+    "data. Remotely Wild, newsletter of the Spatial Ecology and Telemetry "
+    "Working Group of The Wildlife Society.")
 
 
 # ---------------------------------------------------------------------------
@@ -470,14 +472,20 @@ def _kappa_from_rbar(rbar):
 
 
 def _rayleigh_p(n, rbar):
-    """Rayleigh test p-value (uniformity vs. a preferred direction), Zar (1999)
-    approximation. n = number of directions, rbar = mean resultant length."""
-    z = n * rbar * rbar
+    """Rayleigh test p-value (uniformity vs. a preferred direction), Zar 1999
+    eq. 27.4 (derived from Greenwood and Durand 1955), with Rayleigh's
+    R = n * rbar:
+        P = exp[ sqrt(1 + 4n + 4(n^2 - R^2)) - (1 + 2n) ]
+    The same formula Topography along Lines uses (unified 2026-09-24; this
+    function previously used a series approximation, within 0.0002 of it).
+    n = number of directions, rbar = mean resultant length. Computed in
+    float64 whatever the input type (Aspect Focal Statistics passes float32)."""
+    n = np.asarray(n, dtype=np.float64)
+    rbar = np.asarray(rbar, dtype=np.float64)
+    R = n * rbar
     with np.errstate(over="ignore", invalid="ignore"):
-        p = np.exp(-z) * (
-            1.0 + (2.0 * z - z * z) / (4.0 * n)
-            - (24.0 * z - 132.0 * z ** 2 + 76.0 * z ** 3 - 9.0 * z ** 4)
-            / (288.0 * n * n))
+        p = np.exp(np.sqrt(np.maximum(1.0 + 4.0 * n + 4.0 * (n * n - R * R), 0.0))
+                   - (1.0 + 2.0 * n))
     return np.clip(p, 0.0, 1.0)
 
 
@@ -1632,23 +1640,65 @@ def _zone_window(ext, gt, W, H, margin=2):
 
 
 def _poly_paths(geom):
-    """One matplotlib compound Path per polygon geometry (all parts and
-    interior rings; Esri ring orientation + the nonzero winding rule make
-    holes subtract)."""
+    """One simple matplotlib Path per RING of a polygon geometry (exterior
+    and interior rings alike). The caller applies the even-odd rule --
+    a point is inside when it falls inside an odd number of rings -- so
+    holes subtract. (A single compound path did NOT subtract holes: on the
+    Coconino stands it counted every hole's cells, up to 41% too many;
+    found and fixed 2026-09-24.) Returns None for an empty geometry."""
     from matplotlib.path import Path as MplPath
-    verts, codes = [], []
+    rings, cur = [], []
     for part in geom:
-        new_ring = True
         for pt in part:
             if pt is None:                    # separator: interior ring next
-                new_ring = True
+                if len(cur) >= 3:
+                    rings.append(MplPath(cur))
+                cur = []
                 continue
-            verts.append((pt.X, pt.Y))
-            codes.append(MplPath.MOVETO if new_ring else MplPath.LINETO)
-            new_ring = False
-    if not verts:
-        return None
-    return MplPath(verts, codes)
+            cur.append((pt.X, pt.Y))
+        if len(cur) >= 3:
+            rings.append(MplPath(cur))
+        cur = []
+    return rings or None
+
+
+def _polygon_zone_mask_rows_gdal(geoms, c0, r0, c1, r1, gt, chunk_rows):
+    """Yield (row0, mask_chunk) boolean chunks of the window where cell
+    CENTERS fall inside any of the zone's polygons -- the same rule as
+    ``_polygon_zone_mask_rows``, but by GDAL's scanline rasterizer (C code,
+    one pass per polygon over only the rows it covers) instead of testing
+    every window cell against every polygon. On the Coconino stands (5,966
+    polygons, 1.09 million vertices, 75 zones, 18.6 million cells) the old
+    test took over 15 minutes; this takes seconds. Interior rings are holes.
+    Raises on any GDAL/OGR problem so the caller can fall back."""
+    from osgeo import gdal, ogr
+    ogr.UseExceptions()
+    gdal.UseExceptions()
+    drv = ogr.GetDriverByName("MEM") or ogr.GetDriverByName("Memory")
+    vds = drv.CreateDataSource("zone")
+    lyr = vds.CreateLayer("zone", geom_type=ogr.wkbMultiPolygon)
+    defn = lyr.GetLayerDefn()
+    for g in geoms:
+        wkb = g.WKB
+        if not wkb:
+            continue
+        f = ogr.Feature(defn)
+        f.SetGeometry(ogr.CreateGeometryFromWkb(bytes(wkb)))
+        lyr.CreateFeature(f)
+        f = None
+    mdrv = gdal.GetDriverByName("MEM")
+    w = c1 - c0
+    for rs in range(r0, r1, chunk_rows):
+        re_ = min(r1, rs + chunk_rows)
+        h = re_ - rs
+        m = mdrv.Create("", w, h, 1, gdal.GDT_Byte)
+        m.SetGeoTransform((gt[0] + c0 * gt[1], gt[1], 0.0,
+                           gt[3] + rs * gt[5], 0.0, gt[5]))
+        gdal.RasterizeLayer(m, [1], lyr, burn_values=[1])
+        mask = m.GetRasterBand(1).ReadAsArray() > 0
+        m = None
+        yield rs, mask
+    vds = None
 
 
 def _polygon_zone_mask_rows(paths, c0, r0, c1, r1, gt, chunk_rows):
@@ -1662,9 +1712,13 @@ def _polygon_zone_mask_rows(paths, c0, r0, c1, r1, gt, chunk_rows):
         gx, gy = np.meshgrid(xs, ys)
         pts = np.column_stack([gx.ravel(), gy.ravel()])
         inside = np.zeros(pts.shape[0], bool)
-        for p in paths:
-            if p is not None:
-                inside |= p.contains_points(pts)
+        for rings in paths:
+            if not rings:
+                continue
+            poly = np.zeros(pts.shape[0], bool)
+            for ring in rings:
+                poly ^= ring.contains_points(pts)       # even-odd: holes out
+            inside |= poly
         yield rs, inside.reshape(re_ - rs, c1 - c0)
 
 
@@ -2191,8 +2245,24 @@ def _run_zonal_shapes(in_zone, zone_field, shape_type, band, gt, W, H,
 
     _mh.phase_advance("Gathering raster cells per zone...")
     nz = len(groups)
+    nfeat = sum(len(g) for g in groups.values())
+    _say(messages, "{:,} zone(s) from {:,} feature(s); each zone's cells are "
+                   "gathered in turn.".format(nz, nfeat))
+    import time as _time
+    t_all = _time.time()
+    use_gdal = True
+    done_feat = 0
     for zi, (key, geoms) in enumerate(groups.items()):
         touch(key)
+        t_zone = _time.time()
+        _mh.phase_step(done_feat, nfeat)
+        try:
+            arcpy.SetProgressorLabel(
+                "Gathering cells: zone {:,} of {:,}, {} ({:,} feature{})..."
+                .format(zi + 1, nz, key, len(geoms),
+                        "" if len(geoms) == 1 else "s"))
+        except Exception:
+            pass
         ext = None
         for g in geoms:
             e = g.extent
@@ -2201,8 +2271,10 @@ def _run_zonal_shapes(in_zone, zone_field, shape_type, band, gt, W, H,
                 max(ext[2], e.XMax), max(ext[3], e.YMax))
         c0, r0, c1, r1 = _zone_window(ext, gt, W, H)
         if c1 <= c0 or r1 <= r0:
-            _mh.phase_step(zi + 1, nz)
+            done_feat += len(geoms)
+            _mh.phase_step(done_feat, nfeat)
             continue
+        n_before = acc.zones[key]["n"] if key in acc.zones else 0
 
         def eat(vals_block):
             fin = np.isfinite(vals_block)
@@ -2214,16 +2286,32 @@ def _run_zonal_shapes(in_zone, zone_field, shape_type, band, gt, W, H,
             feed(key, vals_block[fin])
 
         if shape_type == "Polygon":
-            paths = [_poly_paths(g) for g in geoms]
             chunk = max(1, 4_000_000 // max(1, c1 - c0))
-            for rs, mask in _polygon_zone_mask_rows(paths, c0, r0, c1, r1,
-                                                    gt, chunk):
+            chunks = None
+            if use_gdal:
+                try:
+                    chunks = list(_polygon_zone_mask_rows_gdal(
+                        geoms, c0, r0, c1, r1, gt, chunk))
+                except Exception as e:
+                    use_gdal = False
+                    _warn(messages, "Fast polygon rasterization unavailable "
+                                    "({}); using the slower cell-by-cell "
+                                    "test.".format(e))
+            if chunks is None:
+                paths = [_poly_paths(g) for g in geoms]
+                chunks = _polygon_zone_mask_rows(paths, c0, r0, c1, r1,
+                                                 gt, chunk)
+            for rs, mask in chunks:
                 if not mask.any():
                     continue
-                arr = band.ReadAsArray(c0, rs, c1 - c0,
-                                       mask.shape[0]).astype(np.float64)
-                arr = _nan_mask_invalid(band, arr, c0, rs)
-                eat(arr[mask])
+                # read only the columns this chunk's mask actually uses
+                cols = np.flatnonzero(mask.any(axis=0))
+                ca, cb = int(cols[0]), int(cols[-1]) + 1
+                sub = mask[:, ca:cb]
+                arr = band.ReadAsArray(c0 + ca, rs, cb - ca,
+                                       sub.shape[0]).astype(np.float64)
+                arr = _nan_mask_invalid(band, arr, c0 + ca, rs)
+                eat(arr[sub])
         else:
             cells = set()
             for g in geoms:
@@ -2241,7 +2329,16 @@ def _run_zonal_shapes(in_zone, zone_field, shape_type, band, gt, W, H,
                                            re_ - rs).astype(np.float64)
                     arr = _nan_mask_invalid(band, arr, cA, rs)
                     eat(arr[rows[sel] - rs, cols[sel] - cA])
-        _mh.phase_step(zi + 1, nz)
+        done_feat += len(geoms)
+        _mh.phase_step(done_feat, nfeat)
+        n_after = acc.zones[key]["n"] if key in acc.zones else 0
+        _say(messages, "  Zone {:,} of {:,}: {} -- {:,} feature{}, {:,} cells, "
+                       "{:.1f} s.".format(zi + 1, nz, key, len(geoms),
+                                          "" if len(geoms) == 1 else "s",
+                                          int(n_after - n_before),
+                                          _time.time() - t_zone))
+    _say(messages, "All {:,} zones gathered in {:.1f} s.".format(
+        nz, _time.time() - t_all))
 
 
 def _write_zonal_table(out_table, in_zone_data, zone_field, zone_is_raster,

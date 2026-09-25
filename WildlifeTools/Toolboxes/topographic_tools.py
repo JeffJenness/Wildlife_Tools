@@ -2763,23 +2763,15 @@ def _slope_unit_word(unit):
 
 
 def _t95_quantile(df):
-    """Two-sided 95% t quantile (Zar 1999 table B.3): exact through 30 df,
-    coarse steps to the normal 1.96."""
-    t = (12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262,
-         2.228, 2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101,
-         2.093, 2.086, 2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052,
-         2.048, 2.045, 2.042)
+    """Two-sided 95% t quantile (the t value for a 95% confidence interval of
+    a mean; Zar 1999 ch. 7), exact for every df via scipy. (Until 2026-09-24
+    this was Zar's table through 30 df and coarse steps above it, which used
+    the value for the high end of each step and so made the interval up to
+    1% too narrow at 31, 41, 61 and 121 df.)"""
     if df < 1:
         return float("nan")
-    if df <= 30:
-        return t[df - 1]
-    if df <= 40:
-        return 2.021
-    if df <= 60:
-        return 2.000
-    if df <= 120:
-        return 1.980
-    return 1.960
+    from scipy.stats import t as _t
+    return float(_t.ppf(0.975, df))
 
 
 class _SlopeZoneAcc(object):
@@ -3102,6 +3094,10 @@ def _slope_zonal_points(in_zone, zone_field, band, gt, W, H, nodata, rsr,
     if lim is not None:
         valid &= (np.abs(arr) <= lim)
     sval = np.where(valid, arr, 0.0)
+    # NEG_COUNT reports values negative in the SOURCE, before the absolute-
+    # value option (as for cell zones): interpolate the signed angles too,
+    # and count a point negative when its signed interpolated slope is < 0.
+    dval_signed = _slope_to_deg(sval, unit)
     if use_absolute:
         sval = np.abs(sval)
     dval = _slope_to_deg(sval, unit)
@@ -3113,6 +3109,7 @@ def _slope_zonal_points(in_zone, zone_field, band, gt, W, H, nodata, rsr,
     fx = colf - cL
     fy = rowf - rT
     dsum = np.zeros(len(keys_))
+    ssum = np.zeros(len(keys_))
     wsum = np.zeros(len(keys_))
     for dr in (0, 1):
         for dc in (0, 1):
@@ -3124,22 +3121,25 @@ def _slope_zonal_points(in_zone, zone_field, band, gt, W, H, nodata, rsr,
             rrs = np.clip(rr, 0, Hw - 1)
             ok = inb & valid[rrs, ccs]
             dsum += np.where(ok, w * dval[rrs, ccs], 0.0)
+            ssum += np.where(ok, w * dval_signed[rrs, ccs], 0.0)
             wsum += np.where(ok, w, 0.0)
 
     n_out = 0
     per_zone_deg = {}
+    per_zone_neg = {}
     for i, k in enumerate(keys_):
         touch(k)
         if wsum[i] > 1e-12:
             per_zone_deg.setdefault(k, []).append(dsum[i] / wsum[i])
+            if ssum[i] / wsum[i] < 0.0:
+                per_zone_neg[k] = per_zone_neg.get(k, 0) + 1
         else:
             acc.add_counts(k, nodata=1)
             n_out += 1
     for k, degs in per_zone_deg.items():
         dd = np.asarray(degs, np.float64)
         z = acc._zone(k)
-        neg = int(np.count_nonzero(dd < 0.0))
-        z["neg"] += neg
+        z["neg"] += per_zone_neg.get(k, 0)
         src_units = np.asarray(
             [_slope_from_deg(float(x), unit) for x in dd], np.float64)
         acc.add_slopes(k, dd, src_units)

@@ -144,19 +144,24 @@ namespace WildlifeTools.PolarPlots
             double rbarU = (n > 0) ? Math.Sqrt(su * su + cu * cu) / n : 0.0;
             if (rbarU > 1.0) rbarU = 1.0;
 
-            // Rayleigh test of uniformity (Fisher 1993 eq. 4.17; Zar 1999 eq.
-            // 27.2-4). For count-weighted data (raster bins / Value+Count
-            // tables) the sample is the underlying observations, so use the
-            // weighted r-bar and the total count as n.
+            // Rayleigh test of uniformity. Z = n r-bar^2 (Zar 1999 eq. 27.2);
+            // p from Zar 1999 eq. 27.4 (derived from Greenwood and Durand
+            // 1955), with Rayleigh's R = n r-bar:
+            //   p = exp[ sqrt(1 + 4n + 4(n^2 - R^2)) - (1 + 2n) ]
+            // the same formula as Topography along Lines and the aspect tools
+            // (unified 2026-09-24; previously a series approximation within
+            // 0.0002 of it). For count-weighted data (raster bins /
+            // Value+Count tables) the sample is the underlying observations,
+            // so use the weighted r-bar and the total count as n.
             double nEff = WeightsAreCounts ? TotalWeight : n;
             double rbarEff = WeightsAreCounts ? MeanResultantLength : rbarU;
             double z = nEff * rbarEff * rbarEff;
             RayleighZ = z;
+            double rEff = nEff * rbarEff;
             RayleighP = (nEff > 0)
-                ? Clamp01(Math.Exp(-z) * (1.0
-                    + (2.0 * z - z * z) / (4.0 * nEff)
-                    - (24.0 * z - 132.0 * z * z + 76.0 * z * z * z - 9.0 * z * z * z * z)
-                        / (288.0 * nEff * nEff)))
+                ? Clamp01(Math.Exp(Math.Sqrt(Math.Max(
+                      1.0 + 4.0 * nEff + 4.0 * (nEff * nEff - rEff * rEff), 0.0))
+                    - (1.0 + 2.0 * nEff)))
                 : double.NaN;
 
             // von Mises concentration kappa MLE approximation (Fisher 1993

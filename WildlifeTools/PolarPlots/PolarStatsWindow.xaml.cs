@@ -146,7 +146,7 @@ namespace WildlifeTools.PolarPlots
             "[B] Mardia, K. V., and P. E. Jupp. 2000. Directional Statistics. Wiley.",
             "[C] Batschelet, E. 1981. Circular Statistics in Biology. Academic Press.",
             "[D] Best, D. J., and N. I. Fisher. 1981. Communications in Statistics - Simulation and Computation 10(5):493-502.",
-            "[E] Zar, J. H. 1999. Biostatistical Analysis, 4th ed. Prentice Hall, ch. 27.",
+            "[E] Zar, J. H. 1999. Biostatistical Analysis, 4th ed. Prentice Hall, ch. 27 (Rayleigh p: eq. 27.4).",
         };
 
         /// <summary>A paragraph with a bottom hairline border -- unlike a
