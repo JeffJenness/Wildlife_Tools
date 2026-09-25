@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "name": "Land Facet Corridor Designer 3-Class Topographic Position",
+  "family": "slope_position",
+  "builtin": true,
+  "description": "The three-class topographic position classification used to partition a landscape into canyons, slopes and ridges before clustering it into land facets (Land Facet Corridor Designer manual): RAW TPI, with cells at least 6 elevation units BELOW the neighborhood mean classed Canyons (1), at least 6 units ABOVE it Ridges (3), and everything between Slopes (2). No slope criterion, so it can be applied to a TPI raster alone. The manual's authors experimented with neighborhood sizes in three diverse landscapes and settled on a circular radius of 5 cells; the -6/+6 thresholds are elevation units of a METERS DEM, so adjust them for other units or landscapes.",
+  "source": "Jenness, J., B. Brost, and P. Beier. 2013. Land Facet Corridor Designer. http://corridordesign.org (manual, Create a 3-Category Topographic Position Raster).",
+  "inputs": [
+    {
+      "role": "tpi",
+      "kind": "tpi",
+      "label": "TPI"
+    }
+  ],
+  "classes": [
+    {
+      "value": 1,
+      "name": "Canyons",
+      "color": [
+        43,
+        131,
+        186
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": "<=",
+              "value": -6
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 2,
+      "name": "Slopes",
+      "color": [
+        171,
+        221,
+        164
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": ">",
+              "value": -6
+            },
+            {
+              "join": "and",
+              "op": "<=",
+              "value": 6
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": 3,
+      "name": "Ridges",
+      "color": [
+        215,
+        25,
+        28
+      ],
+      "criteria": [
+        {
+          "input": "tpi",
+          "units": "raw",
+          "conditions": [
+            {
+              "op": ">",
+              "value": 6
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
