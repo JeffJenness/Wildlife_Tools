@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "name": "Ground-Based Equipment Operability (Percent Slope)",
+  "family": "general",
+  "builtin": true,
+  "description": "Classifies a PERCENT-slope raster into six bands of ground-based logging equipment operability, using RAW thresholds at 20, 30, 40, 50 and 60 percent: unrestricted ground-based (<= 20), wheeled-equipment limit (20-30, the Oregon OSHA rubber-tired skidder limit), tracked equipment (30-40, the Oregon OSHA limit for crawler tractors, tracked feller bunchers, excavators and loaders), steep-slope equipment (40-50, the Oregon OSHA limit for equipment designed for steep slopes), tethered or high-flotation (50-60, the GMUG forest plan limit for high-flotation equipment and the SBEADMR limit for cut-to-length systems on a slash mat), and cable, aerial or hand only (> 60). The input must be in PERCENT (20% = 11.3 deg, 30% = 16.7, 40% = 21.8, 50% = 26.6, 60% = 31.0); a degree raster would put far too much ground in the gentle classes. These are recurring published values, not a national standard -- duplicate the system and set the thresholds from the forest plan and project decision that govern your area.",
+  "source": "OAR 437-007-0935(1), quoted in Oregon OSHA's guidelines for tethered logging systems (2016) and the USDA Forest Service Forest Operations Equipment Catalog (Tethered Logging Systems); Grand Mesa, Uncompahgre and Gunnison National Forests Land and Resource Management Plan III-41 to III-42, quoted in the SBEADMR Supplemental Information Report on Cut-to-Length and Tethered Logging Technologies (2022).",
+  "inputs": [
+    { "role": "raster", "kind": "external", "label": "Percent slope raster" }
+  ],
+  "classes": [
+    { "value": 1, "name": "Unrestricted Ground-Based", "color": [69, 117, 180],
+      "criteria": [ { "input": "raster", "units": "raw", "conditions": [ {"op": "<=", "value": 20} ] } ] },
+    { "value": 2, "name": "Ground-Based, Wheeled Limit", "color": [145, 191, 219],
+      "criteria": [ { "input": "raster", "units": "raw", "conditions": [ {"op": ">", "value": 20}, {"join": "and", "op": "<=", "value": 30} ] } ] },
+    { "value": 3, "name": "Tracked Equipment Only", "color": [224, 243, 248],
+      "criteria": [ { "input": "raster", "units": "raw", "conditions": [ {"op": ">", "value": 30}, {"join": "and", "op": "<=", "value": 40} ] } ] },
+    { "value": 4, "name": "Steep-Slope Equipment", "color": [254, 224, 144],
+      "criteria": [ { "input": "raster", "units": "raw", "conditions": [ {"op": ">", "value": 40}, {"join": "and", "op": "<=", "value": 50} ] } ] },
+    { "value": 5, "name": "Tethered or High-Flotation", "color": [252, 141, 89],
+      "criteria": [ { "input": "raster", "units": "raw", "conditions": [ {"op": ">", "value": 50}, {"join": "and", "op": "<=", "value": 60} ] } ] },
+    { "value": 6, "name": "Cable, Aerial or Hand Only", "color": [215, 48, 39],
+      "criteria": [ { "input": "raster", "units": "raw", "conditions": [ {"op": ">", "value": 60} ] } ] }
+  ]
+}

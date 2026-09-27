@@ -170,7 +170,7 @@ namespace WildlifeTools.Classification
         private static readonly Dictionary<string, string> LegacyRoles =
             new() { ["grid"] = "raster" };
 
-        private static void NormalizeRoles(ClassificationSystem s)
+        internal static void NormalizeRoles(ClassificationSystem s)
         {
             if (s?.Inputs == null) return;
             var existing = new HashSet<string>(s.Inputs.Select(i => i.Role));
@@ -207,6 +207,25 @@ namespace WildlifeTools.Classification
                 catch { /* skip unreadable files */ }
             }
             return result.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        /// <summary>One system from its JSON text (a store file or an
+        /// element of a shared bundle). Throws on malformed JSON.</summary>
+        internal static ClassificationSystem Deserialize(string json)
+            => JsonSerializer.Deserialize<ClassificationSystem>(json, Opts)
+               ?? throw new InvalidOperationException("empty document");
+
+        /// <summary>A store path for a NEW file named after the system that
+        /// does not collide with any existing file (names that differ only
+        /// in punctuation share a slug).</summary>
+        internal static string UniqueNewPath(string name)
+        {
+            string d = EnsureStore();
+            string slug = Slug(name);
+            string path = Path.Combine(d, slug + ".json");
+            for (int i = 2; File.Exists(path); i++)
+                path = Path.Combine(d, $"{slug}_{i}.json");
+            return path;
         }
 
         public static string Slug(string name)

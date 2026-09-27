@@ -21,6 +21,12 @@
     <DockPanel Grid.Column="0">
       <TextBlock DockPanel.Dock="Top" Text="Saved classification systems"
                  FontWeight="Bold" Margin="0,0,0,4" />
+      <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,4,0,0">
+        <Button x:Name="ImportBtn" Content="Import..." Width="70" Click="OnImport" Margin="0,0,4,0"
+                ToolTip="Add classification systems from a JSON file a colleague shared (their exported file, or a file copied from their store)" />
+        <Button x:Name="ExportBtn" Content="Export..." Width="70" Click="OnExport"
+                ToolTip="Save the selected system as a JSON file to share with a colleague" />
+      </StackPanel>
       <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,6,0,0">
         <Button x:Name="NewBtn" Content="New" Width="52" Click="OnNew" Margin="0,0,4,0" />
         <Button x:Name="DupBtn" Content="Duplicate" Width="70" Click="OnDuplicate" Margin="0,0,4,0" />
@@ -70,6 +76,18 @@
                   HorizontalAlignment="Right" Margin="0,8,0,0">
         <TextBlock x:Name="RolesHint" VerticalAlignment="Center" Foreground="Gray"
                    Margin="0,0,12,0" />
+        <!-- online-help icon, GP-pane style -->
+        <Button x:Name="HelpBtn" Margin="0,0,10,0" VerticalAlignment="Center"
+                Width="20" Height="20" Padding="0" Background="Transparent"
+                BorderThickness="0" Cursor="Hand" Click="OnHelp"
+                ToolTip="Open the online help page for the Classification System Builder">
+          <Grid>
+            <Ellipse Width="18" Height="18" Fill="#0079C1" />
+            <TextBlock Text="?" Foreground="White" FontWeight="Bold" FontSize="12"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Margin="0,-1,0,0" />
+          </Grid>
+        </Button>
         <Button x:Name="SaveBtn" Content="Save" Width="80" Click="OnSave" Margin="0,0,6,0"
                 IsDefault="True" />
         <Button Content="Close" Width="80" Click="OnClose" IsCancel="True" />

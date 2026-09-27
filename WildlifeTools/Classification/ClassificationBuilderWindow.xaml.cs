@@ -348,6 +348,92 @@ namespace WildlifeTools.Classification
 
         private void OnClose(object s, RoutedEventArgs e) => Close();
 
+        private void OnHelp(object s, RoutedEventArgs e)
+            => WebHelp.Open("topographic-analysis/classification-system-builder.html");
+
+        // ---- sharing: export the selected system, import from a file -------
+        private void OnExport(object s, RoutedEventArgs e)
+        {
+            if (!(SystemList.SelectedItem is ClassificationSystem sys)) return;
+            if (string.IsNullOrEmpty(sys.FilePath) || !System.IO.File.Exists(sys.FilePath))
+            {
+                MessageBox.Show("Save this system first; Export writes the saved file.",
+                    "Classification System Builder", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "Export classification system",
+                Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*",
+                DefaultExt = ".json",
+                AddExtension = true,
+                FileName = ClassificationStore.Slug(sys.Name) + ".json",
+            };
+            if (dlg.ShowDialog() != true) return;
+            string dest = dlg.FileName;
+            if (string.IsNullOrEmpty(System.IO.Path.GetExtension(dest))) dest += ".json";
+            try
+            {
+                System.IO.File.Copy(sys.FilePath, dest, true);
+                MessageBox.Show($"Exported '{sys.Name}' to\n{dest}\n\nSend that file to a colleague; "
+                    + "they add it with the Builder's Import button.",
+                    "Classification System Builder", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not export: " + ex.Message,
+                    "Classification System Builder", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        private void OnImport(object s, RoutedEventArgs e)
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Import classification systems from a JSON file",
+                Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*",
+                CheckFileExists = true,
+            };
+            if (dlg.ShowDialog() != true) return;
+            List<ClassificationImport.Candidate> found;
+            try
+            {
+                found = ClassificationImport.Scan(dlg.FileName, _systems.Select(x => x.Name));
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("That file could not be read as JSON:\n\n" + ex.Message,
+                    "Classification System Builder", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            if (found.Count == 0)
+            {
+                MessageBox.Show("No classification systems were found in that file.",
+                    "Classification System Builder", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            var pick = new ImportPickerWindow(this, dlg.FileName, found);
+            if (pick.ShowDialog() != true) return;
+            try
+            {
+                // import against the SAVED store, not unsaved edits
+                var store = ClassificationStore.List();
+                var names = ClassificationImport.Import(found, pick.Mode, store);
+                Reload(names.FirstOrDefault());
+                MessageBox.Show(names.Count == 0
+                        ? "Nothing was imported."
+                        : "Imported " + names.Count + (names.Count == 1 ? " system:\n  " : " systems:\n  ")
+                          + string.Join("\n  ", names),
+                    "Classification System Builder", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not import: " + ex.Message,
+                    "Classification System Builder", MessageBoxButton.OK, MessageBoxImage.Warning);
+                Reload(null);
+            }
+        }
+
         private string UniqueName(string baseName)
         {
             var names = new HashSet<string>(_systems.Select(x => x.Name), StringComparer.OrdinalIgnoreCase);

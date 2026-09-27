@@ -50,7 +50,7 @@ def check(name, ok, detail=""):
 
 
 seeds = sorted(glob.glob(os.path.join(TBX, "classification_seeds", "*.json")))
-check("nine bundled seeds", len(seeds) == 9, str(len(seeds)))
+check("ten bundled seeds", len(seeds) == 10, str(len(seeds)))
 for f in seeds:
     s = json.load(open(f, encoding="utf-8"))
     try:
@@ -77,5 +77,17 @@ check("LF3 boundaries: -6 -> Canyons, 6 -> Slopes, 6.01 -> Ridges; NoData stays 
       np.array_equal(out, want), str(out.tolist()))
 check("LF3 covers every finite TPI (no gap, no overlap)",
       int((out[valid] > 0).sum()) == int(valid.sum()))
+
+fo = json.load(open(os.path.join(TBX, "classification_seeds",
+                                 "forestry_slope_operability_percent.json"),
+                    encoding="utf-8"))
+check("forestry: general family, one raw raster input",
+      fo["family"] == "general" and [i["role"] for i in fo["inputs"]] == ["raster"])
+pct = np.array([[0.0, 20.0, 20.01, 30.0, 30.01, 40.0],
+                [40.01, 50.0, 50.01, 60.0, 60.01, 150.0]])
+outp = tt.classify(fo, {"raster": pct}, np.ones_like(pct, bool))
+check("forestry boundaries: 20->1, 30->2, 40->3, 50->4, 60->5, >60->6",
+      np.array_equal(outp, np.array([[1, 1, 2, 2, 3, 3], [4, 4, 5, 5, 6, 6]])),
+      str(outp.tolist()))
 
 print("\n{} passed, {} failed".format(PASS, FAIL))

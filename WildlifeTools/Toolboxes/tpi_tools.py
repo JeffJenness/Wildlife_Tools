@@ -20,7 +20,7 @@
 """Topographic Position Index (TPI) / Slope Position / Landform classification
 apply engine for the Jenness Enterprises toolbox.
 
-Ports Jeff Jenness's ArcView 3 "TPI v.1.3a" extension and its corrected ArcMap
+Ports Jeff Jenness's ArcView 3.x "TPI v.1.3a" extension and its corrected ArcMap
 (VB6) rewrite. TPI is the difference between a cell's elevation and the mean
 elevation of a neighborhood around it (Weiss 2001; Guisan et al. 1999). Slope
 Position classifies one TPI (plus slope); Landform classifies two TPI scales

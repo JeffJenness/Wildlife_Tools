@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.99.23" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.99.24" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>Wildlife and Forestry Tools</Name>
     <Description>Wildlife and forestry analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -1053,7 +1053,7 @@ Orders a set of points into a short travel route -- a survey route you can load 
                 largeImage="Images\ClassBuilder_32.png"
                 keytip="CB">
           <tooltip heading="Classification System Builder">
-            Create, edit, duplicate, and delete the reusable classification systems (class thresholds, names, and colors -- with optional per-class transparency) applied by the Slope Position, Landform, and General Raster Classification tools. Systems are saved as JSON in a per-user location that survives add-in reinstalls, so your custom classifications stay available and can be shared by copying the files.<disabledText />
+            Create, edit, duplicate, and delete the reusable classification systems (class thresholds, names, and colors -- with optional per-class transparency) applied by the Slope Position, Landform, and General Raster Classification tools. Systems are saved as JSON in a per-user location that survives add-in reinstalls, so your custom classifications stay available; Export and Import buttons share them with colleagues as JSON files.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_SimpleHypsometricShading"
