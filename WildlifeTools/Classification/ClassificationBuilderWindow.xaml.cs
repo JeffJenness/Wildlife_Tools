@@ -42,6 +42,9 @@ namespace WildlifeTools.Classification
         private readonly ObservableCollection<ClassificationSystem> _systems = new();
         private ClassificationSystem _current;                 // system being edited
         private string _loadedName;         // name as loaded (rename detection)
+        private string _loadedJson;         // canonical form as loaded (change detection)
+        private bool _quiet;                // programmatic selection: no discard prompt
+        private bool _restoring;            // putting the selection back after "No": leave the editor alone
         private readonly ObservableCollection<ClassRowVM> _classes = new();
 
         public ClassificationBuilderWindow()
@@ -55,21 +58,124 @@ namespace WildlifeTools.Classification
 
         private void Reload(string selectName)
         {
-            _systems.Clear();
-            foreach (var s in ClassificationStore.List())
-                _systems.Add(s);
-            if (selectName != null)
-                SystemList.SelectedItem = _systems.FirstOrDefault(
-                    s => string.Equals(s.Name, selectName, StringComparison.OrdinalIgnoreCase));
-            else if (_systems.Count > 0)
-                SystemList.SelectedIndex = 0;
-            else
-                LoadIntoEditor(null);
+            _quiet = true;
+            try
+            {
+                _current = null;            // whatever was loaded is gone or saved
+                _systems.Clear();
+                foreach (var s in ClassificationStore.List())
+                    _systems.Add(s);
+                if (selectName != null)
+                    SystemList.SelectedItem = _systems.FirstOrDefault(
+                        s => string.Equals(s.Name, selectName, StringComparison.OrdinalIgnoreCase));
+                else if (_systems.Count > 0)
+                    SystemList.SelectedIndex = 0;
+                else
+                    LoadIntoEditor(null);
+            }
+            finally { _quiet = false; }
+        }
+
+        // ---- unsaved-changes guard ---------------------------------------
+        /// <summary>The system as the editor currently shows it (no side
+        /// effects on _current).</summary>
+        private ClassificationSystem EditorSnapshot()
+        {
+            CommitEdits();
+            var fam = FamilyBox.SelectedItem as string ?? "slope_position";
+            var su = SlopeUnitsBox.SelectedItem as string;
+            return new ClassificationSystem
+            {
+                Name = NameBox.Text.Trim(),
+                Family = fam,
+                Description = string.IsNullOrWhiteSpace(DescBox.Text) ? null : DescBox.Text.Trim(),
+                SlopeUnits = (fam == "general" || string.IsNullOrEmpty(su)) ? null : su,
+                Inputs = ClassificationStore.DefaultInputs(fam),
+                Classes = _classes.Select(c => c.ToClassDef()).ToList(),
+            };
+        }
+
+        /// <summary>A system reduced to what the editor can change, passed
+        /// through the same row conversions the editor uses, so a freshly
+        /// loaded system and its untouched editor state serialize alike.</summary>
+        private static string Canonical(ClassificationSystem s) => ClassificationStore.ToJson(new ClassificationSystem
+        {
+            Name = (s.Name ?? "").Trim(),
+            Family = s.Family,
+            Description = string.IsNullOrWhiteSpace(s.Description) ? null : s.Description.Trim(),
+            SlopeUnits = (s.Family == "general" || string.IsNullOrEmpty(s.SlopeUnits)) ? null : s.SlopeUnits,
+            Inputs = ClassificationStore.DefaultInputs(s.Family),
+            Classes = (s.Classes ?? new List<ClassDef>()).OrderBy(c => c.Value)
+                        .Select(c => ClassRowVM.From(c).ToClassDef()).ToList(),
+        });
+
+        private bool EditorDirty()
+        {
+            if (_current == null || !Editor.IsEnabled) return false;
+            if (string.IsNullOrEmpty(_current.FilePath)) return true;   // never saved
+            try { return Canonical(EditorSnapshot()) != _loadedJson; }
+            catch { return false; }
+        }
+
+        /// <summary>Ask before leaving unsaved work. True = go ahead (edits
+        /// discarded; a never-saved system is dropped from the list).</summary>
+        private bool LeaveEditor()
+        {
+            if (!EditorDirty()) return true;
+            bool unsaved = string.IsNullOrEmpty(_current.FilePath);
+            string name = string.IsNullOrWhiteSpace(NameBox.Text) ? _current.Name : NameBox.Text.Trim();
+            var r = MessageBox.Show(unsaved
+                    ? $"'{name}' has not been saved.\n\nDiscard it?"
+                    : $"'{name}' has unsaved changes.\n\nDiscard them?",
+                "Classification System Builder", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (r != MessageBoxResult.Yes) return false;
+            if (unsaved) _systems.Remove(_current);
+            _current = null;
+            return true;
+        }
+
+        protected override void OnClosing(CancelEventArgs e)
+        {
+            if (!LeaveEditor()) { e.Cancel = true; return; }
+            base.OnClosing(e);
         }
 
         // ---- load a system into the editor -------------------------------
         private void OnSystemSelected(object s, System.Windows.Controls.SelectionChangedEventArgs e)
-            => LoadIntoEditor(SystemList.SelectedItem as ClassificationSystem);
+        {
+            if (_restoring) return;         // the edits in the editor must survive
+            if (!_quiet && _current != null && !ReferenceEquals(SystemList.SelectedItem, _current)
+                || !_quiet && _current != null && SystemList.SelectedItems.Count > 1)
+            {
+                var leaving = _current;
+                if (!LeaveEditor())
+                {
+                    // keep editing: put the selection back without reloading
+                    // (reloading would wipe the very edits being kept)
+                    _restoring = true;
+                    try
+                    {
+                        SystemList.SelectedItems.Clear();
+                        SystemList.SelectedItem = leaving;
+                    }
+                    finally { _restoring = false; }
+                    return;
+                }
+            }
+            if (SystemList.SelectedItems.Count > 1)
+            {
+                // several selected: nothing to edit; Duplicate / Export /
+                // Delete act on the whole selection
+                LoadIntoEditor(null);
+                RolesHint.Text = SystemList.SelectedItems.Count
+                    + " systems selected: Duplicate, Export or Delete them together";
+                return;
+            }
+            LoadIntoEditor(SystemList.SelectedItem as ClassificationSystem);
+        }
+
+        private List<ClassificationSystem> SelectedSystems()
+            => SystemList.SelectedItems.OfType<ClassificationSystem>().ToList();
 
         private void LoadIntoEditor(ClassificationSystem sys)
         {
@@ -96,6 +202,7 @@ namespace WildlifeTools.Classification
             foreach (var c in sys.Classes.OrderBy(c => c.Value))
                 _classes.Add(ClassRowVM.From(c));
             UpdateRolesHint();
+            _loadedJson = Canonical(sys);
         }
 
         private void OnFamilyChanged(object s, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -113,6 +220,7 @@ namespace WildlifeTools.Classification
         // ---- system list buttons -----------------------------------------
         private void OnNew(object s, RoutedEventArgs e)
         {
+            if (!LeaveEditor()) return;
             var sys = new ClassificationSystem
             {
                 Name = UniqueName("New Classification System"),
@@ -127,36 +235,79 @@ namespace WildlifeTools.Classification
             };
             sys.Inputs = ClassificationStore.DefaultInputs(sys.Family);
             _systems.Add(sys);
-            SystemList.SelectedItem = sys;
+            _quiet = true;
+            try { SystemList.SelectedItem = sys; } finally { _quiet = false; }
             NameBox.Focus();
             NameBox.SelectAll();
         }
 
+        private ClassificationSystem MakeCopy(ClassificationSystem src) => new()
+        {
+            Name = UniqueName(src.Name + " (copy)"),
+            Family = src.Family,
+            Description = src.Description,
+            SlopeUnits = src.SlopeUnits,
+            Inputs = ClassificationStore.DefaultInputs(src.Family),
+            Classes = src.Classes.Select(CloneClass).ToList(),
+        };
+
         private void OnDuplicate(object s, RoutedEventArgs e)
         {
-            if (!(SystemList.SelectedItem is ClassificationSystem src)) return;
+            var sel = SelectedSystems();
+            if (sel.Count == 0) return;
             CommitEdits();
-            var copy = new ClassificationSystem
+            if (sel.Count == 1)
             {
-                Name = UniqueName(src.Name + " (copy)"),
-                Family = src.Family,
-                Description = src.Description,
-                SlopeUnits = src.SlopeUnits,
-                Inputs = ClassificationStore.DefaultInputs(src.Family),
-                Classes = src.Classes.Select(CloneClass).ToList(),
-            };
-            _systems.Add(copy);
-            SystemList.SelectedItem = copy;
+                // one system: an unsaved copy in the editor, saved when you
+                // click Save (rename it first if you like)
+                if (!LeaveEditor()) return;
+                var copy = MakeCopy(sel[0]);
+                _systems.Add(copy);
+                _quiet = true;
+                try { SystemList.SelectedItem = copy; } finally { _quiet = false; }
+                return;
+            }
+            // several: there is no editor to save them from, so the copies
+            // are written to the store at once
+            var made = new List<string>();
+            try
+            {
+                foreach (var src in sel)
+                {
+                    var copy = MakeCopy(src);
+                    copy.FilePath = ClassificationStore.UniqueNewPath(copy.Name);
+                    ClassificationStore.Save(copy);
+                    _systems.Add(copy);           // so UniqueName sees it
+                    made.Add(copy.Name);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not duplicate: " + ex.Message,
+                    "Classification System Builder", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            Reload(made.FirstOrDefault());
+            if (made.Count > 0)
+                MessageBox.Show("Saved " + made.Count + " copies:\n  " + string.Join("\n  ", made),
+                    "Classification System Builder", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         private void OnDelete(object s, RoutedEventArgs e)
         {
-            if (!(SystemList.SelectedItem is ClassificationSystem sys)) return;
-            var r = MessageBox.Show($"Delete the classification system '{sys.Name}'?",
-                "Classification System Builder", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            var sel = SelectedSystems();
+            if (sel.Count == 0) return;
+            string ask = sel.Count == 1
+                ? $"Delete the classification system '{sel[0].Name}'?"
+                : "Delete these " + sel.Count + " classification systems?\n  "
+                  + string.Join("\n  ", sel.Select(x => x.Name));
+            var r = MessageBox.Show(ask, "Classification System Builder",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning);
             if (r != MessageBoxResult.Yes) return;
-            try { ClassificationStore.Delete(sys); }
-            catch (Exception ex) { MessageBox.Show("Could not delete: " + ex.Message); }
+            foreach (var sys in sel)
+            {
+                try { ClassificationStore.Delete(sys); }
+                catch (Exception ex) { MessageBox.Show($"Could not delete '{sys.Name}': " + ex.Message); }
+            }
             Reload(null);
         }
 
@@ -354,29 +505,47 @@ namespace WildlifeTools.Classification
         // ---- sharing: export the selected system, import from a file -------
         private void OnExport(object s, RoutedEventArgs e)
         {
-            if (!(SystemList.SelectedItem is ClassificationSystem sys)) return;
-            if (string.IsNullOrEmpty(sys.FilePath) || !System.IO.File.Exists(sys.FilePath))
+            var sel = SelectedSystems();
+            if (sel.Count == 0) return;
+            var saved = sel.Where(x => !string.IsNullOrEmpty(x.FilePath)
+                                       && System.IO.File.Exists(x.FilePath)).ToList();
+            if (saved.Count == 0)
             {
                 MessageBox.Show("Save this system first; Export writes the saved file.",
                     "Classification System Builder", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
+            bool single = saved.Count == 1;
             var dlg = new Microsoft.Win32.SaveFileDialog
             {
-                Title = "Export classification system",
+                Title = single ? "Export classification system"
+                               : "Export " + saved.Count + " classification systems to one file",
                 Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*",
                 DefaultExt = ".json",
                 AddExtension = true,
-                FileName = ClassificationStore.Slug(sys.Name) + ".json",
+                FileName = single ? ClassificationStore.Slug(saved[0].Name) + ".json"
+                                  : "classification_systems.json",
             };
             if (dlg.ShowDialog() != true) return;
             string dest = dlg.FileName;
             if (string.IsNullOrEmpty(System.IO.Path.GetExtension(dest))) dest += ".json";
             try
             {
-                System.IO.File.Copy(sys.FilePath, dest, true);
-                MessageBox.Show($"Exported '{sys.Name}' to\n{dest}\n\nSend that file to a colleague; "
-                    + "they add it with the Builder's Import button.",
+                if (single)
+                    System.IO.File.Copy(saved[0].FilePath, dest, true);
+                else
+                    // a JSON array of the saved files, which Import lists
+                    // as separate systems
+                    System.IO.File.WriteAllText(dest, "[\n"
+                        + string.Join(",\n", saved.Select(x => System.IO.File.ReadAllText(x.FilePath).Trim()))
+                        + "\n]\n");
+                string what = single ? $"Exported '{saved[0].Name}'"
+                    : "Exported " + saved.Count + " systems:\n  " + string.Join("\n  ", saved.Select(x => x.Name))
+                      + "\n";
+                string skipped = sel.Count > saved.Count
+                    ? "\n\n(" + (sel.Count - saved.Count) + " unsaved selection skipped; save it first.)" : "";
+                MessageBox.Show(what + " to\n" + dest + "\n\nSend that file to a colleague; "
+                    + "they add it with the Builder's Import button." + skipped,
                     "Classification System Builder", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
@@ -388,6 +557,7 @@ namespace WildlifeTools.Classification
 
         private void OnImport(object s, RoutedEventArgs e)
         {
+            if (!LeaveEditor()) return;
             var dlg = new Microsoft.Win32.OpenFileDialog
             {
                 Title = "Import classification systems from a JSON file",

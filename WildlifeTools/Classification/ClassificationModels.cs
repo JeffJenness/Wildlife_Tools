@@ -209,6 +209,11 @@ namespace WildlifeTools.Classification
             return result.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
         }
 
+        /// <summary>The system as JSON text (the store's own format), for
+        /// change detection in the Builder.</summary>
+        internal static string ToJson(ClassificationSystem sys)
+            => JsonSerializer.Serialize(sys, Opts);
+
         /// <summary>One system from its JSON text (a store file or an
         /// element of a shared bundle). Throws on malformed JSON.</summary>
         internal static ClassificationSystem Deserialize(string json)
@@ -228,11 +233,23 @@ namespace WildlifeTools.Classification
             return path;
         }
 
+        /// <summary>File-name-safe form of a system name: letters, digits,
+        /// '.' and '-' kept, every other run of characters becomes ONE
+        /// underscore (mirrors classification_store._slug in Python).</summary>
         public static string Slug(string name)
         {
             var sb = new StringBuilder();
+            bool pendingUnderscore = false;
             foreach (char c in name ?? "")
-                sb.Append(char.IsLetterOrDigit(c) || c == '.' || c == '-' ? c : '_');
+            {
+                if (char.IsLetterOrDigit(c) || c == '.' || c == '-')
+                {
+                    if (pendingUnderscore && sb.Length > 0) sb.Append('_');
+                    pendingUnderscore = false;
+                    sb.Append(c);
+                }
+                else pendingUnderscore = true;
+            }
             string s = sb.ToString().Trim('_');
             return string.IsNullOrEmpty(s) ? "system" : s;
         }

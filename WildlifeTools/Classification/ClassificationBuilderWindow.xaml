@@ -33,7 +33,8 @@
         <Button x:Name="DelBtn" Content="Delete" Width="56" Click="OnDelete" />
       </StackPanel>
       <ListBox x:Name="SystemList" SelectionChanged="OnSystemSelected"
-               DisplayMemberPath="Name" />
+               DisplayMemberPath="Name" SelectionMode="Extended"
+               ToolTip="Click a system to edit it. Ctrl+click or Shift+click to select several; Duplicate, Export and Delete then act on all of them." />
     </DockPanel>
 
     <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Center"

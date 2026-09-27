@@ -198,10 +198,11 @@ namespace WildlifeTools.Classification
                 Binding = new Binding("Selected") { UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged },
             };
             grid.Columns.Add(chk);
-            grid.Columns.Add(new DataGridTextColumn { Header = "Name", Binding = new Binding("Name"), Width = 240, IsReadOnly = true });
+            // Name gets the spare width: system names run long, statuses do not
+            grid.Columns.Add(new DataGridTextColumn { Header = "Name", Binding = new Binding("Name"), Width = new DataGridLength(1, DataGridLengthUnitType.Star), MinWidth = 200, IsReadOnly = true });
             grid.Columns.Add(new DataGridTextColumn { Header = "Family", Binding = new Binding("Family"), Width = 110, IsReadOnly = true });
             grid.Columns.Add(new DataGridTextColumn { Header = "Classes", Binding = new Binding("ClassCount"), Width = 60, IsReadOnly = true });
-            grid.Columns.Add(new DataGridTextColumn { Header = "Status", Binding = new Binding("Status"), Width = new DataGridLength(1, DataGridLengthUnitType.Star), IsReadOnly = true });
+            grid.Columns.Add(new DataGridTextColumn { Header = "Status", Binding = new Binding("Status"), Width = DataGridLength.Auto, MinWidth = 90, IsReadOnly = true });
             Grid.SetRow(grid, 1); root.Children.Add(grid);
 
             var conflict = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
@@ -214,6 +215,10 @@ namespace WildlifeTools.Classification
             _replace = new RadioButton { Content = "Replace mine with the imported one", Margin = new Thickness(0, 0, 0, 2) };
             _skip = new RadioButton { Content = "Skip it and keep mine", Margin = new Thickness(0, 0, 0, 2) };
             conflict.Children.Add(_keep); conflict.Children.Add(_replace); conflict.Children.Add(_skip);
+            // the choice only matters when a listed name is already in the
+            // store; showing it unconditionally reads as a claim of a clash
+            conflict.Visibility = found.Any(c => c.Importable && c.Exists)
+                ? Visibility.Visible : Visibility.Collapsed;
             Grid.SetRow(conflict, 2); root.Children.Add(conflict);
 
             var buttons = new StackPanel
