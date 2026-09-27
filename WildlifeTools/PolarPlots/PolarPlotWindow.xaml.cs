@@ -35,7 +35,7 @@ namespace WildlifeTools.PolarPlots
 {
     /// <summary>
     /// Interactive Polar Plots window: pick a dataset and options, watch the
-    /// plot update live, then save it as SVG, add it to the map/layout, or view
+    /// plot update live, then save it as SVG, add it to a layout, or view
     /// the circular statistics. Modernized recreation of the ArcMap Polar Plots
     /// extension.
     ///

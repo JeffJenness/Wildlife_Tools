@@ -53,7 +53,7 @@
                 <Button x:Name="btnAddToLayout" Content="Add to Layout"
                         Margin="8,0,0,0" Padding="10,3" Click="OnAddToLayout"
                         IsEnabled="False"
-                        ToolTip="Place the chart on the active layout (or map) as native, individually editable graphic elements, plus the statistics report as a text element."/>
+                        ToolTip="Place the chart on a layout as native, individually editable graphic elements, plus the statistics report as a text element. If a layout is the active view it is used; otherwise the tool asks which of the project's layouts to use (a project with only one layout uses it without asking)."/>
                 <Button x:Name="btnCopyStats" Content="Copy Stats"
                         Margin="8,0,0,0" Padding="10,3" Click="OnCopyStats"
                         IsEnabled="False"

@@ -54,7 +54,7 @@
                 <Button x:Name="btnLayout" Content="Add to Layout"
                         Margin="8,0,0,0" Padding="10,3" IsEnabled="False"
                         Click="OnAddToLayout"
-                        ToolTip="Place the table on the active layout (or map) as native, individually editable graphic elements."/>
+                        ToolTip="Place the table on a layout as native, individually editable graphic elements. If a layout is the active view it is used; otherwise the tool asks which of the project's layouts to use (a project with only one layout uses it without asking)."/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <!-- online-help icon, GP-pane style -->

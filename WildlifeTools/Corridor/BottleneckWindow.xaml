@@ -198,7 +198,7 @@
                         Content="Add Graph and Stats to Layout" Margin="8,0,0,0"
                         Padding="10,3" IsEnabled="False"
                         Click="OnAddGraphToLayout"
-                        ToolTip="Place the width-profile graph AND the statistics on the active layout (or map) as native, individually editable elements."/>
+                        ToolTip="Place the width-profile graph AND the statistics on a layout as native, individually editable elements. If a layout is the active view it is used; otherwise the tool asks which of the project's layouts to use (a project with only one layout uses it without asking)."/>
                 <Button Grid.Column="5" x:Name="btnCopyStats"
                         Content="Copy Stats" Margin="8,0,0,0" Padding="10,3"
                         IsEnabled="False" Click="OnCopyStats"/>

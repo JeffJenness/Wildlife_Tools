@@ -84,7 +84,7 @@ namespace WildlifeTools.PolarPlots
 
             // Radius of a value ring at fraction f of the value range: from the
             // center for ordinary plots, from the inner circle for external.
-            // Equal-area scaling (Sanderson & Peacock 2019) maps value
+            // Equal-area scaling (Sanderson & Peacock 2020) maps value
             // fractions through a square root so petal AREA, not radius, is
             // proportional to frequency; a ring at radius fraction f then
             // represents the value f^2 * max.

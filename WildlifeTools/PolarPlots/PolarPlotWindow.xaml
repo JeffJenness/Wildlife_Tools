@@ -155,7 +155,7 @@
             </StackPanel>
             <CheckBox x:Name="chkSqrt" Content="Equal-area (square-root) scaling"
                 Margin="0,6,0,0" Checked="StyleRouted" Unchecked="StyleRouted"
-                ToolTip="Scale petal radius by the square root of the bin value so petal AREA, not radius, is proportional to frequency (Sanderson &amp; Peacock 2019). Radius-proportional petals visually exaggerate common directions because area grows as the square of radius. Applies to the Peaks/Rose/External/Wind Rose/Smoothed Density plots; the inner ring value labels account for the scaling." />
+                ToolTip="Scale petal radius by the square root of the bin value so petal AREA, not radius, is proportional to frequency (Sanderson &amp; Peacock 2020). Radius-proportional petals visually exaggerate common directions because area grows as the square of radius. Applies to the Peaks/Rose/External/Wind Rose/Smoothed Density plots; the inner ring value labels account for the scaling." />
           </StackPanel>
         </Expander>
 
@@ -364,9 +364,9 @@
         <Button x:Name="btnSaveSvg" Content="Save as SVG..." Margin="4,0"
                 Padding="10,4" Click="OnSaveSvg"
                 ToolTip="Save the plot exactly as previewed to a scalable SVG vector file." />
-        <Button x:Name="btnAddGraphic" Content="Add to map / layout" Margin="4,0"
+        <Button x:Name="btnAddGraphic" Content="Add to Layout" Margin="4,0"
                 Padding="10,4" Click="OnAddGraphic"
-                ToolTip="Place the plot as a grouped graphic: on the active LAYOUT (centered on the page, sized in inches exactly as previewed) or, if a map view is active, into a 'Polar Plots' graphics layer sized to the visible extent. Every piece stays an editable element -- ungroup to adjust individually." />
+                ToolTip="Place the plot on a layout as a grouped graphic, centered on the page and sized in inches exactly as previewed. If a layout is the active view it is used; otherwise the tool asks which of the project's layouts to use (a project with only one layout uses it without asking). Every piece stays an editable element -- ungroup to adjust individually." />
         <Button x:Name="btnClose" Content="Close" Margin="4,0" Padding="10,4" Click="OnClose" />
         </StackPanel>
       </StackPanel>

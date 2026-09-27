@@ -151,7 +151,7 @@ _BEERS_CITATION = (
     "Beers, T. W., P. E. Dress, and L. C. Wensel. 1966. Aspect transformation "
     "in site productivity research. Journal of Forestry 64(10):691-692.")
 _POLAR_CITATION = (
-    "Jenness, J. 2015. Polar Plots for ArcGIS. Jenness Enterprises. "
+    "Jenness, J. 2014. Polar plots for ArcGIS. Jenness Enterprises. "
     "http://www.jennessent.com/arcgis/polar_plots.htm.")
 # Northness / Eastness: the sine/cosine decomposition of aspect.
 _NE_CITATION = (
