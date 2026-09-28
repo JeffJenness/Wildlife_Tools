@@ -48,6 +48,7 @@ Best & Fisher (1981).
 
 import math
 import os
+import re
 
 import numpy as np
 
@@ -190,6 +191,47 @@ _CIRC_CITATION = (
 _D8_CODES = {1, 2, 4, 8, 16, 32, 64, 128}
 
 
+def _lineage_source_kind(in_raster):
+    """Classify a raster from the geoprocessing tool that WROTE it, as recorded
+    in its metadata lineage: one <Process ToolSource=".../ToolName"> element per
+    tool run, its text the tool's arguments. Only the most recent
+    direction-producing process counts, and only by its tool name and
+    arguments -- never by words that merely appear somewhere in the metadata
+    (a TWI raster's description mentions "flow direction" and "D-Infinity",
+    which must not make it look like a D-infinity flow-direction raster).
+    Returns ('dinf'|'d8'|'aspect', reason) or None when the lineage says
+    nothing (copied, exported or third-party rasters often lose it)."""
+    import arcpy
+    try:
+        try:
+            path = arcpy.Describe(in_raster).catalogPath
+        except Exception:
+            path = in_raster
+        xml = arcpy.metadata.Metadata(path).xml or ""
+    except Exception:
+        return None
+    found = None
+    for m in re.finditer(r'<Process\b([^>]*)>(.*?)</Process>', xml, re.S | re.I):
+        src = re.search(r'ToolSource="([^"]*)"', m.group(1), re.I)
+        tool = re.split(r"[\\/]", src.group(1))[-1].lower() if src else ""
+        args = m.group(2)
+        if tool == "flowdirection":
+            if re.search(r"\bDINF\b", args, re.I):
+                found = ("dinf", "geoprocessing history (Flow Direction, D-infinity)")
+            else:
+                found = ("d8", "geoprocessing history (Flow Direction, D8 or MFD)")
+        elif (tool == "aspect"
+              or (tool == "surfaceparameters"
+                  and re.search(r"\bASPECT\b", args, re.I))
+              # our focal tool writes directions only for these two statistics
+              or (tool == "aspectfocalstatistics"
+                  and re.search(r"(Mean|Median) Direction", args, re.I))):
+            found = ("aspect", "geoprocessing history ({})".format(
+                re.split(r"[\\/]", src.group(1))[-1]))
+    return found
+
+
+
 def _detect_source_kind(in_raster, arr=None, nodata=None):
     """Best-effort classification of ``in_raster`` as one of 'aspect', 'dinf',
     'd8', or 'unknown', from geoprocessing lineage in the raster metadata and,
@@ -197,29 +239,9 @@ def _detect_source_kind(in_raster, arr=None, nodata=None):
     or exported rasters lose it), so this only ever drives an informational
     message -- never correctness."""
     import arcpy
-    text = ""
-    try:
-        # Resolve a layer to its dataset path; this arcpy has no
-        # Metadata.lineage attribute (the history lives inside md.xml).
-        try:
-            path = arcpy.Describe(in_raster).catalogPath
-        except Exception:
-            path = in_raster
-        md = arcpy.metadata.Metadata(path)
-        text = ((md.xml or "") + " " +
-                (getattr(md, "lineage", "") or "")).lower()
-    except Exception:
-        text = ""
-    if text:
-        dinf = ("flowdirection" in text or "flow direction" in text) and \
-               ("dinf" in text or "d-infinity" in text or "d infinity" in text)
-        if dinf:
-            return "dinf", "geoprocessing history (D-infinity Flow Direction)"
-        if "flowdirection" in text or "flow direction" in text:
-            return "d8", "geoprocessing history (Flow Direction)"
-        if "surfaceparameters" in text or ">aspect<" in text or \
-                "aspect" in text:
-            return "aspect", "geoprocessing history (Aspect)"
+    kind = _lineage_source_kind(in_raster)
+    if kind:
+        return kind
     # Value fallback: a D8 raster holds only the powers of two 1..128. Check the
     # cheap max FIRST (a reduction, no copy/sort) and only run the expensive
     # np.unique when every value could still be a D8 code -- an ordinary aspect
