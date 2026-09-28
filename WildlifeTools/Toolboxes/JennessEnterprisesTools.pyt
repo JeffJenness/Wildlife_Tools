@@ -5555,6 +5555,11 @@ class AspectFocalStatistics(object):
 
     def updateParameters(self, parameters):
         P = {p.name: p for p in parameters}
+        # Legacy option name from earlier releases ("Sentinel (...)"): map it
+        # to the current wording so older scripts and models still validate.
+        fh = P["flat_handling"]
+        if fh.valueAsText and fh.valueAsText.lower().startswith("sentinel"):
+            fh.value = aspect_tools.FLAT_HANDLING[0]
         inr, outr = P["in_raster"], P["out_raster"]
         nbr = P["neighborhood"].valueAsText or "Circle"
         rel = self._relevant(nbr)

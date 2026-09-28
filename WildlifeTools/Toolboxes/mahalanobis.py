@@ -956,7 +956,7 @@ def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
             "{:,} sample cells held a value above the valid maximum for "
             "one of the variables and were excluded -- a raster has "
             "probably lost its NoData declaration (a file geodatabase may "
-            "not preserve it on a multi-band raster), so NoData sentinels "
+            "not preserve it on a multi-band raster), so its NoData placeholder values "
             "arrive as data.".format(n_capped))
     if n < k + 1:
         raise arcpy.ExecuteError(

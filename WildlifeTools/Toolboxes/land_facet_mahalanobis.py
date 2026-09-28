@@ -605,7 +605,7 @@ def run_facet_mahalanobis(in_raster, blocks, variables, out_workspace,
                   "maximum (1.0) and were excluded -- the density raster "
                   "has probably lost its NoData declaration (a file "
                   "geodatabase may not preserve it on a multi-band "
-                  "raster), so NoData sentinels arrive as data.".format(
+                  "raster), so its NoData placeholder values arrive as data.".format(
                       total_capped))
         out = {}
         for fid in fids:

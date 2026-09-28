@@ -103,7 +103,9 @@ _UNIT_M = dict(_hs._RADIUS_METERS)
 _UNIT_M["Cells"] = None
 INPUT_CONVENTIONS = ["Compass (0 = north, clockwise)",
                      "Mathematical (0 = east, counter-clockwise; e.g. D-infinity)"]
-FLAT_HANDLING = ["Sentinel (-1 / 0 / 1 by statistic)", "NoData"]
+# Earlier releases called the first choice "Sentinel (...)"; the .pyt maps
+# that legacy string to FLAT_HANDLING[0] so existing scripts keep working.
+FLAT_HANDLING = ["Flat value (-1 / 0 / 1 by statistic)", "NoData"]
 
 # ---- Aspect Transformation ------------------------------------------------
 # key -> label (checklist order; the user may pick several at once).
