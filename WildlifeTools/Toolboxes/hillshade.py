@@ -139,7 +139,7 @@ BLUR_KERNELS = ["Average", "Gaussian"]
 _WARN_RASTER_CELLS = 2_000_000_000
 
 
-def _check_raster_plausible(ds, in_raster, messages=None):
+def _check_raster_plausible(ds, in_raster, messages=None, check_size=True):
     """Defense-in-depth plausibility check on a just-opened raster's
     DECLARED dimensions, before any tool reads its pixel data. Not a
     guarantee against a malicious/malformed file -- a crafted file can
@@ -159,24 +159,70 @@ def _check_raster_plausible(ds, in_raster, messages=None):
         raise arcpy.ExecuteError(
             "The raster {} reports implausible dimensions ({} x {}, {} "
             "band(s)) and was not opened.".format(in_raster, w, h, bands))
-    if w * h > _WARN_RASTER_CELLS:
+    if check_size:
+        _confirm_large(in_raster, w, h, messages, part=False)
+    return ds
+
+
+def _confirm_large(in_raster, w, h, messages, part):
+    """Warn and ask to continue when ``w`` x ``h`` cells exceeds the
+    large-raster threshold. ``part`` True words it as the portion of the
+    raster a windowed tool will actually read."""
+    if w * h <= _WARN_RASTER_CELLS:
+        return
+    if part:
+        warning = (
+            "The part of the raster {} covering the analysis area is very "
+            "large ({:,} x {:,} = {:,} cells). Processing may take a long "
+            "time and use a large amount of memory. Continue?").format(
+                in_raster, w, h, w * h)
+    else:
         warning = (
             "The raster {} is very large ({:,} x {:,} = {:,} cells). "
             "Processing may take a long time and use a large amount of "
             "memory, depending on the tool. Continue?").format(
                 in_raster, w, h, w * h)
-        if messages is not None:
-            messages.addWarningMessage(warning)
-        if not _mh._confirm(warning, caption="Large Raster"):
-            raise arcpy.ExecuteError(
-                "Cancelled: {} exceeds the {:,}-cell size check and "
-                "continuing was not confirmed.".format(
-                    in_raster, _WARN_RASTER_CELLS))
-    return ds
+    if messages is not None:
+        messages.addWarningMessage(warning)
+    if not _mh._confirm(warning, caption="Large Raster"):
+        raise arcpy.ExecuteError(
+            "Cancelled: {} exceeds the {:,}-cell size check and "
+            "continuing was not confirmed.".format(
+                in_raster, _WARN_RASTER_CELLS))
 
 
-def _open_source(in_raster, scratch, messages):
+def check_window_size(in_raster, ncols, nrows, messages=None):
+    """For tools that read only a WINDOW of the raster (points, zones):
+    apply the large-raster warning to the window actually read, not to the
+    whole raster. Pair with ``_open_source(..., check_size=False)``."""
+    _confirm_large(in_raster, max(0, int(ncols)), max(0, int(nrows)),
+                   messages, part=True)
+
+
+def check_extent_window(ds, in_raster, extent, messages=None):
+    """``check_window_size`` for the cells of ``ds`` that an arcpy Extent
+    (already in the raster's coordinate system) covers. ``extent`` None or
+    unusable -> the whole raster is checked."""
+    W, H = ds.RasterXSize, ds.RasterYSize
+    try:
+        gt = ds.GetGeoTransform()
+        csx, csy = gt[1], abs(gt[5])
+        c0 = max(0, int((extent.XMin - gt[0]) // csx))
+        c1 = min(W, int(-(-(extent.XMax - gt[0]) // csx)))
+        r0 = max(0, int((gt[3] - extent.YMax) // csy))
+        r1 = min(H, int(-(-(gt[3] - extent.YMin) // csy)))
+        ncols, nrows = max(0, c1 - c0), max(0, r1 - r0)
+    except Exception:
+        ncols, nrows = W, H
+    check_window_size(in_raster, ncols, nrows, messages)
+
+
+def _open_source(in_raster, scratch, messages, check_size=True):
     """Open ``in_raster`` with GDAL: ``(dataset, tmp_copy_or_None)``.
+
+    ``check_size`` False skips the whole-raster large-size prompt, for
+    tools that read only a window and check that window themselves
+    (``check_window_size`` / ``check_extent_window``).
 
     Tries the catalog path directly, then the OpenFileGDB raster subdataset
     syntax (GDAL 3.7+; avoids exporting file-geodatabase DEMs), and only as a
@@ -202,7 +248,7 @@ def _open_source(in_raster, scratch, messages):
     except RuntimeError:
         ds = None
     if ds is not None:
-        return _check_raster_plausible(ds, in_raster, messages), None
+        return _check_raster_plausible(ds, in_raster, messages, check_size), None
 
     parts = _mh.split_gdb_dataset(path)
     if parts:
@@ -211,7 +257,7 @@ def _open_source(in_raster, scratch, messages):
         except RuntimeError:
             ds = None
         if ds is not None:
-            return _check_raster_plausible(ds, in_raster, messages), None
+            return _check_raster_plausible(ds, in_raster, messages, check_size), None
 
     _set_label("Exporting the DEM to a scratch GeoTIFF (GDAL cannot read this "
                "format directly; this can take a while for large rasters)...")
@@ -224,7 +270,7 @@ def _open_source(in_raster, scratch, messages):
     except RuntimeError:
         raise arcpy.ExecuteError(
             "Could not open the input raster: {}".format(in_raster))
-    return _check_raster_plausible(ds, in_raster, messages), tif
+    return _check_raster_plausible(ds, in_raster, messages, check_size), tif
 
 
 def _msg(messages, text):

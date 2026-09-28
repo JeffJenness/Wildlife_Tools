@@ -2894,6 +2894,12 @@ def _detect_slope_units(in_raster):
     return found
 
 
+def _at_zone_extent(in_zone_data, sr):
+    """The zone dataset's extent in ``sr`` (see aspect_tools)."""
+    import aspect_tools
+    return aspect_tools._zone_extent_in(in_zone_data, sr)
+
+
 def run_slope_zonal(in_zone_data, zone_field, in_raster, out_table,
                     ignore_nodata=True, statistics_type="ALL",
                     slope_units=SLOPE_UNITS_Z[0], use_absolute=True,
@@ -2959,14 +2965,18 @@ def run_slope_zonal(in_zone_data, zone_field, in_raster, out_table,
             zone_order.append(key)
         acc._zone(key)
 
+    # Only the zones' windows are read, so the large-raster check applies to
+    # the zones' extent rather than to the whole raster.
     src, in_copy = _hs._open_source(in_raster, arcpy.env.scratchFolder,
-                                    messages)
+                                    messages, check_size=False)
     try:
         band = src.GetRasterBand(1)
         W, H = src.RasterXSize, src.RasterYSize
         gt = src.GetGeoTransform()
         nodata = band.GetNoDataValue()
         rsr = arcpy.Describe(in_raster).spatialReference
+        _hs.check_extent_window(src, in_raster,
+                                _at_zone_extent(in_zone_data, rsr), messages)
 
         total_bad = 0
         total_neg = 0

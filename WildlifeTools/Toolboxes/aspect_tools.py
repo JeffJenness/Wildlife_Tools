@@ -934,7 +934,10 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
     ys = np.asarray(ys, np.float64)
 
     # Windowed raster read over the points' extent (+2-cell margin).
-    src, in_copy = _hs._open_source(in_raster, arcpy.env.scratchFolder, messages)
+    # Only the points' window is read, so the large-raster check applies to
+    # that window rather than to the whole raster.
+    src, in_copy = _hs._open_source(in_raster, arcpy.env.scratchFolder,
+                                    messages, check_size=False)
     try:
         band = src.GetRasterBand(1)
         W, H = src.RasterXSize, src.RasterYSize
@@ -950,6 +953,7 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
             r0w = max(0, r_lo)
             c1w = min(W, c_hi)
             r1w = min(H, r_hi)
+            _hs.check_window_size(in_raster, c1w - c0w, r1w - r0w, messages)
         else:
             c0w = r0w = 0
             c1w = r1w = 0
@@ -1652,6 +1656,21 @@ def _split_compass(vals, is_math):
     return v, int(np.count_nonzero(flat)), int(np.count_nonzero(bad))
 
 
+def _zone_extent_in(in_zone_data, sr):
+    """The zone dataset's extent in spatial reference ``sr`` (an arcpy
+    Extent), or None when it cannot be determined."""
+    import arcpy
+    try:
+        ext = arcpy.Describe(in_zone_data).extent
+        try:
+            ext = ext.projectAs(sr)
+        except Exception:
+            pass
+        return ext
+    except Exception:
+        return None
+
+
 def _zone_window(ext, gt, W, H, margin=2):
     """Window (c0, r0, c1, r1) of the aspect grid covering ``ext``
     (xmin, ymin, xmax, ymax) plus a margin, clamped to the raster."""
@@ -1852,7 +1871,10 @@ def run_aspect_zonal(in_zone_data, zone_field, in_raster, out_table,
         acc._zone(key)
 
     # ---- open the aspect raster ------------------------------------------
-    src, in_copy = _hs._open_source(in_raster, arcpy.env.scratchFolder, messages)
+    # Only the zones' windows are read, so the large-raster check applies to
+    # the zones' extent rather than to the whole raster.
+    src, in_copy = _hs._open_source(in_raster, arcpy.env.scratchFolder,
+                                    messages, check_size=False)
     try:
         band = src.GetRasterBand(1)
         W, H = src.RasterXSize, src.RasterYSize
@@ -1860,6 +1882,8 @@ def run_aspect_zonal(in_zone_data, zone_field, in_raster, out_table,
         nodata = band.GetNoDataValue()
         csx, csy = gt[1], abs(gt[5])
         rsr = arcpy.Describe(in_raster).spatialReference
+        _hs.check_extent_window(src, in_raster,
+                                _zone_extent_in(in_zone_data, rsr), messages)
 
         total_flat = 0
         total_bad = 0
