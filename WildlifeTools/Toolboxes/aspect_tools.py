@@ -147,6 +147,20 @@ _RECLASS_DEFS = {
 }
 _RECLASS_SUFFIX = {"NS": "_NS", "EW": "_EW", "NESW": "_NESW", "EIGHT": "_8Dir"}
 
+# Derived output parameter per transformation (Aspect Transformation), so a
+# ModelBuilder model can connect one transformation directly to the next
+# tool: key -> (parameter name, display name).
+TRANSFORM_OUTPUT_PARAMS = [
+    ("NS", "out_ns", "North / South raster"),
+    ("EW", "out_ew", "East / West raster"),
+    ("NESW", "out_nesw", "North / East / South / West raster"),
+    ("EIGHT", "out_8dir", "8-direction raster"),
+    ("NORTHNESS", "out_northness", "Northness raster"),
+    ("EASTNESS", "out_eastness", "Eastness raster"),
+    ("TRIGDEV", "out_trigdev", "Trigonometric deviation raster"),
+    ("NUMDEV", "out_numdev", "Numeric deviation raster"),
+]
+
 _TW_CITATION = (
     "Trimble, G. R., Jr., and S. Weitzman. 1956. Site index studies of upland "
     "oaks in the northern Appalachians. Forest Science 2:162-173.")
@@ -1149,7 +1163,8 @@ def _reclass_codes(compass, dvalid, key):
 def run_aspect_transform(in_raster, out_workspace, transformations,
                          base_name=None, target_bearing=45.0,
                          input_convention=INPUT_CONVENTIONS[0],
-                         flat_handling=FLAT_TRANSFORM[1], messages=None):
+                         flat_handling=FLAT_TRANSFORM[1], messages=None,
+                         out_map=None):
     """Generate one or more transformations of an aspect raster (see the tool
     help). ``transformations`` is a list of transform keys or labels; each
     produces its own raster in ``out_workspace``. Returns the list of output
@@ -1273,6 +1288,8 @@ def run_aspect_transform(in_raster, out_workspace, transformations,
                                    in_raster, is_math, scratch, messages)
         if out_path:
             outputs.append(out_path)
+            if out_map is not None:
+                out_map[key] = out_path     # per-transformation outputs
 
     _mh.end_phases()
     _say(messages, "Aspect Transformation complete: created {} raster(s).".format(

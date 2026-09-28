@@ -5755,12 +5755,24 @@ class AspectTransformation(object):
         flat_handling.filter.type = "ValueList"
         flat_handling.filter.list = aspect_tools.FLAT_TRANSFORM
         flat_handling.value = aspect_tools.FLAT_TRANSFORM[1]
+        # All rasters written, as one list. It stays the FIRST output: the
+        # geoprocessing pane adds only the first filled output parameter to
+        # the map, so the list adds every raster once and the single
+        # outputs below never duplicate them.
         out_rasters = arcpy.Parameter(
             displayName="Output rasters", name="out_rasters",
             datatype="DERasterDataset", parameterType="Derived",
             direction="Output", multiValue=True)
+        # One derived output per transformation, filled only when that
+        # transformation is run, so a model can wire, say, Northness
+        # straight into the next tool.
+        singles = [arcpy.Parameter(
+            displayName=disp, name=pname, datatype="DERasterDataset",
+            parameterType="Derived", direction="Output")
+            for _k, pname, disp in aspect_tools.TRANSFORM_OUTPUT_PARAMS]
         params = [in_raster, transformations, out_workspace, base_name,
-                  target_bearing, input_convention, flat_handling, out_rasters]
+                  target_bearing, input_convention, flat_handling,
+                  out_rasters] + singles
         saved = _load_tool_defaults("AspectTransformation")
         for p in (transformations, target_bearing, flat_handling):
             if p.name in saved:
@@ -5829,6 +5841,7 @@ class AspectTransformation(object):
             in_raster = _resolve_raster_path(P["in_raster"]) or \
                 P["in_raster"].valueAsText
             keys = self._selected_keys(P["transformations"])
+            by_key = {}
             outputs = aspect_tools.run_aspect_transform(
                 in_raster=in_raster,
                 out_workspace=P["out_workspace"].valueAsText,
@@ -5840,12 +5853,19 @@ class AspectTransformation(object):
                                   or aspect_tools.INPUT_CONVENTIONS[0]),
                 flat_handling=(P["flat_handling"].valueAsText
                                or aspect_tools.FLAT_TRANSFORM[1]),
-                messages=messages)
+                messages=messages,
+                out_map=by_key)
             if outputs:
                 try:
                     P["out_rasters"].value = ";".join(outputs)
                 except Exception:
                     pass
+            for key, pname, _disp in aspect_tools.TRANSFORM_OUTPUT_PARAMS:
+                if key in by_key and pname in P:
+                    try:
+                        P[pname].value = by_key[key]
+                    except Exception:
+                        pass
             _save_tool_defaults("AspectTransformation", {
                 "transformations": P["transformations"].valueAsText,
                 "target_bearing": P["target_bearing"].value,
