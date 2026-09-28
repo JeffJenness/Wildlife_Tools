@@ -288,6 +288,13 @@ def run_radiating_lines(points, n_lines=None, bearing_interval=None,
     primary = None
     ins_l = ins_p = edit = None
     is_shp_p = False
+    # shapefiles cannot store NULL: null transferred attributes -> -999 / ""
+    xtypes = [p[2] for p in plan]
+    shp_l = _ll._is_shp_dest(out_lines) if out_lines else False
+    shp_p = _ll._is_shp_dest(out_points) if out_points else False
+
+    def _safe(attrs, shp):
+        return _mh.shp_safe_attrs(attrs, xtypes) if (shp and xtypes) else attrs
     n_l = n_p = n_blocked = 0
     try:
         if out_lines:
@@ -438,7 +445,7 @@ def run_radiating_lines(points, n_lines=None, bearing_interval=None,
                     ins_l.insertRow(tuple(
                         [shp, oid, j + 1, float(bearings[j]),
                          float(dists_m[j]), int(bool(blocked[j])),
-                         px, py, ex, ey] + list(attrs)))
+                         px, py, ex, ey] + _safe(list(attrs), shp_l)))
                     n_l += 1
                     if blocked[j]:
                         n_blocked += 1
@@ -447,7 +454,7 @@ def run_radiating_lines(points, n_lines=None, bearing_interval=None,
                         [arcpy.PointGeometry(arcpy.Point(ex, ey),
                                              out_sr),
                          oid, j + 1, "End Point", float(dists_m[j]),
-                         float(bearings[j]), ex, ey] + list(attrs)))
+                         float(bearings[j]), ex, ey] + _safe(list(attrs), shp_p)))
                     n_p += 1
             if ins_p is not None:
                 # the classic extension wrote -999 for the origin's
@@ -458,7 +465,7 @@ def run_radiating_lines(points, n_lines=None, bearing_interval=None,
                     [arcpy.PointGeometry(arcpy.Point(px, py),
                                          out_sr),
                      oid, 0, "Origin", miss, miss, px, py]
-                    + list(attrs)))
+                    + _safe(list(attrs), shp_p)))
                 n_p += 1
             _mh.phase_step(si + 1, len(pts))
     finally:

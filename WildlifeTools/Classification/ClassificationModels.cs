@@ -261,7 +261,7 @@ namespace WildlifeTools.Classification
             string d = EnsureStore();
             string path = sys.FilePath;
             if (string.IsNullOrEmpty(path))
-                path = Path.Combine(d, Slug(sys.Name) + ".json");
+                path = UniqueNewPath(sys.Name);   // never overwrite a same-slug system
             File.WriteAllText(path, JsonSerializer.Serialize(sys, Opts));
             sys.FilePath = path;
             return path;

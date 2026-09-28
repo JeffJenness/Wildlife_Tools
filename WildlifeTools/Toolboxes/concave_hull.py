@@ -904,7 +904,9 @@ def run_concave_hull(in_features, method, out_features,
                 perim_m = abs(shp.length)
             row = [shp]
             if case_cols:
-                row.append(key)
+                # a null case value on a shapefile: -999 / "" by field type
+                row.append(_mh.shp_safe_attrs([key], [case_plan[0][2]])[0]
+                           if (is_shp and key is None) else key)
             row += [method, n_pts,
                     _null(float(param_m) if param_m is not None
                           else None),

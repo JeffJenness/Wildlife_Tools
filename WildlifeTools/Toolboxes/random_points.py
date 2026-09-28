@@ -1881,7 +1881,9 @@ def _write_points(out_fc, out_sr, work_sr, reproject, rows, src_field,
                            n_written]
                     if strat_field:
                         row.append(str(strat)[:64]
-                                   if strat is not None else None)
+                                   if strat is not None
+                                   else ("" if out_path.lower().endswith(".shp")
+                                         else None))
                     if src_field:
                         row.append(fid)
                     if cat_field:

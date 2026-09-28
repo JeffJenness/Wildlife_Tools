@@ -806,17 +806,28 @@ def run_centerline(in_features, out_lines, mode=None,
                      float(w3.mean()), float(w3.max())]
                     + list(rec["attrs"])))
 
+    # shapefiles cannot store NULL: transferred source attributes that are
+    # null get the house stand-ins (-999 / "") on a shapefile output
+    xtypes = [p[2] for p in plan]
+
+    def _safe(row, path):
+        if xtypes and str(path).lower().endswith(".shp"):
+            row = list(row)
+            row[-len(xtypes):] = _mh.shp_safe_attrs(row[-len(xtypes):], xtypes)
+            return tuple(row)
+        return row
+
     with arcpy.da.InsertCursor(out_lines, line_cols) as cur:
         for row in line_rows:
-            cur.insertRow(row)
+            cur.insertRow(_safe(row, out_lines))
     if pts_path:
         with arcpy.da.InsertCursor(pts_path, pt_cols) as cur:
             for row in pt_rows:
-                cur.insertRow(row)
+                cur.insertRow(_safe(row, pts_path))
     if seg_path:
         with arcpy.da.InsertCursor(seg_path, seg_cols) as cur:
             for row in seg_rows:
-                cur.insertRow(row)
+                cur.insertRow(_safe(row, seg_path))
     n_lines = len(line_rows)
     n_pts = len(pt_rows)
     n_segs = len(seg_rows)

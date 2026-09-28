@@ -4638,6 +4638,7 @@ class TopographyAlongLines(object):
                 mahalanobis.phase_advance()          # -> "Reading the DEM..."
                 dem_path = _resolve_raster_path(P["in_dem"])
                 dem_sr = arcpy.Describe(dem_path).spatialReference
+                source_sr = arcpy.Describe(in_lines).spatialReference
                 tx_note = lst.datum_transformation(
                     source_sr, dem_sr, arcpy.Describe(in_lines).extent)
                 if not lst.same_datum(source_sr, dem_sr):
@@ -4666,6 +4667,15 @@ class TopographyAlongLines(object):
             mahalanobis.phase_advance()              # -> "Computing attributes..."
             label_every = max(1, (n_total // 200) or 1)
             n_feat = n_written = short_fractal = nodata_segs = empty = 0
+            nodata_gaps = 0
+            # A shapefile field cannot hold a null: write -999 there for every
+            # undefined value (the convention Split Lines uses), never None.
+            try:
+                shp_in = lst.is_shapefile_target(
+                    arcpy.Describe(in_lines).catalogPath)
+            except Exception:
+                shp_in = lst.is_shapefile_target(in_lines)
+            null_val = -999 if shp_in else None
             with arcpy.da.UpdateCursor(in_lines, ["SHAPE@"] + field_names) as cur:
                 for r in cur:
                     n_feat += 1
@@ -4681,8 +4691,14 @@ class TopographyAlongLines(object):
                         continue
                     parts, diag = lst.build_parts(shp, source, dem, elev_mpu)
                     nodata_segs += diag.get("nodata_segments", 0)
+                    nodata_gaps += diag.get("nodata_gaps", 0)
                     if not parts:
                         empty += 1
+                        if null_val is not None:
+                            out = list(r)
+                            for i in range(len(field_keys)):
+                                out[i + 1] = null_val
+                            cur.updateRow(out)
                         continue
                     stats = lst.compute_line_statistics(
                         parts, length_unit, elev_units, slope_unit, wanted)
@@ -4690,7 +4706,7 @@ class TopographyAlongLines(object):
                     for i, key in enumerate(field_keys):
                         v = stats.get(key)
                         if v is None or (isinstance(v, float) and math.isnan(v)):
-                            out[i + 1] = None
+                            out[i + 1] = null_val
                             if key == "fractal_d":
                                 short_fractal += 1
                         else:
@@ -4706,16 +4722,20 @@ class TopographyAlongLines(object):
                     "Fractal Dimension could not be computed for {} line(s) "
                     "because they were too short to span a range of scales (a "
                     "line must be longer than roughly six times the sampling "
-                    "interval); those values were left null.".format(short_fractal))
+                    "interval); those values were left {}.".format(
+                        short_fractal, "-999 (shapefile)" if shp_in else "null"))
             if nodata_segs:
                 messages.addWarningMessage(
-                    "{} segment(s) fell on DEM NoData and were skipped; the "
-                    "affected lines describe only their valid portions."
-                    .format(nodata_segs))
+                    "{} segment(s) fell on DEM NoData and were skipped, breaking "
+                    "the chain at {} gap(s): the affected lines describe only "
+                    "their valid portions, and no turn angle, reversal, "
+                    "sinuosity chord or fractal path spans a gap."
+                    .format(nodata_segs, nodata_gaps))
             if empty:
                 messages.addWarningMessage(
                     "{} line(s) had no usable segments (too short, or entirely "
-                    "on NoData) and were left null.".format(empty))
+                    "on NoData) and were left {}.".format(
+                        empty, "-999 (shapefile)" if shp_in else "null"))
 
             # Per-field metadata stating the units (and the direction convention
             # for direction-dependent statistics).
@@ -5222,6 +5242,7 @@ class SplitLinesIntoSegments(object):
             # Copied source fields (type from source; sanitized name).
             src_fields = {f.name: f for f in arcpy.ListFields(in_lines)}
             copy_map = []                        # (source name, target name)
+            copy_types = []                      # field type per copied field
             for cn in copy_names:
                 f = src_fields.get(cn)
                 if f is None:
@@ -5238,6 +5259,7 @@ class SplitLinesIntoSegments(object):
                         "Source field '{}' copied as '{}' (the original name was "
                         "invalid, reserved or already in use).".format(cn, tgt))
                 copy_map.append((cn, tgt))
+                copy_types.append(ftype)
 
             dem = None
             if need_dem:
@@ -5278,7 +5300,10 @@ class SplitLinesIntoSegments(object):
                     vals.append(v)
                 if alt_field:
                     vals.extend([used, sid, alt_no])
-                vals.extend(copied_vals)
+                # A shapefile cannot hold NULL: null source attributes
+                # become -999 (numeric) or "" (text) there.
+                vals.extend(copied_vals if null_ok else
+                            mahalanobis.shp_safe_attrs(copied_vals, copy_types))
                 icur.insertRow(vals)
 
             icur = arcpy.da.InsertCursor(out_fc, out_flds)
@@ -5591,11 +5616,11 @@ class AspectFocalStatistics(object):
                     kind, _why = aspect_tools._detect_source_kind(inr.valueAsText)
                 except Exception:
                     kind = "unknown"
-                conv = P["input_convention"]
-                if kind == "dinf" and (not conv.altered
-                                       or conv.valueAsText == self._auto_conv):
-                    conv.value = aspect_tools.INPUT_CONVENTIONS[1]
-                    self._auto_conv = aspect_tools.INPUT_CONVENTIONS[1]
+                # A new raster is a new situation: Mathematical for a
+                # D-infinity raster, else back to Compass.
+                P["input_convention"].value = (
+                    aspect_tools.INPUT_CONVENTIONS[1] if kind == "dinf"
+                    else aspect_tools.INPUT_CONVENTIONS[0])
         return
 
     def updateMessages(self, parameters):
@@ -5770,9 +5795,14 @@ class AspectTransformation(object):
             displayName=disp, name=pname, datatype="DERasterDataset",
             parameterType="Derived", direction="Output")
             for _k, pname, disp in aspect_tools.TRANSFORM_OUTPUT_PARAMS]
+        # The geoprocessing pane adds only the FIRST filled output to the
+        # map, and applies that output's .symbology. The single outputs
+        # therefore come first: the pane adds the first chosen one already
+        # symbolized, execute adds the rest from their layer files, and the
+        # combined list (last) is never added plain on top.
         params = [in_raster, transformations, out_workspace, base_name,
-                  target_bearing, input_convention, flat_handling,
-                  out_rasters] + singles
+                  target_bearing, input_convention, flat_handling] \
+            + singles + [out_rasters]
         saved = _load_tool_defaults("AspectTransformation")
         for p in (transformations, target_bearing, flat_handling):
             if p.name in saved:
@@ -5811,11 +5841,11 @@ class AspectTransformation(object):
                 kind, _why = aspect_tools._detect_source_kind(inr.valueAsText)
             except Exception:
                 kind = "unknown"
-            conv = P["input_convention"]
-            if kind == "dinf" and (not conv.altered
-                                   or conv.valueAsText == self._auto_conv):
-                conv.value = aspect_tools.INPUT_CONVENTIONS[1]
-                self._auto_conv = aspect_tools.INPUT_CONVENTIONS[1]
+            # A new raster is a new situation: Mathematical for a D-infinity
+            # raster, else back to Compass (the user can still change it).
+            P["input_convention"].value = (
+                aspect_tools.INPUT_CONVENTIONS[1] if kind == "dinf"
+                else aspect_tools.INPUT_CONVENTIONS[0])
         return
 
     def updateMessages(self, parameters):
@@ -5833,6 +5863,45 @@ class AspectTransformation(object):
                 tb.setErrorMessage("The target bearing must be 0 - 360 degrees.")
         return
 
+    @staticmethod
+    def _add_symbolized(keys, by_key, by_lyrx, messages):
+        """Add the outputs to the active map through their .lyrx files
+        (execute-time only; no-op headless). The pane itself adds only the
+        FIRST filled output parameter -- the first chosen transformation's
+        single output, symbolized by its .symbology -- so that one is
+        skipped here; the others are added from their layer files. (Inside
+        the pane arcpy.env.addOutputsToMap reads False even when Pro adds
+        outputs, so that setting cannot be used as a guard.)"""
+        try:
+            m = arcpy.mp.ArcGISProject("CURRENT").activeMap
+        except Exception:
+            return                      # headless: nothing to add to
+        if m is None:
+            return
+        first = next((k for k, _p, _d in aspect_tools.TRANSFORM_OUTPUT_PARAMS
+                      if k in by_key), None)
+        added = 0
+        for key in reversed(keys):          # first chosen ends up on top
+            if key == first:
+                continue                    # the pane adds this one
+            path = by_key.get(key)
+            if not path:
+                continue
+            try:
+                lyrx = by_lyrx.get(key)
+                if lyrx and os.path.exists(lyrx):
+                    m.addLayer(arcpy.mp.LayerFile(lyrx))
+                else:
+                    m.addDataFromPath(path)
+                added += 1
+            except Exception as e:
+                messages.addWarningMessage("Could not add {} to the map: {}".format(
+                    os.path.basename(path), e))
+        if added:
+            messages.addMessage("Added {} symbolized layer(s) to the map "
+                                "(the first output is added by the "
+                                "geoprocessing pane).".format(added))
+
     def execute(self, parameters, messages):
         try:
             _scripting_hint(messages, type(self).__name__)
@@ -5841,7 +5910,8 @@ class AspectTransformation(object):
             in_raster = _resolve_raster_path(P["in_raster"]) or \
                 P["in_raster"].valueAsText
             keys = self._selected_keys(P["transformations"])
-            by_key = {}
+            by_key, by_lyrx = {}, {}
+            prev_add = arcpy.env.addOutputsToMap
             outputs = aspect_tools.run_aspect_transform(
                 in_raster=in_raster,
                 out_workspace=P["out_workspace"].valueAsText,
@@ -5854,7 +5924,7 @@ class AspectTransformation(object):
                 flat_handling=(P["flat_handling"].valueAsText
                                or aspect_tools.FLAT_TRANSFORM[1]),
                 messages=messages,
-                out_map=by_key)
+                out_map=by_key, lyrx_map=by_lyrx)
             if outputs:
                 try:
                     P["out_rasters"].value = ";".join(outputs)
@@ -5864,8 +5934,15 @@ class AspectTransformation(object):
                 if key in by_key and pname in P:
                     try:
                         P[pname].value = by_key[key]
+                        if key in by_lyrx:
+                            P[pname].symbology = by_lyrx[key]
                     except Exception:
                         pass
+            # The pane adds only the FIRST output (the plain out_rasters
+            # list), so add the symbolized layers here from their .lyrx
+            # files, then turn the pane's add off so it does not stack
+            # plain copies on top (restored in finally).
+            self._add_symbolized(keys, by_key, by_lyrx, messages)
             _save_tool_defaults("AspectTransformation", {
                 "transformations": P["transformations"].valueAsText,
                 "target_bearing": P["target_bearing"].value,
@@ -5891,6 +5968,11 @@ class AspectTransformation(object):
             # traceback appended by arcgisscripting, redundant with the
             # one above and pointing at this line instead of the real
             # failure.
+        finally:
+            try:
+                arcpy.env.addOutputsToMap = prev_add
+            except Exception:
+                pass
 
 
 class ExtractAspectValuesToPoints(object):
@@ -5984,8 +6066,11 @@ class ExtractAspectValuesToPoints(object):
                 kind, _why = aspect_tools._detect_source_kind(inr.valueAsText)
             except Exception:
                 kind = "unknown"
-            if kind == "dinf":
-                P["input_convention"].value = aspect_tools.INPUT_CONVENTIONS[1]
+            # A new raster is a new situation: Mathematical for a D-infinity
+            # raster, else back to Compass (the user can still change it).
+            P["input_convention"].value = (
+                aspect_tools.INPUT_CONVENTIONS[1] if kind == "dinf"
+                else aspect_tools.INPUT_CONVENTIONS[0])
         return
 
     def updateMessages(self, parameters):
@@ -6000,6 +6085,20 @@ class ExtractAspectValuesToPoints(object):
             except Exception:
                 pass
         if inr.valueAsText:
+            # D8 flow-direction rasters (codes 1-128) are not aspect: warn on
+            # every cycle (Pro clears messages each validation); the lineage
+            # read is cached by path because it is not free.
+            key = inr.valueAsText
+            if getattr(self, "_d8_key", None) != key:
+                try:
+                    self._d8_kind = aspect_tools._detect_source_kind(key)[0]
+                except Exception:
+                    self._d8_kind = "unknown"
+                self._d8_key = key
+            if getattr(self, "_d8_kind", None) == "d8":
+                inr.setWarningMessage(
+                    "This looks like a D8 flow-direction raster (flow codes "
+                    "1-128, not degrees); it is not valid aspect input.")
             try:
                 if arcpy.Describe(inr.valueAsText).bandCount != 1:
                     inr.setErrorMessage("The aspect raster must be single band.")
@@ -6191,8 +6290,11 @@ class AspectZonalStatisticsAsTable(object):
                 kind, _why = aspect_tools._detect_source_kind(inr.valueAsText)
             except Exception:
                 kind = "unknown"
-            if kind == "dinf":
-                P["input_convention"].value = aspect_tools.INPUT_CONVENTIONS[1]
+            # A new raster is a new situation: Mathematical for a D-infinity
+            # raster, else back to Compass (the user can still change it).
+            P["input_convention"].value = (
+                aspect_tools.INPUT_CONVENTIONS[1] if kind == "dinf"
+                else aspect_tools.INPUT_CONVENTIONS[0])
         return
 
     def updateMessages(self, parameters):
@@ -6417,8 +6519,9 @@ class SlopeZonalStatisticsAsTable(object):
         if inr.valueAsText and not inr.hasBeenValidated:
             # Default the unit from the raster's geoprocessing history
             # (Esri's Slope / Surface Parameters record DEGREE or
-            # PERCENT_RISE); keep the current choice when nothing can be
-            # determined. Set UNCONDITIONALLY on each raster change:
+            # PERCENT_RISE); Degrees when nothing can be determined -- a
+            # new raster is a new situation. Set UNCONDITIONALLY on each
+            # raster change:
             # instance state does not persist across validation cycles, so
             # an altered-guard can never work here. The module is reloaded
             # because VALIDATION (unlike execute) otherwise runs whatever
@@ -6429,11 +6532,10 @@ class SlopeZonalStatisticsAsTable(object):
                     inr.valueAsText)
             except Exception:
                 detected = None
-            if detected:
-                P["slope_units"].value = (
-                    topographic_tools.SLOPE_UNITS_Z[1]
-                    if detected == "percent"
-                    else topographic_tools.SLOPE_UNITS_Z[0])
+            P["slope_units"].value = (
+                topographic_tools.SLOPE_UNITS_Z[1]
+                if detected == "percent"
+                else topographic_tools.SLOPE_UNITS_Z[0])
         return
 
     def updateMessages(self, parameters):
@@ -6898,20 +7000,23 @@ class TopographicWetnessIndex(object):
             importlib.reload(topographic_tools)
             P = {p.name: p for p in parameters}
             geo = False
+            in_raster_path = (_resolve_raster_path(P["in_raster"])
+                              or P["in_raster"].valueAsText)
             try:
-                geo = arcpy.Describe(P["in_raster"].valueAsText) \
+                geo = arcpy.Describe(in_raster_path) \
                     .spatialReference.type == "Geographic"
             except Exception:
                 pass
             out_lyrx = topographic_tools.run_twi(
-                in_raster=P["in_raster"].valueAsText,
+                in_raster=in_raster_path,
                 out_raster=P["out_raster"].valueAsText,
                 elev_units=P["elev_units"].valueAsText or "Meters",
                 slope_method=(P["slope_method"].valueAsText
                               or topographic_tools.SLOPE_METHODS[0]),
                 slope_epsilon=P["slope_epsilon"].value,
-                in_filled_dem=P["in_filled_dem"].valueAsText or None,
-                in_flow_accumulation=P["in_flow_accumulation"].valueAsText or None,
+                in_filled_dem=_resolve_raster_path(P["in_filled_dem"]),
+                in_flow_accumulation=_resolve_raster_path(
+                    P["in_flow_accumulation"]),
                 out_filled_dem=(P["out_filled_dem"].valueAsText
                                 if P["out_filled_dem"].enabled else None),
                 out_flow_accumulation=(P["out_flow_accumulation"].valueAsText

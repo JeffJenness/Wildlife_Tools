@@ -1403,6 +1403,8 @@ def run_inscribed_geometry(in_features, geometry_type, out_features,
     is_shp = _ll._is_shp_dest(str(out_features)) \
         or str(out_features).lower().endswith(".shp")
 
+    xtypes = [p[2] for p in plan]     # shapefile stand-ins for null transfers
+
     def _null(v=None):
         if v is not None:
             return v
@@ -1462,7 +1464,8 @@ def run_inscribed_geometry(in_features, geometry_type, out_features,
                      _null(maj), _null(mnr), _null(az),
                      (nverts if nverts is not None
                       else (-999 if is_shp else None))]
-                    + list(attrs)))
+                    + (_mh.shp_safe_attrs(list(attrs), xtypes)
+                       if (is_shp and xtypes) else list(attrs))))
                 n_rows += 1
     _say(messages, "{:,} inscribed shape{} written.".format(
         n_rows, "" if n_rows == 1 else "s"))

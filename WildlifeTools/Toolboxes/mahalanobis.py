@@ -1278,6 +1278,31 @@ def is_shapefile_target(path):
     return "\\" in s      # a path in a plain folder -> dBASE naming rules
 
 
+SHP_NULL = -999.0       # the house stand-in for an undefined number on a shapefile
+
+
+def shp_safe_attrs(values, ftypes):
+    """Transferred attribute values made safe for a SHAPEFILE/dBASE target,
+    which cannot store NULL: None becomes -999 in a numeric field, "" in a
+    TEXT field; DATE values pass through (a null date is rare, and arcpy
+    writes it as an empty date). ``ftypes`` are the AddFields type names
+    ("DOUBLE", "LONG", "SHORT", "FLOAT", "TEXT", "DATE", ...), one per value,
+    e.g. ``[p[2] for p in plan]`` from ``centerline_width._transfer_plan``.
+    Call it only when the target is a shapefile; a geodatabase keeps NULLs.
+    (Standing rule, 2026-09-28: every tool that writes features or tables
+    must work when the target is a shapefile.)"""
+    out = []
+    for v, ft in zip(values, ftypes):
+        if v is None:
+            ft = str(ft).upper()
+            if ft == "TEXT":
+                v = ""
+            elif ft != "DATE":
+                v = SHP_NULL
+        out.append(v)
+    return out
+
+
 def dbf_table_path(path):
     """A table written to a plain FOLDER must carry the ``.dbf`` extension
     (standing rule); inside a geodatabase or the memory workspace the name
@@ -2586,6 +2611,7 @@ def run_mahalanobis_points(target_points, var_rows, sample_method, stats_source,
     except Exception:
         pass
     cols = ["SHAPE@XY"] + [f for _t, f in fields]
+    null_ok = not is_shapefile_target(str(out_points))
     # Read the points natively and project each to the grid's coordinate
     # system HERE with the datum transformation: a cursor's spatial_reference=
     # reprojects without one (verified 2026-09-23).
@@ -2619,8 +2645,9 @@ def run_mahalanobis_points(target_points, var_rows, sample_method, stats_source,
                         else:
                             vals.append(d2)
             if vals is None:
+                # shapefiles cannot store NULL: the house -999 stand-in
                 for i in range(len(selected)):
-                    row[i + 1] = None
+                    row[i + 1] = None if null_ok else SHP_NULL
                 n_null += 1
             else:
                 for i, v in enumerate(vals):
@@ -2633,8 +2660,9 @@ def run_mahalanobis_points(target_points, var_rows, sample_method, stats_source,
         pass
     messages.addMessage(
         "Computed {} point values into field(s) {}; {} point(s) outside the data or on "
-        "NoData were set to null.".format(
-            n_val, ", ".join("'{}'".format(f) for _t, f in fields), n_null))
+        "NoData were set to {}.".format(
+            n_val, ", ".join("'{}'".format(f) for _t, f in fields), n_null,
+            "null" if null_ok else "-999 (a shapefile cannot store null)"))
 
     try:
         _write_points_metadata(out_points, variables, stats_source, fields, n_used)

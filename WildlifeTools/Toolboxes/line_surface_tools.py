@@ -226,7 +226,7 @@ SEG_DESC = {
     "abs_inclination": "The absolute value of the Inclination Angle. Null on the first segment of a line, part or run.",
     "defl3d": "The full three-dimensional angle between the previous segment's vector and this one's: 0 when the route continues straight at the same pitch, 180 for an exact reversal. Always positive; null on the first segment of a line, part or run.",
     "source_id": "The ObjectID of the polyline this segment came from.",
-    "seg_num": "The segment's order within its part, counted from 1.",
+    "seg_num": "The segment's order within its part, counted from 1 and restarting at 1 in each part of a multipart line (a NoData gap inside a part does not restart it).",
     "part_index": "Which part of a multipart line the segment belongs to, counted from 0.",
     "slope_class": "Uphill, Downhill or Flat (exactly zero elevation change), in the direction of travel.",
     "station": "The cumulative planimetric distance from the start of the part to the start of this segment.",
@@ -956,11 +956,17 @@ def _densify_if_curved(shape, interval_m=None):
 def build_parts(shape, source, dem=None, elev_m_per_unit=1.0):
     """Reduce one polyline ``shape`` (arcpy Polyline, SHAPE@) to the per-part
     segment dicts compute_line_statistics needs. ``source`` is "DEM" or "Z".
-    Returns (parts, diag) where diag counts NoData drops and short-for-fractal
-    parts. All returned lengths/elevations are in METERS."""
+    Returns (parts, diag) where diag counts NoData drops, the NoData gaps at
+    which the chain was broken, and geometry parts with no usable segment.
+    All returned lengths/elevations are in METERS.
+
+    A sample on NoData (or off the DEM) BREAKS the chain: the valid runs on
+    either side of the gap become separate parts, so no turn angle, reversal,
+    sinuosity chord or fractal path ever spans a gap, and the first valid
+    sample after a gap starts the next run (it is never dropped)."""
     import arcpy
     parts = []
-    diag = {"nodata_segments": 0, "empty_parts": 0}
+    diag = {"nodata_segments": 0, "nodata_gaps": 0, "empty_parts": 0}
 
     shape = _densify_if_curved(
         shape, dem["interval_m"] if source == "DEM" and dem else None)
@@ -994,50 +1000,66 @@ def build_parts(shape, source, dem=None, elev_m_per_unit=1.0):
         z_m = [(zr * elev_m_per_unit if zr is not None and np.isfinite(zr)
                 else float("nan")) for zr in z_raw]
 
-        seg_plan, seg_dz, seg_bear, keep_pts, keep_z = [], [], [], [], []
+        # One run per stretch of consecutive valid segments; a NoData segment
+        # closes the current run and the next valid segment opens a new one.
+        run = None                      # (seg_plan, seg_dz, seg_bear, pts, z)
+        n_runs_here = 0
+
+        def close_run():
+            nonlocal run, n_runs_here
+            if run is None:
+                return
+            seg_plan, seg_dz, seg_bear, keep_pts, keep_z = run
+            run = None
+            if not seg_plan:
+                return
+            g_first = arcpy.PointGeometry(keep_pts[0], work_sr)
+            g_last = arcpy.PointGeometry(keep_pts[-1], work_sr)
+            _a, chord_h = g_first.angleAndDistanceTo(g_last, "GEODESIC")
+            parts.append({
+                "seg_plan_m": np.array(seg_plan),
+                "seg_dz_m": np.array(seg_dz),
+                "seg_bearing": np.array(seg_bear),
+                "z_m": np.array(keep_z),
+                "pts_xy_m": _local_xy_m(keep_pts, work_sr),
+                "chord_horiz_m": chord_h,
+                "chord_dz_m": keep_z[-1] - keep_z[0],
+                "base_step_m": (interval_m if source == "DEM"
+                                else float(np.median(seg_plan))),
+                # For the min/max-elevation coordinate statistics: the kept
+                # sample points (in work_sr -- the DEM's SR when sampling a
+                # DEM) plus both references, so the winning point can be
+                # reported in the POLYLINE dataset's own coordinate system.
+                # Only the one winning point is ever projected, so keeping
+                # the whole list costs nothing extra.
+                "pts_work": keep_pts,
+                "work_sr": work_sr,
+                "dataset_sr": shape.spatialReference or work_sr,
+            })
+            n_runs_here += 1
+
         for i in range(len(samples) - 1):
             p0, p1 = samples[i], samples[i + 1]
             z0, z1 = z_m[i], z_m[i + 1]
             if not (np.isfinite(z0) and np.isfinite(z1)):
                 diag["nodata_segments"] += 1
+                if run is not None:
+                    close_run()
+                    diag["nodata_gaps"] += 1
                 continue
             g0 = arcpy.PointGeometry(p0, work_sr)
             g1 = arcpy.PointGeometry(p1, work_sr)
             ang, dist = g0.angleAndDistanceTo(g1, "GEODESIC")
-            seg_plan.append(dist)
-            seg_dz.append(z1 - z0)
-            seg_bear.append(ang % 360.0)
-            if not keep_pts:
-                keep_pts.append(p0)
-                keep_z.append(z0)
-            keep_pts.append(p1)
-            keep_z.append(z1)
-        if not seg_plan:
+            if run is None:
+                run = ([], [], [], [p0], [z0])   # the run's first sample
+            run[0].append(dist)
+            run[1].append(z1 - z0)
+            run[2].append(ang % 360.0)
+            run[3].append(p1)
+            run[4].append(z1)
+        close_run()
+        if n_runs_here == 0:
             diag["empty_parts"] += 1
-            continue
-
-        g_first = arcpy.PointGeometry(keep_pts[0], work_sr)
-        g_last = arcpy.PointGeometry(keep_pts[-1], work_sr)
-        _a, chord_h = g_first.angleAndDistanceTo(g_last, "GEODESIC")
-        parts.append({
-            "seg_plan_m": np.array(seg_plan),
-            "seg_dz_m": np.array(seg_dz),
-            "seg_bearing": np.array(seg_bear),
-            "z_m": np.array(keep_z),
-            "pts_xy_m": _local_xy_m(keep_pts, work_sr),
-            "chord_horiz_m": chord_h,
-            "chord_dz_m": keep_z[-1] - keep_z[0],
-            "base_step_m": (interval_m if source == "DEM"
-                            else float(np.median(seg_plan))),
-            # For the min/max-elevation coordinate statistics: the kept sample
-            # points (in work_sr -- the DEM's SR when sampling a DEM) plus both
-            # references, so the winning point can be reported in the POLYLINE
-            # dataset's own coordinate system. Only the one winning point is
-            # ever projected, so keeping the whole list costs nothing extra.
-            "pts_work": keep_pts,
-            "work_sr": work_sr,
-            "dataset_sr": shape.spatialReference or work_sr,
-        })
     return parts, diag
 
 
@@ -1328,13 +1350,14 @@ def build_segments(shape, source, dem, elev_m_per_unit, source_sr, parent_oid,
         geom = shape
 
     segs = []
-    seg_num = 0
     geom = _densify_if_curved(
         geom, interval_m if source == "DEM" else None)
     for pi in range(geom.partCount):
         pts_in = [pt for pt in geom.getPart(pi) if pt is not None]
         if len(pts_in) < 2:
             continue
+        seg_num = 0     # Segment Number restarts at 1 in every part; a NoData
+                        # gap inside a part does not restart it
         if source == "DEM":
             samples_w = (list(pts_in) if vertex_only
                          else _densify_geodesic(pts_in, work_sr, interval_m))
@@ -1369,6 +1392,16 @@ def build_segments(shape, source, dem, elev_m_per_unit, source_sr, parent_oid,
             if not (z0 is not None and z1 is not None
                     and np.isfinite(z0) and np.isfinite(z1)):
                 prev = None               # gap breaks the angle chain
+                # The gap still occupies distance along the line, so the
+                # station past it stays the true distance from the start.
+                try:
+                    _b, gap_m = arcpy.PointGeometry(samples_s[i], source_sr) \
+                        .angleAndDistanceTo(
+                            arcpy.PointGeometry(samples_s[i + 1], source_sr),
+                            "GEODESIC")
+                    station_m += gap_m
+                except Exception:
+                    pass
                 continue
             p0, p1 = samples_s[i], samples_s[i + 1]
             g0 = arcpy.PointGeometry(p0, source_sr)

@@ -57,13 +57,17 @@ than a third of the summits. Fixed 2026-09-23.) Both kinds are written to the
 output (one Prominence field: depression depth for low points, saddle
 prominence for peaks) and drive the optional minimum-prominence filter.
 Extremes whose saddle path leaves the raster are measured against the raster
-edge (the standard convention for a bounded map), and edge-draining low
-points have depth 0. Of two EQUAL extremes in one basin, one is measured to
-the saddle between them and the other carries the basin's full depth.
+edge or NoData: the prominence written is the drop the extreme's region had
+already made when it first touched the outside, a LOWER BOUND on the true
+value (an extreme lying on the edge itself, or beside NoData, has made no drop
+and gets 0). Of two EQUAL extremes in one basin, one is measured to the
+saddle between them and the other carries the basin's full depth.
 
-EDGE FLAG: every point records whether its region touches the raster edge or
-NoData -- where neighbors are unknown, so the extreme (and its prominence) may
-be an artifact of truncation. The field lets users screen those out.
+EDGE FLAG (EdgeOfData = 1): the extreme's prominence/depth was measured
+against the raster edge or NoData rather than against real terrain -- either
+the extreme itself lies on the edge or beside NoData, or its region reached
+the outside before meeting a higher (deeper) extreme. Such a value is a lower
+bound; the field lets users screen those points out.
 
 The output honors the Output Coordinates geoprocessing environment (most tools
 in this suite deliberately ignore environments; this one is explicitly asked
@@ -129,6 +133,10 @@ def find_extremes(a, valid, messages=None):
     pre-merged component of value -inf). Each extreme region seeds a
     component; when two components meet at level v the one with the higher
     extreme is absorbed and its extreme's prominence is v minus its value.
+    ``edge`` is True when the absorbing component held no REAL extreme at or
+    below the absorbed one -- it won only because it contains the outside --
+    so the prominence is the drop to the raster edge or NoData, a lower bound
+    (0 when the extreme itself lies on the edge or beside NoData).
     """
     from scipy import ndimage
 
@@ -186,6 +194,7 @@ def find_extremes(a, valid, messages=None):
     parent = list(range(N))
     bid = [0] * N                     # bottom region id at a root (0 = none)
     bval = [float("inf")] * N         # that region's value (inf = none)
+    rbest = [float("inf")] * N        # lowest REAL extreme in the component
     done = bytearray(N)
     OUT = 0                           # padded corner: the outside component
     for o in np.flatnonzero(~padv.ravel()).tolist():
@@ -194,6 +203,7 @@ def find_extremes(a, valid, messages=None):
     bid[OUT] = -1
     bval[OUT] = float("-inf")
     prom = [0.0] * (m + 1)
+    edge_hit = [False] * (m + 1)      # measured against the outside
     order = np.flatnonzero(padv.ravel())
     order = order[np.argsort(padf.ravel()[order], kind="stable")].tolist()
     deltas = (-Wp - 1, -Wp, -Wp + 1, -1, 1, Wp - 1, Wp, Wp + 1)
@@ -205,6 +215,7 @@ def find_extremes(a, valid, messages=None):
         if r:
             bid[i] = r
             bval[i] = zl[i]
+            rbest[i] = zl[i]
         v = zl[i]
         for d in deltas:
             n = i + d
@@ -226,6 +237,12 @@ def find_extremes(a, valid, messages=None):
                 x, y = y, x
             if bid[y] > 0:
                 prom[bid[y]] = v - bval[y]
+                # x holds no real extreme at or below y's: x survived only
+                # because it contains the outside, so this prominence is the
+                # drop to the raster edge / NoData -- a lower bound.
+                edge_hit[bid[y]] = rbest[x] > bval[y]
+            if rbest[y] < rbest[x]:
+                rbest[x] = rbest[y]
             parent[y] = x
         if messages is not None and k % step == 0:
             _mh.phase_step(k, total)
@@ -244,7 +261,7 @@ def find_extremes(a, valid, messages=None):
         results.append({
             "row": int(rr[s]), "col": int(cc[s]),
             "value": float(reg_val[jx]), "prominence": float(prom[jx + 1]),
-            "edge": bool(reg_edge[jx]),
+            "edge": bool(reg_edge[jx]) or bool(edge_hit[jx + 1]),
         })
     return results
 
@@ -424,8 +441,9 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
         if n0 != len(points):
             _say(messages,
                  "{:,} of {:,} extremes kept at minimum prominence/depth "
-                 "{:g} (edge-draining low points have depth 0 and are "
-                 "removed by any positive threshold).".format(
+                 "{:g} (extremes lying on the edge of the data or beside "
+                 "NoData have prominence 0 and are removed by any positive "
+                 "threshold).".format(
                      len(points), n0, min_prominence))
 
     if window >= 2:
@@ -484,7 +502,8 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
 
     _say(messages, "{:,} point{} written{}.".format(
         len(points), "" if len(points) == 1 else "s",
-        " ({:,} on the edge of the data, flagged EdgeOfData = 1)".format(
+        " ({:,} measured against the edge of the data or NoData, a lower "
+        "bound on their prominence, flagged EdgeOfData = 1)".format(
             n_edge) if n_edge else ""))
 
     # ---- metadata (standing rules: dataset + field level) -------------------
@@ -512,16 +531,21 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
                 {"name": "Prominence", "description":
                     "For a peak: its topographic prominence -- the drop from "
                     "the summit to the key saddle separating it from higher "
-                    "ground (measured to the raster edge when the saddle "
-                    "path leaves the map). For a low point: the depth of its "
-                    "depression below the spill point (0 for edge-draining "
-                    "low points). Source-raster units."},
+                    "ground. For a low point: the depth of its depression "
+                    "below the spill point. When the saddle path leaves the "
+                    "map (EdgeOfData = 1) the value is the drop to the raster "
+                    "edge or NoData, a lower bound on the true prominence; an "
+                    "extreme lying on the edge itself gets 0. Source-raster "
+                    "units."},
                 {"name": "EdgeOfData", "description":
-                    "Whether this extreme's region touches the raster edge "
-                    "or NoData, where neighbors are unknown -- the extreme "
-                    "and its prominence may be artifacts of truncation.",
-                 "coded": [(1, "On the edge of the data."),
-                           (0, "Interior: all neighbors known.")]},
+                    "1 when the prominence/depth was measured against the "
+                    "raster edge or NoData rather than real terrain: the "
+                    "extreme lies on the edge or beside NoData, or its region "
+                    "reached the outside before meeting higher (deeper) "
+                    "ground. The Prominence is then a lower bound.",
+                 "coded": [(1, "Measured against the edge of the data "
+                              "(prominence is a lower bound)."),
+                           (0, "Interior: measured against real terrain.")]},
                 {"name": "X", "description":
                     "X-coordinate of the point, in the output feature "
                     "class's coordinate system."},

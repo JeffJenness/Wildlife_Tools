@@ -2543,20 +2543,28 @@ def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
         _hs._msg(messages, "Using supplied flow-accumulation raster (skipping "
                  "fill, flow direction, and accumulation).")
     else:
-        fill_input = zraw
+        _mh.phase_advance("Filling sinks (priority-flood)...")
         if have_fill:
+            # The supplied surface IS the routing surface: the tool's own
+            # sink fill is skipped, so sinks left in it on purpose (a fill
+            # with a Z limit) survive. The routers tolerate them: a cell with
+            # no lower neighbor and no equal-elevation exit gets no receiver
+            # and simply ends the flow (a terminal, like a raster-edge cell).
             farr, fnod = _twi_read_aligned(in_filled_dem, width, height,
                                            scratch, messages, "filled-DEM")
             fmask = np.isfinite(farr)
             if fnod is not None:
                 fmask &= (farr != fnod)
-            fill_input = np.where(fmask, farr, zraw)
+            filled = np.where(fmask, farr, zraw)
+            del farr, fmask
             _hs._msg(messages, "Using supplied filled DEM as the routing "
-                     "surface.")
-        _mh.phase_advance("Filling sinks (priority-flood)...")
-        filled, order = _twi_priority_flood(fill_input, valid, messages)
+                     "surface (the tool's own sink fill is skipped; any "
+                     "sink the supplied surface still holds ends the flow "
+                     "that reaches it).")
+        else:
+            filled, order = _twi_priority_flood(zraw, valid, messages)
+            del order                  # routing computes its own order
         _mh.phase_advance("Tracing {} flow directions...".format(flabel))
-        del order                      # routing computes its own order
         if fkey == "D8":
             recv, porder = _twi_receivers(filled, valid, base_geom)
             _mh.phase_advance("Accumulating flow...")

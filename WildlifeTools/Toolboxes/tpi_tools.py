@@ -66,8 +66,8 @@ _WEISS_CITATION = ("Weiss, A. 2001. Topographic Position and Landforms "
                    "TPI_Weiss_poster.htm).")
 _WG_CITATION = ("Wilson, J. P., and J. C. Gallant. 2000. Terrain analysis: "
                 "principles and applications. John Wiley & Sons.")
-_TPI_CITATION = (_WEISS_CITATION + " See also Guisan, A., J. Weiss, and A. "
-                 "Weiss. 1999. Plant Ecology 143:107-122 "
+_TPI_CITATION = (_WEISS_CITATION + " See also Guisan, A., S. B. Weiss, and "
+                 "A. D. Weiss. 1999. Plant Ecology 143:107-122 "
                  "(https://doi.org/10.1023/A:1009841519580); Jenness, J. 2006. "
                  "Topographic Position Index extension for ArcView 3.x "
                  "(http://www.jennessent.com/arcview/tpi.htm).")

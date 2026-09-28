@@ -85,8 +85,11 @@ check("grid 1: pit (4,4) depth 5, interior",
 check("grid 1: east-edge flat -> one point at (3,6), depth 0, edge",
       one(L, row=3, col=6, value=30.0, prominence=0.0, edge=True) is not None, L)
 check("grid 1: exactly two low points (the bench emits nothing)", len(L) == 2, L)
-check("grid 1: peak 70 with prominence 10 (to the west edge at 60)",
-      P == [{"row": 1, "col": 1, "value": 70.0, "prominence": 10.0, "edge": False}], P)
+# 2026-09-28: EdgeOfData now means "measured against the edge / NoData" (a
+# lower bound), not merely "the extreme's own cells lie on the edge". The 70
+# is the highest cell, so its 10 is the drop to the west edge -> flagged.
+check("grid 1: peak 70 with prominence 10 (to the west edge at 60), flagged edge",
+      P == [{"row": 1, "col": 1, "value": 70.0, "prominence": 10.0, "edge": True}], P)
 
 g = plane()
 g[1, 1] = 70.0
@@ -96,6 +99,8 @@ P = peaks(g)
 check("grid 2: two summits, 70 -> 10 and 66 -> 8 (saddle 58)",
       one(P, value=70.0, prominence=10.0) is not None
       and one(P, value=66.0, prominence=8.0) is not None and len(P) == 2, P)
+check("grid 2: the 70 is measured against the edge (flagged); the 66 against the 70 (not flagged)",
+      one(P, value=70.0, edge=True) is not None and one(P, value=66.0, edge=False) is not None, P)
 
 # ---------------------------------------------------------------- nested extremes (the bug)
 B = np.full((7, 7), 10.0)
@@ -126,7 +131,8 @@ check("nested pits: 10 -> depth 40 (spill at the 50 edge), 20 -> 5 (saddle 25)",
 D = np.full((9, 9), 100.0)
 D[4, 4] = 90.1
 L = lows(D)
-check("single pit: depth 9.9 exact", L == [{"row": 4, "col": 4, "value": 90.1, "prominence": 100.0 - 90.1, "edge": False}], L)
+# 2026-09-28: the pit spills off the map at 100, so its depth is a lower bound -> flagged.
+check("single pit: depth 9.9 exact, spill at the edge -> flagged", L == [{"row": 4, "col": 4, "value": 90.1, "prominence": 100.0 - 90.1, "edge": True}], L)
 
 M = np.full((9, 9), 20.0)
 M[2:7, 2:7] = 47.7 + 20.0       # a 5 x 5 mesa
@@ -170,8 +176,24 @@ valid[1, 1] = False
 L = lows(N, valid)
 check("NoData: pit beside the hole is flagged edge with depth 0 (drains into the unknown)",
       one(L, row=2, col=2, prominence=0.0, edge=True) is not None, L)
-check("NoData: interior pit keeps depth 20 and is not flagged",
+check("NoData: interior pit keeps depth 20 and is not flagged (it spills at 100 into the 60 pit's basin, real terrain)",
       one(L, row=4, col=4, prominence=20.0, edge=False) is not None, L)
+
+# ---------------------------------------------------------------- lower-bound rule (2026-09-28)
+Q = np.full((9, 9), 10.0)
+Q[3:6, 3:6] = 70.0
+Q[4, 4] = 80.0
+Q[2:7, 2:7] = np.where(Q[2:7, 2:7] == 10.0, 50.0, Q[2:7, 2:7])
+vq = np.ones((9, 9), bool)
+vq[1, 1] = False                # a NoData cell touching the 50 ring at (2,2)
+P = peaks(Q, vq)
+check("lower bound: an 80 peak whose region reaches NoData after dropping 30 -> prominence 30, flagged",
+      one(P, row=4, col=4, prominence=30.0, edge=True) is not None and len(P) == 1, P)
+S = np.full((9, 9), 10.0)
+S[0, 4] = 80.0                  # the highest cell sits on the edge itself
+P = peaks(S)
+check("lower bound: an edge cell that is itself the highest -> prominence 0, flagged",
+      one(P, row=0, col=4, prominence=0.0, edge=True) is not None and len(P) == 1, P)
 
 # ---------------------------------------------------------------- consistency on random terrain
 rng = np.random.default_rng(7)

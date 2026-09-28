@@ -1877,7 +1877,7 @@ def _write_arrays(out_fc, out_sr, work_sr, reproject, rows, design,
                     if strat_field:
                         rec.append(str(row["stratum"])[:64]
                                    if row["stratum"] is not None
-                                   else None)
+                                   else ("" if is_shp else None))
                     if src_field:
                         rec.append(row["src_fid"])
                     if cat_field:

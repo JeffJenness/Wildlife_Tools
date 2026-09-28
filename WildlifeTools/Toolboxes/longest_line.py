@@ -674,6 +674,9 @@ def run_longest_line(in_features, out_lines, transfer_fields=None,
     cols = ["SHAPE@", "Src_FID", "Part", "Length_m", "Azimuth",
             "X1", "Y1", "X2", "Y2"] + out_names
     geographic = out_sr.type == "Geographic"
+    # shapefiles cannot store NULL: null transferred attributes -> -999 / ""
+    xtypes = [p[2] for p in plan]
+    shp_out = str(out_lines).lower().endswith(".shp")
     with arcpy.da.InsertCursor(out_lines, cols) as ins:
         for r in results:
             wsr = r["working_sr"]
@@ -692,10 +695,13 @@ def run_longest_line(in_features, out_lines, transfer_fields=None,
             az %= 360.0
             shp = arcpy.Polyline(arcpy.Array(
                 [arcpy.Point(x1, y1), arcpy.Point(x2, y2)]), out_sr)
+            attrs = list(r["attrs"])
+            if shp_out and xtypes:
+                attrs = _mh.shp_safe_attrs(attrs, xtypes)
             ins.insertRow(tuple(
                 [shp, r["oid"], r["part"], float(r["length_m"]),
                  float(az), float(x1), float(y1), float(x2),
-                 float(y2)] + list(r["attrs"])))
+                 float(y2)] + attrs))
     _say(messages, "{:,} longest line{} written.".format(
         len(results), "" if len(results) == 1 else "s"))
     _stamp(out_lines, "longest interior lines (fetch)", in_features)
@@ -1015,11 +1021,21 @@ def run_station_fetch(stations, in_features, out_radials,
         ["Fetch_m", "DOUBLE", "Length (m)", "", "", ""],
         ["Capped", "SHORT", "1 = reached the maximum fetch",
          "", "", ""]] + xfer_rows)
+    # shapefiles cannot store NULL: null transferred attributes -> -999 / ""
+    xtypes = [p[2] for p in plan]
+
+    def _safe(row, path):
+        if xtypes and str(path).lower().endswith(".shp"):
+            row = list(row)
+            row[-len(xtypes):] = _mh.shp_safe_attrs(row[-len(xtypes):], xtypes)
+            return tuple(row)
+        return row
+
     with arcpy.da.InsertCursor(
             out_radials, ["SHAPE@", "Src_FID", "Kind", "Bearing",
                           "Fetch_m", "Capped"] + out_names) as ins:
         for row in radial_rows:
-            ins.insertRow(row)
+            ins.insertRow(_safe(row, out_radials))
     if out_stations:
         out_stations = _make_fc(out_stations, "POINT", out_sr)
         arcpy.management.AddFields(out_stations, [
@@ -1055,7 +1071,7 @@ def run_station_fetch(stations, in_features, out_radials,
                 row = list(row)
                 if is_shp and row[12] is None:
                     row[12] = -1.0
-                ins.insertRow(tuple(row))
+                ins.insertRow(_safe(tuple(row), out_stations))
     n_shift = sum(1 for r in station_rows if r[11] > 0)
     if n_shift:
         _say(messages,

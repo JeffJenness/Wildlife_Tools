@@ -931,16 +931,50 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
     _mh.phase_advance("Reading the aspect raster...")
     rsr = arcpy.Describe(in_raster).spatialReference
 
-    # Gather every point in the RASTER's coordinate system.
+    # Gather every point in the RASTER's coordinate system. A cursor's
+    # spatial_reference= reprojects WITHOUT a datum transformation (NAD27
+    # points on a NAD83 raster would land 100-200 m off), so when the datums
+    # differ the geometry is read natively and projected here with the
+    # transformation clip_tools chooses; same datum takes the fast cursor path.
+    import clip_tools as _ct
+    psr = arcpy.Describe(out_points).spatialReference
+    same = (True if psr is None or psr.name in ("Unknown", "")
+            else _ct._same_datum(psr, rsr))
     oids, xs, ys = [], [], []
-    with arcpy.da.SearchCursor(out_points, ["OID@", "SHAPE@XY"],
-                               spatial_reference=rsr) as cur:
-        for oid, xy in cur:
-            if xy is None:
-                continue
-            oids.append(oid)
-            xs.append(xy[0])
-            ys.append(xy[1])
+    if same:
+        with arcpy.da.SearchCursor(out_points, ["OID@", "SHAPE@XY"],
+                                   spatial_reference=rsr) as cur:
+            for oid, xy in cur:
+                if xy is None:
+                    continue
+                oids.append(oid)
+                xs.append(xy[0])
+                ys.append(xy[1])
+    else:
+        try:
+            ext = arcpy.Describe(out_points).extent
+        except Exception:
+            ext = None
+        tfm = _ct.transformation_name(psr, rsr, ext)
+        _warn(messages, "The points ({}) and the aspect raster ({}) are on "
+                        "different datums. The points were projected onto "
+                        "the raster with the transformation {}.".format(
+                            psr.GCS.name, rsr.GCS.name,
+                            tfm or "(none available: coordinates were "
+                                   "re-projected without a datum shift)"))
+        with arcpy.da.SearchCursor(out_points, ["OID@", "SHAPE@"]) as cur:
+            for oid, g in cur:
+                if g is None:
+                    continue
+                try:
+                    pt = _ct.project_geometry(g, rsr, ext).firstPoint
+                except Exception:
+                    pt = None
+                if pt is None:
+                    continue
+                oids.append(oid)
+                xs.append(pt.X)
+                ys.append(pt.Y)
     n_pts = len(oids)
     if n_pts == 0:
         _warn(messages, "The input contains no point features.")
@@ -997,6 +1031,17 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
         aw &= (arr != nodata)
     if wmask is not None:
         aw &= wmask
+    kind, why = _detect_source_kind(in_raster, arr if arr.size else None,
+                                    nodata)
+    if kind == "d8":
+        _warn(messages, "This looks like a D8 flow-direction raster ({}) -- "
+                        "flow codes 1-128, not degrees; not valid aspect "
+                        "input.".format(why))
+    elif kind == "dinf" and not is_math:
+        _warn(messages, "This looks like a D-infinity flow-direction raster "
+                        "({}); set the input convention to Mathematical so "
+                        "its angles are converted to compass "
+                        "directions.".format(why))
     # Sanity check: an aspect raster holds -1 (flat) and 0-360 only.
     n_bad = int(np.count_nonzero(aw & ((arr < -1.001) | (arr > 360.001))))
     if n_bad:
@@ -1052,7 +1097,10 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
                 Csum += np.where(dirok, w * np.cos(rad_v), 0.0)
                 wdir += np.where(dirok, w, 0.0)
                 wvalid += np.where(valid, w, 0.0)
-            has_dir = wdir > 1e-12
+            # No direction when the neighbors' arrows cancel exactly (a
+            # resultant of zero length has no bearing) -- the same rule
+            # the zonal tool's point zones use; such points get -1.
+            has_dir = (wdir > 1e-12) & (np.hypot(Ssum, Csum) > 1e-12)
             some_valid = wvalid > 1e-12
             mean_dir = np.degrees(np.arctan2(Ssum, Csum)) % 360.0
             mean_dir[mean_dir >= 360.0] = 0.0
@@ -1082,7 +1130,8 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
             cur.updateRow(row)
 
     _say(messages, "Sampled {:,} point(s): {:,} with a direction, {:,} flat "
-                   "(-1), {:,} on NoData or outside the raster ({}).".format(
+                   "or with no defined direction (-1), {:,} on NoData or "
+                   "outside the raster ({}).".format(
                        n_pts, n_pts - n_flat - n_nodata, n_flat, n_nodata,
                        "NULL" if null_ok else "-9999"))
     _say(messages, "Values are {} aspect in COMPASS degrees (0 = north, "
@@ -1164,7 +1213,7 @@ def run_aspect_transform(in_raster, out_workspace, transformations,
                          base_name=None, target_bearing=45.0,
                          input_convention=INPUT_CONVENTIONS[0],
                          flat_handling=FLAT_TRANSFORM[1], messages=None,
-                         out_map=None):
+                         out_map=None, lyrx_map=None):
     """Generate one or more transformations of an aspect raster (see the tool
     help). ``transformations`` is a list of transform keys or labels; each
     produces its own raster in ``out_workspace``. Returns the list of output
@@ -1278,18 +1327,20 @@ def run_aspect_transform(in_raster, out_workspace, transformations,
         out_path = os.path.join(ws, out_name)
 
         if key in _RECLASS_KEYS:
-            out_path = _write_reclass(gdal, key, compass, dvalid, flat,
-                                      flat_nodata, gt, proj, width, height,
-                                      out_path, in_raster, is_math, scratch,
-                                      messages)
+            out_path, lyrx = _write_reclass(
+                gdal, key, compass, dvalid, flat, flat_nodata, gt, proj,
+                width, height, out_path, in_raster, is_math, scratch, messages)
         else:
-            out_path = _write_trig(gdal, key, compass, dvalid, flat, flat_nodata,
-                                   bearing, gt, proj, width, height, out_path,
-                                   in_raster, is_math, scratch, messages)
+            out_path, lyrx = _write_trig(
+                gdal, key, compass, dvalid, flat, flat_nodata, bearing, gt,
+                proj, width, height, out_path, in_raster, is_math, scratch,
+                messages)
         if out_path:
             outputs.append(out_path)
             if out_map is not None:
                 out_map[key] = out_path     # per-transformation outputs
+            if lyrx_map is not None and lyrx:
+                lyrx_map[key] = lyrx        # its symbology layer file
 
     _mh.end_phases()
     _say(messages, "Aspect Transformation complete: created {} raster(s).".format(
@@ -1338,11 +1389,16 @@ def _write_reclass(gdal, key, compass, dvalid, flat, flat_nodata, gt, proj,
     prev = arcpy.env.pyramid
     arcpy.env.pyramid = "NONE"
     try:
-        arcpy.management.CopyRaster(tmp, out_path, pixel_type="32_BIT_SIGNED")
+        # Grid-native delivery: no environment (Output Coordinate System,
+        # Extent, Snap Raster, Cell Size, Mask) may re-project, crop or
+        # resample the finished raster (same rule as the trig outputs).
+        with _mh.neutral_grid_env():
+            arcpy.management.CopyRaster(tmp, out_path,
+                                        pixel_type="32_BIT_SIGNED")
     except Exception as e:
         _warn(messages, "Could not write {}: {}".format(out_path, e))
         arcpy.env.pyramid = prev
-        return None
+        return None, None
     finally:
         arcpy.env.pyramid = prev
     try:
@@ -1385,7 +1441,7 @@ def _write_reclass(gdal, key, compass, dvalid, flat, flat_nodata, gt, proj,
         lyrx = None
     _build_pyramids(out_path, "NEAREST", messages)
     _say(messages, "  Created {}".format(out_path))
-    return out_path
+    return out_path, lyrx
 
 
 def _write_trig(gdal, key, compass, dvalid, flat, flat_nodata, bearing, gt,
@@ -1446,18 +1502,18 @@ def _write_trig(gdal, key, compass, dvalid, flat, flat_nodata, bearing, gt,
             citation=cite)
     except Exception as e:
         _warn(messages, "Could not write {}: {}".format(out_path, e))
-        return None
+        return None, None
     # Diverging blue-white-red for the +/-1 transforms; blue-yellow-red for the
     # 0-180 numeric deviation.
     ramp = ([(43, 131, 186), (255, 255, 191), (215, 25, 28)]
             if key in ("NORTHNESS", "EASTNESS", "TRIGDEV")
             else [(43, 131, 186), (255, 255, 191), (215, 25, 28)])
     try:
-        _mh.default_stretch_lyrx(out_path, ramp, messages=messages)
+        lyrx = _mh.default_stretch_lyrx(out_path, ramp, messages=messages)
     except Exception:
-        pass
+        lyrx = None
     _say(messages, "  Created {}".format(out_path))
-    return out_path
+    return out_path, lyrx
 
 
 def _stamp_metadata(out_path, title, in_raster, is_math, desc, messages):
@@ -1982,7 +2038,7 @@ def _run_zonal_raster(in_zone, band, gt, W, H, nodata, rsr, acc, zone_order,
     if (zsr and rsr and zsr.name not in ("Unknown", "") and
             rsr.name not in ("Unknown", "") and zsr.name != rsr.name):
         raise arcpy.ExecuteError(
-            "The zone raster ({}) and the aspect raster ({}) are in "
+            "The zone raster ({}) and the input raster ({}) are in "
             "different coordinate systems -- project one to match the other "
             "first (Project Raster).".format(zsr.name, rsr.name))
 
@@ -1998,7 +2054,7 @@ def _run_zonal_raster(in_zone, band, gt, W, H, nodata, rsr, acc, zone_order,
         zext = (zgt[0], zgt[3] - zH * zcsy, zgt[0] + zW * zcsx, zgt[3])
         c0, r0, c1, r1 = _zone_window(zext, gt, W, H, margin=0)
         if c1 <= c0 or r1 <= r0:
-            _warn(messages, "The zone raster does not overlap the aspect "
+            _warn(messages, "The zone raster does not overlap the input "
                             "raster; the output table will be empty.")
             return
         csx, csy = gt[1], abs(gt[5])

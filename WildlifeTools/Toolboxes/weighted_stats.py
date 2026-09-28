@@ -338,6 +338,11 @@ def run_weighted_stats(in_features, fields, out_table, case_field=None,
                   + [f for f, _ in dbl])
     rows_written = 0
     total_rows = max(len(ordered_cases) * len(fields), 1)
+    # a dBASE table cannot store NULL: the house -999 stand-in for a
+    # statistic that is undefined (one record -> no SD, all values null...)
+    is_dbf = out_table.lower().endswith(".dbf")
+    nul = _mh.SHP_NULL if is_dbf else None
+    n_stand_in = 0
     with arcpy.da.InsertCursor(out_table, ins_fields) as ins:
         for ck in ordered_cases:
             for f in fields:
@@ -349,6 +354,9 @@ def run_weighted_stats(in_features, fields, out_table, case_field=None,
                     s["sd"], s["var"], s["median"],
                     s["w_total"], s["w_mean"], s["w_sd"], s["w_var"],
                     s["w_median"]]
+                if is_dbf:
+                    n_stand_in += sum(1 for v in row if v is None)
+                    row = [nul if v is None else v for v in row]
                 ins.insertRow(row)
                 rows_written += 1
                 _mh.phase_step(rows_written, total_rows)
@@ -356,6 +364,10 @@ def run_weighted_stats(in_features, fields, out_table, case_field=None,
     _mh.end_phases()
     _say(messages, "Wrote {:,} statistics row(s) to {} in {:.1f} s.".format(
         rows_written, out_table, time.perf_counter() - _t0))
+    if n_stand_in:
+        _say(messages, "{:,} undefined statistic(s) (for example the standard "
+             "deviation of a single record) were written as -999, because a "
+             "dBASE table cannot store null.".format(n_stand_in))
     _t0 = time.perf_counter()
     if is_polygon:
         _say(messages,
