@@ -322,10 +322,12 @@ def _add_tables_to_map(P, names, messages=None):
     the FIRST output parameter of a tool to the map (Jeff's run, 2026-09-08:
     Calculate Statistical Matrices with four table outputs -> only the mean
     vector appeared), so any further output tables must be added explicitly
-    via arcpy.mp -- execute-time only (CURRENT is reliable there), honoring
-    the add-outputs-to-map option, and silently doing nothing headless."""
-    if arcpy.env.addOutputsToMap is False:
-        return
+    via arcpy.mp -- execute-time only (CURRENT is reliable there), silently
+    doing nothing headless. There is deliberately NO check of
+    arcpy.env.addOutputsToMap: inside the geoprocessing pane it reads False
+    even when Pro is adding outputs (verified 2026-09-28; see the note on
+    AspectTransformation._add_symbolized), so a guard on it skipped every
+    table."""
     paths = [P[n].valueAsText for n in names if n in P and P[n].valueAsText]
     if not paths:
         return
@@ -5039,9 +5041,19 @@ class SplitLinesIntoSegments(object):
             except Exception:
                 pass
         use_dem = (src.valueAsText == self._DEM_SOURCE)
+        try:
+            want_land = bool({k for k, _ in self._seg_pairs(P["surface_attributes"])}
+                             & self._LANDSCAPE_STATS)
+        except Exception:
+            want_land = False
         if use_dem and not dem.valueAsText:
             dem.setErrorMessage("Specify a DEM, or choose the polylines' own Z values.")
-        if use_dem and dem.valueAsText:
+        elif want_land and not dem.valueAsText:
+            dem.setErrorMessage(
+                "Average Landscape Slope, Average Landscape Compass Direction "
+                "and Traverse Angle are read from a DEM: specify one, or "
+                "remove those attributes.")
+        if dem.valueAsText and (use_dem or want_land):
             try:
                 if arcpy.Describe(dem.valueAsText).bandCount != 1:
                     dem.setErrorMessage("The elevation raster must be single band.")
@@ -5283,8 +5295,9 @@ class SplitLinesIntoSegments(object):
 
             mahalanobis.phase_advance()              # -> "Splitting ... segments..."
             label_every = max(1, (n_total // 200) or 1)
-            n_lines = n_segs = nodata_segs = 0
-            n_alt = n_alt_dropped = 0
+            n_lines = n_segs = 0
+            seg_diag = {"nodata_segs": 0, "nodata_gaps": 0}
+            n_alt = n_alt_dropped = n_alt_zero = 0
             step_id = 0
 
             def write_rec(rec, copied_vals, used, sid, alt_no):
@@ -5325,7 +5338,8 @@ class SplitLinesIntoSegments(object):
                         n_lines += 1
                         recs = lst.build_segments(
                             shp, source, dem, elev_mpu, source_sr, oid,
-                            landscape=want_land, vertex_only=vertex_only)
+                            landscape=want_land, vertex_only=vertex_only,
+                            diag=seg_diag)
                         step_lengths = [r["plan_m"] for r in recs if r["plan_m"] > 0]
                         for rec in recs:
                             step_id += 1
@@ -5348,7 +5362,7 @@ class SplitLinesIntoSegments(object):
                                 length_m = (rec["plan_m"] if alt_same or not step_lengths
                                             else alt_rng.choice(step_lengths))
                                 if length_m <= 0:
-                                    n_alt_dropped += 1
+                                    n_alt_zero += 1        # zero-length real step
                                     continue
                                 end = arcpy.PointGeometry(start, source_sr) \
                                     .pointFromAngleAndDistance(heading, length_m, "GEODESIC") \
@@ -5368,7 +5382,17 @@ class SplitLinesIntoSegments(object):
             messages.addMessage(
                 "Created {:,} segment feature(s) from {:,} line(s).".format(
                     n_segs, n_lines))
+            if seg_diag["nodata_segs"]:
+                messages.addWarningMessage(
+                    "{:,} segment(s) touching NoData elevation were skipped; the "
+                    "chain was broken at {:,} gap(s), and each run of valid "
+                    "segments starts its own angle chain.".format(
+                        seg_diag["nodata_segs"], seg_diag["nodata_gaps"]))
             if alt_k > 0:
+                if n_alt_zero:
+                    messages.addMessage(
+                        "{:,} alternative step(s) not cast because their real "
+                        "step has zero length.".format(n_alt_zero))
                 messages.addMessage(
                     "Alternative steps: {} per real step, headings {}, lengths {}"
                     "{}; {:,} written, {:,} dropped (end on NoData or off the DEM). "

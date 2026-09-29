@@ -1317,7 +1317,7 @@ def compute_line_statistics(parts, length_unit="Meters", elev_unit="Meters",
 # --------------------------------------------------------------------------
 
 def build_segments(shape, source, dem, elev_m_per_unit, source_sr, parent_oid,
-                   landscape=False, vertex_only=False):
+                   landscape=False, vertex_only=False, diag=None):
     """Ordered per-segment records for ONE polyline feature, for the segment
     tool. Coordinates are in the SOURCE dataset's coordinate system; lengths and
     elevation change are carried in METERS (converted at write time by
@@ -1333,7 +1333,9 @@ def build_segments(shape, source, dem, elev_m_per_unit, source_sr, parent_oid,
     fall line (0 straight up/down, 90 along the contour); None where undefined.
     With ``vertex_only`` True the DEM is sampled at the original vertices only,
     giving one segment per vertex pair (e.g. one per GPS step) instead of one
-    per DEM cell crossed."""
+    per DEM cell crossed. ``diag`` (a dict, optional) accumulates
+    ``nodata_segs`` (segments skipped on NoData) and ``nodata_gaps`` (runs of
+    them, i.e. breaks in the chain) for the run report."""
     import arcpy
     if landscape and dem is not None:
         _landscape_grids(dem, elev_m_per_unit)
@@ -1387,11 +1389,17 @@ def build_segments(shape, source, dem, elev_m_per_unit, source_sr, parent_oid,
 
         station_m = 0.0
         prev = None                       # (bearing, pitch, vx, vy, vz)
+        in_gap = False
         for i in range(len(samples_s) - 1):
             z0, z1 = z_elev[i], z_elev[i + 1]
             if not (z0 is not None and z1 is not None
                     and np.isfinite(z0) and np.isfinite(z1)):
                 prev = None               # gap breaks the angle chain
+                if diag is not None:
+                    diag["nodata_segs"] = diag.get("nodata_segs", 0) + 1
+                    if not in_gap:
+                        diag["nodata_gaps"] = diag.get("nodata_gaps", 0) + 1
+                in_gap = True
                 # The gap still occupies distance along the line, so the
                 # station past it stays the true distance from the start.
                 try:
@@ -1403,6 +1411,7 @@ def build_segments(shape, source, dem, elev_m_per_unit, source_sr, parent_oid,
                 except Exception:
                     pass
                 continue
+            in_gap = False
             p0, p1 = samples_s[i], samples_s[i + 1]
             g0 = arcpy.PointGeometry(p0, source_sr)
             g1 = arcpy.PointGeometry(p1, source_sr)

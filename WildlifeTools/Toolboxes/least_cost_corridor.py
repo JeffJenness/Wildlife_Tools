@@ -425,13 +425,13 @@ def _deliver_corridor_raster(gdal, corridor, valid, gt, proj, w, h, out_path,
         citation=_CD_CITATION)
 
 
-def _create_corridor_fc(out_ws, out_name, sr):
+def _create_corridor_fc(out_ws, out_name, sr, cat_len=255):
     import arcpy
 
     arcpy.management.CreateFeatureclass(out_ws, out_name, "POLYGON",
                                         spatial_reference=_mh.clean_sr(sr))
     out_fc = os.path.join(out_ws, out_name)
-    fields = [("Category", "TEXT", 64), ("CategoryID", "LONG", None),
+    fields = [("Category", "TEXT", cat_len), ("CategoryID", "LONG", None),
               ("Block_A", "LONG", None), ("Block_B", "LONG", None),
               ("Percentile", "DOUBLE", None), ("CorridorID", "LONG", None),
               ("Area_SqM", "DOUBLE", None), ("Cells", "LONG", None)]
@@ -682,9 +682,21 @@ def run_least_cost_corridor(in_termini, cost_raster=None, cost_workspace=None,
         if not n_lab:
             return 0
         if not fc_state["created"]:
-            _create_corridor_fc(out_ws, out_name, rast_sr)
+            # A shapefile's text fields top out at 254 characters.
+            fc_state["cat_len"] = (254 if _mh.is_shapefile_target(
+                os.path.join(out_ws, out_name)) else 255)
+            _create_corridor_fc(out_ws, out_name, rast_sr, fc_state["cat_len"])
             fc_state["created"] = True
             fc_state["sr"] = rast_sr
+        cat_len = fc_state.get("cat_len", 255)
+        if label is not None and len(str(label)) > cat_len:
+            if not fc_state.get("warned_len"):
+                _warn(messages,
+                      "A category label is {:,} characters long; the Category "
+                      "field holds {:,}, so it was cut short.".format(
+                          len(str(label)), cat_len))
+                fc_state["warned_len"] = True
+            label = str(label)[:cat_len]
         polys = _term._polygons_from_labels(gdal, ogr, lab_grid, gt, proj, rast_sr)
         counts = np.bincount(lab_grid.ravel(),
                              minlength=n_lab + 1)[1:]

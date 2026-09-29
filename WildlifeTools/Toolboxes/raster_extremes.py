@@ -469,8 +469,18 @@ def run_find_extremes(in_raster, out_fc, extreme_type=None,
     out_ws, out_name = os.path.split(str(out_fc))
     arcpy.management.CreateFeatureclass(out_ws, out_name, "POINT",
                                         spatial_reference=_mh.clean_sr(out_sr))
+    # A shapefile's text fields top out at 254 characters; a geodatabase
+    # takes a long folder path whole.
+    shp_out = _mh.is_shapefile_target(out_fc)
+    path_len = 254 if shp_out else 1024
+    if len(src_ws) > path_len:
+        _warn(messages,
+              "The DEM's folder path is {:,} characters long; the SrcPath "
+              "field of a shapefile holds {:,}, so it was cut short.".format(
+                  len(src_ws), path_len))
+        src_ws = src_ws[:path_len]
     fields = [("Type", "TEXT", 12), ("SrcRaster", "TEXT", 128),
-              ("SrcPath", "TEXT", 254), ("CellValue", "DOUBLE", None),
+              ("SrcPath", "TEXT", path_len), ("CellValue", "DOUBLE", None),
               ("Prominence", "DOUBLE", None), ("EdgeOfData", "SHORT", None),
               ("X", "DOUBLE", None), ("Y", "DOUBLE", None)]
     # one AddFields call, not one AddField per field (standing rule)

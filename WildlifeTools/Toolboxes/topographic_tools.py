@@ -3109,8 +3109,10 @@ def _slope_zonal_points(in_zone, zone_field, band, gt, W, H, nodata, rsr,
     if nodata is not None:
         valid &= (arr != nodata)
     valid = _mh.mask_band_valid(band, valid, c0, r0)
+    oor = np.zeros(arr.shape, bool)       # present but outside the valid range
     if lim is not None:
-        valid &= (np.abs(arr) <= lim)
+        oor = valid & (np.abs(arr) > lim)
+        valid &= ~oor
     sval = np.where(valid, arr, 0.0)
     # NEG_COUNT reports values negative in the SOURCE, before the absolute-
     # value option (as for cell zones): interpolate the signed angles too,
@@ -3129,6 +3131,7 @@ def _slope_zonal_points(in_zone, zone_field, band, gt, W, H, nodata, rsr,
     dsum = np.zeros(len(keys_))
     ssum = np.zeros(len(keys_))
     wsum = np.zeros(len(keys_))
+    lost = np.zeros(len(keys_), bool)     # lost a neighbor to the range check
     for dr in (0, 1):
         for dc in (0, 1):
             cc = cL + dc
@@ -3138,10 +3141,22 @@ def _slope_zonal_points(in_zone, zone_field, band, gt, W, H, nodata, rsr,
             ccs = np.clip(cc, 0, Ww - 1)
             rrs = np.clip(rr, 0, Hw - 1)
             ok = inb & valid[rrs, ccs]
+            lost |= inb & oor[rrs, ccs]
             dsum += np.where(ok, w * dval[rrs, ccs], 0.0)
             ssum += np.where(ok, w * dval_signed[rrs, ccs], 0.0)
             wsum += np.where(ok, w, 0.0)
 
+    n_lost = int(np.count_nonzero(lost))
+    if n_lost:
+        n_lost_all = int(np.count_nonzero(lost & (wsum <= 1e-12)))
+        _warn(messages,
+              "{:,} point(s) had a value outside the valid slope range for {} "
+              "among their four surrounding cells; those cells were left out "
+              "of the interpolation{} -- this may not be a slope raster in the "
+              "chosen unit.".format(
+                  n_lost, _slope_unit_word(unit),
+                  " ({:,} point(s) were left with no value)".format(n_lost_all)
+                  if n_lost_all else ""))
     n_out = 0
     per_zone_deg = {}
     per_zone_neg = {}
