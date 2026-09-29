@@ -401,6 +401,119 @@ def focal_percentile(z, valid, rx_out_rows, ry_out, rx_in_rows, ry_in,
     return pctl
 
 
+def pctl_reachable_max(rx_out_rows, ry_out, rx_in_rows, ry_in):
+    """Highest value a percentile TPI can take with this neighborhood.
+
+    focal_percentile counts the focal cell in its own neighborhood (the
+    denominator) but never below itself, so a circle of n cells tops out at
+    100 (n - 1) / n -- a cell higher than every neighbor -- e.g. 88.9 for the
+    9 cells of a 1.5-cell radius. An annulus excludes the centre and can
+    reach 100. Returns (max_value, n_max, varies): n_max is the largest
+    interior neighborhood (per-row radii on a geographic DEM can make n vary
+    by row, flagged by ``varies``); n_max is None for an annulus. Uses the
+    same inside test as focal_percentile."""
+    rxo = np.asarray(rx_out_rows, dtype=np.float64)
+    rxi = np.asarray(rx_in_rows, dtype=np.float64)
+    if bool((rxi > 0).any() or ry_in > 0):
+        return 100.0, None, False
+    uniq = np.unique(rxo)
+    ry = max(float(ry_out), 1e-9)
+    nyo = int(math.ceil(float(ry_out)))
+    n = np.zeros(uniq.shape)
+    for dr in range(-nyo, nyo + 1):
+        g = 1.0 + 1e-9 - (dr / ry) ** 2
+        if g < 0.0:
+            continue
+        m = np.floor(np.maximum(uniq, 1e-9) * math.sqrt(g) + 1e-12)
+        n += 2.0 * m + 1.0
+    n_max = int(n.max())
+    if n_max <= 0:
+        return 0.0, n_max, False
+    return 100.0 * (n_max - 1) / n_max, n_max, bool(n.min() != n.max())
+
+
+def _disk_radius_for_cells(n_needed):
+    """Smallest circle radius (in cells, 0.5-cell steps) whose disk holds at
+    least ``n_needed`` cells; for the percentile advice."""
+    r = 1.0
+    while r < 1000.0:
+        k = int(math.ceil(r))
+        xs = np.arange(-k, k + 1)
+        cnt = int((((xs[None, :] / r) ** 2 + (xs[:, None] / r) ** 2)
+                   <= 1.0 + 1e-9).sum())
+        if cnt >= n_needed:
+            return r
+        r += 0.5
+    return None
+
+
+def _describe_conditions(conditions):
+    c0 = conditions[0]
+    s = "{} {:g}".format(c0["op"], float(c0["value"]))
+    if len(conditions) > 1:
+        c1 = conditions[1]
+        s += " {} {} {:g}".format(c1.get("join", "and"), c1["op"],
+                                  float(c1["value"]))
+    return s
+
+
+def _condition_reachable(conditions, hi):
+    """True if some value in [0, hi] satisfies the criterion's conditions
+    (percentile TPI is never below 0)."""
+    cands = {0.0, float(hi)}
+    for c in conditions:
+        v = float(c["value"])
+        for x in (v, v - 1e-6, v + 1e-6):
+            if 0.0 <= x <= hi:
+                cands.add(x)
+    vals = sorted(cands)
+    for a, b in zip(vals, vals[1:]):
+        cands.add((a + b) / 2.0)
+    arr = np.array(sorted(cands), dtype=np.float64)
+    return bool(_criterion_mask(arr, conditions).any())
+
+
+def pctl_class_warnings(system, role, hi, from_raster=False):
+    """Warnings for classes whose percentile-TPI criterion on ``role`` no cell
+    can satisfy because the percentile cannot exceed ``hi`` (see
+    pctl_reachable_max). ``from_raster`` True: ``hi`` is the observed maximum
+    of a supplied raster rather than the neighborhood's mathematical limit.
+    Values and classes are never changed."""
+    out = []
+    for c in sorted(system.get("classes", []), key=lambda c: int(c["value"])):
+        for cr in c.get("criteria", []):
+            if cr.get("input") != role:
+                continue
+            if _UNIT_KIND.get(cr.get("units", "raw")) != "pctl":
+                continue
+            conds = cr.get("conditions") or []
+            if not conds or _condition_reachable(conds, hi):
+                continue
+            if from_raster:
+                why = ("the highest value in this TPI raster is "
+                       "{:.1f}").format(hi)
+                advice = ("Use a TPI computed over a larger neighborhood or "
+                          "lower the threshold.")
+            else:
+                why = ("with this neighborhood the highest possible value is "
+                       "{:.1f}").format(hi)
+                need = None
+                for cond in conds:
+                    v = float(cond["value"])
+                    if cond["op"] in (">", ">=") and v < 100.0:
+                        n_req = int(math.floor(100.0 / (100.0 - v))) + 1
+                        need = max(need or 0, n_req)
+                r = _disk_radius_for_cells(need) if need else None
+                advice = ("Use a larger neighborhood (a radius of {:g} cells "
+                          "or more) or lower the threshold.").format(r) \
+                    if r else "Use a larger neighborhood or lower the threshold."
+            out.append(("Class '{}' needs percentile TPI {}, but {}; no cell "
+                        "can fall in that class. {}").format(
+                            c.get("name", c.get("value")),
+                            _describe_conditions(conds), why, advice))
+    return out
+
+
 # ---------------------------------------------------------------------------
 #  TPI variants and slope
 # ---------------------------------------------------------------------------
@@ -774,6 +887,13 @@ def run_classification(family, in_raster, out_raster, system, sources,
                 rtype = spec.get("declared_type") or read_tpi_type(spec["raster"])
                 nbhd_by_role[role] = read_tpi_nbhd(spec["raster"])
                 w = tpi_type_warning(system, role, rtype)
+                # A percentile TPI cannot exceed 100 (n - 1) / n; for a
+                # supplied raster the observed maximum is the practical limit.
+                if rtype is None or _TPI_TYPE_KIND.get(rtype) == "pctl":
+                    fin = resolved[role][np.isfinite(resolved[role])]
+                    if fin.size:
+                        warnings.extend(pctl_class_warnings(
+                            system, role, float(fin.max()), from_raster=True))
             else:
                 tpi_type = spec.get("tpi_type", "dev")
                 _step("Computing TPI ({}) for '{}' over a {} radius {:g} {}...".format(
@@ -793,6 +913,9 @@ def run_classification(family, in_raster, out_raster, system, sources,
                 nbhd_by_role[role] = (spec.get("outer"),
                                       spec.get("units", "Cells"))
                 w = tpi_type_warning(system, role, tpi_type)
+                if tpi_type == "pctl":
+                    hi, _n, _var = pctl_reachable_max(rxo, ryo, rxi, ryi)
+                    warnings.extend(pctl_class_warnings(system, role, hi))
                 if spec.get("save"):
                     _step("Saving generated TPI raster for '{}'...".format(role))
                     _save_intermediate(
@@ -1032,6 +1155,16 @@ def run_tpi(in_raster, out_raw=None, out_dev=None, out_pctl=None,
     if "pctl" in keys:
         _mh.phase_advance("Computing percentile within neighborhood...")
         grids["pctl"] = focal_percentile(z, valid, rxo, ryo, rxi, ryi, messages)
+        hi, n_max, varies = pctl_reachable_max(rxo, ryo, rxi, ryi)
+        if n_max is None:
+            _hs._msg(messages, "Percentile TPI: the annulus leaves out the "
+                     "centre cell, so values can reach 100.")
+        else:
+            _hs._msg(messages, "Percentile TPI: with a neighborhood of {}{} "
+                     "cells including the centre cell, the highest possible "
+                     "value is {}{:.1f} (a cell higher than every "
+                     "neighbor).".format("at most " if varies else "", n_max,
+                                         "at most " if varies else "", hi))
 
     descs = {
         "raw": ("Topographic Position Index (TPI): each cell's elevation minus "

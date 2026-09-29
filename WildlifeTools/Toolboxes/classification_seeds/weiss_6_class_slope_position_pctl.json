@@ -4,7 +4,7 @@
   "family": "slope_position",
   "builtin": true,
   "slopeUnits": "Degrees",
-  "description": "Six-class slope-position classification from PERCENTILE TPI values (0-100: the percentage of neighborhood cells lower than the focal cell; Wilson and Gallant 2000, eq. 3.31) plus slope (to split flat from mid-slope), after Weiss (2001). Break points at the 10th, 45th, 55th, and 90th percentiles. Percentile thresholds are relative to each cell's own neighborhood, so they adapt to local relief.",
+  "description": "Six-class slope-position classification from PERCENTILE TPI values (0-100: the percentage of neighborhood cells lower than the focal cell; Wilson and Gallant 2000, eq. 3.31) plus slope (to split flat from mid-slope), adapted from Weiss's (2001) classification system. Break points at the 10th, 45th, 55th, and 90th percentiles. Percentile thresholds are relative to each cell's own neighborhood, so they adapt to local relief.",
   "source": "Weiss, A. 2001. Topographic Position and Landforms Analysis. ESRI International User Conference poster; percentile TPI after Wilson, J. P., and J. C. Gallant. 2000. Terrain analysis: principles and applications (eq. 3.31).",
   "inputs": [
     { "role": "tpi", "kind": "tpi", "label": "TPI (percentile)" },

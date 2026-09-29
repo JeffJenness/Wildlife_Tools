@@ -4,7 +4,7 @@
   "family": "landform",
   "builtin": true,
   "slopeUnits": "Degrees",
-  "description": "Landform classification from a small- and a large-neighborhood TPI (standardized) plus slope, after Weiss (2001).",
+  "description": "Landform classification from a small- and a large-neighborhood TPI (standardized) plus slope, adapted from Weiss's (2001) classification system.",
   "source": "Weiss, A. 2001. Topographic Position and Landforms Analysis. ESRI International User Conference poster.",
   "inputs": [
     {

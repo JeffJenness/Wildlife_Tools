@@ -4,7 +4,7 @@
   "family": "slope_position",
   "builtin": true,
   "slopeUnits": "Degrees",
-  "description": "Six-class slope-position classification from a standardized TPI plus slope (to split flat from mid-slope), after Weiss (2001).",
+  "description": "Six-class slope-position classification from a standardized TPI plus slope (to split flat from mid-slope), adapted from Weiss's (2001) classification system.",
   "source": "Weiss, A. 2001. Topographic Position and Landforms Analysis. ESRI International User Conference poster.",
   "inputs": [
     {

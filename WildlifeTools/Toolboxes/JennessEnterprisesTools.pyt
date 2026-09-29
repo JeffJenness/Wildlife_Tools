@@ -5573,12 +5573,19 @@ class AspectFocalStatistics(object):
         flat_handling.filter.type = "ValueList"
         flat_handling.filter.list = aspect_tools.FLAT_HANDLING
         flat_handling.value = aspect_tools.FLAT_HANDLING[0]
+        # Esri's Ignore NoData in calculations. Last, so existing positional
+        # script calls stay valid; checked = the behavior before it existed.
+        ignore_nodata = arcpy.Parameter(
+            displayName="Ignore NoData in calculations", name="ignore_nodata",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        ignore_nodata.value = True
         params = [in_raster, out_raster, statistic, neighborhood, nbr_units,
                   radius, width, height, inner_radius, outer_radius,
                   start_angle, end_angle, kernel_file, input_convention,
-                  flat_handling]
+                  flat_handling, ignore_nodata]
         saved = _load_tool_defaults("AspectFocalStatistics")
-        for p in (statistic, neighborhood, nbr_units, flat_handling):
+        for p in (statistic, neighborhood, nbr_units, flat_handling,
+                  ignore_nodata):
             if p.name in saved:
                 try:
                     p.value = saved[p.name]
@@ -5711,7 +5718,8 @@ class AspectFocalStatistics(object):
                                   or aspect_tools.INPUT_CONVENTIONS[0]),
                 flat_handling=(P["flat_handling"].valueAsText
                                or aspect_tools.FLAT_HANDLING[0]),
-                messages=messages)
+                messages=messages,
+                ignore_nodata=(P["ignore_nodata"].value is not False))
             _writeback_resolved_raster(P, "out_raster")
             if out_lyrx:
                 try:
@@ -5724,6 +5732,7 @@ class AspectFocalStatistics(object):
                 "neighborhood": P["neighborhood"].valueAsText,
                 "nbr_units": P["nbr_units"].valueAsText,
                 "flat_handling": P["flat_handling"].valueAsText,
+                "ignore_nodata": P["ignore_nodata"].value is not False,
             })
         except arcpy.ExecuteError as e:
             # Clean, expected failure (bad input, a validation check that

@@ -536,9 +536,18 @@ def run_aspect_focal(in_raster, out_raster, statistic,
                      start_angle=0.0, end_angle=90.0,
                      nbr_units="Cells", kernel_file=None,
                      input_convention=INPUT_CONVENTIONS[0],
-                     flat_handling=FLAT_HANDLING[0], messages=None):
+                     flat_handling=FLAT_HANDLING[0], messages=None,
+                     ignore_nodata=True):
     """Compute one circular focal statistic on an aspect raster. See the module
-    docstring and the tool help for conventions and the all-flat fill values."""
+    docstring and the tool help for conventions and the all-flat fill values.
+
+    ``ignore_nodata`` (Esri's Ignore NoData in calculations): True leaves
+    NoData cells out of each neighborhood and uses the rest (a NoData cell
+    with any valid neighbor gets a value); False makes a cell NoData when ANY
+    cell of its neighborhood (kernel weight > 0, the processing cell included)
+    is NoData -- and, as in Esri's Focal Statistics, the area beyond the
+    raster edge counts as NoData, so a band one neighborhood radius wide
+    around the edge becomes NoData. Flat cells (-1) are data, not NoData."""
     import arcpy
     if statistic not in STAT_LABEL:
         # allow passing the label
@@ -628,6 +637,10 @@ def run_aspect_focal(in_raster, out_raster, statistic,
     cos_f = np.where(dvalid, np.cos(rad), 0.0).astype(np.float32)
     dvalid_f = dvalid.astype(np.float32)
     flat_f = flat.astype(np.float32)
+    # Ignore NoData unchecked: count each neighborhood's valid cells (flat
+    # cells are data). correlate() pads with 0, so cells beyond the raster
+    # edge count as missing -- Esri's rule.
+    valid_f = None if ignore_nodata else valid.astype(np.float32)
     shape = a.shape
     del a, valid                          # raw grid no longer needed
 
@@ -666,9 +679,18 @@ def run_aspect_focal(in_raster, out_raster, statistic,
     C = np.zeros(shape, np.float32)
     Ndir = np.zeros(shape, np.float32)
     Nflat = np.zeros(shape, np.float32)
+    # A Weight kernel's Rayleigh test needs the sum of squared weights too:
+    # Kish's effective sample size (sum w)^2 / sum w^2 depends only on the
+    # RELATIVE weights, so a kernel of 1s and one of 10s give the same p.
+    kish = weighted and statistic == "RAYLEIGH"
+    Nw2 = np.zeros(shape, np.float32) if kish else None
+    # Cells whose neighborhood includes NoData or reaches past the edge
+    # (only when Ignore NoData is unchecked).
+    any_nd = None if ignore_nodata else np.zeros(shape, bool)
     single = (len(groups) == 1)
     conv_done = [0]
-    conv_total = 4 * len(groups) + 1          # 4 fields per group + assembly
+    conv_total = ((4 + (1 if kish else 0) + (0 if ignore_nodata else 1))
+                  * len(groups) + 1)       # fields per group + assembly
 
     def _tick():
         conv_done[0] += 1
@@ -681,12 +703,26 @@ def run_aspect_focal(in_raster, out_raster, statistic,
             C = _hs.nbr_conv(cos_f, kf); _tick()
             Ndir = _hs.nbr_conv(dvalid_f, kf); _tick()
             Nflat = _hs.nbr_conv(flat_f, kf); _tick()
+            if kish:
+                Nw2 = _hs.nbr_conv(dvalid_f, kf * kf); _tick()
         else:
             S[rows] = _hs.nbr_conv(sin_f, kf)[rows]; _tick()
             C[rows] = _hs.nbr_conv(cos_f, kf)[rows]; _tick()
             Ndir[rows] = _hs.nbr_conv(dvalid_f, kf)[rows]; _tick()
             Nflat[rows] = _hs.nbr_conv(flat_f, kf)[rows]; _tick()
-    del sin_f, cos_f, dvalid_f, flat_f
+            if kish:
+                Nw2[rows] = _hs.nbr_conv(dvalid_f, kf * kf)[rows]; _tick()
+        if not ignore_nodata:
+            kb = (k > 0).astype(np.float32)
+            nv = _hs.nbr_conv(valid_f, kb)
+            short = nv < (np.float32(kb.sum()) - np.float32(0.5))
+            if single:
+                any_nd = short
+            else:
+                any_nd[rows] = short[rows]
+            del nv, short
+            _tick()
+    del sin_f, cos_f, dvalid_f, flat_f, valid_f
     if statistic not in _ORDER_STATS:
         del rad
     if not weighted:
@@ -733,7 +769,16 @@ def run_aspect_focal(in_raster, out_raster, statistic,
                            np.float32(2.0) * (np.float32(1.0) - Rbar),
                            np.float32(0.0)))), NANF)
     elif statistic == "RAYLEIGH":
-        p = _rayleigh_p(np.where(Ndir == 0, np.float32(1.0), Ndir), Rbar)
+        if kish:
+            # Kish (1965) effective sample size for weighted observations:
+            # equals the cell count when all weights are equal, and does not
+            # change when every weight is multiplied by the same constant.
+            with np.errstate(divide="ignore", invalid="ignore"):
+                n_test = np.where(Nw2 > 1e-12, (Ndir * Ndir) / Nw2,
+                                  np.float32(1.0)).astype(np.float32)
+        else:
+            n_test = Ndir
+        p = _rayleigh_p(np.where(n_test == 0, np.float32(1.0), n_test), Rbar)
         out = np.where(has_dir, p.astype(np.float32), NANF)
         del p
     elif statistic == "KAPPA":
@@ -769,6 +814,14 @@ def run_aspect_focal(in_raster, out_raster, statistic,
     fill = _ALLFLAT_FILL[statistic]
     out[all_flat] = NANF if as_nodata else np.float32(fill)
     out[no_valid] = NANF
+    if any_nd is not None:
+        n_nd = int(np.count_nonzero(any_nd & ~no_valid))
+        out[any_nd] = NANF
+        _say(messages,
+             "Ignore NoData is off: {:,} cell(s) set to NoData because their "
+             "neighborhood includes a NoData cell or extends past the edge "
+             "of the raster.".format(n_nd))
+        del any_nd
 
     out_valid = np.isfinite(out)
     n_out = int(out_valid.sum())

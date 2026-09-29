@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "Weiss 6-Class Slope Position, using Raw TPI values",
   "family": "slope_position",
-  "description": "Six-class slope-position classification from RAW TPI values (elevation units; thresholds +/- 5 and +/- 20) plus slope (to split flat from mid-slope), after Weiss (2001). Raw thresholds are absolute relief -- adjust them to your DEM and question.",
+  "description": "Six-class slope-position classification from RAW TPI values (elevation units; thresholds +/- 5 and +/- 20) plus slope (to split flat from mid-slope), adapted from Weiss's (2001) classification system. Raw thresholds are absolute relief -- adjust them to your DEM and question.",
   "source": "Weiss, A. 2001. Topographic Position and Landforms Analysis. ESRI International User Conference poster.",
   "builtin": true,
   "slopeUnits": "Degrees",
