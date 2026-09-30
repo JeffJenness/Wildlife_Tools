@@ -237,7 +237,7 @@
             <StackPanel Orientation="Horizontal" Margin="16,0,0,0">
               <Label Content="Bearings:" />
               <TextBox x:Name="txtSecRays" Text="12" Width="48" TextChanged="StyleText"
-                  ToolTip="How many bearings around the circle: 12 = every 30 degrees, 18 = every 20 degrees. Minimum 3." />
+                  ToolTip="How many bearings around the circle: 12 = every 30 degrees, 18 = every 20 degrees. Minimum 3. The degree labels go at these bearings (the rays always start at 0 degrees), so a count that does not divide 360 by a multiple of 90 leaves some of east, south and west unlabeled." />
             </StackPanel>
             <CheckBox x:Name="chkSecCircles" Content="Secondary reference circles" IsChecked="True"
                 Checked="StyleRouted" Unchecked="StyleRouted"
@@ -267,7 +267,7 @@
                 ToolTip="Turn each degree label so it flows around the circle (perpendicular to its bearing ray) instead of staying horizontal. Labels on the lower half are flipped so nothing reads upside-down." />
             <CheckBox x:Name="chkInnerLabels" Content="Show inner ring-value labels" IsChecked="True"
                 Checked="StyleRouted" Unchecked="StyleRouted"
-                ToolTip="Bin-value labels at each secondary ring, drawn just beside the chosen axes with a halo for readability." />
+                ToolTip="Bin-value labels at each secondary ring, drawn just beside the chosen axes with a halo for readability. Shade by Density shows a color legend below the plot instead, since its wedges all reach the circle; Smoothed Density and Dot Plot have no ring values." />
             <StackPanel Orientation="Horizontal" Margin="16,0,0,0">
               <CheckBox x:Name="chkInnerN" Content="N" IsChecked="True" Margin="0,0,6,0" Checked="StyleRouted" Unchecked="StyleRouted" ToolTip="Label ring values along the north axis." />
               <CheckBox x:Name="chkInnerE" Content="E" Margin="0,0,6,0" Checked="StyleRouted" Unchecked="StyleRouted" ToolTip="Label ring values along the east axis." />
@@ -364,9 +364,9 @@
         <Button x:Name="btnStats" Content="Calculate statistics" Margin="4,0"
                 Padding="10,4" Click="OnCalcStats"
                 ToolTip="Open the Circular Descriptive Statistics report (mean direction, dispersion, Rayleigh test, and more) in a resizable window." />
-        <Button x:Name="btnSaveSvg" Content="Save as SVG..." Margin="4,0"
-                Padding="10,4" Click="OnSaveSvg"
-                ToolTip="Save the plot exactly as previewed to a scalable SVG vector file." />
+        <Button x:Name="btnSaveGraphic" Content="Save Graphic..." Margin="4,0"
+                Padding="10,4" Click="OnSaveGraphic"
+                ToolTip="Save the plot exactly as previewed, as a PNG image (300 dpi, white background) or a scalable SVG vector file; choose the format in the Save as type list." />
         <Button x:Name="btnAddGraphic" Content="Add to Layout" Margin="4,0"
                 Padding="10,4" Click="OnAddGraphic"
                 ToolTip="Place the plot on a layout as a grouped graphic, centered on the page and sized in inches exactly as previewed. If a layout is the active view it is used; otherwise the tool asks which of the project's layouts to use (a project with only one layout uses it without asking). Every piece stays an editable element -- ungroup to adjust individually." />

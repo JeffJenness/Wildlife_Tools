@@ -291,9 +291,9 @@
           <Button x:Name="btnStats" Content="Calculate statistics" Margin="4,0"
                   Padding="10,4" Click="OnCalcStats"
                   ToolTip="Open the Slope Statistics report (mean, median, SD, range, percentiles, 95% CI) in a resizable window with copy and add-to-layout options." />
-          <Button x:Name="btnSaveSvg" Content="Save as SVG..." Margin="4,0"
-                  Padding="10,4" Click="OnSaveSvg"
-                  ToolTip="Save the graphic exactly as previewed to a scalable SVG vector file." />
+          <Button x:Name="btnSaveGraphic" Content="Save Graphic..." Margin="4,0"
+                  Padding="10,4" Click="OnSaveGraphic"
+                  ToolTip="Save the graphic exactly as previewed, as a PNG image (300 dpi, white background) or a scalable SVG vector file; choose the format in the Save as type list." />
           <Button x:Name="btnAddGraphic" Content="Add to Layout" Margin="4,0"
                   Padding="10,4" Click="OnAddGraphic"
                   ToolTip="Place the graphic on a layout as a grouped graphic, centered on the page and sized exactly as previewed. If a layout is the active view it is used; otherwise the tool asks which of the project's layouts to use (a project with only one layout uses it without asking). Every piece stays an editable element -- ungroup to adjust individually." />

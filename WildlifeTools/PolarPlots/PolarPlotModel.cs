@@ -77,6 +77,25 @@ namespace WildlifeTools.PolarPlots
         public double HalfWidthIn = 3.0;   // canvas extends +/- this in x
         public double HalfHeightIn = 3.0;  // and +/- this in y
 
+        /// <summary>Moves every element by (dx, dy) inches. Builders lay a
+        /// plot out around the origin, then shift it so the canvas grows
+        /// only on the sides where titles or legends are drawn.</summary>
+        public void Shift(double dx, double dy)
+        {
+            if (Math.Abs(dx) < 1e-12 && Math.Abs(dy) < 1e-12) return;
+            PtIn S(PtIn p) => new PtIn(p.X + dx, p.Y + dy);
+            foreach (var e in Elements)
+            {
+                if (e.Points != null)
+                    for (int i = 0; i < e.Points.Count; i++) e.Points[i] = S(e.Points[i]);
+                if (e.Rings != null)
+                    foreach (var ring in e.Rings)
+                        if (ring != null)
+                            for (int i = 0; i < ring.Count; i++) ring[i] = S(ring[i]);
+                e.Center = S(e.Center);
+            }
+        }
+
         public static PtIn Polar(double radiusIn, double azimuthDeg)
         {
             double a = azimuthDeg * Math.PI / 180.0;

@@ -869,24 +869,17 @@ namespace WildlifeTools.PolarPlots
             win.Show();
         }
 
-        private void OnSaveSvg(object sender, RoutedEventArgs e)
+        private void OnSaveGraphic(object sender, RoutedEventArgs e)
         {
             if (_model == null) { MessageBox.Show("Nothing to save yet.", "Polar Plots"); return; }
-            var dlg = new Microsoft.Win32.SaveFileDialog
-            {
-                Filter = "SVG file (*.svg)|*.svg",
-                FileName = MakeFileBase() + ".svg",
-                Title = "Save polar plot as SVG",
-                InitialDirectory = ImageSaveFolder.Initial(),
-            };
-            if (dlg.ShowDialog() != true) return;
-            ImageSaveFolder.Remember(dlg.FileName);
             try
             {
-                File.WriteAllText(dlg.FileName, PolarPlotSvg.Render(_model));
-                SetStatus("Saved " + Path.GetFileName(dlg.FileName));
+                string path = PolarPlotWpf.SaveGraphicDialog(_model, MakeFileBase(),
+                    "Save the polar plot");
+                if (path != null) SetStatus("Saved " + Path.GetFileName(path));
             }
-            catch (Exception ex) { MessageBox.Show("Could not save SVG: " + ex.Message, "Polar Plots"); }
+            catch (Exception ex)
+            { MessageBox.Show("Could not save the graphic: " + ex.Message, "Polar Plots"); }
         }
 
         private async void OnAddGraphic(object sender, RoutedEventArgs e)
@@ -894,7 +887,7 @@ namespace WildlifeTools.PolarPlots
             if (_model == null) { MessageBox.Show("Nothing to add yet.", "Polar Plots"); return; }
             var model = _model;                     // snapshot for the MCT call
             string name = "Polar Plot - " +
-                ((cboSource.SelectedItem as PolarPlotData.Source)?.Name ?? "plot");
+                ((cboSource.SelectedItem as PolarPlotData.Source)?.LayerName ?? "plot");
             btnAddGraphic.IsEnabled = false;
             try
             {

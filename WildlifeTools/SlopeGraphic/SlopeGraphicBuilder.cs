@@ -65,7 +65,10 @@ namespace WildlifeTools.SlopeGraphic
             double titleBottom = (s.ShowSecondaryTitles && secLines > 0)
                 ? secLines * s.SecondaryTitleFontSizePt / 72.0 * 1.5 + 0.2 : 0.0;
             m.HalfWidthIn = coreW / 2.0;
-            m.HalfHeightIn = coreH / 2.0 + Math.Max(titleTop, titleBottom);
+            // The canvas holds the title band above and the secondary-title
+            // band below; the graphic is shifted at the end so neither is
+            // mirrored as blank space on the other side.
+            m.HalfHeightIn = coreH / 2.0 + (titleTop + titleBottom) / 2.0;
             double ox = -coreW / 2.0 + padL;
             double oy = -coreH / 2.0 + padB;
 
@@ -278,6 +281,7 @@ namespace WildlifeTools.SlopeGraphic
                         Anchor = TextAnchor.Middle,
                     });
             }
+            m.Shift(0.0, (titleBottom - titleTop) / 2.0);
             return m;
         }
 

@@ -677,25 +677,17 @@ namespace WildlifeTools.SlopeGraphic
             new SlopeStatsWindow(st, header) { Owner = this }.Show();
         }
 
-        private void OnSaveSvg(object sender, RoutedEventArgs e)
+        private void OnSaveGraphic(object sender, RoutedEventArgs e)
         {
             if (_model == null) { MessageBox.Show("Nothing to save yet.", "Slope Graphic"); return; }
-            var dlg = new Microsoft.Win32.SaveFileDialog
-            {
-                Filter = "SVG file (*.svg)|*.svg",
-                FileName = MakeFileBase() + ".svg",
-                Title = "Save slope graphic as SVG",
-                InitialDirectory = ImageSaveFolder.Initial(),
-            };
-            if (dlg.ShowDialog() != true) return;
-            ImageSaveFolder.Remember(dlg.FileName);
             try
             {
-                File.WriteAllText(dlg.FileName, PolarPlotSvg.Render(_model));
-                SetStatus("Saved " + Path.GetFileName(dlg.FileName));
+                string path = PolarPlotWpf.SaveGraphicDialog(_model, MakeFileBase(),
+                    "Save the slope graphic");
+                if (path != null) SetStatus("Saved " + Path.GetFileName(path));
             }
             catch (Exception ex)
-            { MessageBox.Show("Could not save SVG: " + ex.Message, "Slope Graphic"); }
+            { MessageBox.Show("Could not save the graphic: " + ex.Message, "Slope Graphic"); }
         }
 
         private async void OnAddGraphic(object sender, RoutedEventArgs e)

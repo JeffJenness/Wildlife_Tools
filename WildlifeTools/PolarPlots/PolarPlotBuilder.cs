@@ -20,6 +20,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Windows;
+using System.Windows.Media;
 
 namespace WildlifeTools.PolarPlots
 {
@@ -68,7 +70,16 @@ namespace WildlifeTools.PolarPlots
             // titles / wind legend) bands, keeping every band clear of the rim
             // labels. External plots put their azimuth labels INSIDE the inner
             // circle, so no rim band is needed for them.
-            double labelMargin = (s.ShowAzimuthLabels && !external) ? 0.45 : 0.12;
+            // The azimuth labels are placed from their measured size, so each
+            // one sits the same small gap from the circle at any font size
+            // and plot diameter; the rim band is as wide as they need.
+            var azLabels = s.ShowAzimuthLabels
+                ? LayoutAzimuthLabels(s, external, innerR, plotR)
+                : new List<AzLabel>();
+            double labelMargin = 0.12;
+            if (!external)
+                foreach (var lab in azLabels)
+                    labelMargin = Math.Max(labelMargin, lab.FarR - plotR + 0.04);
             double rimR = plotR + labelMargin;
             double titleTop = s.ShowPrimaryTitle ? s.TitleFontSizePt / 72.0 * 1.8 + 0.1 : 0.0;
             int secLines = (secondaryTitles?.Count ?? 0);
@@ -77,9 +88,22 @@ namespace WildlifeTools.PolarPlots
             double legendRow = 0.18;
             double legendBottom = (wind != null)
                 ? 0.24 + (wind.Breaks.Length - 1) * legendRow : 0.0;
-            m.HalfWidthIn = rimR + 0.1;
-            m.HalfHeightIn = rimR + 0.1 + Math.Max(titleTop,
-                Math.Max(titleBottom, legendBottom));
+            // Shade by Density: the value of a wedge is its SHADE, not its
+            // length, so a color legend below the plot (under any secondary
+            // titles) takes the place of the ring-value labels. It follows
+            // the same checkbox as those labels.
+            bool shadeLegend = s.PlotType == PolarPlotType.ShadeByDensity &&
+                               s.ShowInnerLabels && n > 0;
+            double lf = s.LabelFontSizePt / 72.0;
+            double shadeLegendH = shadeLegend ? 1.5 * lf + 0.14 + 1.5 * lf + 0.10 : 0.0;
+            // Bands above and below the rim: the primary title on top; the
+            // secondary titles, then any legend, stacked below. The canvas
+            // holds exactly these, and the finished plot is shifted (end of
+            // Build) so no band is mirrored as blank space on the far side.
+            double topBand = titleTop;
+            double bottomBand = titleBottom + shadeLegendH + legendBottom;
+            m.HalfWidthIn = rimR + 0.06;
+            m.HalfHeightIn = rimR + 0.06 + (topBand + bottomBand) / 2.0;
             const double yShift = 0.0;
 
             // Radius of a value ring at fraction f of the value range: from the
@@ -166,44 +190,24 @@ namespace WildlifeTools.PolarPlots
                 BuildMeanOverlay(m, s, stats, external ? innerR : 0.0, plotR, yShift);
 
             // ---- azimuth labels around the rim ------------------------------
-            if (s.ShowAzimuthLabels)
+            foreach (var lab in azLabels)
             {
-                var azes = new SortedSet<double> { 0, 90, 180, 270 };
-                if (s.ShowSecondaryRefRadius && s.SecondaryRefBearings >= 3)
-                {
-                    double step = 360.0 / s.SecondaryRefBearings;
-                    for (int i = 0; i < s.SecondaryRefBearings; i++)
-                        azes.Add(CircularStats.Mod360(i * step));
-                }
-                double azLabelR = external
-                    ? Math.Max(innerR - 0.16, innerR * 0.55)   // inside the inner circle
-                    : plotR + labelMargin * 0.55;              // outside the rim
-                foreach (double az in azes)
-                {
-                    var p = PolarPlotModel.Polar(azLabelR, az);
-                    var el = Label(
-                        ((int)Math.Round(az)).ToString(CI) + "°",
-                        p.X, p.Y + yShift, s, TextAnchor.Middle);
-                    el.Halo = s.LabelHalo;
-                    el.HaloWidthPt = s.LabelHaloWidthPt;
-                    if (s.AzimuthLabelsRotated)
-                    {
-                        // Perpendicular to the bearing ray = tangential flow
-                        // around the rim; flip the lower half so nothing reads
-                        // upside-down.
-                        double rot = az;
-                        if (az > 90.0 && az < 270.0) rot = az + 180.0;
-                        el.RotationDeg = rot;
-                    }
-                    m.Elements.Add(el);
-                }
+                var p = PolarPlotModel.Polar(lab.R, lab.Az);
+                var el = Label(lab.Text, p.X, p.Y + yShift, s, TextAnchor.Middle);
+                el.Halo = s.LabelHalo;
+                el.HaloWidthPt = s.LabelHaloWidthPt;
+                el.RotationDeg = lab.RotationDeg;
+                m.Elements.Add(el);
             }
 
             // ---- inner ring labels (values on chosen axes) ------------------
             // Suppressed for the smoothed-density and dot plots, whose radii
-            // are not on the binned-count scale the rings would imply.
+            // are not on the binned-count scale the rings would imply, and
+            // for Shade by Density, whose wedges all reach the circle (its
+            // values are in the color legend instead).
             bool ringsHaveValues = s.PlotType != PolarPlotType.SmoothedDensity &&
-                                   s.PlotType != PolarPlotType.DotPlot;
+                                   s.PlotType != PolarPlotType.DotPlot &&
+                                   s.PlotType != PolarPlotType.ShadeByDensity;
             if (ringsHaveValues &&
                 s.ShowInnerLabels && s.ShowSecondaryRefCircles && s.SecondaryRefCircles >= 1)
             {
@@ -269,12 +273,64 @@ namespace WildlifeTools.PolarPlots
                     });
             }
 
+            // ---- Shade by Density color legend (below the plot) -------------
+            if (shadeLegend)
+            {
+                double minV = double.PositiveInfinity;
+                for (int i = 0; i < n; i++) minV = Math.Min(minV, bins[i]);
+                double maxV = Math.Max(maxVal, minV);
+                double yTop = -rimR - 0.10 - (titleBottom > 0 ? titleBottom - 0.10 : 0.0);
+                var hdr = Label("Bin value", 0, yTop - 0.75 * lf, s, TextAnchor.Middle);
+                hdr.Bold = true;
+                m.Elements.Add(hdr);
+                double barTop = yTop - 1.5 * lf, barBot = barTop - 0.14;
+                double barW = Math.Min(1.8, 2.0 * rimR * 0.8);
+                double x0 = -barW / 2.0;
+                const int cells = 24;
+                double cw = barW / cells;
+                for (int i = 0; i < cells; i++)
+                {
+                    // Same color rule as the wedges: low -> high color across
+                    // the lowest to the highest bin value.
+                    var col = s.LowDensity.Lerp(s.HighDensity, (i + 0.5) / cells);
+                    m.Elements.Add(new PolarElement
+                    {
+                        Kind = PolarElementKind.Polygon,
+                        Points = new List<PtIn>
+                        {
+                            new PtIn(x0 + i * cw, barBot), new PtIn(x0 + (i + 1) * cw, barBot),
+                            new PtIn(x0 + (i + 1) * cw, barTop), new PtIn(x0 + i * cw, barTop),
+                        },
+                        Fill = col,
+                        Stroke = col,               // hides hairline seams
+                        StrokeWidthPt = 0.3,
+                    });
+                }
+                m.Elements.Add(new PolarElement
+                {
+                    Kind = PolarElementKind.Polyline,
+                    Points = new List<PtIn>
+                    {
+                        new PtIn(x0, barBot), new PtIn(x0 + barW, barBot),
+                        new PtIn(x0 + barW, barTop), new PtIn(x0, barTop),
+                        new PtIn(x0, barBot),
+                    },
+                    Stroke = s.PrimaryRefColor,
+                    StrokeWidthPt = 0.5,
+                });
+                double yLab = barBot - 0.75 * lf - 0.03;
+                m.Elements.Add(Label(FormatVal(minV), x0, yLab, s, TextAnchor.Start));
+                m.Elements.Add(Label(FormatVal((minV + maxV) / 2.0), 0, yLab, s,
+                                     TextAnchor.Middle));
+                m.Elements.Add(Label(FormatVal(maxV), x0 + barW, yLab, s, TextAnchor.End));
+            }
+
             // ---- wind-rose band legend (bottom-left) ------------------------
             if (wind != null)
             {
                 double sq = 0.11;                       // swatch square size
                 double x0 = -m.HalfWidthIn + 0.08;
-                double yTop = -rimR - 0.16;
+                double yTop = -rimR - 0.16 - (titleBottom > 0 ? titleBottom - 0.10 : 0.0);
                 int k = wind.Breaks.Length - 1;
                 var hdr = Label(string.IsNullOrWhiteSpace(s.MagnitudeField)
                         ? "Bands" : s.MagnitudeField,
@@ -301,6 +357,9 @@ namespace WildlifeTools.PolarPlots
                         x0 + sq + 0.06, yc, s, TextAnchor.Start));
                 }
             }
+            // Laid out around the origin; shift so the top band holds only
+            // the title and the bottom band only the titles and legend.
+            m.Shift(0.0, (bottomBand - topBand) / 2.0);
             return m;
         }
 
@@ -785,6 +844,122 @@ namespace WildlifeTools.PolarPlots
                 Fill = s.LabelColor,
                 Anchor = anchor,
             };
+
+        // ---- azimuth label layout -------------------------------------------
+        private sealed class AzLabel
+        {
+            public double Az, R, RotationDeg, FarR;
+            public string Text;
+        }
+
+        /// <summary>The bearings that get a degree label: the secondary
+        /// reference bearings when those rays are drawn (so 13 bearings label
+        /// 0, 28, 55, ... and not the cardinals), otherwise N, E, S and W.</summary>
+        private static List<double> LabelBearings(PolarPlotSettings s)
+        {
+            var azes = new List<double>();
+            if (s.ShowSecondaryRefRadius && s.SecondaryRefBearings >= 3)
+            {
+                double step = 360.0 / s.SecondaryRefBearings;
+                for (int i = 0; i < s.SecondaryRefBearings; i++)
+                    azes.Add(CircularStats.Mod360(i * step));
+            }
+            else
+                azes.AddRange(new[] { 0.0, 90.0, 180.0, 270.0 });
+            return azes;
+        }
+
+        /// <summary>Places each degree label from its measured size: outside
+        /// the rim, its nearest edge a fixed gap beyond the circle; on the
+        /// External types, inside the inner circle, its nearest edge the same
+        /// gap within it. The gap scales with the font (about half a letter
+        /// height) and clears the confidence arc when that is drawn.</summary>
+        private static List<AzLabel> LayoutAzimuthLabels(PolarPlotSettings s,
+            bool external, double innerR, double plotR)
+        {
+            var list = new List<AzLabel>();
+            double em = s.LabelFontSizePt / 72.0;
+            double gap = 0.03 + 0.45 * em + s.PrimaryRefWidthPt / 72.0 / 2.0;
+            if (!external && s.ShowMeanArrow && s.ShowMeanCI)
+                gap = Math.Max(gap, 0.055 + 0.035 + 0.03);   // the arc and its ticks
+            foreach (double az in LabelBearings(s))
+            {
+                string text = ((int)Math.Round(az)).ToString(CI) + "°";
+                double rot = 0.0;
+                if (s.AzimuthLabelsRotated)
+                {
+                    // Perpendicular to the bearing ray = tangential flow
+                    // around the rim; flip the lower half so nothing reads
+                    // upside-down.
+                    rot = az;
+                    if (az > 90.0 && az < 270.0) rot = az + 180.0;
+                }
+                var corners = LabelInkCorners(text, s, rot);
+                double a = az * Math.PI / 180.0;
+                double ux = Math.Sin(a), uy = Math.Cos(a);      // outward
+                double minDot = double.PositiveInfinity, maxDot = double.NegativeInfinity;
+                foreach (var c in corners)
+                {
+                    double d = c.X * ux + c.Y * uy;
+                    minDot = Math.Min(minDot, d);
+                    maxDot = Math.Max(maxDot, d);
+                }
+                double r = external
+                    ? Math.Max(innerR - gap - maxDot, innerR * 0.3)
+                    : plotR + gap - minDot;
+                double far = 0.0;
+                foreach (var c in corners)
+                    far = Math.Max(far, Math.Sqrt(
+                        Math.Pow(r * ux + c.X, 2) + Math.Pow(r * uy + c.Y, 2)));
+                list.Add(new AzLabel { Az = az, R = r, RotationDeg = rot,
+                                       Text = text, FarR = far });
+            }
+            return list;
+        }
+
+        /// <summary>The four corners of a label's INK box, in inches relative
+        /// to the point the renderers center it on, turned by its rotation
+        /// (clockwise positive, model +y up). Measured with the label's own
+        /// font; falls back to an estimate if measuring fails.</summary>
+        private static List<PtIn> LabelInkCorners(string text, PolarPlotSettings s,
+                                                  double rotationDeg)
+        {
+            double left, right, top, bottom;          // inches, model +y up
+            try
+            {
+                var tf = new Typeface(new FontFamily(s.LabelFontFamily ?? "Segoe UI"),
+                    s.LabelItalic ? FontStyles.Italic : FontStyles.Normal,
+                    s.LabelBold ? FontWeights.Bold : FontWeights.Normal,
+                    FontStretches.Normal);
+                var ft = new FormattedText(text, CI, FlowDirection.LeftToRight, tf,
+                    s.LabelFontSizePt * 96.0 / 72.0, Brushes.Black, 1.0);
+                // Same placement as PolarPlotWpf.DrawText: the line box is
+                // centered on the anchor point.
+                var b = ft.BuildGeometry(new Point(-ft.Width / 2.0, -ft.Height / 2.0)).Bounds;
+                if (b.IsEmpty || b.Width <= 0) throw new InvalidOperationException();
+                left = b.Left / 96.0; right = b.Right / 96.0;
+                top = -b.Top / 96.0; bottom = -b.Bottom / 96.0;
+            }
+            catch
+            {
+                double em = s.LabelFontSizePt / 72.0;
+                double w = text.Length * 0.55 * em;
+                left = -w / 2.0; right = w / 2.0;
+                top = 0.30 * em; bottom = -0.40 * em;
+            }
+            var pts = new List<PtIn>
+            {
+                new PtIn(left, top), new PtIn(right, top),
+                new PtIn(right, bottom), new PtIn(left, bottom),
+            };
+            if (Math.Abs(rotationDeg) < 1e-9) return pts;
+            double t = rotationDeg * Math.PI / 180.0;
+            double cs = Math.Cos(t), sn = Math.Sin(t);
+            var rotated = new List<PtIn>(4);
+            foreach (var p in pts)       // clockwise with +y up
+                rotated.Add(new PtIn(p.X * cs + p.Y * sn, -p.X * sn + p.Y * cs));
+            return rotated;
+        }
 
         private static bool IsCardinal(double az)
         {

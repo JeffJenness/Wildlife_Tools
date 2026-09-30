@@ -186,6 +186,65 @@ namespace WildlifeTools.PolarPlots
             dc.DrawGeometry(Brush(e.Fill), null, geo);
         }
 
+        /// <summary>Writes the model as a PNG image at <paramref name="dpi"/>
+        /// on a white background, sized exactly as the model (no rulers).
+        /// Shared by every chart window's Save Graphic.</summary>
+        public static void SavePng(PolarPlotModel m, string path, double dpi = 300.0)
+        {
+            // The drawing is in device-independent units (96 per inch); a
+            // bitmap made at `dpi` scales it by dpi/96 itself and records the
+            // resolution, so the PNG opens at the plot's true size in Word.
+            var dg = Render(m);
+            int pxW = (int)Math.Ceiling(m.HalfWidthIn * 2 * dpi);
+            int pxH = (int)Math.Ceiling(m.HalfHeightIn * 2 * dpi);
+            var dv = new DrawingVisual();
+            using (var dc = dv.RenderOpen())
+            {
+                // The white background covers the whole (ceiled) bitmap, or
+                // the last row and column of pixels stay transparent.
+                dc.DrawRectangle(Brushes.White, null,
+                    new Rect(0, 0, pxW * PxPerIn / dpi + 1, pxH * PxPerIn / dpi + 1));
+                dc.DrawDrawing(dg);
+            }
+            var rtb = new System.Windows.Media.Imaging.RenderTargetBitmap(
+                pxW, pxH, dpi, dpi, PixelFormats.Pbgra32);
+            rtb.Render(dv);
+            var enc = new System.Windows.Media.Imaging.PngBitmapEncoder();
+            enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(rtb));
+            using (var fs = System.IO.File.Create(path)) enc.Save(fs);
+        }
+
+        /// <summary>The Save Graphic dialog for a chart model: PNG (300 dpi,
+        /// white background) or SVG, chosen by the file type. Returns the
+        /// saved path, or null when canceled.</summary>
+        public static string SaveGraphicDialog(PolarPlotModel m, string fileBase,
+                                               string title)
+        {
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = title,
+                Filter = "PNG image, 300 dpi (*.png)|*.png|SVG vector (*.svg)|*.svg",
+                FileName = fileBase + ".png",
+                InitialDirectory = ImageSaveFolder.Initial(),
+                DefaultExt = ".png",
+                AddExtension = true,
+            };
+            if (dlg.ShowDialog() != true) return null;
+            string path = dlg.FileName;
+            string ext = System.IO.Path.GetExtension(path);
+            if (string.IsNullOrEmpty(ext))
+            {
+                ext = dlg.FilterIndex == 2 ? ".svg" : ".png";   // typed without one
+                path += ext;
+            }
+            ImageSaveFolder.Remember(path);
+            if (ext.Equals(".svg", StringComparison.OrdinalIgnoreCase))
+                System.IO.File.WriteAllText(path, PolarPlotSvg.Render(m));
+            else
+                SavePng(m, path);
+            return path;
+        }
+
         private static Brush Fill(PolarElement e) =>
             e.Fill.IsTransparent ? null : Brush(e.Fill);
 
