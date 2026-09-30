@@ -149,7 +149,7 @@
             <StackPanel x:Name="pnlSmooth" Visibility="Collapsed">
               <Label Content="Smoothing (degrees)" />
               <TextBox x:Name="txtSmooth" Text="20" TextChanged="StyleText"
-                  ToolTip="Standard deviation of the von Mises smoothing kernel, in degrees (Fisher 1993). Smaller = closer to the raw data (spikier); larger = smoother. The Number of bins box is ignored for this plot type -- the curve is computed on a fine fixed grid." />
+                  ToolTip="How wide a bump each direction is spread into before the bumps are added up into the curve, in degrees (a von Mises kernel; Fisher 1993). The setting is close to the standard deviation of each bump: at 20, about two-thirds of each direction's weight lies within 20 degrees on either side. The match is close for small settings and looser for large ones (a setting of 60 gives a spread nearer 76 degrees). Smaller = closer to the raw data (spikier); larger = smoother. The Number of bins box is ignored for this plot type -- the curve is computed on a fine fixed grid." />
             </StackPanel>
             <StackPanel x:Name="pnlDot" Visibility="Collapsed">
               <Label x:Name="lblDot" Content="Dot diameter (in)" />
