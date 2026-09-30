@@ -37,13 +37,25 @@
       <StackPanel>
 
         <Border BorderBrush="#33000000" BorderThickness="0,0,0,1" Padding="0,0,0,4" Margin="0,0,0,4">
-          <StackPanel Orientation="Horizontal">
+          <DockPanel LastChildFill="False">
+            <Button x:Name="btnHelp" DockPanel.Dock="Right" Margin="4,0,6,0"
+                VerticalAlignment="Center" Width="20" Height="20"
+                Padding="0" Background="Transparent" BorderThickness="0"
+                Cursor="Hand" Click="OnHelp"
+                ToolTip="Open the online help page for this tool">
+              <Grid>
+                <Ellipse Width="18" Height="18" Fill="#0079C1"/>
+                <TextBlock Text="?" Foreground="White" FontWeight="Bold"
+                           FontSize="12" HorizontalAlignment="Center"
+                           VerticalAlignment="Center" Margin="0,-1,0,0"/>
+              </Grid>
+            </Button>
             <Label Content="Style presets:" VerticalAlignment="Center" />
             <Button Content="Load..." Padding="10,2" Margin="4,0" Click="OnLoadStyle"
                 ToolTip="Load a saved Slope Graphic style (element toggles, colors, fonts, size) from a JSON preset file." />
             <Button Content="Save..." Padding="10,2" Margin="4,0" Click="OnSaveStyle"
                 ToolTip="Save the current style (everything about appearance; nothing about the data source) to a named JSON preset file in your user profile." />
-          </StackPanel>
+          </DockPanel>
         </Border>
 
         <Expander Header="Data source" IsExpanded="True">

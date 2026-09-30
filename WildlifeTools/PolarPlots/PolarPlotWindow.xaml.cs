@@ -869,6 +869,9 @@ namespace WildlifeTools.PolarPlots
             win.Show();
         }
 
+        private void OnHelp(object sender, RoutedEventArgs e)
+            => WebHelp.Open("terrain-graphs/polar-plots.html");
+
         private void OnSaveGraphic(object sender, RoutedEventArgs e)
         {
             if (_model == null) { MessageBox.Show("Nothing to save yet.", "Polar Plots"); return; }

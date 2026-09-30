@@ -677,6 +677,9 @@ namespace WildlifeTools.SlopeGraphic
             new SlopeStatsWindow(st, header) { Owner = this }.Show();
         }
 
+        private void OnHelp(object sender, RoutedEventArgs e)
+            => WebHelp.Open("terrain-graphs/slope-graphic.html");
+
         private void OnSaveGraphic(object sender, RoutedEventArgs e)
         {
             if (_model == null) { MessageBox.Show("Nothing to save yet.", "Slope Graphic"); return; }
