@@ -33,7 +33,7 @@
               ToolTip="Copy the report as text with ArcGIS text-formatting tags, for pasting into a LAYOUT TEXT element where ArcGIS renders the bold and colors." />
       <Button Content="Add to Layout" Padding="10,4" Margin="4,0"
               Click="OnAddToLayout"
-              ToolTip="One click: place a text element carrying this report (with its formatting) at the center of the active layout. Open a layout view first." />
+              ToolTip="One click: place a text element carrying this report (with its formatting) at the center of a layout. The active layout is used when one is open; otherwise you pick from the project's layouts." />
       <Button Content="Close" Padding="10,4" Margin="4,0" Click="OnCloseClick" />
     </StackPanel>
     <RichTextBox x:Name="rtb" IsReadOnly="True" IsDocumentEnabled="True"

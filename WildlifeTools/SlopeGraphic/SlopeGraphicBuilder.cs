@@ -48,7 +48,17 @@ namespace WildlifeTools.SlopeGraphic
             // ---- canvas layout ---------------------------------------------
             double maxR = 1.28 * R;                  // protractor labels
             double padL = 0.15, padB = 0.15, padT = 0.40, padRt = 0.45;
-            double coreW = padL + maxR + padRt;
+            var legend = LegendRows(s, st);
+            double legendFont = s.LabelFontSizePt * 0.9;
+            double legendSw = 0.30;                  // symbol sample width
+            double legendGap = 0.08;
+            double legendTextW = 0.0;
+            foreach (var row in legend)
+                legendTextW = Math.Max(legendTextW,
+                    row.text.Length * legendFont * 0.52 / 72.0);
+            double legendW = legend.Count > 0
+                ? 0.10 + legendSw + legendGap + legendTextW + 0.10 : 0.0;
+            double coreW = padL + maxR + padRt + legendW;
             double coreH = padB + maxR + padT;
             double titleTop = s.ShowPrimaryTitle ? s.TitleFontSizePt / 72.0 * 1.8 + 0.1 : 0.0;
             int secLines = secondaryTitles?.Count ?? 0;
@@ -218,6 +228,24 @@ namespace WildlifeTools.SlopeGraphic
                 }
             }
 
+            // ---- legend (upper right, to the right of the protractor) -------
+            if (legend.Count > 0)
+            {
+                double lh = legendFont / 72.0 * 1.7;
+                double xs = ox + maxR + padRt - 0.25;    // symbol sample left
+                double xt = xs + legendSw + legendGap;   // text left
+                double y = oy + maxR - lh / 2.0;
+                foreach (var row in legend)
+                {
+                    row.draw(m, xs, xs + legendSw, y);
+                    var el = Label(s, row.text, new PtIn(xt, y), 0.9);
+                    el.Anchor = TextAnchor.Start;
+                    el.Halo = new RgbaColor(0, 0, 0, 0);
+                    m.Elements.Add(el);
+                    y -= lh;
+                }
+            }
+
             // ---- titles -----------------------------------------------------
             if (s.ShowPrimaryTitle && !string.IsNullOrWhiteSpace(s.PrimaryTitle))
                 m.Elements.Add(new PolarElement
@@ -251,6 +279,102 @@ namespace WildlifeTools.SlopeGraphic
                     });
             }
             return m;
+        }
+
+        // ---- legend rows ----------------------------------------------------
+        private sealed class LegendRow
+        {
+            public string text;
+            public Action<PolarPlotModel, double, double, double> draw;  // (model, x0, x1, yc)
+        }
+
+        /// <summary>One row for each element that is drawn, in the order the
+        /// elements sit from front to back.</summary>
+        private static List<LegendRow> LegendRows(SlopeGraphicSettings s, SlopeStats st)
+        {
+            var rows = new List<LegendRow>();
+            if (!s.ShowLegend || st == null || double.IsNaN(st.MeanDeg)) return rows;
+            double sq = 0.13;
+
+            void LineRow(string text, RgbaColor col, double widthPt, PolarDash dash) =>
+                rows.Add(new LegendRow
+                {
+                    text = text,
+                    draw = (m, x0, x1, yc) => m.Elements.Add(new PolarElement
+                    {
+                        Kind = PolarElementKind.Line,
+                        Points = new List<PtIn> { new PtIn(x0, yc), new PtIn(x1, yc) },
+                        Stroke = col,
+                        StrokeWidthPt = widthPt,
+                        Dash = dash,
+                    }),
+                });
+            void FillRow(string text, RgbaColor fill, RgbaColor outline) =>
+                rows.Add(new LegendRow
+                {
+                    text = text,
+                    draw = (m, x0, x1, yc) => m.Elements.Add(new PolarElement
+                    {
+                        Kind = PolarElementKind.Polygon,
+                        Points = new List<PtIn>
+                        {
+                            new PtIn(x0, yc - sq / 2), new PtIn(x1, yc - sq / 2),
+                            new PtIn(x1, yc + sq / 2), new PtIn(x0, yc + sq / 2),
+                        },
+                        Fill = fill,
+                        Stroke = outline,
+                        StrokeWidthPt = 0.75,
+                    }),
+                });
+
+            if (s.ShowMeanLine)
+                LineRow("Mean slope", s.MeanColor, s.MeanWidthPt, PolarDash.Solid);
+            if (s.ShowMedianLine && !double.IsNaN(st.Median))
+                LineRow("Median slope", s.MedianColor,
+                        Math.Max(s.MeanWidthPt * 0.75, 0.8), PolarDash.Dash);
+            if (s.ShowCiArc && !double.IsNaN(st.CiHalfDeg95))
+                rows.Add(new LegendRow
+                {
+                    text = "95% CI of the mean",
+                    draw = (m, x0, x1, yc) =>
+                    {
+                        m.Elements.Add(new PolarElement
+                        {
+                            Kind = PolarElementKind.Line,
+                            Points = new List<PtIn> { new PtIn(x0, yc), new PtIn(x1, yc) },
+                            Stroke = s.CiColor,
+                            StrokeWidthPt = 1.5,
+                        });
+                        foreach (double x in new[] { x0, x1 })
+                            m.Elements.Add(new PolarElement
+                            {
+                                Kind = PolarElementKind.Line,
+                                Points = new List<PtIn>
+                                { new PtIn(x, yc - 0.045), new PtIn(x, yc + 0.045) },
+                                Stroke = s.CiColor,
+                                StrokeWidthPt = 1.5,
+                            });
+                    },
+                });
+            if (s.ShowSdWedge && st.SdDeg > 0)
+                FillRow("Mean ± 1 SD", s.SdFill, s.SdOutline);
+            if (s.ShowPercentileWedge)
+                FillRow(Ordinal(s.PercentileLo) + " to " + Ordinal(s.PercentileHi) +
+                        " percentiles", s.PercentileFill, s.PercentileOutline);
+            if (s.ShowRangeWedge && st.Max > st.Min - 1e-12)
+                FillRow("Range (minimum to maximum)", s.RangeFill, s.RangeOutline);
+            return rows;
+        }
+
+        private static string Ordinal(double p)
+        {
+            string n = (Math.Abs(p - Math.Round(p)) < 1e-9)
+                ? ((int)Math.Round(p)).ToString(CI) : p.ToString("0.#", CI);
+            int last = (int)Math.Round(p) % 10, last2 = (int)Math.Round(p) % 100;
+            if (Math.Abs(p - Math.Round(p)) > 1e-9) return n + "th";
+            string sfx = (last2 >= 11 && last2 <= 13) ? "th"
+                : last == 1 ? "st" : last == 2 ? "nd" : last == 3 ? "rd" : "th";
+            return n + sfx;
         }
 
         // ---- helpers --------------------------------------------------------

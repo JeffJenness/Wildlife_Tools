@@ -132,6 +132,10 @@ namespace WildlifeTools.PolarPlots
         public string AzimuthField = "";
         public PolarWeightOption WeightOption = PolarWeightOption.None;
         public string WeightField = "";
+        /// <summary>The weight field holds COUNTS of identical observations
+        /// (a raster attribute table's Count): the sample size is then the
+        /// total count, and every statistic runs on the full distribution.</summary>
+        public bool WeightsAreCounts = false;
         public bool UseSelectedOnly = false;
         public bool AddReverse = false;
         public bool ExcludeNegative = true;

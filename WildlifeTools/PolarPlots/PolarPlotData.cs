@@ -39,13 +39,41 @@ namespace WildlifeTools.PolarPlots
     {
         internal sealed class Source
         {
-            public string Name;
+            public string Name;                    // as listed ("x  [raster]")
             public bool IsPolyline;
             public FeatureLayer FeatureLayer;      // one of these is set
             public StandaloneTable StandaloneTable;
             public BasicRasterLayer RasterLayer;   // aspect raster source
             public bool IsRaster => RasterLayer != null;
             public override string ToString() => Name;
+
+            /// <summary>The layer or table behind this entry.</summary>
+            public MapMember Member => (MapMember)FeatureLayer
+                ?? (MapMember)StandaloneTable ?? RasterLayer;
+
+            /// <summary>The name as it stands in the Contents pane NOW (no
+            /// "[raster]" tag), for titles, report headers and file names.</summary>
+            public string LayerName
+            {
+                get
+                {
+                    try { return Member?.Name ?? Name ?? ""; }
+                    catch { return Name ?? ""; }
+                }
+            }
+
+            /// <summary>The list text for the member's current name.</summary>
+            public string ListName() =>
+                IsRaster ? LayerName + "  [raster]" : LayerName;
+
+            public bool SameMember(Source other)
+            {
+                var a = Member; var b = other?.Member;
+                if (a == null || b == null) return false;
+                if (ReferenceEquals(a, b)) return true;
+                try { return !string.IsNullOrEmpty(a.URI) && a.URI == b.URI; }
+                catch { return false; }
+            }
         }
 
         internal sealed class Result
@@ -57,6 +85,11 @@ namespace WildlifeTools.PolarPlots
             public bool HasMagnitudes;             // magnitude field was read
             public bool IsBinned;                  // raster: 0.1-degree count bins
             public long RawCount;                  // rows read / cells examined
+            public long KeptCount;                 // records kept (before reverses)
+            public long TableRows = -1;            // rows in the whole table
+            public bool SelectionUsed;             // a selection limited the read
+            public bool SelectionEmpty;            // asked for, nothing selected
+            public bool WeightsAreCounts;          // weight field holds counts
             public long ExcludedNegative;
             public string SamplingNote;            // raster: how cells were read
             public int UsableCount => Azimuths.Count;
@@ -143,14 +176,21 @@ namespace WildlifeTools.PolarPlots
                 int magIdx = string.IsNullOrEmpty(s.MagnitudeField)
                     ? -1 : def.FindField(s.MagnitudeField);
                 res.Weighted = s.WeightOption != PolarWeightOption.None;
+                res.WeightsAreCounts = s.WeightsAreCounts &&
+                    s.WeightOption == PolarWeightOption.ByAttribute;
                 res.HasMagnitudes = magIdx >= 0;
+                try { res.TableRows = table.GetCount(); } catch { }
 
                 var qf = new QueryFilter();
                 if (s.UseSelectedOnly)
                 {
                     IReadOnlyList<long> ids = GetSelectedIds(src);
                     if (ids != null && ids.Count > 0)
+                    {
                         qf.ObjectIDs = ids.ToList();
+                        res.SelectionUsed = true;
+                    }
+                    else res.SelectionEmpty = true;
                 }
 
                 using (RowCursor cur = table.Search(qf, false))
@@ -193,10 +233,15 @@ namespace WildlifeTools.PolarPlots
                             if (magIdx >= 0 && !TryDouble(row[magIdx], out mag))
                                 mag = double.NaN;
 
-                            AddValue(res, az, weight, mag, s);
-                            if (s.AddReverse)
-                                AddValue(res, CircularStats.Mod360(az + 180.0),
-                                         weight, mag, s);
+                            // The reverse goes in only with its own record:
+                            // an excluded -1 must not contribute a 179.
+                            if (AddValue(res, az, weight, mag, s))
+                            {
+                                res.KeptCount++;
+                                if (s.AddReverse)
+                                    AddValue(res, CircularStats.Mod360(az + 180.0),
+                                             weight, mag, s);
+                            }
                         }
                     }
                 }
@@ -204,22 +249,24 @@ namespace WildlifeTools.PolarPlots
             return res;
         }
 
-        private static void AddValue(Result res, double az, double weight, double mag,
+        /// <summary>Adds one direction; false when it was excluded.</summary>
+        private static bool AddValue(Result res, double az, double weight, double mag,
                                      PolarPlotSettings s)
         {
             // Exclude-negative handling before normalizing into 0-360.
             if (s.ExcludeMinusOneOnly)
             {
-                if (Math.Abs(az - (-1.0)) < 1e-9) { res.ExcludedNegative++; return; }
+                if (Math.Abs(az - (-1.0)) < 1e-9) { res.ExcludedNegative++; return false; }
             }
             else if (s.ExcludeNegative && az < 0.0)
             {
                 res.ExcludedNegative++;
-                return;
+                return false;
             }
             res.Azimuths.Add(CircularStats.Mod360(az));
             res.Weights.Add(res.Weighted ? weight : 1.0);
             res.Magnitudes.Add(mag);
+            return true;
         }
 
         internal static IReadOnlyList<long> GetSelectedIds(Source src)
@@ -268,11 +315,19 @@ namespace WildlifeTools.PolarPlots
             var sr = poly.SpatialReference;
             if (sr != null && sr.IsGeographic)
             {
-                // Great-circle length (relative weight only; radius arbitrary).
+                // Geodesic length in meters: follows true curves and does
+                // not count the jump between the parts of a multipart line.
+                try
+                {
+                    double g = GeometryEngine.Instance.GeodesicLength(poly);
+                    if (g > 0.0 && !double.IsNaN(g)) return g;
+                }
+                catch { }
+                // Fallback: great-circle length, part by part.
                 double total = 0.0;
-                var pts = poly.Points;
-                for (int i = 1; i < pts.Count; i++)
-                    total += GreatCircle(pts[i - 1], pts[i]);
+                foreach (var part in poly.Parts)
+                    foreach (var seg in part)
+                        total += GreatCircle(seg.StartPoint, seg.EndPoint);
                 return total;
             }
             return poly.Length;

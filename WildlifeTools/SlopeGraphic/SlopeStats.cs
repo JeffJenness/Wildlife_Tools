@@ -45,12 +45,28 @@ namespace WildlifeTools.SlopeGraphic
     /// the tangents). The median, percentiles, min and max are order
     /// statistics -- invariant under the monotone conversion -- and stay in
     /// source units throughout. Pure C#, no ArcGIS dependency. The 95% CI of
-    /// the mean uses the t distribution (Zar 1999 ch. 7).
+    /// the mean uses the t distribution (Zar 1999 ch. 7); with weights that
+    /// are not counts, n is Kish's (1992) effective sample size.
     /// </summary>
     internal sealed class SlopeStats
     {
         public SlopeUnit Unit { get; }
         public bool WeightsAreCounts { get; }
+
+        /// <summary>True for a raster read binned to 0.01-degree classes.</summary>
+        public bool Binned { get; private set; }
+
+        /// <summary>The n behind the confidence interval: the count of
+        /// observations, or, for weights that are not counts, Kish's (1992,
+        /// eq. 4.3) effective sample size (sum w)^2 / (sum w^2), which equals
+        /// the record count when the weights are all equal and is smaller
+        /// when a few records carry most of the weight.</summary>
+        public double EffectiveN { get; private set; }
+
+        /// <summary>True when EffectiveN is a Kish effective sample size that
+        /// differs from the record count.</summary>
+        public bool KishApplied { get; private set; }
+
         public long Count { get; private set; }      // cells for binned data
         public double TotalWeight { get; private set; }
         public double MeanDeg { get; private set; }  // degree-space mean
@@ -122,7 +138,7 @@ namespace WildlifeTools.SlopeGraphic
             Unit = unit;
             WeightsAreCounts = weightsAreCounts;
             int n = values?.Count ?? 0;
-            double sw = 0, swx = 0, swx2 = 0;
+            double sw = 0, swx = 0, swx2 = 0, sw2 = 0;
             Min = double.PositiveInfinity; Max = double.NegativeInfinity;
             for (int i = 0; i < n; i++)
             {
@@ -132,10 +148,12 @@ namespace WildlifeTools.SlopeGraphic
                 _v.Add(x); _w.Add(w);
                 double deg = ToDegrees(x, unit);
                 sw += w; swx += w * deg; swx2 += w * deg * deg;
+                sw2 += w * w;
                 if (x < Min) Min = x;
                 if (x > Max) Max = x;
             }
-            Finish(sw, swx, swx2, weightsAreCounts ? (long)Math.Round(sw) : _v.Count);
+            Finish(sw, swx, swx2, weightsAreCounts ? (long)Math.Round(sw) : _v.Count,
+                   sw2);
         }
 
         /// <summary>Binned raster data: exact streamed sums (of the ANGLES, in
@@ -155,16 +173,19 @@ namespace WildlifeTools.SlopeGraphic
             }
             s.Min = min; s.Max = max;
             if (s._v.Count == 0) { s.Min = double.PositiveInfinity; s.Max = double.NegativeInfinity; }
-            s.Finish(sumW, sumWX, sumWX2, (long)Math.Round(sumW));
+            s.Finish(sumW, sumWX, sumWX2, (long)Math.Round(sumW), 0.0);
             return s;
         }
 
-        private SlopeStats(SlopeUnit unit) { Unit = unit; WeightsAreCounts = true; }
+        private SlopeStats(SlopeUnit unit)
+        { Unit = unit; WeightsAreCounts = true; Binned = true; }
 
-        private void Finish(double sw, double swx, double swx2, long count)
+        private void Finish(double sw, double swx, double swx2, long count,
+                            double sw2)
         {
             Count = count;
             TotalWeight = sw;
+            EffectiveN = count;
             if (sw <= 0 || _v.Count == 0)
             {
                 MeanDeg = SdDeg = Median = CiHalfDeg95 = double.NaN;
@@ -181,9 +202,22 @@ namespace WildlifeTools.SlopeGraphic
                 : 0.0;
             SortPairs();
             Median = Quantile(0.5);
-            long nEff = WeightsAreCounts ? Count : _v.Count;
+            // n for the interval: the observations themselves when the
+            // weights are counts (or absent); otherwise Kish's effective
+            // sample size, so a few heavy records do not pass for many.
+            double nEff = WeightsAreCounts ? Count : _v.Count;
+            if (!WeightsAreCounts && sw2 > 0)
+            {
+                double kish = sw * sw / sw2;
+                if (kish < nEff - 1e-9)
+                {
+                    nEff = kish;
+                    KishApplied = true;
+                }
+            }
+            EffectiveN = nEff;
             CiHalfDeg95 = (nEff > 1 && SdDeg > 0)
-                ? T95(nEff - 1) * SdDeg / Math.Sqrt(nEff)
+                ? T95(nEff - 1.0) * SdDeg / Math.Sqrt(nEff)
                 : double.NaN;
         }
 
@@ -212,14 +246,27 @@ namespace WildlifeTools.SlopeGraphic
             return _v[_v.Count - 1];
         }
 
-        /// <summary>Two-sided 95% t quantile for the given df (Zar 1999,
-        /// table B.3); exact table through 30, then coarse steps to z.</summary>
+        /// <summary>Two-sided 95% t value for a fractional df (an effective
+        /// sample size): between whole degrees of freedom up to 30 the table
+        /// is interpolated linearly in 1/df, the usual rule for t tables;
+        /// above 30 the expansion takes the fractional df directly. A df
+        /// between 0 and 1 has no tabled value and returns NaN.</summary>
+        public static double T95(double df)
+        {
+            if (double.IsNaN(df) || df < 1.0) return double.NaN;
+            double lo = Math.Floor(df);
+            if (df - lo < 1e-9) return T95((long)lo);
+            if (df >= 30.0) return T95Expansion(df);
+            double tLo = T95((long)lo), tHi = T95((long)lo + 1);
+            double f = (1.0 / lo - 1.0 / df) / (1.0 / lo - 1.0 / (lo + 1.0));
+            return tLo + f * (tHi - tLo);
+        }
+
         /// <summary>Two-sided 95% t value for a confidence interval of a mean
         /// (Zar 1999 ch. 7). Zar's table through 30 df (three decimals); above
         /// that the Cornish-Fisher expansion of t in powers of 1/df, which is
         /// within 3e-8 of the exact value for every df from 31 to 100,000
-        /// (checked against scipy 2026-09-24). Replaces coarse steps (2.021,
-        /// 2.000, 1.980, 1.960) that made the interval up to 1% too narrow.</summary>
+        /// (checked against scipy 2026-09-24).</summary>
         public static double T95(long df)
         {
             double[] t = { 12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365,
@@ -228,6 +275,11 @@ namespace WildlifeTools.SlopeGraphic
                 2.056, 2.052, 2.048, 2.045, 2.042 };
             if (df < 1) return double.NaN;
             if (df <= 30) return t[df - 1];
+            return T95Expansion(df);
+        }
+
+        private static double T95Expansion(double df)
+        {
             const double z = 1.959963984540054;       // normal 97.5% point
             double z2 = z * z;
             double g1 = (z2 * z + z) / 4.0;

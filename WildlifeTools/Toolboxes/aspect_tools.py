@@ -42,8 +42,10 @@ input is in the mathematical convention.
 
 Circular-statistics references (see Issues with Directional Data, Jenness 2012, and
 the sources it cites): Mardia & Jupp 2000; Fisher 1993; Batschelet 1981;
-Zar 1999. The von Mises concentration estimate follows Fisher (1993) /
-Best & Fisher (1981).
+Zar 1999. The von Mises concentration estimate is Best and Fisher's (1981,
+p. 495) piecewise approximation (Fisher 1993 eq. 4.40), with their
+small-sample correction (p. 498; Fisher 1993 eq. 4.41, applied for n <= 15);
+the confidence interval of the mean direction is Fisher's eqs. 4.42-4.43.
 """
 
 import math
@@ -494,9 +496,45 @@ def _circular_median(stack):
 # ---------------------------------------------------------------------------
 #  Circular-statistics from the resultant sums
 # ---------------------------------------------------------------------------
+def _kappa_small_sample(kml, n):
+    """Best and Fisher's (1981, p. 498) correction of the maximum-likelihood
+    kappa for small samples (Fisher 1993 eq. 4.41, applied for n <= 15),
+    where the uncorrected estimate is biased upward. Vectorized; ``n`` may be fractional (an effective sample size).
+    Values with n > 15 pass through unchanged."""
+    k = np.asarray(kml, dtype=np.float64)
+    nn = np.broadcast_to(np.asarray(n, dtype=np.float64), k.shape)
+    small = (nn >= 1.0) & (nn <= 15.0) & (k > 0.0)
+    if not small.any():
+        return k
+    out = k.copy()
+    with np.errstate(divide="ignore", invalid="ignore"):
+        lo = small & (k < 2.0)
+        out[lo] = np.maximum(k[lo] - 2.0 / (nn[lo] * k[lo]), 0.0)
+        hi = small & (k >= 2.0)
+        out[hi] = (nn[hi] - 1.0) ** 3 * k[hi] / (nn[hi] ** 3 + nn[hi])
+    return out
+
+
+def _fisher_interval_suitable(kappa, n):
+    """Fisher's (1993) Table 4.3: whether the standard-error confidence
+    interval (rather than a bootstrap) is the recommended method for this
+    kappa and sample size."""
+    if kappa >= 2.0:
+        return True
+    if kappa >= 1.5:
+        return n >= 10
+    if kappa >= 1.0:
+        return n >= 15
+    if kappa >= 0.4:
+        return n >= 25
+    return False
+
+
 def _kappa_from_rbar(rbar):
-    """von Mises concentration MLE approximation (Fisher 1993 eq. 4.42 /
-    Best & Fisher 1981), vectorized and capped."""
+    """von Mises concentration, the piecewise approximation to the
+    maximum-likelihood estimate (Best and Fisher 1981 p. 495; Fisher 1993
+    eq. 4.40), vectorized and capped. Callers apply the small-sample
+    correction (_kappa_small_sample) with their own n."""
     r = np.clip(rbar, 0.0, 0.999999)
     k = np.empty_like(r)
     lo = r < 0.53
@@ -682,7 +720,7 @@ def run_aspect_focal(in_raster, out_raster, statistic,
     # A Weight kernel's Rayleigh test needs the sum of squared weights too:
     # Kish's effective sample size (sum w)^2 / sum w^2 depends only on the
     # RELATIVE weights, so a kernel of 1s and one of 10s give the same p.
-    kish = weighted and statistic == "RAYLEIGH"
+    kish = weighted and statistic in ("RAYLEIGH", "KAPPA")
     Nw2 = np.zeros(shape, np.float32) if kish else None
     # Cells whose neighborhood includes NoData or reaches past the edge
     # (only when Ignore NoData is unchecked).
@@ -782,7 +820,18 @@ def run_aspect_focal(in_raster, out_raster, statistic,
         out = np.where(has_dir, p.astype(np.float32), NANF)
         del p
     elif statistic == "KAPPA":
-        out = np.where(has_dir, _kappa_from_rbar(Rbar).astype(np.float32), NANF)
+        # Small-sample correction (Fisher 1993 eq. 4.41) for neighborhoods
+        # of 15 or fewer directional cells; with a Weight kernel n is the
+        # Kish effective sample size, as for the Rayleigh test.
+        if kish:
+            with np.errstate(divide="ignore", invalid="ignore"):
+                n_k = np.where(Nw2 > 1e-12, (Ndir * Ndir) / Nw2,
+                               np.float32(1.0)).astype(np.float32)
+        else:
+            n_k = Ndir
+        kap = _kappa_small_sample(_kappa_from_rbar(Rbar), n_k)
+        out = np.where(has_dir, kap.astype(np.float32), NANF)
+        del kap, n_k
     elif statistic == "PROPDEF":
         out = np.where(ntot > 0,
                        Ndir / np.where(ntot == 0, np.float32(1.0), ntot), NANF)
@@ -1752,18 +1801,25 @@ def _zone_stats_row(z, ignore_nodata):
     out["ANG_DEV"] = math.degrees(math.sqrt(max(2.0 * (1.0 - rbar), 0.0)))
     out["MEDIAN_DIR"] = _hist_circ_median_deg(z["hist"])
     out["CIRC_RANGE"] = _hist_circ_range_deg(z["hist"])
-    kappa = float(_kappa_from_rbar(np.asarray([rbar]))[0])
+    kappa = float(_kappa_small_sample(
+        _kappa_from_rbar(np.asarray([rbar])), float(n))[0])
     out["VM_KAPPA"] = kappa
+    out["_KAPPA_ADJ"] = n <= 15          # private flags for the run report
+    out["_CI_CAUTION"] = False
     out["RAYLEIGH_Z"] = n * rbar * rbar
     out["RAYLEIGH_P"] = float(_rayleigh_p(np.asarray([float(n)]),
                                           np.asarray([rbar]))[0])
+    # Fisher 1993 sec. 4.5.5: circular standard error 1/sqrt(n R-bar kappa)
+    # (eq. 4.42), half-angle arcsin(1.96 s.e.) (eq. 4.43); undefined once
+    # 1.96 s.e. reaches 1.
     if n > 1 and rbar > 0 and kappa > 0 and out["MEAN_DIR"] is not None:
-        se = 1.0 / math.sqrt(n * rbar * kappa)
-        half = math.degrees(1.96 * se)
-        if 0.0 < half < 90.0:
+        x = 1.96 / math.sqrt(n * rbar * kappa)
+        if 0.0 < x < 1.0:
+            half = math.degrees(math.asin(x))
             out["CI95_HALF"] = half
             out["CI95_LO"] = (out["MEAN_DIR"] - half) % 360.0
             out["CI95_HI"] = (out["MEAN_DIR"] + half) % 360.0
+            out["_CI_CAUTION"] = not _fisher_interval_suitable(kappa, n)
     return out
 
 
@@ -2574,6 +2630,7 @@ def _write_zonal_table(out_table, in_zone_data, zone_field, zone_is_raster,
         ordered = zone_order
 
     big = False
+    n_adj = n_caution = 0
     # A dBASE table cannot hold NULL: statistics that cannot be computed
     # for a zone are written as -999 there (the toolbox's convention).
     nul = -999.0 if dbf else None
@@ -2583,6 +2640,10 @@ def _write_zonal_table(out_table, in_zone_data, zone_field, zone_is_raster,
         for key in ordered:
             z = acc.zones[key]
             stats = _zone_stats_row(z, ignore_nodata)
+            if stats.get("VM_KAPPA") is not None and stats.get("_KAPPA_ADJ"):
+                n_adj += 1
+            if stats.get("_CI_CAUTION"):
+                n_caution += 1
             n, flat = z["n"], z["flat"]
             denom = n + flat
             fpct = (100.0 * flat / denom) if denom > 0 else nul
@@ -2598,6 +2659,18 @@ def _write_zonal_table(out_table, in_zone_data, zone_field, zone_is_raster,
     if big:
         _warn(messages, "A zone exceeded the 32-bit COUNT limit; its count "
                         "was clamped to 2,147,483,647.")
+    if n_adj and ("KAPPA" in keys or "CI95" in keys):
+        _say(messages, "{:,} zone(s) have 15 or fewer directional cells; "
+                       "their von Mises concentration carries the "
+                       "small-sample correction of Best and Fisher (1981; "
+                       "Fisher 1993, eq. 4.41)."
+                       .format(n_adj))
+    if n_caution and "CI95" in keys:
+        _warn(messages, "{:,} zone(s) have a confidence interval outside the "
+                        "range Fisher (1993, Table 4.3) recommends for the "
+                        "standard-error method (weak concentration or few "
+                        "cells); he advises a bootstrap interval there. Read "
+                        "those intervals with caution.".format(n_caution))
     _say(messages, "Wrote {:,} zone row(s) to {}.".format(
         len(ordered), out_table))
 

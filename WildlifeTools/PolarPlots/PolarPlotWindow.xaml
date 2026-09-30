@@ -82,9 +82,12 @@
                 ToolTip="Weight each polyline's azimuth by the polyline's length, so long lines count more than short ones." />
             <RadioButton x:Name="rbWField" Content="By attribute field" GroupName="W"
                 Checked="RereadRouted"
-                ToolTip="Weight each record by a numeric attribute value (for example, a Count field from a raster attribute table)." />
+                ToolTip="Weight each record by a numeric attribute value, such as an area, or the Count field of a raster attribute table." />
             <ComboBox x:Name="cboWField" Margin="16,2,0,0" SelectionChanged="RereadSel"
                 ToolTip="The numeric field supplying each record's weight." />
+            <CheckBox x:Name="chkWCounts" Content="Weights are counts of observations"
+                Margin="16,2,0,0" Checked="RereadRouted" Unchecked="RereadRouted"
+                ToolTip="Check when each weight is the NUMBER of identical observations the record stands for, as in a raster attribute table (one row per value, with a Count of cells). The sample size is then the total count, and the median, range, Rayleigh test, concentration and confidence interval all run on the full distribution. Checked automatically for a field whose name contains Count. Leave unchecked for weights of importance, such as length or area: the sample size is then the number of records, and the median, range and Rayleigh test use the unweighted directions." />
             <CheckBox x:Name="chkSelected" Content="Use selected records only"
                 Margin="0,6,0,0" Checked="RereadRouted" Unchecked="RereadRouted"
                 ToolTip="Analyze only the currently selected records; if nothing is selected, all records are used." />
@@ -255,7 +258,7 @@
             </Grid>
             <CheckBox x:Name="chkMeanCI" Content="  with 95% confidence arc"
                 Margin="16,2,0,0" Checked="StyleRouted" Unchecked="StyleRouted"
-                ToolTip="Arc just outside the plotting circle spanning the 95% confidence interval of the mean direction (von Mises large-sample standard error 1/sqrt(n * r-bar * kappa); Fisher 1993). Omitted when the interval is undefined or wider than 180 degrees." />
+                ToolTip="Arc just outside the plotting circle spanning the 95% confidence interval of the mean direction (von Mises standard error 1/sqrt(n * r-bar * kappa), half-angle arcsin(1.96 * s.e.); Fisher 1993, eqs. 4.42-4.43). Drawn only with the mean direction arrow, and omitted when the interval is undefined. The directions are assumed to be independent observations; for raster cells, which are not, read the arc as a lower bound." />
             <CheckBox x:Name="chkAzLabels" Content="Show azimuth (degree) labels" IsChecked="True"
                 Margin="0,4,0,0" Checked="StyleRouted" Unchecked="StyleRouted"
                 ToolTip="Degree labels around the rim at every primary and secondary reference bearing." />

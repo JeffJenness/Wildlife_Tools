@@ -84,9 +84,12 @@
                   ToolTip="Weight each polyline's slope by the polyline's length, so long lines count more than short ones (geodesic length on lat/long data)." />
               <RadioButton x:Name="rbWField" Content="By attribute field" GroupName="SW"
                   Checked="RereadRouted"
-                  ToolTip="Weight each record by a numeric attribute value (for example, an area or count field)." />
+                  ToolTip="Weight each record by a numeric attribute value, such as an area, or the Count field of a raster attribute table." />
               <ComboBox x:Name="cboWField" Margin="16,2,0,0" SelectionChanged="RereadSel"
                   ToolTip="The numeric field supplying each record's weight." />
+              <CheckBox x:Name="chkWCounts" Content="Weights are counts of observations"
+                  Margin="16,2,0,0" Checked="RereadRouted" Unchecked="RereadRouted"
+                  ToolTip="Check when each weight is the NUMBER of identical observations the record stands for, as in a raster attribute table (one row per value, with a Count of cells). The sample size behind the standard deviation and the confidence interval is then the total count. Checked automatically for a field whose name contains Count. Leave unchecked for weights of importance, such as length or area: the confidence interval then uses the effective sample size (sum of weights)^2 / (sum of squared weights) (Kish 1992), which is smaller than the number of records when a few records carry most of the weight." />
               <CheckBox x:Name="chkSelected" Content="Use selected records only"
                   Margin="0,6,0,0" Checked="RereadRouted" Unchecked="RereadRouted"
                   ToolTip="Analyze only the currently selected records; if nothing is selected, all records are used." />
@@ -169,7 +172,7 @@
               <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
               <CheckBox x:Name="chkCi" Content="95% CI of the mean (arc)" IsChecked="True"
                   VerticalAlignment="Center" Checked="StyleRouted" Unchecked="StyleRouted"
-                  ToolTip="Arcing curve with end ticks spanning the 95% confidence interval of the MEAN slope (t-based; Zar 1999 ch. 7), just outside the mean line -- the same idiom as the Polar Plots mean-direction confidence arc. With millions of raster cells the interval is often a sliver: that is real (the mean is simply known very precisely)." />
+                  ToolTip="Arcing curve with end ticks spanning the 95% confidence interval of the MEAN slope (t-based; Zar 1999 ch. 7), just outside the mean line -- the same idiom as the Polar Plots mean-direction confidence arc. The interval assumes independent observations. Raster cells are not (neighboring cells have nearly the same slope), so with millions of cells the arc shrinks to a sliver that is narrower than the real uncertainty: read it as a lower bound." />
               <mapctl:ColorPickerControl x:Name="cpCi" Grid.Column="1" Height="22" Margin="6,0,0,0"
                   Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="StyleColor"
                   ToolTip="Color of the confidence arc." />
@@ -189,6 +192,9 @@
             <CheckBox x:Name="chkBoundaryLabels" Content="Value labels on the elements" IsChecked="True"
                 Margin="0,3,0,0" Checked="StyleRouted" Unchecked="StyleRouted"
                 ToolTip="Small halo'd numeric labels (in the source unit) at the mean-line tip and at each wedge boundary, so the graphic is readable without the statistics text beside it." />
+            <CheckBox x:Name="chkLegend" Content="Legend (upper right)" IsChecked="True"
+                Margin="0,3,0,0" Checked="StyleRouted" Unchecked="StyleRouted"
+                ToolTip="A legend at the upper right naming each element that is drawn: the mean and median lines, the standard-deviation, range and percentile wedges, and the confidence arc, each with a sample of its symbol. Uses the label font." />
             <Grid Margin="0,6,0,0">
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/><ColumnDefinition Width="40"/>

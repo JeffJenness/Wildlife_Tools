@@ -32,7 +32,8 @@ namespace WildlifeTools.SlopeGraphic
     /// as Polar Plots (PolarPlotData.Source: feature layers, standalone
     /// tables, and rasters). Vector/table sources read a numeric field with
     /// optional weighting; raster sources stream cell values into exact
-    /// running sums (source units) plus a fine ANGLE-space histogram for
+    /// running sums (of the slope ANGLES, in degrees) plus a fine
+    /// ANGLE-space histogram for
     /// quantiles -- never materializing raw values -- with the same VAT fast
     /// path, systematic sampling, and per-window caching as the polar reader.
     /// The whole raster is always considered (clip first for a study area).
@@ -45,6 +46,7 @@ namespace WildlifeTools.SlopeGraphic
             public string FieldName = "";
             public PolarWeightOption WeightOption = PolarWeightOption.None;
             public string WeightField = "";
+            public bool WeightsAreCounts;          // weight field holds counts
             public bool UseSelectedOnly;
             public SlopeUnit Unit = SlopeUnit.Degrees;
             public int RasterSampleStep;           // 0 auto / 1 all / else Nth
@@ -58,6 +60,10 @@ namespace WildlifeTools.SlopeGraphic
             public long ExcludedInvalid;           // negative / beyond-vertical
             public string SamplingNote;
             public bool Weighted;
+            public long KeptCount;                 // records used
+            public long TableRows = -1;            // rows in the whole table
+            public bool SelectionUsed;             // a selection limited the read
+            public bool SelectionEmpty;            // asked for, nothing selected
         }
 
         /// <summary>Angle-space histogram resolution: 0.01 degrees.</summary>
@@ -68,11 +74,11 @@ namespace WildlifeTools.SlopeGraphic
         internal sealed class RasterCache
         {
             public double[] Hist;                  // angle bins
-            public double SumW, SumWX, SumWX2;     // source units
+            public double SumW, SumWX, SumWX2;     // of the angles, degrees
             public double Min, Max;
             public long Examined, Excluded;
             public string SamplingNote;
-            public SlopeUnit Unit;                 // unit the sums are in
+            public SlopeUnit Unit;                 // unit the cells were read as
         }
 
         /// <summary>
@@ -147,11 +153,17 @@ namespace WildlifeTools.SlopeGraphic
                 int wIdx = (o.WeightOption == PolarWeightOption.ByAttribute)
                     ? def.FindField(o.WeightField) : -1;
 
+                try { res.TableRows = table.GetCount(); } catch { }
                 var qf = new QueryFilter();
                 if (o.UseSelectedOnly)
                 {
                     var ids = PolarPlotData.GetSelectedIds(src);
-                    if (ids != null && ids.Count > 0) qf.ObjectIDs = ids.ToList();
+                    if (ids != null && ids.Count > 0)
+                    {
+                        qf.ObjectIDs = ids.ToList();
+                        res.SelectionUsed = true;
+                    }
+                    else res.SelectionEmpty = true;
                 }
                 using (RowCursor cur = table.Search(qf, false))
                 {
@@ -183,8 +195,11 @@ namespace WildlifeTools.SlopeGraphic
                     }
                 }
             }
+            res.KeptCount = values.Count;
+            bool counts = o.WeightsAreCounts &&
+                          o.WeightOption == PolarWeightOption.ByAttribute;
             if (values.Count > 0)
-                res.Stats = new SlopeStats(values, weights, false, o.Unit);
+                res.Stats = new SlopeStats(values, weights, counts, o.Unit);
             return res;
         }
 

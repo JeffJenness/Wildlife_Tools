@@ -50,6 +50,10 @@ namespace WildlifeTools.PolarPlots
         /// on the record list, which would treat every occupied bin equally.</summary>
         public bool WeightsAreCounts { get; }
 
+        /// <summary>True when the counts come from a raster read binned to
+        /// 0.1-degree classes (as opposed to a table's count field).</summary>
+        public bool Binned { get; }
+
         // Results.
         public long Count { get; private set; }
         public double TotalWeight { get; private set; }
@@ -75,17 +79,33 @@ namespace WildlifeTools.PolarPlots
         public double VonMisesKappa { get; private set; }          // concentration
         public double MeanCiHalfDeg95 { get; private set; }        // NaN if undefined
 
+        /// <summary>True when kappa carries Fisher's small-sample correction
+        /// (n &lt;= 15; Fisher 1993 eq. 4.41).</summary>
+        public bool KappaAdjusted { get; private set; }
+
+        /// <summary>True when a confidence interval is reported although the
+        /// sample lies outside the range Fisher (1993, Table 4.3) recommends
+        /// for the standard-error interval (he advises a bootstrap there).</summary>
+        public bool CiOutsideFisherRange { get; private set; }
+
+        /// <summary>Resultants shorter than this are rounding residue of
+        /// directions that cancel exactly (reverse azimuths, opposed pairs):
+        /// the mean direction is then undefined, not whatever angle the
+        /// residue happens to point in.</summary>
+        internal const double ZeroRbar = 1e-9;
+
         private const double DegToRad = Math.PI / 180.0;
         private const double RadToDeg = 180.0 / Math.PI;
 
         public CircularStats(IReadOnlyList<double> azimuths,
                              IReadOnlyList<double> weights, bool weighted,
-                             bool weightsAreCounts = false)
+                             bool weightsAreCounts = false, bool? binned = null)
         {
             Azimuths = azimuths ?? Array.Empty<double>();
             Weights = weights;
             Weighted = weighted;
             WeightsAreCounts = weightsAreCounts;
+            Binned = binned ?? weightsAreCounts;
             Compute();
         }
 
@@ -110,9 +130,14 @@ namespace WildlifeTools.PolarPlots
             ResultantLength = Math.Sqrt(s * s + c * c);
             double rbar = (w > 0.0) ? ResultantLength / w : 0.0;
             if (rbar > 1.0) rbar = 1.0;               // guard FP just over 1
+            if (rbar < ZeroRbar)                      // cancelled: FP residue only
+            {
+                rbar = 0.0;
+                ResultantLength = 0.0;
+            }
             MeanResultantLength = rbar;
 
-            MeanDirectionDeg = (ResultantLength > 0.0)
+            MeanDirectionDeg = (rbar > 0.0)
                 ? Mod360(Math.Atan2(s, c) * RadToDeg)
                 : double.NaN;
 
@@ -164,23 +189,34 @@ namespace WildlifeTools.PolarPlots
                     - (1.0 + 2.0 * nEff)))
                 : double.NaN;
 
-            // von Mises concentration kappa MLE approximation (Fisher 1993
-            // eq. 4.42 / Best & Fisher 1981), from the (reported) mean resultant.
-            VonMisesKappa = KappaFromRbar(MeanResultantLength);
+            // von Mises concentration kappa: Best and Fisher's (1981 p. 495)
+            // piecewise approximation to the maximum-likelihood estimate
+            // (Fisher 1993 eq. 4.40), with their small-sample correction
+            // (p. 498; Fisher 1993 eq. 4.41, applied for n <= 15 -- the
+            // ArcMap Polar Plots tool applied the same one).
+            VonMisesKappa = KappaSmallSample(
+                KappaFromRbar(MeanResultantLength), Count);
+            KappaAdjusted = Count > 0 && Count <= 15;
 
-            // 95% confidence half-angle of the mean direction: von Mises
-            // large-sample standard error 1/sqrt(n * r-bar * kappa) (Fisher
-            // 1993 sec. 4.4.5). Undefined (NaN) when the directions are too
-            // dispersed for the interval to mean anything (half-angle >= 90
-            // degrees, kappa ~ 0), or when n < 2. Drawn as the confidence arc.
+            // 95% confidence interval of the mean direction (Fisher 1993
+            // sec. 4.5.5): circular standard error 1/sqrt(n * r-bar * kappa)
+            // (eq. 4.42), half-angle arcsin(1.96 * s.e.) (eq. 4.43).
+            // Undefined (NaN) when 1.96 * s.e. reaches 1 (the directions are
+            // too dispersed for the interval to exist), or when n < 2. Drawn
+            // as the confidence arc.
             MeanCiHalfDeg95 = double.NaN;
+            CiOutsideFisherRange = false;
             if (Count > 1 && MeanResultantLength > 0 && VonMisesKappa > 0 &&
                 !double.IsNaN(MeanDirectionDeg))
             {
-                double se = 1.0 / Math.Sqrt(
+                double x = 1.96 / Math.Sqrt(
                     Count * MeanResultantLength * VonMisesKappa);
-                double half = 1.96 * se / DegToRad;
-                if (half > 0 && half < 90.0) MeanCiHalfDeg95 = half;
+                if (x > 0 && x < 1.0)
+                {
+                    MeanCiHalfDeg95 = Math.Asin(x) * RadToDeg;
+                    CiOutsideFisherRange =
+                        !FisherIntervalSuitable(VonMisesKappa, Count);
+                }
             }
 
             // Circular median + range (order statistics; Fisher 1993 sec. 2.3.2;
@@ -231,6 +267,61 @@ namespace WildlifeTools.PolarPlots
             else if (r < 0.85) k = -0.4 + 1.39 * r + 0.43 / (1.0 - r);
             else k = 1.0 / (r * r * r - 4.0 * r * r + 3.0 * r);
             return Math.Min(Math.Max(k, 0.0), 1.0e4);
+        }
+
+        /// <summary>Best and Fisher's (1981, p. 498) correction of the
+        /// maximum-likelihood kappa for small samples (Fisher 1993 eq. 4.41,
+        /// applied for n &lt;= 15), where the uncorrected estimate is
+        /// biased upward.</summary>
+        internal static double KappaSmallSample(double kml, long n)
+        {
+            if (n < 1 || n > 15 || kml <= 0.0) return kml;
+            double dn = n;
+            if (kml < 2.0)
+                return Math.Max(kml - 2.0 / (dn * kml), 0.0);
+            return (dn - 1) * (dn - 1) * (dn - 1) * kml / (dn * dn * dn + dn);
+        }
+
+        /// <summary>Fisher's (1993) Table 4.3: whether the standard-error
+        /// interval (rather than a bootstrap) is the recommended method for
+        /// this kappa and sample size.</summary>
+        internal static bool FisherIntervalSuitable(double kappa, long n)
+        {
+            if (kappa >= 2.0) return true;
+            if (kappa >= 1.5) return n >= 10;
+            if (kappa >= 1.0) return n >= 15;
+            if (kappa >= 0.4) return n >= 25;
+            return false;
+        }
+
+        /// <summary>The cautions that follow the extended statistics, shared
+        /// by every report format.</summary>
+        public List<string> Notes()
+        {
+            var ci = CultureInfo.InvariantCulture;
+            var notes = new List<string>();
+            if (WeightsAreCounts && Binned)
+                notes.Add("(Values binned to 0.1-degree classes; statistics " +
+                          "computed on the per-class cell counts.)");
+            else if (WeightsAreCounts)
+                notes.Add("(Weights are counts of observations; every statistic " +
+                          "is computed on the full distribution, with n the " +
+                          "total count.)");
+            else if (Weighted)
+                notes.Add("(Median, Range and the Rayleigh test are computed " +
+                          "on the unweighted azimuths.)");
+            if (KappaAdjusted)
+                notes.Add("(Kappa adjusted for small sample size, n = " +
+                          Count.ToString("N0", ci) +
+                          "; Best and Fisher 1981, Fisher 1993 eq. 4.41.)");
+            if (CiOutsideFisherRange)
+                notes.Add("(Caution: with kappa = " +
+                          VonMisesKappa.ToString("F3", ci) + " and n = " +
+                          Count.ToString("N0", ci) + ", the confidence interval " +
+                          "is outside the range Fisher (1993, Table 4.3) " +
+                          "recommends for this method; he advises a bootstrap " +
+                          "interval instead.)");
+            return notes;
         }
 
         private static double CircularMedian(List<double> sorted)
@@ -353,12 +444,8 @@ namespace WildlifeTools.PolarPlots
             sb.AppendLine("Rayleigh Test of Uniformity: Z = " +
                           RayleighZ.ToString("F5", ci) + ", p = " +
                           RayleighP.ToString("F5", ci) + "   [A,E]");
-            if (WeightsAreCounts)
-                sb.AppendLine("   (Values binned to 0.1-degree classes; statistics " +
-                              "computed on the per-class cell counts.)");
-            else if (Weighted)
-                sb.AppendLine("   (Median, Range and the Rayleigh test are computed " +
-                              "on the unweighted azimuths.)");
+            foreach (string note in Notes())
+                sb.AppendLine("   " + note);
             sb.AppendLine("-------------------------------------------------------");
             sb.AppendLine("[A] Fisher, N. I. 1993. Statistical Analysis of Circular Data. " +
                           "Cambridge University Press.");

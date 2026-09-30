@@ -65,6 +65,7 @@ namespace WildlifeTools.SlopeGraphic
         public RgbaColor ProtractorColor = new RgbaColor(120, 120, 120, 255);
 
         public bool ShowBoundaryLabels = true;     // values at mean/wedge edges
+        public bool ShowLegend = true;             // element key, upper right
         public string LabelFontFamily = "Segoe UI";
         public double LabelFontSizePt = 9.0;
         public bool LabelBold = false;
@@ -148,6 +149,7 @@ namespace WildlifeTools.SlopeGraphic
         public bool ShowProtractorLabels { get; set; } = true;
         public int[] ProtractorColor { get; set; }
         public bool ShowBoundaryLabels { get; set; } = true;
+        public bool ShowLegend { get; set; } = true;
         public string LabelFontFamily { get; set; } = "Segoe UI";
         public double LabelFontSizePt { get; set; } = 9;
         public string LabelFontStyle { get; set; } = "Regular";

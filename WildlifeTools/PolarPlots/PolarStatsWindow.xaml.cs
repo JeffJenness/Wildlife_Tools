@@ -120,14 +120,12 @@ namespace WildlifeTools.PolarPlots
             AddStat(xp, "Mean Direction 95% CI", st.MeanCiText(CI), "[A,D]");
             AddStat(xp, "Rayleigh Test of Uniformity",
                 "Z = " + st.RayleighZ.ToString("F5", CI) + ", p = " + st.RayleighP.ToString("F5", CI), "[A,E]");
-            if (st.WeightsAreCounts)
-                xp.Inlines.Add(new Italic(new Run(
-                    "(Values binned to 0.1-degree classes; statistics computed " +
-                    "on the per-class cell counts.)")) { FontSize = 11 });
-            else if (st.Weighted)
-                xp.Inlines.Add(new Italic(new Run(
-                    "(Median, Range and the Rayleigh test are computed on the " +
-                    "unweighted azimuths.)")) { FontSize = 11 });
+            var notes = st.Notes();
+            for (int i = 0; i < notes.Count; i++)
+            {
+                if (i > 0) xp.Inlines.Add(new LineBreak());
+                xp.Inlines.Add(new Italic(new Run(notes[i])) { FontSize = 11 });
+            }
             doc.Blocks.Add(xp);
 
             var rp = new Paragraph { FontSize = 11, Foreground = Brushes.Gray };
@@ -315,12 +313,8 @@ namespace WildlifeTools.PolarPlots
             Line("Rayleigh Test of Uniformity",
                 "Z = " + st.RayleighZ.ToString("F5", CI) + ", p = " +
                 st.RayleighP.ToString("F5", CI), "[A,E]");
-            if (st.WeightsAreCounts)
-                sb.AppendLine("<ITA>(Values binned to 0.1-degree classes; " +
-                              "statistics computed on the per-class cell counts.)</ITA>");
-            else if (st.Weighted)
-                sb.AppendLine("<ITA>(Median, Range and the Rayleigh test are " +
-                              "computed on the unweighted azimuths.)</ITA>");
+            foreach (string note in st.Notes())
+                sb.Append("<ITA>").Append(EscapeEsri(note)).AppendLine("</ITA>");
             sb.AppendLine();
             foreach (string r in References())
                 sb.Append("<FNT size=\"7\"><CLR red=\"110\" green=\"110\" blue=\"110\">")

@@ -29,6 +29,7 @@ using ArcGIS.Core.CIM;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
 using ArcGIS.Desktop.Mapping;
 using ArcGIS.Desktop.Mapping.Controls;
+using ArcGIS.Desktop.Mapping.Events;
 using WildlifeTools.PolarPlots;
 using MessageBox = ArcGIS.Desktop.Framework.Dialogs.MessageBox;
 
@@ -89,6 +90,139 @@ namespace WildlifeTools.SlopeGraphic
             cboSecStyle.ItemsSource = FontStyleNames;
             cboSecStyle.SelectedIndex = 2;
             Loaded += async (_, __) => await LoadSourcesAsync();
+
+            // A layer renamed in the Contents pane: the list and the
+            // secondary title follow it. Layers or tables added or removed:
+            // the list is rebuilt. A changed selection: the data are read
+            // again when only the selected records are in use.
+            try
+            {
+                var tokens = new List<ArcGIS.Core.Events.SubscriptionToken>
+                {
+                    MapMemberPropertiesChangedEvent.Subscribe(OnMapMemberChanged),
+                    LayersAddedEvent.Subscribe(_ => QueueRefresh()),
+                    LayersRemovedEvent.Subscribe(_ => QueueRefresh()),
+                    StandaloneTablesAddedEvent.Subscribe(_ => QueueRefresh()),
+                    StandaloneTablesRemovedEvent.Subscribe(_ => QueueRefresh()),
+                    MapSelectionChangedEvent.Subscribe(OnMapSelectionChanged),
+                };
+                Closed += (_, __) =>
+                {
+                    try
+                    {
+                        MapMemberPropertiesChangedEvent.Unsubscribe(tokens[0]);
+                        LayersAddedEvent.Unsubscribe(tokens[1]);
+                        LayersRemovedEvent.Unsubscribe(tokens[2]);
+                        StandaloneTablesAddedEvent.Unsubscribe(tokens[3]);
+                        StandaloneTablesRemovedEvent.Unsubscribe(tokens[4]);
+                        MapSelectionChangedEvent.Unsubscribe(tokens[5]);
+                    }
+                    catch { }
+                };
+            }
+            catch { }
+        }
+
+        private void QueueRefresh()
+        {
+            try { Dispatcher.BeginInvoke(new Action(RefreshSources)); }
+            catch { }
+        }
+
+        private bool _selectionRereadQueued;
+
+        /// <summary>The map's selection changed: with "Use selected records
+        /// only" on, the current dataset is read again (once, however many
+        /// layers the selection touched).</summary>
+        private void OnMapSelectionChanged(MapSelectionChangedEventArgs args)
+        {
+            try
+            {
+                if (_selectionRereadQueued) return;
+                _selectionRereadQueued = true;
+                Dispatcher.BeginInvoke(new Action(async () =>
+                {
+                    _selectionRereadQueued = false;
+                    if (_loading || _srcIsRaster || chkSelected.IsChecked != true) return;
+                    await RereadAsync();
+                }));
+            }
+            catch { }
+        }
+
+        private void OnMapMemberChanged(MapMemberPropertiesChangedEventArgs args)
+        {
+            try
+            {
+                Dispatcher.BeginInvoke(new Action(ApplyRenames));
+            }
+            catch { }
+        }
+
+        /// <summary>Re-reads every listed member's current name; redraws the
+        /// list and the preview when one changed. Nothing is read again.</summary>
+        private void ApplyRenames()
+        {
+            try
+            {
+                bool any = false;
+                foreach (var src in _sources)
+                {
+                    string nm = src.ListName();
+                    if (!string.IsNullOrEmpty(nm) && nm != src.Name)
+                    { src.Name = nm; any = true; }
+                }
+                if (!any) return;
+                var cur = cboSource.SelectedItem;
+                bool was = _loading;
+                _loading = true;
+                try
+                {
+                    cboSource.ItemsSource = null;
+                    cboSource.ItemsSource = _sources;
+                    cboSource.SelectedItem = cur;
+                }
+                finally { _loading = was; }
+                if (!_loading && !_busy) RenderPreview();
+            }
+            catch { }
+        }
+
+        /// <summary>The ribbon button was clicked while the window is open:
+        /// list the active map's layers and tables again, keeping the current
+        /// dataset (and its data) when it is still there.</summary>
+        private bool _refreshPending;      // a change arrived during a read
+
+        internal async void RefreshSources()
+        {
+            if (_loading) return;
+            if (_busy) { _refreshPending = true; return; }
+            try
+            {
+                var map = MapView.Active?.Map;
+                if (map == null) return;     // a layout is active: keep the list
+                var fresh = await QueuedTask.Run(() => PolarPlotData.ListSources(map));
+                var cur = cboSource.SelectedItem as PolarPlotData.Source;
+                var keep = cur == null ? null
+                    : fresh.FirstOrDefault(x => x.SameMember(cur));
+                _sources = fresh;
+                _loading = true;
+                try
+                {
+                    cboSource.ItemsSource = _sources;
+                    if (keep != null) cboSource.SelectedItem = keep;
+                }
+                finally { _loading = false; }
+                if (keep != null) { RenderPreview(); return; }
+                if (_sources.Count > 0) cboSource.SelectedIndex = 0;   // reads
+                else
+                {
+                    _lastResult = null;
+                    RenderPreview();
+                    SetStatus("No layers or tables in the map.");
+                }
+            }
+            catch (Exception ex) { _loading = false; SetStatus("Error: " + ex.Message); }
         }
 
         private static void StyleToFlags(string style, out bool bold, out bool italic)
@@ -216,7 +350,23 @@ namespace WildlifeTools.SlopeGraphic
             if (_loading) return;
             if (ReferenceEquals(s, cboSlopeUnit))
                 _unitDetectNote = null;    // user overrode the auto-detected unit
+            if (ReferenceEquals(s, cboWField)) SuggestCounts();
             await RereadAsync();
+        }
+
+        /// <summary>A weight field named Count is, by convention, a raster
+        /// attribute table's cell count: offer the counts reading.</summary>
+        private void SuggestCounts()
+        {
+            string n = cboWField.SelectedItem as string ?? "";
+            bool was = _loading;
+            _loading = true;
+            try
+            {
+                chkWCounts.IsChecked =
+                    n.IndexOf("count", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+            finally { _loading = was; }
         }
         private async void RereadRouted(object s, RoutedEventArgs e)
         { if (!_loading) { SyncEnabled(); await RereadAsync(); } }
@@ -299,6 +449,7 @@ namespace WildlifeTools.SlopeGraphic
             if (fields.Count > 0) { cboField.SelectedIndex = 0; cboWField.SelectedIndex = 0; }
             rbWLength.IsEnabled = src.IsPolyline;
             if (!src.IsPolyline && rbWLength.IsChecked == true) rbWNone.IsChecked = true;
+            SuggestCounts();
             _loading = false;
             SyncEnabled();
         }
@@ -306,6 +457,7 @@ namespace WildlifeTools.SlopeGraphic
         private void SyncEnabled()
         {
             cboWField.IsEnabled = rbWField.IsChecked == true;
+            chkWCounts.IsEnabled = rbWField.IsChecked == true;
         }
 
         private async System.Threading.Tasks.Task RereadAsync()
@@ -335,6 +487,11 @@ namespace WildlifeTools.SlopeGraphic
             }
             catch (Exception ex) { SetStatus("Error reading data: " + ex.Message); }
             finally { _busy = false; barProgress.Visibility = Visibility.Collapsed; }
+            if (_refreshPending)
+            {
+                _refreshPending = false;
+                RefreshSources();
+            }
             if (_rereadPending)
             {
                 _rereadPending = false;
@@ -357,6 +514,8 @@ namespace WildlifeTools.SlopeGraphic
                     : rbWField.IsChecked == true ? PolarWeightOption.ByAttribute
                     : PolarWeightOption.None,
                 WeightField = cboWField.SelectedItem as string ?? "",
+                WeightsAreCounts = rbWField.IsChecked == true &&
+                                   chkWCounts.IsChecked == true,
                 UseSelectedOnly = chkSelected.IsChecked == true,
                 Unit = UnitFromCombo(),
             };
@@ -400,6 +559,7 @@ namespace WildlifeTools.SlopeGraphic
                 ShowProtractorLabels = chkProtLabels.IsChecked == true,
                 ProtractorColor = _colProtractor,
                 ShowBoundaryLabels = chkBoundaryLabels.IsChecked == true,
+                ShowLegend = chkLegend.IsChecked == true,
                 LabelFontFamily = cboLabelFont.SelectedItem as string ?? "Segoe UI",
                 LabelFontSizePt = Math.Max(4.0, ParseD(txtLabelSize.Text, 9.0)),
                 LabelColor = _colLabel,
@@ -412,7 +572,7 @@ namespace WildlifeTools.SlopeGraphic
                 SecondaryTitleFontFamily = cboSecFont.SelectedItem as string ?? "Segoe UI",
                 SecondaryTitleFontSizePt = Math.Max(4.0, ParseD(txtSecSize.Text, 9.0)),
                 SecondaryTitleColor = _colSec,
-                DatasetName = (cboSource.SelectedItem as PolarPlotData.Source)?.Name ?? "",
+                DatasetName = (cboSource.SelectedItem as PolarPlotData.Source)?.LayerName ?? "",
             };
             StyleToFlags(cboLabelStyle.SelectedItem as string, out bool lb, out bool li);
             s.LabelBold = lb; s.LabelItalic = li;
@@ -478,7 +638,7 @@ namespace WildlifeTools.SlopeGraphic
             if (st == null) { MessageBox.Show("No data to analyze.", "Slope Graphic"); return; }
             var header = new List<string>
             {
-                "Dataset = " + ((cboSource.SelectedItem as PolarPlotData.Source)?.Name ?? ""),
+                "Dataset = " + ((cboSource.SelectedItem as PolarPlotData.Source)?.LayerName ?? ""),
                 "Slope Unit = " + SlopeStats.UnitLabel(st.Unit),
             };
             if (_srcIsRaster)
@@ -493,7 +653,26 @@ namespace WildlifeTools.SlopeGraphic
                 header.Add("Slope Field = [" + (cboField.SelectedItem as string ?? "") + "]");
                 header.Add("Weighting = " + (rbWLength.IsChecked == true ? "By polyline length"
                     : rbWField.IsChecked == true
-                        ? "Field [" + (cboWField.SelectedItem as string ?? "") + "]" : "None"));
+                        ? "Field [" + (cboWField.SelectedItem as string ?? "") + "]" +
+                          (st.WeightsAreCounts ? " (counts of observations)" : "")
+                        : "None"));
+                var r = _lastResult;
+                string n = r.RawCount.ToString("N0", CI);
+                if (r.SelectionUsed)
+                    header.Add("Records = Analyzing selected records (n = " + n +
+                        (r.TableRows >= 0
+                            ? " of " + r.TableRows.ToString("N0", CI) : "") + ")");
+                else if (r.SelectionEmpty)
+                    header.Add("Records = No records selected, analyzing all (n = " +
+                               n + ")");
+                else
+                    header.Add("Records = Analyzing all records (n = " + n + ")");
+                long dropped = r.RawCount - r.KeptCount;
+                if (dropped > 0)
+                    header.Add("   Note: " + dropped.ToString("N0", CI) +
+                        " records excluded from analysis (no value, no weight, " +
+                        "negative, or beyond vertical). Final count = " +
+                        r.KeptCount.ToString("N0", CI));
             }
             new SlopeStatsWindow(st, header) { Owner = this }.Show();
         }
@@ -524,7 +703,7 @@ namespace WildlifeTools.SlopeGraphic
             if (_model == null) { MessageBox.Show("Nothing to add yet.", "Slope Graphic"); return; }
             var model = _model;
             string name = "Slope Graphic - " +
-                ((cboSource.SelectedItem as PolarPlotData.Source)?.Name ?? "slope");
+                ((cboSource.SelectedItem as PolarPlotData.Source)?.LayerName ?? "slope");
             btnAddGraphic.IsEnabled = false;
             try
             {
@@ -565,6 +744,7 @@ namespace WildlifeTools.SlopeGraphic
             ShowProtractorLabels = chkProtLabels.IsChecked == true,
             ProtractorColor = SlopeStyleDto.FromColor(_colProtractor),
             ShowBoundaryLabels = chkBoundaryLabels.IsChecked == true,
+            ShowLegend = chkLegend.IsChecked == true,
             LabelFontFamily = cboLabelFont.SelectedItem as string ?? "Segoe UI",
             LabelFontSizePt = ParseD(txtLabelSize.Text, 9),
             LabelFontStyle = cboLabelStyle.SelectedItem as string ?? "Regular",
@@ -612,6 +792,7 @@ namespace WildlifeTools.SlopeGraphic
                 chkProtLabels.IsChecked = d.ShowProtractorLabels;
                 _colProtractor = SlopeStyleDto.ToColor(d.ProtractorColor, _colProtractor);
                 chkBoundaryLabels.IsChecked = d.ShowBoundaryLabels;
+                chkLegend.IsChecked = d.ShowLegend;
                 SelectItem(cboLabelFont, d.LabelFontFamily);
                 txtLabelSize.Text = d.LabelFontSizePt.ToString(CI);
                 SelectStyle(cboLabelStyle, d.LabelFontStyle);

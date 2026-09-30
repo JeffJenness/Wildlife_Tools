@@ -67,7 +67,13 @@ namespace WildlifeTools.SlopeGraphic
             yield return ("Maximum Slope", st.FmtBoth(st.Max), null);
             yield return ("5th / 95th Percentiles",
                 st.FmtBoth(st.Quantile(0.05)) + "  /  " + st.FmtBoth(st.Quantile(0.95)), null);
-            yield return ("Mean Slope 95% CI", st.CiText(), "[A]");
+            yield return ("Mean Slope 95% CI", st.CiText(),
+                          st.KishApplied ? "[A,B]" : "[A]");
+            if (st.KishApplied)
+                yield return ("Effective sample size",
+                    st.EffectiveN.ToString("F2", CI) + " (of " +
+                    st.Count.ToString("N0", CI) + " weighted records; used for " +
+                    "the confidence interval)", "[B]");
             if (st.Unit != SlopeUnit.Degrees)
                 yield return ("Note", "The mean, SD and CI are computed on the " +
                     "slope ANGLES and converted for display; computing them on raw " +
@@ -88,7 +94,7 @@ namespace WildlifeTools.SlopeGraphic
             }
             foreach (var (name, value, refs) in StatLines())
                 sb.AppendLine(name + " = " + value + (refs != null ? "   " + refs : ""));
-            if (_st.WeightsAreCounts)
+            if (_st.Binned)
                 sb.AppendLine("   (Cell values binned to 0.01-degree classes for the " +
                               "median/percentiles; mean, SD, min and max are exact.)");
             sb.AppendLine("-------------------------------------------------------");
@@ -100,6 +106,8 @@ namespace WildlifeTools.SlopeGraphic
         {
             "[A] Zar, J. H. 1999. Biostatistical Analysis, 4th ed. Prentice " +
             "Hall. ch. 7 (t-based confidence interval for a mean).",
+            "[B] Kish, L. 1992. Weighting for unequal Pi. Journal of Official " +
+            "Statistics 8:183-200 (effective sample size, eq. 4.3).",
             "Slope graphic after the Jenness Enterprises Grid Tools extension " +
             "for ArcView 3.x.",
         };
@@ -138,7 +146,7 @@ namespace WildlifeTools.SlopeGraphic
                     { Foreground = Brushes.Gray, FontSize = 11 });
                 sp.Inlines.Add(new LineBreak());
             }
-            if (_st.WeightsAreCounts)
+            if (_st.Binned)
                 sp.Inlines.Add(new Italic(new Run(
                     "(Cell values binned to 0.01-degree classes for the " +
                     "median/percentiles; mean, SD, min and max are exact.)"))
@@ -179,7 +187,7 @@ namespace WildlifeTools.SlopeGraphic
                       .Append(refs).Append("</CLR>");
                 sb.AppendLine();
             }
-            if (_st.WeightsAreCounts)
+            if (_st.Binned)
                 sb.AppendLine("<ITA>(Cell values binned to 0.01-degree classes for " +
                               "the median/percentiles; mean, SD, min and max are exact.)</ITA>");
             sb.AppendLine();

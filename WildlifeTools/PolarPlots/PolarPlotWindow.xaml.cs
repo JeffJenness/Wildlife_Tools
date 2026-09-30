@@ -29,6 +29,7 @@ using ArcGIS.Core.CIM;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
 using ArcGIS.Desktop.Mapping;
 using ArcGIS.Desktop.Mapping.Controls;
+using ArcGIS.Desktop.Mapping.Events;
 using MessageBox = ArcGIS.Desktop.Framework.Dialogs.MessageBox;
 
 namespace WildlifeTools.PolarPlots
@@ -98,6 +99,139 @@ namespace WildlifeTools.PolarPlots
             cboSecStyle.SelectedIndex = 2;                    // Italic
 
             Loaded += async (_, __) => await LoadSourcesAsync();
+
+            // A layer renamed in the Contents pane: the list and the
+            // secondary title follow it. Layers or tables added or removed:
+            // the list is rebuilt. A changed selection: the data are read
+            // again when only the selected records are in use.
+            try
+            {
+                var tokens = new List<ArcGIS.Core.Events.SubscriptionToken>
+                {
+                    MapMemberPropertiesChangedEvent.Subscribe(OnMapMemberChanged),
+                    LayersAddedEvent.Subscribe(_ => QueueRefresh()),
+                    LayersRemovedEvent.Subscribe(_ => QueueRefresh()),
+                    StandaloneTablesAddedEvent.Subscribe(_ => QueueRefresh()),
+                    StandaloneTablesRemovedEvent.Subscribe(_ => QueueRefresh()),
+                    MapSelectionChangedEvent.Subscribe(OnMapSelectionChanged),
+                };
+                Closed += (_, __) =>
+                {
+                    try
+                    {
+                        MapMemberPropertiesChangedEvent.Unsubscribe(tokens[0]);
+                        LayersAddedEvent.Unsubscribe(tokens[1]);
+                        LayersRemovedEvent.Unsubscribe(tokens[2]);
+                        StandaloneTablesAddedEvent.Unsubscribe(tokens[3]);
+                        StandaloneTablesRemovedEvent.Unsubscribe(tokens[4]);
+                        MapSelectionChangedEvent.Unsubscribe(tokens[5]);
+                    }
+                    catch { }
+                };
+            }
+            catch { }
+        }
+
+        private void QueueRefresh()
+        {
+            try { Dispatcher.BeginInvoke(new Action(RefreshSources)); }
+            catch { }
+        }
+
+        private bool _selectionRereadQueued;
+
+        /// <summary>The map's selection changed: with "Use selected records
+        /// only" on, the current dataset is read again (once, however many
+        /// layers the selection touched).</summary>
+        private void OnMapSelectionChanged(MapSelectionChangedEventArgs args)
+        {
+            try
+            {
+                if (_selectionRereadQueued) return;
+                _selectionRereadQueued = true;
+                Dispatcher.BeginInvoke(new Action(async () =>
+                {
+                    _selectionRereadQueued = false;
+                    if (_loading || _srcIsRaster || chkSelected.IsChecked != true) return;
+                    await RereadAsync();
+                }));
+            }
+            catch { }
+        }
+
+        private void OnMapMemberChanged(MapMemberPropertiesChangedEventArgs args)
+        {
+            try
+            {
+                Dispatcher.BeginInvoke(new Action(ApplyRenames));
+            }
+            catch { }
+        }
+
+        /// <summary>Re-reads every listed member's current name; redraws the
+        /// list and the preview when one changed. Nothing is read again.</summary>
+        private void ApplyRenames()
+        {
+            try
+            {
+                bool any = false;
+                foreach (var src in _sources)
+                {
+                    string nm = src.ListName();
+                    if (!string.IsNullOrEmpty(nm) && nm != src.Name)
+                    { src.Name = nm; any = true; }
+                }
+                if (!any) return;
+                var cur = cboSource.SelectedItem;
+                bool was = _loading;
+                _loading = true;
+                try
+                {
+                    cboSource.ItemsSource = null;
+                    cboSource.ItemsSource = _sources;
+                    cboSource.SelectedItem = cur;
+                }
+                finally { _loading = was; }
+                if (!_loading && !_busy) RenderPreview();
+            }
+            catch { }
+        }
+
+        /// <summary>The ribbon button was clicked while the window is open:
+        /// list the active map's layers and tables again, keeping the current
+        /// dataset (and its data) when it is still there.</summary>
+        private bool _refreshPending;      // a change arrived during a read
+
+        internal async void RefreshSources()
+        {
+            if (_loading) return;
+            if (_busy) { _refreshPending = true; return; }
+            try
+            {
+                var map = MapView.Active?.Map;
+                if (map == null) return;     // a layout is active: keep the list
+                var fresh = await QueuedTask.Run(() => PolarPlotData.ListSources(map));
+                var cur = cboSource.SelectedItem as PolarPlotData.Source;
+                var keep = cur == null ? null
+                    : fresh.FirstOrDefault(x => x.SameMember(cur));
+                _sources = fresh;
+                _loading = true;
+                try
+                {
+                    cboSource.ItemsSource = _sources;
+                    if (keep != null) cboSource.SelectedItem = keep;
+                }
+                finally { _loading = false; }
+                if (keep != null) { RenderPreview(); return; }
+                if (_sources.Count > 0) cboSource.SelectedIndex = 0;   // reads
+                else
+                {
+                    _az.Clear(); _wt.Clear(); _mag.Clear(); _lastResult = null;
+                    RenderPreview();
+                    SetStatus("No feature layers or tables in the map.");
+                }
+            }
+            catch (Exception ex) { _loading = false; SetStatus("Error: " + ex.Message); }
         }
 
         private static void StyleToFlags(string style, out bool bold, out bool italic)
@@ -225,7 +359,26 @@ namespace WildlifeTools.PolarPlots
             await RereadAsync();
         }
         private async void RereadSel(object s, SelectionChangedEventArgs e)
-        { if (!_loading) await RereadAsync(); }
+        {
+            if (_loading) return;
+            if (ReferenceEquals(s, cboWField)) SuggestCounts();
+            await RereadAsync();
+        }
+
+        /// <summary>A weight field named Count is, by convention, a raster
+        /// attribute table's cell count: offer the counts reading.</summary>
+        private void SuggestCounts()
+        {
+            string n = cboWField.SelectedItem as string ?? "";
+            bool was = _loading;
+            _loading = true;
+            try
+            {
+                chkWCounts.IsChecked =
+                    n.IndexOf("count", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+            finally { _loading = was; }
+        }
         private async void RereadRouted(object s, RoutedEventArgs e)
         { if (!_loading) { SyncEnabled(); await RereadAsync(); } }
         private void StyleSel(object s, SelectionChangedEventArgs e)
@@ -233,7 +386,7 @@ namespace WildlifeTools.PolarPlots
         private void StyleText(object s, TextChangedEventArgs e)
         { if (!_loading) RenderPreview(); }
         private void StyleRouted(object s, RoutedEventArgs e)
-        { if (!_loading) RenderPreview(); }
+        { if (!_loading) { SyncEnabled(); RenderPreview(); } }
 
         // ---- diameter units (inches / centimeters) --------------------------
         // The model is ALWAYS inches internally; the unit choice only changes
@@ -358,6 +511,7 @@ namespace WildlifeTools.PolarPlots
             rbWLength.IsEnabled = src.IsPolyline;
             if (!src.IsPolyline && rbAzPolyline.IsChecked == true) rbAzField.IsChecked = true;
             if (!src.IsPolyline && rbWLength.IsChecked == true) rbWNone.IsChecked = true;
+            SuggestCounts();
             _loading = false;
             SyncEnabled();
         }
@@ -366,8 +520,16 @@ namespace WildlifeTools.PolarPlots
         {
             cboAzField.IsEnabled = rbAzField.IsChecked == true;
             cboWField.IsEnabled = rbWField.IsChecked == true;
+            chkWCounts.IsEnabled = rbWField.IsChecked == true;
             chkExcludeNeg1.IsEnabled = chkExcludeNeg.IsChecked == true;
+            // The arc is drawn only with the arrow.
+            chkMeanCI.IsEnabled = chkMeanArrow.IsChecked == true;
         }
+
+        /// <summary>Each weight is a count of identical observations: a
+        /// raster's binned cells, or a table weighted by a count field.</summary>
+        private bool CountsMode =>
+            _srcIsRaster || (_lastResult != null && _lastResult.WeightsAreCounts);
 
         private bool _rereadPending;    // a change arrived during a long read
 
@@ -409,6 +571,11 @@ namespace WildlifeTools.PolarPlots
             }
             catch (Exception ex) { SetStatus("Error reading data: " + ex.Message); }
             finally { _busy = false; barProgress.Visibility = Visibility.Collapsed; }
+            if (_refreshPending)
+            {
+                _refreshPending = false;
+                RefreshSources();
+            }
             if (_rereadPending)
             {
                 _rereadPending = false;
@@ -502,7 +669,7 @@ namespace WildlifeTools.PolarPlots
             s.SecondaryTitleColor = _colSec;
 
             var src = cboSource.SelectedItem as PolarPlotData.Source;
-            s.DatasetName = src?.Name ?? "";
+            s.DatasetName = src?.LayerName ?? "";
             s.AzimuthOption = rbAzPolyline.IsChecked == true
                 ? PolarAzimuthOption.ByPolyline : PolarAzimuthOption.ByAttribute;
             s.AzimuthField = cboAzField.SelectedItem as string ?? "";
@@ -510,10 +677,15 @@ namespace WildlifeTools.PolarPlots
                 : rbWField.IsChecked == true ? PolarWeightOption.ByAttribute
                 : PolarWeightOption.None;
             s.WeightField = cboWField.SelectedItem as string ?? "";
+            s.WeightsAreCounts = rbWField.IsChecked == true &&
+                                 chkWCounts.IsChecked == true;
             s.UseSelectedOnly = chkSelected.IsChecked == true;
             s.AddReverse = chkReverse.IsChecked == true;
             s.ExcludeNegative = chkExcludeNeg.IsChecked == true;
-            s.ExcludeMinusOneOnly = chkExcludeNeg1.IsChecked == true;
+            // The narrower box applies only while the exclusion itself is on;
+            // grayed out but still checked, it must not go on excluding -1.
+            s.ExcludeMinusOneOnly = s.ExcludeNegative &&
+                                    chkExcludeNeg1.IsChecked == true;
             return s;
         }
 
@@ -534,10 +706,20 @@ namespace WildlifeTools.PolarPlots
                 string azSrc = s.AzimuthOption == PolarAzimuthOption.ByPolyline
                     ? "polyline direction" : "field [" + s.AzimuthField + "]";
                 lines.Add("Source: " + s.DatasetName + " (" + azSrc + ")");
-                lines.Add("Count analyzed: " + _az.Count.ToString("N0", CultureInfo.InvariantCulture));
-                lines.Add(s.WeightOption == PolarWeightOption.None
-                    ? "Values not weighted"
-                    : "Total weight: " + _wt.Sum().ToString("N2", CultureInfo.InvariantCulture));
+                if (CountsMode)
+                {
+                    lines.Add("Count analyzed: " +
+                        Math.Round(_wt.Sum()).ToString("N0", CultureInfo.InvariantCulture) +
+                        " (" + _az.Count.ToString("N0", CultureInfo.InvariantCulture) +
+                        " records, counts in field [" + s.WeightField + "])");
+                }
+                else
+                {
+                    lines.Add("Count analyzed: " + _az.Count.ToString("N0", CultureInfo.InvariantCulture));
+                    lines.Add(s.WeightOption == PolarWeightOption.None
+                        ? "Values not weighted"
+                        : "Total weight: " + _wt.Sum().ToString("N2", CultureInfo.InvariantCulture));
+                }
             }
             double max = bins != null && bins.Length > 0 ? bins.Max() : 0;
             lines.Add("Maximum bin value: " + max.ToString("N2", CultureInfo.InvariantCulture));
@@ -580,7 +762,7 @@ namespace WildlifeTools.PolarPlots
                                      s.PlotType == PolarPlotType.Bearings ||
                                      s.PlotType == PolarPlotType.WindRose))
                     s.PlotType = PolarPlotType.CircularBins;
-                var st = new CircularStats(_az, _wt, _weighted, _srcIsRaster);
+                var st = new CircularStats(_az, _wt, _weighted, CountsMode, _srcIsRaster);
                 var bins = st.Bin(s.BinCount);
                 var model = PolarPlotBuilder.Build(s, bins, SecondaryTitleLines(s, bins),
                                                    _az, _wt, _mag, st);
@@ -594,6 +776,11 @@ namespace WildlifeTools.PolarPlots
                       " cells plotted (binned to 0.1°" +
                       (_lastResult?.SamplingNote != null
                           ? "; " + _lastResult.SamplingNote : "") + ")"
+                    : CountsMode
+                    ? Math.Round(_wt.Sum()).ToString("N0", CultureInfo.InvariantCulture) +
+                      " observations plotted from " +
+                      _az.Count.ToString("N0", CultureInfo.InvariantCulture) +
+                      " records (counts in [" + s.WeightField + "])"
                     : _az.Count.ToString("N0", CultureInfo.InvariantCulture) +
                       " value(s) plotted";
                 SetStatus(plotted +
@@ -617,7 +804,8 @@ namespace WildlifeTools.PolarPlots
         {
             if (_az.Count == 0) { MessageBox.Show("No data to analyze.", "Polar Plots"); return; }
             var s = BuildSettings();
-            var st = new CircularStats(_az, _wt, _weighted, _srcIsRaster);
+            var st = new CircularStats(_az, _wt, _weighted, CountsMode, _srcIsRaster);
+            var inv = CultureInfo.InvariantCulture;
             var header = _srcIsRaster
                 ? new List<string>
                 {
@@ -636,8 +824,46 @@ namespace WildlifeTools.PolarPlots
                         ? "Derived from polylines" : "Field [" + s.AzimuthField + "]"),
                     "Weighting = " + (s.WeightOption == PolarWeightOption.None ? "None"
                         : s.WeightOption == PolarWeightOption.ByLength ? "By polyline length"
-                        : "Field [" + s.WeightField + "]"),
+                        : "Field [" + s.WeightField + "]" +
+                          (CountsMode ? " (counts of observations)" : "")),
                 };
+            var r = _lastResult;
+            if (!_srcIsRaster && r != null)
+            {
+                string n = r.RawCount.ToString("N0", inv);
+                if (r.SelectionUsed)
+                    header.Add("Records = Analyzing selected records (n = " + n +
+                        (r.TableRows >= 0
+                            ? " of " + r.TableRows.ToString("N0", inv) : "") + ")");
+                else if (r.SelectionEmpty)
+                    header.Add("Records = No records selected, analyzing all (n = " +
+                               n + ")");
+                else
+                    header.Add("Records = Analyzing all records (n = " + n + ")");
+                long dropped = r.RawCount - r.KeptCount;
+                if (dropped > 0)
+                    header.Add("   Note: " + dropped.ToString("N0", inv) +
+                        " records excluded from analysis (no direction, no " +
+                        "weight, or an excluded value). Final count = " +
+                        r.KeptCount.ToString("N0", inv));
+            }
+            if (s.ExcludeMinusOneOnly)
+                header.Add("** Analysis excludes all '-1' values" +
+                    (r != null && r.ExcludedNegative > 0
+                        ? " (" + r.ExcludedNegative.ToString("N0", inv) + " excluded)"
+                        : ""));
+            else if (s.ExcludeNegative)
+                header.Add("** Analysis excludes all negative values" +
+                    (r != null && r.ExcludedNegative > 0
+                        ? " (" + r.ExcludedNegative.ToString("N0", inv) + " excluded)"
+                        : ""));
+            if (s.AddReverse)
+            {
+                header.Add("** NOTE: Reverse azimuths have been added for all records.");
+                header.Add("   Every direction is cancelled by its opposite, so the mean");
+                header.Add("   direction, dispersion, concentration, confidence interval");
+                header.Add("   and Rayleigh test below describe the added reverses, not the data.");
+            }
             string plain = st.BuildReport(header);
             var win = new PolarStatsWindow(st, header, plain) { Owner = this };
             win.Show();
@@ -883,7 +1109,7 @@ namespace WildlifeTools.PolarPlots
         // ---- helpers --------------------------------------------------------
         private string MakeFileBase()
         {
-            string n = (cboSource.SelectedItem as PolarPlotData.Source)?.Name ?? "PolarPlot";
+            string n = (cboSource.SelectedItem as PolarPlotData.Source)?.LayerName ?? "PolarPlot";
             var sb = new System.Text.StringBuilder();
             foreach (char c in n) sb.Append(char.IsLetterOrDigit(c) ? c : '_');
             return "PolarPlot_" + sb.ToString().Trim('_');

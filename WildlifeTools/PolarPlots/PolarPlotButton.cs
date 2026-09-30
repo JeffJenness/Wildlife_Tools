@@ -28,7 +28,7 @@ namespace WildlifeTools.PolarPlots
     /// Ribbon button that opens the interactive Polar Plots window. ONE shared
     /// non-modal window (like the Sudoku / Thought for the Day cards), so the
     /// map keeps working while the plot is designed; clicking again brings the
-    /// existing window forward.
+    /// existing window forward and lists the map's layers and tables again.
     /// </summary>
     internal sealed class PolarPlotButton : Button
     {
@@ -38,7 +38,12 @@ namespace WildlifeTools.PolarPlots
         {
             try
             {
-                if (_window != null) { _window.Activate(); return; }
+                if (_window != null)
+                {
+                    _window.Activate();
+                    _window.RefreshSources();
+                    return;
+                }
                 _window = new PolarPlotWindow
                 { Owner = FrameworkApplication.Current.MainWindow };
                 _window.Closed += (_, __) => _window = null;

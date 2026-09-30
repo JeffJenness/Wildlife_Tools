@@ -90,7 +90,7 @@
           </Button>
           <Button Margin="3,0" Click="OnAddToLayout"
                   Style="{StaticResource ParchButton}"
-                  ToolTip="One click: place a text element carrying this report (with its formatting) at the center of the active layout. Open a layout view first.">
+                  ToolTip="One click: place a text element carrying this report (with its formatting) at the center of a layout. The active layout is used when one is open; otherwise you pick from the project's layouts.">
             <TextBlock TextAlignment="Center"><Run Text="Add to" /><LineBreak /><Run Text="Layout" /></TextBlock>
           </Button>
           <Button Margin="3,0" Click="OnSaveFile"

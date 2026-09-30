@@ -227,14 +227,19 @@ namespace WildlifeTools.PolarPlots
         public static string PlaceOnLayout(PolarPlotModel m, Layout layout,
                                            string name)
         {
+            // The model is in inches; the page may be in centimeters,
+            // millimeters or points. Without this conversion a 4-inch plot
+            // lands 4 cm (or 4 mm) wide while its fonts stay full size.
             double cx = 0, cy = 0, upi = 1.0;
             try
             {
                 var page = layout.GetPage();
+                double metersPerUnit = page.Units.ConversionFactor;
+                if (metersPerUnit > 0) upi = 0.0254 / metersPerUnit;
                 cx = page.Width / 2.0;
                 cy = page.Height / 2.0;
             }
-            catch { cx = m.HalfWidthIn; cy = m.HalfHeightIn; }
+            catch { cx = m.HalfWidthIn * upi; cy = m.HalfHeightIn * upi; }
             var grp = Place(m, layout, cx, cy, upi, name);
             if (grp == null) throw new InvalidOperationException(
                 "No plot elements could be created on the layout.");
