@@ -54,6 +54,17 @@ namespace WildlifeTools.PolarPlots
         /// 0.1-degree classes (as opposed to a table's count field).</summary>
         public bool Binned { get; }
 
+        /// <summary>Axial data: the azimuths given are the DOUBLED angles of
+        /// lines that run both ways (Batschelet 1981, sec. 1.6). The mean
+        /// direction, median, circular range and confidence half-angle are
+        /// halved back to the original scale (the mean axis, which also runs
+        /// the opposite way); AxialAngularDeviationDeg is the halved angular
+        /// deviation (Batschelet eq. 2.3.5). The mean resultant length, the
+        /// variances, circular SD, kappa and the Rayleigh test describe the
+        /// doubled angles.</summary>
+        public bool Axial { get; }
+        public double AxialAngularDeviationDeg { get; private set; } = double.NaN;
+
         // Results.
         public long Count { get; private set; }
         public double TotalWeight { get; private set; }
@@ -99,15 +110,41 @@ namespace WildlifeTools.PolarPlots
 
         public CircularStats(IReadOnlyList<double> azimuths,
                              IReadOnlyList<double> weights, bool weighted,
-                             bool weightsAreCounts = false, bool? binned = null)
+                             bool weightsAreCounts = false, bool? binned = null,
+                             bool axial = false)
         {
             Azimuths = azimuths ?? Array.Empty<double>();
             Weights = weights;
             Weighted = weighted;
             WeightsAreCounts = weightsAreCounts;
             Binned = binned ?? weightsAreCounts;
+            Axial = axial;
             Compute();
+            if (Axial)
+            {
+                // Back to the scale of the lines: halve every angle-valued
+                // result. Each is an axis, so it also holds 180 degrees on.
+                if (!double.IsNaN(MeanDirectionDeg)) MeanDirectionDeg /= 2.0;
+                if (!double.IsNaN(MedianDirectionDeg)) MedianDirectionDeg /= 2.0;
+                if (!double.IsNaN(CircularRangeDeg)) CircularRangeDeg /= 2.0;
+                if (!double.IsNaN(MeanCiHalfDeg95)) MeanCiHalfDeg95 /= 2.0;
+                AxialAngularDeviationDeg = AngularDeviationDeg / 2.0;
+            }
         }
+
+        /// <summary>"16.80000 / 196.80000 Degrees" for an axis, or the plain
+        /// direction text.</summary>
+        public string DirectionText(double deg, CultureInfo ci)
+        {
+            if (double.IsNaN(deg)) return "undefined";
+            if (!Axial) return deg.ToString("F5", ci) + " Degrees";
+            return deg.ToString("F5", ci) + " / " +
+                   Mod360(deg + 180.0).ToString("F5", ci) + " Degrees";
+        }
+
+        /// <summary>Report label for the mean, median and interval lines:
+        /// "Mean Direction" or, for axial data, "Mean Axis".</summary>
+        public string DirWord => Axial ? "Axis" : "Direction";
 
         private void Compute()
         {
@@ -300,6 +337,15 @@ namespace WildlifeTools.PolarPlots
         {
             var ci = CultureInfo.InvariantCulture;
             var notes = new List<string>();
+            if (Axial)
+                notes.Add("(Axial data: the statistics are computed on the " +
+                          "doubled angles, Batschelet 1981 sec. 1.6. The mean " +
+                          "axis, median axis, circular range, confidence " +
+                          "interval and the angular deviation of the axes are " +
+                          "halved back to the scale of the lines; the mean " +
+                          "resultant length, variances, circular standard " +
+                          "deviation, kappa and the Rayleigh test describe the " +
+                          "doubled angles.)");
             if (WeightsAreCounts && Binned)
                 notes.Add("(Values binned to 0.1-degree classes; statistics " +
                           "computed on the per-class cell counts.)");
@@ -417,8 +463,8 @@ namespace WildlifeTools.PolarPlots
                 sb.AppendLine("Total weight = " + TotalWeight.ToString("N4", ci));
             string meanTxt = double.IsNaN(MeanDirectionDeg)
                 ? "undefined (resultant length is zero)"
-                : MeanDirectionDeg.ToString("F5", ci) + " Degrees";
-            sb.AppendLine("Mean Direction = " + meanTxt);
+                : DirectionText(MeanDirectionDeg, ci);
+            sb.AppendLine("Mean " + DirWord + " = " + meanTxt);
             sb.AppendLine("Resultant Length = " + ResultantLength.ToString("F5", ci));
             sb.AppendLine("Mean Resultant Length = " + MeanResultantLength.ToString("F4", ci));
             sb.AppendLine("Circular Variance = " + CircularVariance.ToString("F4", ci) + "   [A,B]");
@@ -431,16 +477,20 @@ namespace WildlifeTools.PolarPlots
                           AngularDeviationRad.ToString("F5", ci) + " Radians   [C]");
             sb.AppendLine("Angular Deviation (Degrees) = " +
                           AngularDeviationDeg.ToString("F5", ci) + " Degrees   [C]");
+            if (Axial)
+                sb.AppendLine("Angular Deviation of the Axes = " +
+                              AxialAngularDeviationDeg.ToString("F5", ci) +
+                              " Degrees   [C]");
             sb.AppendLine("-------------------------------------------------------");
             // Extended descriptors (computed on the unweighted azimuths).
             string medTxt = double.IsNaN(MedianDirectionDeg)
-                ? "undefined" : MedianDirectionDeg.ToString("F5", ci) + " Degrees";
-            sb.AppendLine("Median Direction = " + medTxt + "   [A,B]");
+                ? "undefined" : DirectionText(MedianDirectionDeg, ci);
+            sb.AppendLine("Median " + DirWord + " = " + medTxt + "   [A,B]");
             sb.AppendLine("Circular Range = " + CircularRangeDeg.ToString("F5", ci) +
                           " Degrees   [A,B]");
             sb.AppendLine("von Mises Concentration (kappa) = " +
                           VonMisesKappa.ToString("F5", ci) + "   [A,D]");
-            sb.AppendLine("Mean Direction 95% CI = " + MeanCiText(ci) + "   [A,D]");
+            sb.AppendLine("Mean " + DirWord + " 95% CI = " + MeanCiText(ci) + "   [A,D]");
             sb.AppendLine("Rayleigh Test of Uniformity: Z = " +
                           RayleighZ.ToString("F5", ci) + ", p = " +
                           RayleighP.ToString("F5", ci) + "   [A,E]");

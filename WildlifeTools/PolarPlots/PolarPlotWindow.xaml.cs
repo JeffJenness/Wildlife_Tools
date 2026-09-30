@@ -55,6 +55,8 @@ namespace WildlifeTools.PolarPlots
         private readonly List<double> _az = new List<double>();
         private readonly List<double> _wt = new List<double>();
         private readonly List<double> _mag = new List<double>();
+        private readonly List<double> _axAz = new List<double>();   // doubled angles
+        private readonly List<double> _axWt = new List<double>();
         private bool _hasMag;
         private bool _weighted;
         private PolarPlotData.Result _lastResult;
@@ -522,6 +524,16 @@ namespace WildlifeTools.PolarPlots
             cboWField.IsEnabled = rbWField.IsChecked == true;
             chkWCounts.IsEnabled = rbWField.IsChecked == true;
             chkExcludeNeg1.IsEnabled = chkExcludeNeg.IsChecked == true;
+            // Axial data implies both ends of every line on the plot.
+            bool axial = chkAxial.IsChecked == true;
+            chkReverse.IsEnabled = !axial;
+            if (axial && chkReverse.IsChecked != true)
+            {
+                bool was = _loading;
+                _loading = true;
+                try { chkReverse.IsChecked = true; }
+                finally { _loading = was; }
+            }
             // The arc is drawn only with the arrow.
             chkMeanCI.IsEnabled = chkMeanArrow.IsChecked == true;
         }
@@ -530,6 +542,16 @@ namespace WildlifeTools.PolarPlots
         /// raster's binned cells, or a table weighted by a count field.</summary>
         private bool CountsMode =>
             _srcIsRaster || (_lastResult != null && _lastResult.WeightsAreCounts);
+
+        /// <summary>The statistics of the current data: on the doubled
+        /// angles of the original observations for axial data, else on the
+        /// plotted directions.</summary>
+        private CircularStats MakeStats(PolarPlotSettings s)
+        {
+            bool axial = s.Axial && _axAz.Count > 0;
+            return new CircularStats(axial ? _axAz : _az, axial ? _axWt : _wt,
+                                     _weighted, CountsMode, _srcIsRaster, axial);
+        }
 
         private bool _rereadPending;    // a change arrived during a long read
 
@@ -565,6 +587,8 @@ namespace WildlifeTools.PolarPlots
                 _az.Clear(); _az.AddRange(res.Azimuths);
                 _wt.Clear(); _wt.AddRange(res.Weights);
                 _mag.Clear(); _mag.AddRange(res.Magnitudes);
+                _axAz.Clear(); _axAz.AddRange(res.AxialAzimuths);
+                _axWt.Clear(); _axWt.AddRange(res.AxialWeights);
                 _hasMag = res.HasMagnitudes;
                 _weighted = res.Weighted;
                 RenderPreview();
@@ -680,7 +704,8 @@ namespace WildlifeTools.PolarPlots
             s.WeightsAreCounts = rbWField.IsChecked == true &&
                                  chkWCounts.IsChecked == true;
             s.UseSelectedOnly = chkSelected.IsChecked == true;
-            s.AddReverse = chkReverse.IsChecked == true;
+            s.Axial = chkAxial.IsChecked == true;
+            s.AddReverse = chkReverse.IsChecked == true || s.Axial;
             s.ExcludeNegative = chkExcludeNeg.IsChecked == true;
             // The narrower box applies only while the exclusion itself is on;
             // grayed out but still checked, it must not go on excluding -1.
@@ -762,8 +787,12 @@ namespace WildlifeTools.PolarPlots
                                      s.PlotType == PolarPlotType.Bearings ||
                                      s.PlotType == PolarPlotType.WindRose))
                     s.PlotType = PolarPlotType.CircularBins;
-                var st = new CircularStats(_az, _wt, _weighted, CountsMode, _srcIsRaster);
-                var bins = st.Bin(s.BinCount);
+                var st = MakeStats(s);
+                // Bins for the plot come from the plotted directions (both
+                // ends of every line for axial data), not the doubled angles.
+                var bins = st.Axial
+                    ? new CircularStats(_az, _wt, _weighted, CountsMode, _srcIsRaster).Bin(s.BinCount)
+                    : st.Bin(s.BinCount);
                 var model = PolarPlotBuilder.Build(s, bins, SecondaryTitleLines(s, bins),
                                                    _az, _wt, _mag, st);
                 _model = model; _modelSettings = s;
@@ -804,7 +833,7 @@ namespace WildlifeTools.PolarPlots
         {
             if (_az.Count == 0) { MessageBox.Show("No data to analyze.", "Polar Plots"); return; }
             var s = BuildSettings();
-            var st = new CircularStats(_az, _wt, _weighted, CountsMode, _srcIsRaster);
+            var st = MakeStats(s);
             var inv = CultureInfo.InvariantCulture;
             var header = _srcIsRaster
                 ? new List<string>
@@ -857,7 +886,10 @@ namespace WildlifeTools.PolarPlots
                     (r != null && r.ExcludedNegative > 0
                         ? " (" + r.ExcludedNegative.ToString("N0", inv) + " excluded)"
                         : ""));
-            if (s.AddReverse)
+            if (s.Axial)
+                header.Add("** Axial data: both ends of every line are plotted; the " +
+                           "statistics are computed on the doubled angles.");
+            else if (s.AddReverse)
             {
                 header.Add("** NOTE: Reverse azimuths have been added for all records.");
                 header.Add("   Every direction is cancelled by its opposite, so the mean");

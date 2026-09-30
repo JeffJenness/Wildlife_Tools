@@ -759,7 +759,18 @@ namespace WildlifeTools.PolarPlots
         {
             if (double.IsNaN(st.MeanDirectionDeg) || st.MeanResultantLength <= 0)
                 return;
-            double az = st.MeanDirectionDeg;
+            // Axial data: the mean axis runs both ways, so the arrow and
+            // the confidence arc are drawn at both ends.
+            var ends = st.Axial
+                ? new[] { st.MeanDirectionDeg, CircularStats.Mod360(st.MeanDirectionDeg + 180.0) }
+                : new[] { st.MeanDirectionDeg };
+            foreach (double az in ends)
+                BuildMeanEnd(m, s, st, baseR, plotR, yShift, az);
+        }
+
+        private static void BuildMeanEnd(PolarPlotModel m, PolarPlotSettings s,
+            CircularStats st, double baseR, double plotR, double yShift, double az)
+        {
             double tipR = baseR + (plotR - baseR) * st.MeanResultantLength;
             var col = s.MeanArrowColor;
             double shaftPt = 1.8;

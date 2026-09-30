@@ -138,6 +138,12 @@ namespace WildlifeTools.PolarPlots
         public bool WeightsAreCounts = false;
         public bool UseSelectedOnly = false;
         public bool AddReverse = false;
+        /// <summary>Axial data (lines that run both ways): the plot shows
+        /// both ends of every line, and the statistics are computed on the
+        /// doubled angles (Batschelet 1981, sec. 1.6), with the mean axis,
+        /// median axis, range, confidence interval and angular deviation
+        /// halved back to the original scale.</summary>
+        public bool Axial = false;
         public bool ExcludeNegative = true;
         public bool ExcludeMinusOneOnly = false;
 

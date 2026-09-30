@@ -106,7 +106,10 @@
             </StackPanel>
             <CheckBox x:Name="chkReverse" Content="Add reverse azimuths"
                 Margin="0,2,0,0" Checked="RereadRouted" Unchecked="RereadRouted"
-                ToolTip="Also plot each azimuth's opposite direction (azimuth + 180). Use for phenomena that run both ways, such as geologic fracture lines; the plot becomes symmetric." />
+                ToolTip="Also plot each azimuth's opposite direction (azimuth + 180), so the plot becomes symmetric. This is for the picture only: the statistics then describe the added reverses (every direction is cancelled by its opposite). For lines that run both ways, use Axial data instead." />
+            <CheckBox x:Name="chkAxial" Content="Axial data (lines run both ways)"
+                Margin="0,2,0,0" Checked="RereadRouted" Unchecked="RereadRouted"
+                ToolTip="For lines that run both ways, such as fractures, ridges or the long axes of objects, where 30 and 210 degrees are the same line. The plot shows both ends of every line, and the statistics are computed on the doubled angles (Batschelet 1981, section 1.6), so the two ends of a line become one direction and the mean is real. The report gives the mean axis, median axis, range, confidence interval and angular deviation halved back to the scale of the lines; the mean resultant length, variances, kappa and Rayleigh test describe the doubled angles. The mean arrow is drawn at both ends of the axis." />
             <CheckBox x:Name="chkExcludeNeg" Content="Exclude negative values" IsChecked="True"
                 Margin="0,2,0,0" Checked="RereadRouted" Unchecked="RereadRouted"
                 ToolTip="Skip records with negative azimuths. Aspect rasters commonly use -1 to mean a flat cell with no direction." />

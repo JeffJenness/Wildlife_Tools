@@ -90,6 +90,11 @@ namespace WildlifeTools.PolarPlots
             public bool SelectionUsed;             // a selection limited the read
             public bool SelectionEmpty;            // asked for, nothing selected
             public bool WeightsAreCounts;          // weight field holds counts
+            // Axial data: every kept ORIGINAL direction doubled (mod 360),
+            // one entry per observation, for the statistics. The Azimuths
+            // list holds both ends for the plot.
+            public List<double> AxialAzimuths = new List<double>();
+            public List<double> AxialWeights = new List<double>();
             public long ExcludedNegative;
             public string SamplingNote;            // raster: how cells were read
             public int UsableCount => Azimuths.Count;
@@ -238,7 +243,12 @@ namespace WildlifeTools.PolarPlots
                             if (AddValue(res, az, weight, mag, s))
                             {
                                 res.KeptCount++;
-                                if (s.AddReverse)
+                                if (s.Axial)
+                                {
+                                    res.AxialAzimuths.Add(CircularStats.Mod360(2.0 * az));
+                                    res.AxialWeights.Add(res.Weighted ? weight : 1.0);
+                                }
+                                if (s.AddReverse || s.Axial)
                                     AddValue(res, CircularStats.Mod360(az + 180.0),
                                              weight, mag, s);
                             }
@@ -475,7 +485,18 @@ namespace WildlifeTools.PolarPlots
         private static void FinishRasterResult(Result res, double[] counts,
             long examined, long excluded, string samplingNote, PolarPlotSettings s)
         {
-            if (s.AddReverse)
+            if (s.Axial)
+            {
+                // Doubled angles of the ORIGINAL cells, one entry per bin.
+                double bw = 360.0 / RasterBins;
+                for (int b = 0; b < RasterBins; b++)
+                    if (counts[b] > 0)
+                    {
+                        res.AxialAzimuths.Add(CircularStats.Mod360(2.0 * (b + 0.5) * bw));
+                        res.AxialWeights.Add(counts[b]);
+                    }
+            }
+            if (s.AddReverse || s.Axial)
             {
                 var orig = (double[])counts.Clone();
                 for (int b = 0; b < RasterBins; b++)

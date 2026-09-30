@@ -97,9 +97,9 @@ namespace WildlifeTools.PolarPlots
             AddStat(sp, "Count of values analyzed", st.Count.ToString("N0", CI));
             if (st.Weighted && !st.WeightsAreCounts)
                 AddStat(sp, "Total weight", st.TotalWeight.ToString("N4", CI));
-            AddStat(sp, "Mean Direction", double.IsNaN(st.MeanDirectionDeg)
+            AddStat(sp, "Mean " + st.DirWord, double.IsNaN(st.MeanDirectionDeg)
                 ? "undefined (resultant length is zero)"
-                : st.MeanDirectionDeg.ToString("F5", CI) + " Degrees");
+                : st.DirectionText(st.MeanDirectionDeg, CI));
             AddStat(sp, "Resultant Length", st.ResultantLength.ToString("F5", CI));
             AddStat(sp, "Mean Resultant Length", st.MeanResultantLength.ToString("F4", CI));
             AddStat(sp, "Circular Variance", st.CircularVariance.ToString("F4", CI), "[A,B]");
@@ -110,14 +110,17 @@ namespace WildlifeTools.PolarPlots
             AddStat(sp, "Angular Deviation",
                 st.AngularDeviationRad.ToString("F5", CI) + " Radians = " +
                 st.AngularDeviationDeg.ToString("F5", CI) + " Degrees", "[C]");
+            if (st.Axial)
+                AddStat(sp, "Angular Deviation of the Axes",
+                    st.AxialAngularDeviationDeg.ToString("F5", CI) + " Degrees", "[C]");
             doc.Blocks.Add(sp);
 
             var xp = RulePara();
-            AddStat(xp, "Median Direction", double.IsNaN(st.MedianDirectionDeg)
-                ? "undefined" : st.MedianDirectionDeg.ToString("F5", CI) + " Degrees", "[A,B]");
+            AddStat(xp, "Median " + st.DirWord, double.IsNaN(st.MedianDirectionDeg)
+                ? "undefined" : st.DirectionText(st.MedianDirectionDeg, CI), "[A,B]");
             AddStat(xp, "Circular Range", st.CircularRangeDeg.ToString("F5", CI) + " Degrees", "[A,B]");
             AddStat(xp, "von Mises Concentration (kappa)", st.VonMisesKappa.ToString("F5", CI), "[A,D]");
-            AddStat(xp, "Mean Direction 95% CI", st.MeanCiText(CI), "[A,D]");
+            AddStat(xp, "Mean " + st.DirWord + " 95% CI", st.MeanCiText(CI), "[A,D]");
             AddStat(xp, "Rayleigh Test of Uniformity",
                 "Z = " + st.RayleighZ.ToString("F5", CI) + ", p = " + st.RayleighP.ToString("F5", CI), "[A,E]");
             var notes = st.Notes();
@@ -291,9 +294,9 @@ namespace WildlifeTools.PolarPlots
             Line("Count of values analyzed", st.Count.ToString("N0", CI));
             if (st.Weighted && !st.WeightsAreCounts)
                 Line("Total weight", st.TotalWeight.ToString("N4", CI));
-            Line("Mean Direction", double.IsNaN(st.MeanDirectionDeg)
+            Line("Mean " + st.DirWord, double.IsNaN(st.MeanDirectionDeg)
                 ? "undefined (resultant length is zero)"
-                : st.MeanDirectionDeg.ToString("F5", CI) + " Degrees");
+                : st.DirectionText(st.MeanDirectionDeg, CI));
             Line("Resultant Length", st.ResultantLength.ToString("F5", CI));
             Line("Mean Resultant Length", st.MeanResultantLength.ToString("F4", CI));
             Line("Circular Variance", st.CircularVariance.ToString("F4", CI), "[A,B]");
@@ -304,12 +307,15 @@ namespace WildlifeTools.PolarPlots
             Line("Angular Deviation",
                 st.AngularDeviationRad.ToString("F5", CI) + " Radians = " +
                 st.AngularDeviationDeg.ToString("F5", CI) + " Degrees", "[C]");
+            if (st.Axial)
+                Line("Angular Deviation of the Axes",
+                    st.AxialAngularDeviationDeg.ToString("F5", CI) + " Degrees", "[C]");
             sb.AppendLine();
-            Line("Median Direction", double.IsNaN(st.MedianDirectionDeg)
-                ? "undefined" : st.MedianDirectionDeg.ToString("F5", CI) + " Degrees", "[A,B]");
+            Line("Median " + st.DirWord, double.IsNaN(st.MedianDirectionDeg)
+                ? "undefined" : st.DirectionText(st.MedianDirectionDeg, CI), "[A,B]");
             Line("Circular Range", st.CircularRangeDeg.ToString("F5", CI) + " Degrees", "[A,B]");
             Line("von Mises Concentration (kappa)", st.VonMisesKappa.ToString("F5", CI), "[A,D]");
-            Line("Mean Direction 95% CI", st.MeanCiText(CI), "[A,D]");
+            Line("Mean " + st.DirWord + " 95% CI", st.MeanCiText(CI), "[A,D]");
             Line("Rayleigh Test of Uniformity",
                 "Z = " + st.RayleighZ.ToString("F5", CI) + ", p = " +
                 st.RayleighP.ToString("F5", CI), "[A,E]");
