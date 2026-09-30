@@ -205,29 +205,45 @@ namespace WildlifeTools.SlopeGraphic
                 // ---- boundary value labels ---------------------------------
                 if (s.ShowBoundaryLabels)
                 {
+                    // Labels are placed in order of importance (mean, median,
+                    // SD, percentiles, range); one that would overlap a label
+                    // already placed is left off, and every label is kept
+                    // clear of the two axes (near 0 and 90 degrees the
+                    // boundaries crowd together along them).
+                    var placed = new List<double[]>();
                     void Add(double r, double unitVal, double sizeFactor = 1.0)
                     {
-                        var el = Label(s, st.Fmt(unitVal), Pt(r, AngOf(unitVal)),
-                                       sizeFactor);
-                        m.Elements.Add(el);
+                        string text = st.Fmt(unitVal);
+                        double em = s.LabelFontSizePt * sizeFactor / 72.0;
+                        double hw = text.Length * 0.55 * em / 2.0 + 0.02;
+                        double hh = 0.4 * em + 0.01;
+                        var p = Pt(r, AngOf(unitVal));
+                        double x = Math.Max(p.X, ox + hw + 0.03);
+                        double y = Math.Max(p.Y, oy + hh + 0.02);
+                        foreach (var q in placed)
+                            if (x - hw < q[2] && x + hw > q[0] &&
+                                y - hh < q[3] && y + hh > q[1])
+                                return;
+                        placed.Add(new[] { x - hw, y - hh, x + hw, y + hh });
+                        m.Elements.Add(Label(s, text, new PtIn(x, y), sizeFactor));
                     }
-                    if (s.ShowRangeWedge && st.Max > st.Min - 1e-12)
-                    { Add(0.74 * R, st.Min, 0.9); Add(0.74 * R, st.Max, 0.9); }
-                    if (s.ShowPercentileWedge)
-                    {
-                        Add(0.83 * R, st.Quantile(s.PercentileLo / 100.0), 0.9);
-                        Add(0.83 * R, st.Quantile(s.PercentileHi / 100.0), 0.9);
-                    }
+                    if (s.ShowMeanLine) Add(1.045 * R, st.Mean, 1.0);
+                    if (s.ShowMedianLine && !double.IsNaN(st.Median) &&
+                        Math.Abs(SlopeStats.ToDegrees(st.Median, st.Unit) -
+                                 SlopeStats.ToDegrees(st.Mean, st.Unit)) > 1.5)
+                        Add(0.99 * R, st.Median, 0.9);
                     if (s.ShowSdWedge && st.SdDeg > 0)
                     {
                         Add(0.915 * R, SlopeStats.FromDegrees(sdLoDeg, st.Unit), 0.9);
                         Add(0.915 * R, SlopeStats.FromDegrees(sdHiDeg, st.Unit), 0.9);
                     }
-                    if (s.ShowMedianLine && !double.IsNaN(st.Median) &&
-                        Math.Abs(SlopeStats.ToDegrees(st.Median, st.Unit) -
-                                 SlopeStats.ToDegrees(st.Mean, st.Unit)) > 1.5)
-                        Add(0.99 * R, st.Median, 0.9);
-                    if (s.ShowMeanLine) Add(1.045 * R, st.Mean, 1.0);
+                    if (s.ShowPercentileWedge)
+                    {
+                        Add(0.83 * R, st.Quantile(s.PercentileLo / 100.0), 0.9);
+                        Add(0.83 * R, st.Quantile(s.PercentileHi / 100.0), 0.9);
+                    }
+                    if (s.ShowRangeWedge && st.Max > st.Min - 1e-12)
+                    { Add(0.74 * R, st.Min, 0.9); Add(0.74 * R, st.Max, 0.9); }
                 }
             }
 

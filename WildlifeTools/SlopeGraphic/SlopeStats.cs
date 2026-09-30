@@ -160,15 +160,18 @@ namespace WildlifeTools.SlopeGraphic
         /// degrees) plus the angle-space histogram for the quantiles.</summary>
         public static SlopeStats FromBinned(double[] angleHist, double binDeg,
             double sumW, double sumWX, double sumWX2, double min, double max,
-            SlopeUnit unit)
+            SlopeUnit unit, double[] angleSum = null)
         {
             var s = new SlopeStats(unit);
             for (int b = 0; b < angleHist.Length; b++)
             {
                 if (angleHist[b] <= 0) continue;
-                // Bin center angle -> source-unit value; monotone, so
-                // quantiles computed on these are exact to the bin width.
-                s._v.Add(FromDegrees((b + 0.5) * binDeg, unit));
+                // The bin's mean angle (its center when no sums were kept)
+                // -> source-unit value. Quantiles are exact when a bin holds
+                // one distinct value and within half a bin otherwise.
+                double deg = (angleSum != null && b < angleSum.Length)
+                    ? angleSum[b] / angleHist[b] : (b + 0.5) * binDeg;
+                s._v.Add(FromDegrees(deg, unit));
                 s._w.Add(angleHist[b]);
             }
             s.Min = min; s.Max = max;

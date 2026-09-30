@@ -73,7 +73,12 @@ namespace WildlifeTools.SlopeGraphic
 
         internal sealed class RasterCache
         {
-            public double[] Hist;                  // angle bins
+            public double[] Hist;                  // angle bins (weight)
+            // Weighted sum of the ANGLES that fell in each bin: each bin is
+            // reported by the mean of its own values, not its center, so a
+            // bin holding one distinct value (whole-degree rasters, attribute
+            // tables) gives that value exactly.
+            public double[] HistSum;
             public double SumW, SumWX, SumWX2;     // of the angles, degrees
             public double Min, Max;
             public long Examined, Excluded;
@@ -226,6 +231,7 @@ namespace WildlifeTools.SlopeGraphic
             var acc = new RasterCache
             {
                 Hist = new double[Bins],
+                HistSum = new double[Bins],
                 Min = double.PositiveInfinity,
                 Max = double.NegativeInfinity,
                 Unit = o.Unit,
@@ -303,7 +309,7 @@ namespace WildlifeTools.SlopeGraphic
             res.SamplingNote = a.SamplingNote;
             if (a.SumW > 0)
                 res.Stats = SlopeStats.FromBinned(a.Hist, BinDeg, a.SumW, a.SumWX,
-                    a.SumWX2, a.Min, a.Max, a.Unit);
+                    a.SumWX2, a.Min, a.Max, a.Unit, a.HistSum);
         }
 
         private static void AccumulateValue(double v, double weight, SlopeUnit unit,
@@ -317,6 +323,7 @@ namespace WildlifeTools.SlopeGraphic
             if (b >= Bins) b = Bins - 1;
             if (b < 0) b = 0;
             a.Hist[b] += weight;
+            a.HistSum[b] += weight * deg;
             a.SumW += weight;
             // Moment sums accumulate the ANGLE, never the raw percent/ratio:
             // mean and SD of slope are angle-space statistics (averaging raw

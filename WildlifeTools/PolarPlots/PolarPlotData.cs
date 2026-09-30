@@ -371,6 +371,11 @@ namespace WildlifeTools.PolarPlots
         // systematically sampled -- never via averaged pyramids, which corrupt
         // circular values (mean of 359 and 1 is NOT 180).
         private const int RasterBins = 3600;                 // 0.1-degree bins
+        // The class array is 2 x RasterBins long: [b] is the weight (cell
+        // count) of class b, [RasterBins + b] the weighted SUM of the values
+        // that fell in it. Each class is then reported by the mean of its own
+        // values, not its center, so a class holding one distinct value
+        // (whole-degree rasters, attribute tables) gives that value exactly.
         private const long AutoSampleTarget = 100_000_000;   // cells, auto mode
 
         private static Result ReadRaster(Source src, PolarPlotSettings s,
@@ -398,7 +403,7 @@ namespace WildlifeTools.PolarPlots
             if (w <= 0 || h <= 0) return res;
             long totalCells = (long)w * h;
 
-            var counts = new double[RasterBins];
+            var counts = new double[2 * RasterBins];
             long examined = 0, excluded = 0;
 
             // Fast path: an integer raster with a Value/Count attribute table
@@ -485,28 +490,43 @@ namespace WildlifeTools.PolarPlots
         private static void FinishRasterResult(Result res, double[] counts,
             long examined, long excluded, string samplingNote, PolarPlotSettings s)
         {
+            // The mean value of class b (its center if no sums were kept).
+            double ClassMean(double[] c, int b) =>
+                c.Length >= 2 * RasterBins && c[b] > 0
+                    ? c[RasterBins + b] / c[b]
+                    : (b + 0.5) * (360.0 / RasterBins);
             if (s.Axial)
             {
                 // Doubled angles of the ORIGINAL cells, one entry per bin.
-                double bw = 360.0 / RasterBins;
                 for (int b = 0; b < RasterBins; b++)
                     if (counts[b] > 0)
                     {
-                        res.AxialAzimuths.Add(CircularStats.Mod360(2.0 * (b + 0.5) * bw));
+                        res.AxialAzimuths.Add(CircularStats.Mod360(2.0 * ClassMean(counts, b)));
                         res.AxialWeights.Add(counts[b]);
                     }
             }
             if (s.AddReverse || s.Axial)
             {
+                // Fold each class onto the class 180 degrees away. The values
+                // of class b2 reversed are v + 180, or v - 180 past 360, and
+                // they all land in class b, so the sum shifts by +/-180 each.
                 var orig = (double[])counts.Clone();
+                bool sums = orig.Length >= 2 * RasterBins;
                 for (int b = 0; b < RasterBins; b++)
-                    counts[b] = orig[b] + orig[(b + RasterBins / 2) % RasterBins];
+                {
+                    int b2 = (b + RasterBins / 2) % RasterBins;
+                    counts[b] = orig[b] + orig[b2];
+                    if (sums)
+                        counts[RasterBins + b] = orig[RasterBins + b] +
+                            orig[RasterBins + b2] +
+                            (b2 >= RasterBins / 2 ? -180.0 : 180.0) * orig[b2];
+                }
                 examined *= 2;
             }
             for (int b = 0; b < RasterBins; b++)
                 if (counts[b] > 0)
                 {
-                    res.Azimuths.Add((b + 0.5) * (360.0 / RasterBins));
+                    res.Azimuths.Add(ClassMean(counts, b));
                     res.Weights.Add(counts[b]);
                 }
             res.RawCount = examined;
@@ -530,9 +550,11 @@ namespace WildlifeTools.PolarPlots
                 excluded += (long)weight;
                 return;
             }
-            int b = (int)(CircularStats.Mod360(v) * (RasterBins / 360.0));
-            if (b >= RasterBins) b = 0;
+            double a = CircularStats.Mod360(v);
+            int b = (int)(a * (RasterBins / 360.0));
+            if (b >= RasterBins) { b = 0; a = 0.0; }
             counts[b] += weight;
+            counts[RasterBins + b] += weight * a;
         }
 
         private static bool TryReadVat(Raster raster, PolarPlotSettings s,

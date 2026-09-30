@@ -95,8 +95,10 @@ namespace WildlifeTools.SlopeGraphic
             foreach (var (name, value, refs) in StatLines())
                 sb.AppendLine(name + " = " + value + (refs != null ? "   " + refs : ""));
             if (_st.Binned)
-                sb.AppendLine("   (Cell values binned to 0.01-degree classes for the " +
-                              "median/percentiles; mean, SD, min and max are exact.)");
+                sb.AppendLine("   (Median and percentiles from 0.01-degree classes, each " +
+                              "represented by the mean of its values: exact when a class " +
+                              "holds one value, as with whole degrees or an attribute " +
+                              "table; mean, SD, min and max are exact.)");
             sb.AppendLine("-------------------------------------------------------");
             foreach (var r in References()) sb.AppendLine(r);
             return sb.ToString();
@@ -148,8 +150,10 @@ namespace WildlifeTools.SlopeGraphic
             }
             if (_st.Binned)
                 sp.Inlines.Add(new Italic(new Run(
-                    "(Cell values binned to 0.01-degree classes for the " +
-                    "median/percentiles; mean, SD, min and max are exact.)"))
+                    "(Median and percentiles from 0.01-degree classes, each " +
+                    "represented by the mean of its values: exact when a class " +
+                    "holds one value, as with whole degrees or an attribute " +
+                    "table; mean, SD, min and max are exact.)"))
                 { FontSize = 11 });
             doc.Blocks.Add(sp);
 
@@ -188,8 +192,10 @@ namespace WildlifeTools.SlopeGraphic
                 sb.AppendLine();
             }
             if (_st.Binned)
-                sb.AppendLine("<ITA>(Cell values binned to 0.01-degree classes for " +
-                              "the median/percentiles; mean, SD, min and max are exact.)</ITA>");
+                sb.AppendLine("<ITA>(Median and percentiles from 0.01-degree classes, " +
+                              "each represented by the mean of its values: exact when a " +
+                              "class holds one value, as with whole degrees or an " +
+                              "attribute table; mean, SD, min and max are exact.)</ITA>");
             sb.AppendLine();
             foreach (string r in References())
                 sb.Append("<FNT size=\"7\"><CLR red=\"110\" green=\"110\" blue=\"110\">")

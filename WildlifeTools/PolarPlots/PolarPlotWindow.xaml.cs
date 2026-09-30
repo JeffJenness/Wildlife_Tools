@@ -1137,10 +1137,18 @@ namespace WildlifeTools.PolarPlots
         // ---- helpers --------------------------------------------------------
         private string MakeFileBase()
         {
-            string n = (cboSource.SelectedItem as PolarPlotData.Source)?.LayerName ?? "PolarPlot";
+            // The layer's own name (no "[raster]" tag), every run of
+            // characters that are not letters or digits reduced to ONE
+            // underscore, none at either end.
+            string n = (cboSource.SelectedItem as PolarPlotData.Source)?.LayerName ?? "";
             var sb = new System.Text.StringBuilder();
-            foreach (char c in n) sb.Append(char.IsLetterOrDigit(c) ? c : '_');
-            return "PolarPlot_" + sb.ToString().Trim('_');
+            foreach (char c in n)
+            {
+                if (char.IsLetterOrDigit(c)) sb.Append(c);
+                else if (sb.Length > 0 && sb[sb.Length - 1] != '_') sb.Append('_');
+            }
+            string core = sb.ToString().Trim('_');
+            return core.Length > 0 ? "PolarPlot_" + core : "PolarPlot";
         }
 
         private void SetStatus(string t) => txtStatus.Text = t;

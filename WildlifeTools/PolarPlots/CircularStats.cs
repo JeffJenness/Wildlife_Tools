@@ -347,7 +347,8 @@ namespace WildlifeTools.PolarPlots
                           "deviation, kappa and the Rayleigh test describe the " +
                           "doubled angles.)");
             if (WeightsAreCounts && Binned)
-                notes.Add("(Values binned to 0.1-degree classes; statistics " +
+                notes.Add("(Values counted into 0.1-degree classes, each " +
+                          "represented by the mean of its values; statistics " +
                           "computed on the per-class cell counts.)");
             else if (WeightsAreCounts)
                 notes.Add("(Weights are counts of observations; every statistic " +
