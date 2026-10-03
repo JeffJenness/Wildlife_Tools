@@ -66,8 +66,13 @@ What makes it "enhanced" relative to Esri's Hillshade:
   ``SpheroidalLatLongToCart`` / per-row distance table), so the gradients are
   right at any latitude. Projected rasters use the constant-cell planar
   formulas (faster).
-* **Hillshade levels.** The output ranges 0..levels (levels = 255 matches the
-  Esri look; small values give a posterized, cartographic hillshade).
+* **Hillshade gray levels.** ``levels`` is the number of gray levels: the
+  output runs 0..levels-1, each value covering an equal share of the 0-1
+  illumination range (levels = 256 gives Esri's 0-255; small values give a
+  posterized, cartographic hillshade). Changed in v1.99.42: the legacy VB6
+  code (and this port until then) used round(levels * shade), which gave
+  levels + 1 values with half-width end classes. Outputs of 32 or fewer
+  levels get a raster attribute table (Value, Count).
 * **Hypsometric shading.** Optionally scales the hillshade by a linear
   elevation weight so low elevations darken: at strength s (0-100), the
   multiplier runs from (1 - s/100) at the minimum elevation up to 1 at the
@@ -92,7 +97,8 @@ table::
     dZ/dx = ((NE + 2E + SE) - (NW + 2W + SW)) / (2*hA + 4*h + 2*hB)
     dZ/dy = ((SW + 2S + SE) - (NW + 2N + NE)) / (4*vA + 4*vB)
     shade = cos(zenith)*cos(slope) + sin(zenith)*sin(slope)*cos(azR - aspect)
-    value = round(levels * shade * hypso_multiplier), clamped at 0
+    value = min(floor(levels * shade * hypso_multiplier), levels - 1),
+            clamped at 0
 
 with hA/h/hB the horizontal cell spans of the row above / at / below the
 focal row and vA/vB the vertical spans (all meters), and
@@ -301,6 +307,51 @@ def _hillshade_phase_segment(mode, suns, use_hypso, model_shadows):
         seg.append(("Sweeping cast shadows...", 4 * n_suns))
     seg.append(("Calculating hillshade...", 6))
     return seg
+
+
+# Posterized outputs (few gray levels) get a raster attribute table so each
+# tone's cell count is visible; full-range hillshades (e.g. 256 levels) skip
+# it -- it is rarely useful there and costs an extra read of the output.
+VAT_MAX_LEVELS = 32
+
+
+def _build_level_table(out_raster, levels, messages):
+    """Build the attribute table for a posterized output. Returns the sorted
+    gray values present (from the table), or None when no table was built."""
+    if int(levels) > VAT_MAX_LEVELS:
+        return None
+    try:
+        arcpy.management.BuildRasterAttributeTable(out_raster, "Overwrite")
+        with arcpy.da.SearchCursor(out_raster, ["Value"]) as cur:
+            values = sorted(int(r[0]) for r in cur)
+        _msg(messages, "Built a raster attribute table (Value, Count) for the "
+                       "{} gray levels.".format(int(levels)))
+        return values or None
+    except Exception as e:
+        if messages is not None:
+            messages.addWarningMessage(
+                "Could not build the raster attribute table: {}".format(e))
+        return None
+
+
+def _hillshade_lyrx(out_raster, level_values, messages):
+    """Black-to-white output symbology. A raster with an attribute table
+    opens in Pro as Unique Values with RANDOM colors, so a posterized output
+    gets a Unique Values layer file in grays -- black for value 0, white for
+    the highest value present; everything else gets the black-to-white
+    minimum-maximum stretch."""
+    if level_values:
+        top = max(level_values)
+        classes = []
+        for v in level_values:
+            g = int(round(255.0 * v / top)) if top > 0 else 0
+            classes.append({"value": v, "name": str(v), "color": [g, g, g]})
+        lyrx = _mh.default_unique_value_lyrx(out_raster, classes, field="Value",
+                                            messages=messages)
+        if lyrx:
+            return lyrx
+    return _mh.default_stretch_lyrx(
+        out_raster, [(0, 0, 0), (255, 255, 255)], messages=messages)
 
 
 # Shared finalize phases: CopyRaster -> stats -> metadata/symbology -> pyramids.
@@ -553,7 +604,7 @@ _MDOW_OFFSETS = (-67.5, -22.5, 22.5, 67.5)
 
 
 def run_enhanced_hillshade(in_raster, out_raster, elev_units="Meters",
-                           azimuth=315.0, altitude=45.0, levels=255,
+                           azimuth=315.0, altitude=45.0, levels=256,
                            use_hypso=False, hypso_strength=50,
                            vert_exag=1.0, model_shadows=False,
                            shadow_dim=20.0, messages=None):
@@ -583,7 +634,7 @@ def run_mdow_hillshade(in_raster, out_raster, elev_units="Meters",
 
 def run_multisun_hillshade(in_raster, out_raster, elev_units="Meters",
                            suns=((280.0, 35.0, 50.0), (350.0, 45.0, 50.0)),
-                           levels=255, use_hypso=False, hypso_strength=50,
+                           levels=256, use_hypso=False, hypso_strength=50,
                            vert_exag=1.0, model_shadows=False,
                            shadow_dim=20.0, messages=None):
     """Compute a weighted blend of standard hillshades from multiple sun
@@ -600,7 +651,7 @@ def run_multisun_hillshade(in_raster, out_raster, elev_units="Meters",
 
 
 def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
-                          azimuth=315.0, altitude=45.0, levels=255,
+                          azimuth=315.0, altitude=45.0, levels=256,
                           use_hypso=False, hypso_strength=50,
                           vert_exag=1.0, model_shadows=False,
                           shadow_dim=20.0, blur_radius=10.0,
@@ -799,6 +850,7 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
             if messages is not None:
                 messages.addWarningMessage(
                     "Could not calculate raster statistics: {}".format(e))
+    level_values = _build_level_table(out_raster, levels, messages)
     try:
         md = arcpy.metadata.Metadata(out_raster)
         md.title = os.path.basename(str(out_raster))
@@ -836,8 +888,7 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
     # Black (most shaded) to white (highest hillshade value in this
     # raster) output-parameter symbology.
     _mh.phase_advance("Creating layer file and symbology...")
-    out_lyrx = _mh.default_stretch_lyrx(
-        out_raster, [(0, 0, 0), (255, 255, 255)], messages=messages)
+    out_lyrx = _hillshade_lyrx(out_raster, level_values, messages)
     for p in (out_path, hs_tmp):
         try:
             arcpy.management.Delete(p)
@@ -903,8 +954,11 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
         wsum = sum(w for _, _, w in suns)
         if wsum <= 0.0:
             raise arcpy.ExecuteError("The sun weights must sum to more than 0.")
-    if levels < 1:
-        raise arcpy.ExecuteError("The number of hillshade levels must be at least 1.")
+    if levels < 2:
+        raise arcpy.ExecuteError("The number of hillshade gray levels must be at least 2.")
+    if levels > 32768:
+        raise arcpy.ExecuteError("The number of hillshade gray levels can be at most "
+                                 "32768 (the output is a 16-bit integer raster).")
     if vert_exag <= 0:
         raise arcpy.ExecuteError("The vertical exaggeration must be positive.")
     if use_hypso and not 0.0 <= hypso_strength <= 100.0:
@@ -1148,7 +1202,9 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
             ok = (valid[up, :-2] & valid[up, 1:-1] & valid[up, 2:] &
                   valid[sl, :-2] & valid[sl, 1:-1] & valid[sl, 2:] &
                   valid[dn, :-2] & valid[dn, 1:-1] & valid[dn, 2:])
-            vals = np.rint(hs)                   # banker's rounding, like VB CLng
+            # N gray levels = values 0..N-1, each an equal share of the
+            # 0-1 illumination range (full light lands in the top class).
+            vals = np.minimum(np.floor(hs), levels - 1)
             center = out[(r0 - yoff):(r1 - yoff), 1:-1]
             center[ok] = vals[ok].astype(np.int16)
             if ok.any():
@@ -1192,6 +1248,7 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
             if messages is not None:
                 messages.addWarningMessage(
                     "Could not calculate raster statistics: {}".format(e))
+    level_values = _build_level_table(out_raster, levels, messages)
 
     # Dataset metadata: conceptual description + per-run provenance.
     try:
@@ -1280,7 +1337,8 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
                 md.description = (
                     "Hillshade (shaded relief) raster: illumination of the terrain "
                     "surface from a hypothetical light source, from 0 (fully shaded) "
-                    "to the requested number of levels (fully lit). Unlike the "
+                    "to one less than the requested number of gray levels (fully "
+                    "lit). Unlike the "
                     "standard hillshade, gradients on geographic DEMs are computed "
                     "from true spheroidal cell dimensions at each row's latitude.")
         md.credits = ("Tool by Jeff Jenness, Jenness Enterprises "
@@ -1296,8 +1354,7 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
     # Black (most shaded) to white (highest hillshade value in this
     # raster) output-parameter symbology.
     _mh.phase_advance("Creating layer file and symbology...")
-    out_lyrx = _mh.default_stretch_lyrx(
-        out_raster, [(0, 0, 0), (255, 255, 255)], messages=messages)
+    out_lyrx = _hillshade_lyrx(out_raster, level_values, messages)
 
     try:
         arcpy.management.Delete(out_path)

@@ -2368,10 +2368,10 @@ class EnhancedHillshade(object):
             "Geographic (lat/long) DEMs are handled correctly: cell dimensions are "
             "recomputed for every row from the spheroid, so the shading is accurate "
             "at any latitude without projecting first. Options include the number of "
-            "hillshade levels (255 matches the Esri look; fewer gives a posterized "
+            "gray levels (256 matches the Esri 0-255 range; fewer gives a posterized "
             "cartographic effect), hypsometric shading (darkens low elevations), "
             "vertical exaggeration, and modeled cast shadows (terrain hidden from "
-            "the sun is set to the darkest value).")
+            "the sun is dimmed to a chosen percentage of its unshadowed value).")
         self.category = "Cartography Tools"
         self.canRunInBackground = False
         self._auto_out = None
@@ -2399,9 +2399,9 @@ class EnhancedHillshade(object):
             datatype="GPDouble", parameterType="Required", direction="Input")
         altitude.value = 45.0
         levels = arcpy.Parameter(
-            displayName="Hillshade levels (Esri hillshade = 255)", name="levels",
+            displayName="Hillshade gray levels (Esri hillshade = 256)", name="levels",
             datatype="GPLong", parameterType="Required", direction="Input")
-        levels.value = 255
+        levels.value = 256
         use_hypso = arcpy.Parameter(
             displayName="Apply hypsometric shading", name="use_hypso",
             datatype="GPBoolean", parameterType="Optional", direction="Input")
@@ -2514,8 +2514,9 @@ class EnhancedHillshade(object):
         if alt is not None and not (0 <= alt <= 90):
             P["altitude"].setErrorMessage(
                 "The inclination must be 0 to 90 degrees.")
-        if P["levels"].value is not None and P["levels"].value < 1:
-            P["levels"].setErrorMessage("There must be at least 1 hillshade level.")
+        if P["levels"].value is not None and not 2 <= P["levels"].value <= 32768:
+            P["levels"].setErrorMessage(
+                "The number of gray levels must be between 2 and 32768.")
         st = P["hypso_strength"].value
         if P["use_hypso"].value and st is not None and not (0 <= st <= 100):
             P["hypso_strength"].setErrorMessage(
@@ -2608,7 +2609,7 @@ class MDOWHillshade(object):
             "single-direction hillshade washes out. Geographic (lat/long) DEMs are "
             "handled correctly: cell dimensions are recomputed for every row from "
             "the spheroid, so the shading is accurate at any latitude without "
-            "projecting first. Options include the number of hillshade levels, "
+            "projecting first. Options include the number of gray levels, "
             "hypsometric shading (darkens low elevations), and vertical exaggeration.")
         self.category = "Cartography Tools"
         self.canRunInBackground = False
@@ -2639,7 +2640,7 @@ class MDOWHillshade(object):
             datatype="GPDouble", parameterType="Required", direction="Input")
         altitude.value = 30.0
         levels = arcpy.Parameter(
-            displayName="Hillshade levels", name="levels",
+            displayName="Hillshade gray levels (Esri hillshade = 256)", name="levels",
             datatype="GPLong", parameterType="Required", direction="Input")
         levels.value = 256
         use_hypso = arcpy.Parameter(
@@ -2722,8 +2723,9 @@ class MDOWHillshade(object):
         if alt is not None and not (0 <= alt <= 90):
             P["altitude"].setErrorMessage(
                 "The inclination must be 0 to 90 degrees.")
-        if P["levels"].value is not None and P["levels"].value < 1:
-            P["levels"].setErrorMessage("There must be at least 1 hillshade level.")
+        if P["levels"].value is not None and not 2 <= P["levels"].value <= 32768:
+            P["levels"].setErrorMessage(
+                "The number of gray levels must be between 2 and 32768.")
         st = P["hypso_strength"].value
         if P["use_hypso"].value and st is not None and not (0 <= st <= 100):
             P["hypso_strength"].setErrorMessage(
@@ -2877,9 +2879,9 @@ class MultiSunHillshade(object):
             datatype="GPString", parameterType="Optional", direction="Input")
 
         levels = arcpy.Parameter(
-            displayName="Hillshade levels (Esri hillshade = 255)", name="levels",
+            displayName="Hillshade gray levels (Esri hillshade = 256)", name="levels",
             datatype="GPLong", parameterType="Required", direction="Input")
-        levels.value = 255
+        levels.value = 256
         use_hypso = arcpy.Parameter(
             displayName="Apply hypsometric shading", name="use_hypso",
             datatype="GPBoolean", parameterType="Optional", direction="Input")
@@ -3054,8 +3056,9 @@ class MultiSunHillshade(object):
                 "The weights of suns 1 to {} total {:g} percent, leaving "
                 "nothing for sun {}. Weights must total 100.".format(
                     n - 1, others, n))
-        if P["levels"].value is not None and P["levels"].value < 1:
-            P["levels"].setErrorMessage("There must be at least 1 hillshade level.")
+        if P["levels"].value is not None and not 2 <= P["levels"].value <= 32768:
+            P["levels"].setErrorMessage(
+                "The number of gray levels must be between 2 and 32768.")
         st = P["hypso_strength"].value
         if P["use_hypso"].value and st is not None and not (0 <= st <= 100):
             P["hypso_strength"].setErrorMessage(
@@ -3153,7 +3156,7 @@ class BlurredHillshade(object):
             "are sized per row on the spheroid for geographic DEMs) is applied "
             "either to the DEM before shading (default; de-emphasizes small "
             "terrain features) or to the finished hillshade image. All the "
-            "Enhanced Hillshade options are available: hillshade levels, "
+            "Enhanced Hillshade options are available: gray levels, "
             "hypsometric shading, vertical exaggeration, and modeled cast "
             "shadows.")
         self.category = "Cartography Tools"
@@ -3205,9 +3208,9 @@ class BlurredHillshade(object):
             datatype="GPDouble", parameterType="Required", direction="Input")
         altitude.value = 45.0
         levels = arcpy.Parameter(
-            displayName="Hillshade levels (Esri hillshade = 255)", name="levels",
+            displayName="Hillshade gray levels (Esri hillshade = 256)", name="levels",
             datatype="GPLong", parameterType="Required", direction="Input")
-        levels.value = 255
+        levels.value = 256
         use_hypso = arcpy.Parameter(
             displayName="Apply hypsometric shading", name="use_hypso",
             datatype="GPBoolean", parameterType="Optional", direction="Input")
@@ -3304,8 +3307,9 @@ class BlurredHillshade(object):
         if alt is not None and not (0 <= alt <= 90):
             P["altitude"].setErrorMessage(
                 "The inclination must be 0 to 90 degrees.")
-        if P["levels"].value is not None and P["levels"].value < 1:
-            P["levels"].setErrorMessage("There must be at least 1 hillshade level.")
+        if P["levels"].value is not None and not 2 <= P["levels"].value <= 32768:
+            P["levels"].setErrorMessage(
+                "The number of gray levels must be between 2 and 32768.")
         st = P["hypso_strength"].value
         if P["use_hypso"].value and st is not None and not (0 <= st <= 100):
             P["hypso_strength"].setErrorMessage(

@@ -59,8 +59,11 @@
 
     <!-- Focal-point option (only when a single element with a focal point is selected) -->
     <CheckBox Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" x:Name="FocalCheck"
-              Content="Center on the element's focal point (instead of its extent center)"
-              IsChecked="True" Visibility="Collapsed" Margin="0,0,0,12" />
+              IsChecked="True" Visibility="Collapsed" Margin="0,0,0,12"
+              VerticalContentAlignment="Top">
+      <TextBlock Text="Center on the element's focal point (instead of its extent center)"
+                 TextWrapping="Wrap" />
+    </CheckBox>
 
     <!-- Buttons -->
     <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal"
