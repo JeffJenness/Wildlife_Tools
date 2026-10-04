@@ -45,7 +45,6 @@ namespace WildlifeTools.Corridor
         public string Name2 = "Variable 2";
         public WeightBasis Basis = WeightBasis.Records;
         public double CellAreaM2;                     // raster bases
-        public bool ApproxCellArea;
         public string WeightDesc = "Count";           // provenance word
         public List<string> SourceLines = new List<string>();  // report
 

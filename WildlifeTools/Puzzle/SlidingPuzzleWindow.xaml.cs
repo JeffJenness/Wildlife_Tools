@@ -284,6 +284,9 @@ namespace WildlifeTools.Puzzle
             btnSolve.IsEnabled = n > 0;
         }
 
+        private void OnHelp(object sender, RoutedEventArgs e)
+            => WebHelp.Open("take-a-break/sliding-puzzle.html");
+
         private void OnSolveStep(object sender, RoutedEventArgs e)
         {
             if (_board == null || _board.IsSolved) return;

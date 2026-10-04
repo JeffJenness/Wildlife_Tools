@@ -367,6 +367,9 @@ namespace WildlifeTools.DataTools
             finally { btnRun.IsEnabled = true; }
         }
 
+        private void OnHelp(object sender, RoutedEventArgs e)
+            => WebHelp.Open("data-tools/attribute-summary-reports.html");
+
         private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
     }
 }

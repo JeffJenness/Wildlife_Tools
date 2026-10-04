@@ -3,7 +3,7 @@
 
 The DEM layer can also be given any of ArcGIS Pro's layer blend modes, which control how it combines with the hillshade beneath: Normal, Multiply, Darken, and Luminosity often work well for hypsometric shading. The blend mode is an ordinary layer property, so it is easy to change manually after the group layer is created (select the DEM layer, then use Layer Blend on the Raster Layer ribbon tab).
 
-Both inputs can be chosen from the layers in your map or browsed from disk. The hillshade can come from any source - the Enhanced, MDOW, or Multi-Sun Hillshade tools, Esri's own hillshade, or any raster you want beneath the elevation tint.
+Both inputs can be chosen from the layers in your map or browsed from disk. The hillshade can come from any source - the Enhanced, MDOW, Multi-Sun, or Blurred Hillshade tools, Esri's own hillshade, or any raster you want beneath the elevation tint.
 
 This tool is one part of the classic "Swiss style" of relief presentation (after Eduard Imhof and the Swiss cartographers, whose hand-drawn conventions Kurt Brassel first automated), which combines three strategies: illuminating the terrain from multiple directions, elevation-based tone adjustments that mimic atmospheric perspective, and softening of the final image. In this toolbox the MDOW Hillshade and Multi-Sun Hillshade tools provide the multi-directional illumination, the hypsometric-shading options and the Simple Hypsometric Shading tool provide the elevation-based tinting, and the Blurred Hillshade tool provides the softening.
 

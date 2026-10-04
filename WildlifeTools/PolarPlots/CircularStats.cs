@@ -83,7 +83,37 @@ namespace WildlifeTools.PolarPlots
         // Extended descriptors (computed on the UNWEIGHTED azimuths, since the
         // median/range are order statistics and the Rayleigh test is defined for
         // an unweighted sample). Cited in the report.
-        public double MedianDirectionDeg { get; private set; }     // compass
+        /// <summary>The circular median (compass degrees; an axis, halved,
+        /// for axial data). Computed on first use: it compares every
+        /// direction with every other, which is far too slow to repeat on
+        /// each preview redraw of a large dataset, and only the statistics
+        /// report shows it.</summary>
+        public double MedianDirectionDeg
+        {
+            get
+            {
+                if (!_medianDone)
+                {
+                    _median = ComputeMedian();
+                    _medianDone = true;
+                }
+                return _median;
+            }
+        }
+        private bool _medianDone;
+        private double _median = double.NaN;
+
+        /// <summary>The n behind kappa's small-sample correction and the
+        /// confidence interval: the count of observations, or, for weights
+        /// that are not counts, Kish's (1992, eq. 4.3) effective sample size
+        /// (sum w)^2 / (sum w^2) -- the same rule as the Slope Graphic and
+        /// Aspect Focal Statistics.</summary>
+        public double EffectiveN { get; private set; }
+
+        /// <summary>True when EffectiveN is a Kish effective sample size that
+        /// differs from the record count.</summary>
+        public bool KishApplied { get; private set; }
+        private double _sumW2;
         public double CircularRangeDeg { get; private set; }       // smallest arc
         public double RayleighZ { get; private set; }              // n * rbar_uw^2
         public double RayleighP { get; private set; }              // uniformity p
@@ -125,7 +155,6 @@ namespace WildlifeTools.PolarPlots
                 // Back to the scale of the lines: halve every angle-valued
                 // result. Each is an axis, so it also holds 180 degrees on.
                 if (!double.IsNaN(MeanDirectionDeg)) MeanDirectionDeg /= 2.0;
-                if (!double.IsNaN(MedianDirectionDeg)) MedianDirectionDeg /= 2.0;
                 if (!double.IsNaN(CircularRangeDeg)) CircularRangeDeg /= 2.0;
                 if (!double.IsNaN(MeanCiHalfDeg95)) MeanCiHalfDeg95 /= 2.0;
                 AxialAngularDeviationDeg = AngularDeviationDeg / 2.0;
@@ -148,7 +177,7 @@ namespace WildlifeTools.PolarPlots
 
         private void Compute()
         {
-            double s = 0.0, c = 0.0, w = 0.0;
+            double s = 0.0, c = 0.0, w = 0.0, w2 = 0.0;
             int n = Azimuths.Count;
             for (int i = 0; i < n; i++)
             {
@@ -157,7 +186,9 @@ namespace WildlifeTools.PolarPlots
                 s += wi * Math.Sin(r);
                 c += wi * Math.Cos(r);
                 w += wi;
+                w2 += wi * wi;
             }
+            _sumW2 = w2;
             // For count-weighted data the sample size is the number of
             // underlying observations (cells), not the number of bins.
             Count = WeightsAreCounts ? (long)Math.Round(w) : n;
@@ -231,9 +262,25 @@ namespace WildlifeTools.PolarPlots
             // (Fisher 1993 eq. 4.40), with their small-sample correction
             // (p. 498; Fisher 1993 eq. 4.41, applied for n <= 15 -- the
             // ArcMap Polar Plots tool applied the same one).
+            // n for kappa's correction and the interval: the observations
+            // themselves when the weights are counts (or absent); otherwise
+            // Kish's effective sample size, so a few heavy records do not
+            // pass for many.
+            double nCi = Count;
+            KishApplied = false;
+            if (Weighted && !WeightsAreCounts && _sumW2 > 0.0)
+            {
+                double kish = TotalWeight * TotalWeight / _sumW2;
+                if (kish < nCi - 1e-9)
+                {
+                    nCi = kish;
+                    KishApplied = true;
+                }
+            }
+            EffectiveN = nCi;
             VonMisesKappa = KappaSmallSample(
-                KappaFromRbar(MeanResultantLength), Count);
-            KappaAdjusted = Count > 0 && Count <= 15;
+                KappaFromRbar(MeanResultantLength), nCi);
+            KappaAdjusted = nCi > 0 && nCi <= 15;
 
             // 95% confidence interval of the mean direction (Fisher 1993
             // sec. 4.5.5): circular standard error 1/sqrt(n * r-bar * kappa)
@@ -243,22 +290,22 @@ namespace WildlifeTools.PolarPlots
             // as the confidence arc.
             MeanCiHalfDeg95 = double.NaN;
             CiOutsideFisherRange = false;
-            if (Count > 1 && MeanResultantLength > 0 && VonMisesKappa > 0 &&
+            if (nCi > 1 && MeanResultantLength > 0 && VonMisesKappa > 0 &&
                 !double.IsNaN(MeanDirectionDeg))
             {
                 double x = 1.96 / Math.Sqrt(
-                    Count * MeanResultantLength * VonMisesKappa);
+                    nCi * MeanResultantLength * VonMisesKappa);
                 if (x > 0 && x < 1.0)
                 {
                     MeanCiHalfDeg95 = Math.Asin(x) * RadToDeg;
                     CiOutsideFisherRange =
-                        !FisherIntervalSuitable(VonMisesKappa, Count);
+                        !FisherIntervalSuitable(VonMisesKappa, nCi);
                 }
             }
 
             // Circular median + range (order statistics; Fisher 1993 sec. 2.3.2;
             // Mardia & Jupp 2000 sec. 2.3). Computed on the unweighted azimuths.
-            if (n == 0) { MedianDirectionDeg = double.NaN; CircularRangeDeg = double.NaN; return; }
+            if (n == 0) { CircularRangeDeg = double.NaN; return; }
             vals.Sort();
             // Circular range = 360 - largest gap between adjacent sorted angles.
             double maxGap = 360.0 - (vals[n - 1] - vals[0]);   // the wrap gap
@@ -266,9 +313,26 @@ namespace WildlifeTools.PolarPlots
                 maxGap = Math.Max(maxGap, vals[i] - vals[i - 1]);
             CircularRangeDeg = 360.0 - maxGap;
             // Range is about which directions are OCCUPIED, so the sorted
-            // distinct list serves both modes; the median must respect counts.
-            MedianDirectionDeg = WeightsAreCounts
-                ? WeightedCircularMedian() : CircularMedian(vals);
+            // distinct list serves both modes. The median (which must respect
+            // counts) is computed on demand: see MedianDirectionDeg.
+        }
+
+        private double ComputeMedian()
+        {
+            int n = Azimuths.Count;
+            if (n == 0) return double.NaN;
+            double m;
+            if (WeightsAreCounts) m = WeightedCircularMedian();
+            else
+            {
+                var vals = new List<double>(n);
+                for (int i = 0; i < n; i++) vals.Add(Mod360(Azimuths[i]));
+                vals.Sort();
+                m = CircularMedian(vals);
+            }
+            // Axial data: back to the scale of the lines, like the mean.
+            if (Axial && !double.IsNaN(m)) m /= 2.0;
+            return m;
         }
 
         /// <summary>Circular median for count-weighted data: the observed
@@ -310,7 +374,7 @@ namespace WildlifeTools.PolarPlots
         /// maximum-likelihood kappa for small samples (Fisher 1993 eq. 4.41,
         /// applied for n &lt;= 15), where the uncorrected estimate is
         /// biased upward.</summary>
-        internal static double KappaSmallSample(double kml, long n)
+        internal static double KappaSmallSample(double kml, double n)
         {
             if (n < 1 || n > 15 || kml <= 0.0) return kml;
             double dn = n;
@@ -322,7 +386,7 @@ namespace WildlifeTools.PolarPlots
         /// <summary>Fisher's (1993) Table 4.3: whether the standard-error
         /// interval (rather than a bootstrap) is the recommended method for
         /// this kappa and sample size.</summary>
-        internal static bool FisherIntervalSuitable(double kappa, long n)
+        internal static bool FisherIntervalSuitable(double kappa, double n)
         {
             if (kappa >= 2.0) return true;
             if (kappa >= 1.5) return n >= 10;
@@ -357,14 +421,20 @@ namespace WildlifeTools.PolarPlots
             else if (Weighted)
                 notes.Add("(Median, Range and the Rayleigh test are computed " +
                           "on the unweighted azimuths.)");
+            string nTxt = KishApplied
+                ? EffectiveN.ToString("F1", ci) : Count.ToString("N0", ci);
+            if (KishApplied)
+                notes.Add("(The weights are not counts, so kappa and the " +
+                          "confidence interval take n as the effective sample " +
+                          "size of the weighted records, " + nTxt + " of " +
+                          Count.ToString("N0", ci) + "; Kish 1992 eq. 4.3.)");
             if (KappaAdjusted)
-                notes.Add("(Kappa adjusted for small sample size, n = " +
-                          Count.ToString("N0", ci) +
+                notes.Add("(Kappa adjusted for small sample size, n = " + nTxt +
                           "; Best and Fisher 1981, Fisher 1993 eq. 4.41.)");
             if (CiOutsideFisherRange)
                 notes.Add("(Caution: with kappa = " +
                           VonMisesKappa.ToString("F3", ci) + " and n = " +
-                          Count.ToString("N0", ci) + ", the confidence interval " +
+                          nTxt + ", the confidence interval " +
                           "is outside the range Fisher (1993, Table 4.3) " +
                           "recommends for this method; he advises a bootstrap " +
                           "interval instead.)");
@@ -510,6 +580,9 @@ namespace WildlifeTools.PolarPlots
                           "Computation 10(5):493-502.");
             sb.AppendLine("[E] Zar, J. H. 1999. Biostatistical Analysis, 4th ed. " +
                           "Prentice Hall. ch. 27.");
+            if (KishApplied)
+                sb.AppendLine("[F] Kish, L. 1992. Weighting for unequal Pi. Journal of " +
+                              "Official Statistics 8:183-200.");
             sb.AppendLine("Circular statistics after Jenness Enterprises Polar Plots.");
             return sb.ToString();
         }

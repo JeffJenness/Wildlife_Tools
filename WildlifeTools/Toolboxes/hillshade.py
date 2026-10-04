@@ -593,7 +593,9 @@ def _cast_shadow_mask(z_m, cellw_m, cellh_m, azimuth, altitude, sun_progress=(0,
             mask = mask[::-1]
         else:
             mask = mask[:, ::-1]
-    return mask
+    # A NoData cell (-inf above) always tests as below the carried surface;
+    # it is not a shadowed cell and must not be counted as one.
+    return mask & ~np.isnan(z_m)
 
 
 # ----------------------------------------------------------------------------
@@ -729,6 +731,14 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
                            "cells ({} kernel).".format(
                                blur_radius, radius_units.lower(), radius_m,
                                float(rx_rows[0]), ry, kernel))
+    if float(np.max(rx_rows)) < 1.0 and ry < 1.0:
+        if messages is not None:
+            messages.addWarningMessage(
+                "The blur radius is smaller than one cell ({:.2f} x {:.2f} "
+                "cells), so no neighboring cells fall inside it and nothing is "
+                "blurred: the output is the same as an ordinary hillshade. Use "
+                "a radius of at least one cell.".format(
+                    float(np.max(rx_rows)), ry))
     note = ", blur radius {:g} {} ({} kernel, {})".format(
         blur_radius, radius_units.lower(), kernel,
         "DEM blurred before shading" if dem_first
@@ -1030,7 +1040,17 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
             _set_label("Scanning elevation statistics for hypsometric shading...")
         else:
             _mh.phase_advance("Scanning elevation statistics for hypsometric shading...")
-        s_min, s_max = band.GetStatistics(0, 1)[:2]
+        # ComputeRasterMinMax scans like GetStatistics(0, 1) but does not
+        # save the result, so no .aux.xml appears beside the user's DEM.
+        try:
+            s_min, s_max = band.ComputeRasterMinMax(0)
+        except RuntimeError:
+            s_min = s_max = None
+        if (s_min is None or s_max is None or
+                not (math.isfinite(s_min) and math.isfinite(s_max))):
+            raise arcpy.ExecuteError(
+                "The DEM has no valid elevation values, so hypsometric shading "
+                "cannot be applied.")
         hyp_lo = s_min * zscale
         hyp_range = max((s_max - s_min) * zscale, 1e-30)
         _msg(messages, "Hypsometric shading: strength {:.0f}% over elevation "
@@ -1055,6 +1075,7 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
             invalid |= ~vm
         z_full[invalid] = np.nan
         z_full *= zscale
+        n_valid = max(int(invalid.size - invalid.sum()), 1)
         geo_note = (" (mean-cell-size approximation on this geographic DEM)"
                     if geographic else "")
         if mode == "multi":
@@ -1071,7 +1092,7 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
                                "{:,} cells ({:.1f}%) dimmed to {:g}% before "
                                "averaging{}.".format(
                                    i + 1, a, al, n_sh,
-                                   100.0 * n_sh / (width * height), shadow_dim,
+                                   100.0 * n_sh / n_valid, shadow_dim,
                                    geo_note))
         else:
             _mh.phase_advance("Sweeping cast shadows...")
@@ -1080,7 +1101,7 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
             _msg(messages, "Cast shadows: {:,} cells ({:.1f}%) are hidden from the "
                            "sun and will be dimmed to {:g}% of their unshadowed "
                            "value{}.".format(
-                               n_sh, 100.0 * n_sh / (width * height), shadow_dim,
+                               n_sh, 100.0 * n_sh / n_valid, shadow_dim,
                                geo_note))
         del z_full
 
@@ -1169,12 +1190,21 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
             if mode == "mdow":
                 # Four hillshades blended with sin^2(aspect - direction)
                 # weights; the weights of 45-degree-spaced directions always
-                # sum to 2, so /2 is exact (Mark 1992).
+                # sum to 2, so /2 is exact (Mark 1992). Each sun's illumination
+                # is clamped at 0 BEFORE it is weighted, as in Mark's method
+                # and every other hillshade mode here: ground that faces away
+                # from a sun gets nothing from that sun. (Jeff, 2026-10-03.
+                # The VB6 tool, and this port until v1.99.43, blended first
+                # and clamped once at the end, so a slope steeper than the sun
+                # inclination and turned away from one sun was DARKENED by
+                # that sun's negative value -- a miscalculation.)
                 cs = cosz * np.cos(slope)
                 ss = sinz * np.sin(slope)
                 shade = np.zeros_like(slope)
                 for dr in dir_rads:
-                    shade += np.sin(aspect - dr) ** 2 * (cs + ss * np.cos(dr - aspect))
+                    sh = cs + ss * np.cos(dr - aspect)
+                    np.maximum(sh, 0.0, out=sh)
+                    shade += np.sin(aspect - dr) ** 2 * sh
                 shade *= 0.5
             elif mode == "multi":
                 # Weighted average of standard hillshades: each sun's shade is

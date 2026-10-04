@@ -391,6 +391,9 @@ namespace WildlifeTools.DataTools
                 ShowToast(sender, "✓ Changes saved");
         }
 
+        private void OnHelp(object sender, RoutedEventArgs e)
+            => WebHelp.Open("data-tools/load-favorite-datasets.html");
+
         private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
 
         // ---- transient toast (same idiom as the stats windows) --------------

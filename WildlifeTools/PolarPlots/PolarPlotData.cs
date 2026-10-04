@@ -521,7 +521,9 @@ namespace WildlifeTools.PolarPlots
                             orig[RasterBins + b2] +
                             (b2 >= RasterBins / 2 ? -180.0 : 180.0) * orig[b2];
                 }
-                examined *= 2;
+                // `examined` stays the number of cells actually read: the
+                // report's "Cells = N examined" line (and the excluded count
+                // beside it) describe the raster, not the doubled plot.
             }
             for (int b = 0; b < RasterBins; b++)
                 if (counts[b] > 0)

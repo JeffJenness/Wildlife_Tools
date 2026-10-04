@@ -1451,7 +1451,9 @@ class MahalanobisPoints(object):
         target_points = arcpy.Parameter(
             displayName="Input points to evaluate", name="target_points",
             datatype="GPFeatureLayer", parameterType="Required", direction="Input")
-        target_points.filter.list = ["Point", "Multipoint"]
+        # one value per feature: a multipoint target could only be scored
+        # at its centroid, so targets are point features
+        target_points.filter.list = ["Point"]
         stats_points = arcpy.Parameter(
             displayName="Sample points for statistics (defaults to the input points)",
             name="stats_points", datatype="GPFeatureLayer",
@@ -2027,24 +2029,75 @@ class KernelDensityGenerate(object):
             # failure.
 
 
+def _kd_value_kind_param():
+    """'Raster cell values' for the two kernel-density post-processing tools:
+    whether the input holds densities or expected counts. It matters only on
+    a latitude/longitude raster (see kernel_density._volume_weights), so the
+    row is shown only then."""
+    p = arcpy.Parameter(
+        displayName="Raster cell values (latitude/longitude rasters)",
+        name="value_kind",
+        datatype="GPString", parameterType="Optional", direction="Input")
+    p.filter.type = "ValueList"
+    p.filter.list = list(kernel_density.VALUE_KINDS)
+    p.value = kernel_density.KIND_DENSITIES
+    p.enabled = False
+    return p
+
+
+def _kd_sync_value_kind(inr, vk):
+    """Show the row only for a latitude/longitude density raster, and, when
+    the input raster has just changed, set it from the raster's metadata
+    (Densities when the metadata does not say). Returns a note for
+    updateMessages, or None."""
+    if not inr.valueAsText:
+        vk.enabled = False
+        return None
+    path = _resolve_raster_path(inr)
+    try:
+        geographic = arcpy.Describe(path).spatialReference.type == "Geographic"
+    except Exception:
+        geographic = False
+    if not geographic:
+        vk.enabled = False
+        return None
+    kind, source = kernel_density.detect_value_kind(path)
+    if kind == kernel_density.KIND_PROPORTION:
+        vk.enabled = False               # proportions are contoured directly
+        return None
+    vk.enabled = True
+    # hasBeenValidated is False only on the pass where the raster itself
+    # just changed: take the metadata's answer then, and leave the user's
+    # later choice alone. When the metadata does not say, the value is left
+    # as it stands (Densities by default) -- a scripted call that passes
+    # "Expected counts" for such a raster must not be overridden.
+    if not inr.hasBeenValidated and kind is not None:
+        vk.value = kind
+    if kind is None:
+        return ("The raster's metadata does not say whether its values are "
+                "densities or expected counts, so Densities is assumed. "
+                "Change this if they are expected counts.")
+    return None
+
+
 class KernelDensityProportion(object):
     """Kernel Density to Proportion Surface -- the "volume" raster.
 
-    Each output cell holds the percent of the total volume (sum of densities)
-    enclosed by the isopleth through it. Contour the result (Esri Contour) at any
-    levels (e.g. 50, 95, 99) to get home-range isopleths directly.
+    Each output cell holds the share (0 to 1) of the total volume contributed
+    by all cells whose density is less than or equal to its own: about 0 at the
+    outer edge, 1 at the peak. Contour at 1 - X/100 for the X% isopleth.
     """
 
     def __init__(self):
         self.label = "Kernel Density to Proportion Surface"
         self.description = (
             "Converts a kernel-density raster into a proportion-under-the-surface "
-            "(volume) raster: each cell holds the percent (0-100) of the total volume "
-            "contained in all cells whose density is greater than or equal to that "
-            "cell's density. Peak cells are near 0, the outer edge near 100, so "
-            "contouring the output at 50/95/99 yields the corresponding home-range "
-            "isopleths. Volume is the density sum (constant cell area cancels); zero "
-            "and NoData cells are excluded.")
+            "(volume) raster: each cell holds the proportion (0 to 1) of the total "
+            "volume contained in all cells whose density is less than or equal to "
+            "that cell's density. The outer edge is near 0 and the peak is 1, so "
+            "contouring the output at 0.05 or 0.50 yields the 95% or 50% home-range "
+            "isopleth. On a latitude/longitude raster the cells are weighted by "
+            "their true areas; zero and NoData cells are excluded.")
         self.category = "Kernel Density Tools"
         self.canRunInBackground = False
         self._auto_out = None
@@ -2057,7 +2110,7 @@ class KernelDensityProportion(object):
         out_raster = arcpy.Parameter(
             displayName="Output proportion raster", name="out_raster",
             datatype="DERasterDataset", parameterType="Required", direction="Output")
-        return [in_raster, out_raster]
+        return [in_raster, out_raster, _kd_value_kind_param()]
 
     def isLicensed(self):
         return True
@@ -2065,6 +2118,7 @@ class KernelDensityProportion(object):
     def updateParameters(self, parameters):
         P = {p.name: p for p in parameters}
         inr, outr = P["in_raster"], P["out_raster"]
+        _kd_sync_value_kind(inr, P["value_kind"])
         if inr.valueAsText and (not outr.altered or outr.valueAsText == self._auto_out):
             try:
                 base = _legalize(_kd_basename(inr.valueAsText) + "_Proportion")
@@ -2076,6 +2130,17 @@ class KernelDensityProportion(object):
         return
 
     def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        vk = P["value_kind"]
+        if vk.enabled and vk.valueAsText == kernel_density.KIND_DENSITIES:
+            # instance state may not survive between validation passes, so
+            # the note is worked out again here
+            path = _resolve_raster_path(P["in_raster"])
+            if path and kernel_density.detect_value_kind(path)[0] is None:
+                vk.setWarningMessage(
+                    "The raster's metadata does not say whether its values "
+                    "are densities or expected counts, so Densities is "
+                    "assumed. Change this if they are expected counts.")
         return
 
     def execute(self, parameters, messages):
@@ -2083,10 +2148,12 @@ class KernelDensityProportion(object):
             _scripting_hint(messages, type(self).__name__)
             importlib.reload(kernel_density)
             P = {p.name: p for p in parameters}
+            vk = P["value_kind"]
             kernel_density.run_proportion_surface(
-                kd=P["in_raster"].valueAsText,
+                kd=_resolve_raster_path(P["in_raster"]),
                 out_raster=P["out_raster"].valueAsText,
-                messages=messages)
+                messages=messages,
+                value_kind=(vk.valueAsText if vk.enabled else None))
             _writeback_resolved_raster(P, "out_raster")
             lyrx = kernel_density.kd_density_lyrx(
                 P["out_raster"].valueAsText, messages)
@@ -2150,7 +2217,8 @@ class KernelDensityContours(object):
         out_polys = arcpy.Parameter(
             displayName="Output contour polygon areas", name="out_polys",
             datatype="DEFeatureClass", parameterType="Optional", direction="Output")
-        return [in_raster, make_lines, out_lines, make_polys, out_polys]
+        return [in_raster, make_lines, out_lines, make_polys, out_polys,
+                _kd_value_kind_param()]
 
     def isLicensed(self):
         return True
@@ -2158,6 +2226,7 @@ class KernelDensityContours(object):
     def updateParameters(self, parameters):
         P = {p.name: p for p in parameters}
         inr = P["in_raster"]
+        _kd_sync_value_kind(inr, P["value_kind"])
         ws = _kd_default_ws(inr.valueAsText) if inr.valueAsText else None
         base = _kd_basename(inr.valueAsText) if inr.valueAsText else None
         for box, out, suffix in [("make_lines", "out_lines", "_Prob_Lines"),
@@ -2184,6 +2253,14 @@ class KernelDensityContours(object):
         if P["make_polys"].value and not P["out_polys"].valueAsText:
             P["out_polys"].setErrorMessage(
                 "Specify an output polygon feature class (or uncheck this option).")
+        vk = P["value_kind"]
+        if vk.enabled and vk.valueAsText == kernel_density.KIND_DENSITIES:
+            path = _resolve_raster_path(P["in_raster"])
+            if path and kernel_density.detect_value_kind(path)[0] is None:
+                vk.setWarningMessage(
+                    "The raster's metadata does not say whether its values "
+                    "are densities or expected counts, so Densities is "
+                    "assumed. Change this if they are expected counts.")
         return
 
     def execute(self, parameters, messages):
@@ -2193,9 +2270,11 @@ class KernelDensityContours(object):
             P = {p.name: p for p in parameters}
             lines = P["out_lines"].valueAsText if P["make_lines"].value else None
             polys = P["out_polys"].valueAsText if P["make_polys"].value else None
+            vk = P["value_kind"]
             kernel_density.run_probability_contours(
-                kd=P["in_raster"].valueAsText,
-                out_lines=lines, out_polys=polys, messages=messages)
+                kd=_resolve_raster_path(P["in_raster"]),
+                out_lines=lines, out_polys=polys, messages=messages,
+                value_kind=(vk.valueAsText if vk.enabled else None))
             for out_name, out_val in (("out_lines", lines),
                                       ("out_polys", polys)):
                 if out_val:
@@ -2470,7 +2549,7 @@ class EnhancedHillshade(object):
         P = {p.name: p for p in parameters}
         inr, outr, units = P["in_raster"], P["out_raster"], P["elev_units"]
         if inr.valueAsText:
-            detected, locked = self._detect_units(inr.valueAsText)
+            detected, locked = self._detect_units(_resolve_raster_path(inr))
             if locked:
                 if not units.altered or units.valueAsText == self._auto_units:
                     units.value = detected
@@ -2483,7 +2562,7 @@ class EnhancedHillshade(object):
                     base = _legalize(os.path.splitext(
                         os.path.basename(inr.valueAsText))[0] + "_Hillshade")
                     ws = arcpy.env.workspace or os.path.dirname(
-                        arcpy.Describe(inr.valueAsText).catalogPath)
+                        arcpy.Describe(_resolve_raster_path(inr)).catalogPath)
                     sug = _unique_name(base, ws)
                     outr.value = sug
                     self._auto_out = sug
@@ -2498,7 +2577,7 @@ class EnhancedHillshade(object):
         inr, units = P["in_raster"], P["elev_units"]
         if inr.valueAsText:
             try:
-                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                if arcpy.Describe(_resolve_raster_path(inr)).bandCount != 1:
                     inr.setErrorMessage(
                         "The elevation raster must be single band.")
             except Exception:
@@ -2537,14 +2616,15 @@ class EnhancedHillshade(object):
             importlib.reload(hillshade)
             P = {p.name: p for p in parameters}
             out_lyrx = hillshade.run_enhanced_hillshade(
-                in_raster=P["in_raster"].valueAsText,
+                in_raster=_resolve_raster_path(P["in_raster"]),
                 out_raster=P["out_raster"].valueAsText,
                 elev_units=P["elev_units"].valueAsText or "Meters",
                 azimuth=P["azimuth"].value,
                 altitude=P["altitude"].value,
                 levels=P["levels"].value,
                 use_hypso=bool(P["use_hypso"].value),
-                hypso_strength=P["hypso_strength"].value or 50,
+                hypso_strength=(P["hypso_strength"].value
+                                if P["hypso_strength"].value is not None else 50),
                 vert_exag=P["vert_exag"].value or 1.0,
                 model_shadows=bool(P["model_shadows"].value),
                 shadow_dim=(P["shadow_dim"].value
@@ -2679,7 +2759,7 @@ class MDOWHillshade(object):
         P = {p.name: p for p in parameters}
         inr, outr, units = P["in_raster"], P["out_raster"], P["elev_units"]
         if inr.valueAsText:
-            detected, locked = self._detect_units(inr.valueAsText)
+            detected, locked = self._detect_units(_resolve_raster_path(inr))
             if locked:
                 if not units.altered or units.valueAsText == self._auto_units:
                     units.value = detected
@@ -2692,7 +2772,7 @@ class MDOWHillshade(object):
                     base = _legalize(os.path.splitext(
                         os.path.basename(inr.valueAsText))[0] + "_MDOW")
                     ws = arcpy.env.workspace or os.path.dirname(
-                        arcpy.Describe(inr.valueAsText).catalogPath)
+                        arcpy.Describe(_resolve_raster_path(inr)).catalogPath)
                     sug = _unique_name(base, ws)
                     outr.value = sug
                     self._auto_out = sug
@@ -2706,7 +2786,7 @@ class MDOWHillshade(object):
         inr, units = P["in_raster"], P["elev_units"]
         if inr.valueAsText:
             try:
-                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                if arcpy.Describe(_resolve_raster_path(inr)).bandCount != 1:
                     inr.setErrorMessage(
                         "The elevation raster must be single band.")
             except Exception:
@@ -2742,14 +2822,15 @@ class MDOWHillshade(object):
             importlib.reload(hillshade)
             P = {p.name: p for p in parameters}
             out_lyrx = hillshade.run_mdow_hillshade(
-                in_raster=P["in_raster"].valueAsText,
+                in_raster=_resolve_raster_path(P["in_raster"]),
                 out_raster=P["out_raster"].valueAsText,
                 elev_units=P["elev_units"].valueAsText or "Meters",
                 azimuth=P["azimuth"].value,
                 altitude=P["altitude"].value,
                 levels=P["levels"].value,
                 use_hypso=bool(P["use_hypso"].value),
-                hypso_strength=P["hypso_strength"].value or 50,
+                hypso_strength=(P["hypso_strength"].value
+                                if P["hypso_strength"].value is not None else 50),
                 vert_exag=P["vert_exag"].value or 1.0,
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
@@ -2971,7 +3052,7 @@ class MultiSunHillshade(object):
         P = {p.name: p for p in parameters}
         inr, outr, units = P["in_raster"], P["out_raster"], P["elev_units"]
         if inr.valueAsText:
-            detected, locked = self._detect_units(inr.valueAsText)
+            detected, locked = self._detect_units(_resolve_raster_path(inr))
             if locked:
                 if not units.altered or units.valueAsText == self._auto_units:
                     units.value = detected
@@ -2984,7 +3065,7 @@ class MultiSunHillshade(object):
                     base = _legalize(os.path.splitext(
                         os.path.basename(inr.valueAsText))[0] + "_MultiSun")
                     ws = arcpy.env.workspace or os.path.dirname(
-                        arcpy.Describe(inr.valueAsText).catalogPath)
+                        arcpy.Describe(_resolve_raster_path(inr)).catalogPath)
                     sug = _unique_name(base, ws)
                     outr.value = sug
                     self._auto_out = sug
@@ -3021,7 +3102,7 @@ class MultiSunHillshade(object):
         inr, units = P["in_raster"], P["elev_units"]
         if inr.valueAsText:
             try:
-                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                if arcpy.Describe(_resolve_raster_path(inr)).bandCount != 1:
                     inr.setErrorMessage(
                         "The elevation raster must be single band.")
             except Exception:
@@ -3085,13 +3166,14 @@ class MultiSunHillshade(object):
                              P["altitude_{}".format(i)].value,
                              P["weight_{}".format(i)].value or 0.0))
             out_lyrx = hillshade.run_multisun_hillshade(
-                in_raster=P["in_raster"].valueAsText,
+                in_raster=_resolve_raster_path(P["in_raster"]),
                 out_raster=P["out_raster"].valueAsText,
                 elev_units=P["elev_units"].valueAsText or "Meters",
                 suns=suns,
                 levels=P["levels"].value,
                 use_hypso=bool(P["use_hypso"].value),
-                hypso_strength=P["hypso_strength"].value or 50,
+                hypso_strength=(P["hypso_strength"].value
+                                if P["hypso_strength"].value is not None else 50),
                 vert_exag=P["vert_exag"].value or 1.0,
                 model_shadows=bool(P["model_shadows"].value),
                 shadow_dim=(P["shadow_dim"].value
@@ -3260,7 +3342,7 @@ class BlurredHillshade(object):
         P = {p.name: p for p in parameters}
         inr, outr, units = P["in_raster"], P["out_raster"], P["elev_units"]
         if inr.valueAsText:
-            detected, locked = self._detect_units(inr.valueAsText)
+            detected, locked = self._detect_units(_resolve_raster_path(inr))
             if locked:
                 if not units.altered or units.valueAsText == self._auto_units:
                     units.value = detected
@@ -3273,7 +3355,7 @@ class BlurredHillshade(object):
                     base = _legalize(os.path.splitext(
                         os.path.basename(inr.valueAsText))[0] + "_Blurred")
                     ws = arcpy.env.workspace or os.path.dirname(
-                        arcpy.Describe(inr.valueAsText).catalogPath)
+                        arcpy.Describe(_resolve_raster_path(inr)).catalogPath)
                     sug = _unique_name(base, ws)
                     outr.value = sug
                     self._auto_out = sug
@@ -3288,7 +3370,7 @@ class BlurredHillshade(object):
         inr, units = P["in_raster"], P["elev_units"]
         if inr.valueAsText:
             try:
-                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                if arcpy.Describe(_resolve_raster_path(inr)).bandCount != 1:
                     inr.setErrorMessage(
                         "The elevation raster must be single band.")
             except Exception:
@@ -3330,14 +3412,15 @@ class BlurredHillshade(object):
             importlib.reload(hillshade)
             P = {p.name: p for p in parameters}
             out_lyrx = hillshade.run_blurred_hillshade(
-                in_raster=P["in_raster"].valueAsText,
+                in_raster=_resolve_raster_path(P["in_raster"]),
                 out_raster=P["out_raster"].valueAsText,
                 elev_units=P["elev_units"].valueAsText or "Meters",
                 azimuth=P["azimuth"].value,
                 altitude=P["altitude"].value,
                 levels=P["levels"].value,
                 use_hypso=bool(P["use_hypso"].value),
-                hypso_strength=P["hypso_strength"].value or 50,
+                hypso_strength=(P["hypso_strength"].value
+                                if P["hypso_strength"].value is not None else 50),
                 vert_exag=P["vert_exag"].value or 1.0,
                 model_shadows=bool(P["model_shadows"].value),
                 shadow_dim=(P["shadow_dim"].value
@@ -3461,7 +3544,7 @@ class SimpleHypsometricShading(object):
             try:
                 base = os.path.splitext(
                     os.path.basename(arcpy.Describe(
-                        dem.valueAsText).catalogPath))[0]
+                        _resolve_raster_path(dem)).catalogPath))[0]
                 sug = "{} Hypsometric Shading".format(base)
                 name.value = sug
                 self._auto_name = sug
@@ -3474,7 +3557,7 @@ class SimpleHypsometricShading(object):
         dem = P["in_dem"]
         if dem.valueAsText:
             try:
-                if arcpy.Describe(dem.valueAsText).bandCount != 1:
+                if arcpy.Describe(_resolve_raster_path(dem)).bandCount != 1:
                     dem.setErrorMessage(
                         "The elevation raster must be single band.")
             except Exception:
@@ -3491,8 +3574,8 @@ class SimpleHypsometricShading(object):
             importlib.reload(cartography_tools)
             P = {p.name: p for p in parameters}
             lyrx = cartography_tools.run_simple_hypso_shading(
-                dem=P["in_dem"].valueAsText,
-                hillshade=P["in_hillshade"].valueAsText,
+                dem=_resolve_raster_path(P["in_dem"]),
+                hillshade=_resolve_raster_path(P["in_hillshade"]),
                 transparency=P["transparency"].value,
                 blend_mode=P["blend_mode"].valueAsText or "Normal",
                 group_name=P["group_name"].valueAsText or None,

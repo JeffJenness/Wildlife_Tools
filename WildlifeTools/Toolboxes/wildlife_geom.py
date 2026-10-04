@@ -178,8 +178,10 @@ def _spherical_triangle_area(ax, ay, bx, by, cx, cy,
         mult = 1.0 if abs(diff) > math.pi else -1.0
 
     s = (ab + bc + ca) / 2.0
-    tan_e_over_4 = math.sqrt(math.tan(s / 2.0) * math.tan((s - ab) / 2.0)
-                             * math.tan((s - bc) / 2.0) * math.tan((s - ca) / 2.0))
+    # Three vertices on one great circle have zero excess; rounding can then
+    # leave the product a hair below zero, which math.sqrt refuses.
+    tan_e_over_4 = math.sqrt(max(0.0, math.tan(s / 2.0) * math.tan((s - ab) / 2.0)
+                                 * math.tan((s - bc) / 2.0) * math.tan((s - ca) / 2.0)))
     e = math.atan(tan_e_over_4) * 4.0
     return R ** 2 * e * mult
 

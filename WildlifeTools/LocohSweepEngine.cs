@@ -162,21 +162,34 @@ namespace WildlifeTools
             // max nearest-neighbor distance (r1 = half of it) and the max
             // pairwise distance (a1); the pairwise max is found on the convex
             // hull's vertices, so the brute-force pass stays tiny
-            double maxNN = 0;
+            // The nearest neighbour of a point with a duplicate fix is that
+            // duplicate, at distance 0 -- the same rule as the LoCoH (Fixed
+            // Sphere) tool's automatic radius (locoh.py), so the r1 marked
+            // here is the radius that tool would pick. (Skipping zero
+            // distances, as this used to, gave a larger r1 than the tool's
+            // whenever an isolated location had been recorded twice.) The
+            // nearest DISTINCT neighbour is kept only as a fallback for data
+            // in which every location is duplicated.
+            double maxNN = 0, maxNNDistinct = 0;
             for (int i = 0; i < n; i++)
             {
-                double best = double.MaxValue;
+                double best = double.MaxValue, bestDistinct = double.MaxValue;
                 for (int j = 0; j < n; j++)
                 {
                     if (j == i) continue;
                     double dx = xs[j] - xs[i], dy = ys[j] - ys[i];
                     double dd = dx * dx + dy * dy;
-                    if (dd < best && dd > 0) best = dd;
+                    if (dd < best) best = dd;
+                    if (dd < bestDistinct && dd > 0) bestDistinct = dd;
                 }
                 if (best < double.MaxValue)
                     maxNN = Math.Max(maxNN, Math.Sqrt(best));
+                if (bestDistinct < double.MaxValue)
+                    maxNNDistinct = Math.Max(maxNNDistinct,
+                                             Math.Sqrt(bestDistinct));
                 if ((i & 511) == 0) ct.ThrowIfCancellationRequested();
             }
+            if (maxNN <= 0) maxNN = maxNNDistinct;
             double maxPair = MaxPairwise(xs, ys, workSr);
             if (maxPair <= 0 || maxNN <= 0)
                 throw new InvalidOperationException(

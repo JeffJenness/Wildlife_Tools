@@ -116,7 +116,14 @@ namespace WildlifeTools.PolarPlots
                     StandaloneTablesAddedEvent.Subscribe(_ => QueueRefresh()),
                     StandaloneTablesRemovedEvent.Subscribe(_ => QueueRefresh()),
                     MapSelectionChangedEvent.Subscribe(OnMapSelectionChanged),
+                    // Another map or scene became the active view: list ITS
+                    // layers and tables.
+                    ActiveMapViewChangedEvent.Subscribe(_ => QueueRefresh()),
                 };
+                // Clicking back into this window: make sure the list is
+                // current, whatever happened in Pro meanwhile (a no-op when
+                // nothing changed).
+                Activated += (_, __) => QueueRefresh();
                 Closed += (_, __) =>
                 {
                     try
@@ -127,6 +134,7 @@ namespace WildlifeTools.PolarPlots
                         StandaloneTablesAddedEvent.Unsubscribe(tokens[3]);
                         StandaloneTablesRemovedEvent.Unsubscribe(tokens[4]);
                         MapSelectionChangedEvent.Unsubscribe(tokens[5]);
+                        ActiveMapViewChangedEvent.Unsubscribe(tokens[6]);
                     }
                     catch { }
                 };
@@ -213,6 +221,16 @@ namespace WildlifeTools.PolarPlots
                 var map = MapView.Active?.Map;
                 if (map == null) return;     // a layout is active: keep the list
                 var fresh = await QueuedTask.Run(() => PolarPlotData.ListSources(map));
+                // Nothing added, removed, renamed or reordered: leave the
+                // list, the selection and the preview exactly as they are.
+                if (_sources != null && fresh.Count == _sources.Count)
+                {
+                    bool same = true;
+                    for (int i = 0; i < fresh.Count && same; i++)
+                        same = fresh[i].SameMember(_sources[i]) &&
+                               fresh[i].Name == _sources[i].Name;
+                    if (same) return;
+                }
                 var cur = cboSource.SelectedItem as PolarPlotData.Source;
                 var keep = cur == null ? null
                     : fresh.FirstOrDefault(x => x.SameMember(cur));

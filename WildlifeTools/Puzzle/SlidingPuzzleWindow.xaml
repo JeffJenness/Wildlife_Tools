@@ -66,6 +66,40 @@
         </Setter.Value>
       </Setter>
     </Style>
+    <!-- round "?" help button in the window's own colors -->
+    <Style x:Key="HelpRound" TargetType="Button">
+      <Setter Property="Focusable" Value="False" />
+      <Setter Property="Width" Value="26" />
+      <Setter Property="Height" Value="26" />
+      <Setter Property="Margin" Value="8,0,0,0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="ToolTip" Value="Open the online help page for this tool" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Grid>
+              <Ellipse x:Name="Disc" Fill="{StaticResource ButtonFaceBrush}"
+                       Stroke="{StaticResource ButtonEdgeBrush}" StrokeThickness="1" />
+              <Ellipse Margin="3" Stroke="{StaticResource ButtonTextBrush}"
+                       StrokeThickness="0.75" Opacity="0.55" />
+              <TextBlock Text="?" FontFamily="Georgia" FontWeight="Bold" FontSize="15"
+                         Foreground="{StaticResource ButtonTextBrush}"
+                         HorizontalAlignment="Center" VerticalAlignment="Center"
+                         Margin="0,-1,0,0" />
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Disc" Property="Fill" Value="{StaticResource ButtonHoverBrush}" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Disc" Property="Fill" Value="{StaticResource ButtonPressedBrush}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </controls:ProWindow.Resources>
 
   <Border Background="{StaticResource FrameBrush}" Padding="9">
@@ -97,6 +131,7 @@
                     FontFamily="{StaticResource BodyFontFam}" FontSize="14"
                     Click="OnEasyToggle"
                     ToolTip="Easy mode: show a faint number in each tile's corner." />
+          <Button Style="{StaticResource HelpRound}" Click="OnHelp" />
         </StackPanel>
 
         <!-- Status + Solve helper (bottom corner) -->

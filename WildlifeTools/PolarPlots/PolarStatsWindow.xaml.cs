@@ -132,7 +132,7 @@ namespace WildlifeTools.PolarPlots
             doc.Blocks.Add(xp);
 
             var rp = new Paragraph { FontSize = 11, Foreground = Brushes.Gray };
-            foreach (string r in References())
+            foreach (string r in References(st.KishApplied))
             {
                 rp.Inlines.Add(new Run(r));
                 rp.Inlines.Add(new LineBreak());
@@ -141,14 +141,21 @@ namespace WildlifeTools.PolarPlots
             return doc;
         }
 
-        private static string[] References() => new[]
+        private static string[] References(bool kish)
         {
-            "[A] Fisher, N. I. 1993. Statistical Analysis of Circular Data. Cambridge University Press.",
-            "[B] Mardia, K. V., and P. E. Jupp. 2000. Directional Statistics. Wiley.",
-            "[C] Batschelet, E. 1981. Circular Statistics in Biology. Academic Press.",
-            "[D] Best, D. J., and N. I. Fisher. 1981. Communications in Statistics - Simulation and Computation 10(5):493-502.",
-            "[E] Zar, J. H. 1999. Biostatistical Analysis, 4th ed. Prentice Hall, ch. 27 (Rayleigh p: eq. 27.4).",
-        };
+            var refs = new List<string>
+            {
+                "[A] Fisher, N. I. 1993. Statistical Analysis of Circular Data. Cambridge University Press.",
+                "[B] Mardia, K. V., and P. E. Jupp. 2000. Directional Statistics. Wiley.",
+                "[C] Batschelet, E. 1981. Circular Statistics in Biology. Academic Press.",
+                "[D] Best, D. J., and N. I. Fisher. 1981. Communications in Statistics - Simulation and Computation 10(5):493-502.",
+                "[E] Zar, J. H. 1999. Biostatistical Analysis, 4th ed. Prentice Hall, ch. 27 (Rayleigh p: eq. 27.4).",
+            };
+            if (kish)
+                refs.Add("[F] Kish, L. 1992. Weighting for unequal Pi. Journal of Official " +
+                         "Statistics 8:183-200.");
+            return refs.ToArray();
+        }
 
         /// <summary>A paragraph with a bottom hairline border -- unlike a
         /// BlockUIContainer, a paragraph border survives RTF serialization, so
@@ -322,7 +329,7 @@ namespace WildlifeTools.PolarPlots
             foreach (string note in st.Notes())
                 sb.Append("<ITA>").Append(EscapeEsri(note)).AppendLine("</ITA>");
             sb.AppendLine();
-            foreach (string r in References())
+            foreach (string r in References(st.KishApplied))
                 sb.Append("<FNT size=\"7\"><CLR red=\"110\" green=\"110\" blue=\"110\">")
                   .Append(EscapeEsri(r)).AppendLine("</CLR></FNT>");
             return sb.ToString();

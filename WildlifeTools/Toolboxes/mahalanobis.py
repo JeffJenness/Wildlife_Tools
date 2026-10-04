@@ -649,16 +649,39 @@ def read_point_xy(in_points, grid_sr):
     """Return point coordinates as an (n, 2) array, in the grid coordinate system.
 
     Honors any selection on a feature layer (arcpy SearchCursor respects it).
+    Every point of a multipoint feature is read (explode_to_points; SHAPE@XY
+    is otherwise the feature's centroid). A cursor's spatial_reference=
+    reprojects WITHOUT a datum transformation (verified 2026-09-23), so it is
+    used only when the points and the grid share a datum; otherwise each
+    point goes through clip_tools.project_geometry.
     """
+    import clip_tools as _ct
+    try:
+        pts_sr = arcpy.Describe(in_points).spatialReference
+    except Exception:
+        pts_sr = None
+    same_datum = True
+    if pts_sr is not None and grid_sr is not None:
+        try:
+            same_datum = _ct._same_datum(pts_sr, grid_sr)
+        except Exception:
+            same_datum = True
     coords = []
-    with arcpy.da.SearchCursor(in_points, ["SHAPE@XY"],
-                               spatial_reference=grid_sr) as cur:
+    with arcpy.da.SearchCursor(
+            in_points, ["SHAPE@XY"],
+            spatial_reference=(grid_sr if same_datum else None),
+            explode_to_points=True) as cur:
         for (xy,) in cur:
             if xy is None:
                 continue
             x, y = xy
             if x is None or y is None:
                 continue
+            if not same_datum:
+                pt = _ct.project_geometry(
+                    arcpy.PointGeometry(arcpy.Point(x, y), pts_sr),
+                    grid_sr).firstPoint
+                x, y = pt.X, pt.Y
             coords.append((x, y))
     return np.asarray(coords, dtype=float)
 
@@ -924,7 +947,11 @@ def stats_from_categorical(vrts, geo, cat_path, cat_value, sample_method,
             stack[j] = band.ReadAsArray(0, yoff, width, rows)
         mask = np.zeros(cat.shape, dtype=bool)
         for t in targets:
-            mask |= np.isclose(cat, t)
+            # np.isclose's default RELATIVE tolerance (1e-5) merges neighboring
+            # codes once they reach 100,000 (100000 and 100001 "match"); the
+            # category raster is nearest-resampled, so the values are exact.
+            with np.errstate(invalid="ignore"):
+                mask |= np.abs(cat - t) <= 1e-9 * max(1.0, abs(t))
         mask &= np.all(np.isfinite(stack), axis=0)
         if value_caps:
             for j, cap in value_caps.items():

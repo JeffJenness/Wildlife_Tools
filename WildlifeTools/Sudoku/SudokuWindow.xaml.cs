@@ -246,6 +246,9 @@ namespace WildlifeTools.Sudoku
                 Select(_selR, _selC);
         }
 
+        private void OnHelp(object sender, RoutedEventArgs e)
+            => WebHelp.Open("take-a-break/sudoku.html");
+
         private void OnSkinChanged(object sender, SelectionChangedEventArgs e)
         {
             // during construction the ctor applies the skin itself, at the

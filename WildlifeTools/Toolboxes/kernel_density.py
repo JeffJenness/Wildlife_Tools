@@ -60,6 +60,16 @@ _NODATA = mh.NODATA_OUT
 # Contours tool can recognize them and contour directly (instead of computing
 # volume-weighted density levels from a kernel-density raster).
 _PROP_TAG = "JENNESS_KD_PROPORTION_SURFACE"
+# Markers for what a kernel-density raster's cell values ARE. On a
+# latitude/longitude raster the volume under the surface is density x cell
+# area, and the cells shrink toward the poles: a DENSITIES raster needs each
+# cell weighted by its area, an EXPECTED COUNTS raster already has it in.
+_DENS_TAG = "JENNESS_KD_DENSITIES"
+_COUNT_TAG = "JENNESS_KD_EXPECTED_COUNTS"
+KIND_DENSITIES = "Densities"
+KIND_COUNTS = "Expected counts"
+KIND_PROPORTION = "Proportion"
+VALUE_KINDS = [KIND_DENSITIES, KIND_COUNTS]
 
 
 _KD_TAGS = "kernel density, home range, utilization distribution"
@@ -89,7 +99,11 @@ _CONTOUR_FIELDS = [
     {"name": "Density",
      "description": "The raster value contoured to produce this isopleth -- the "
                     "kernel-density threshold for a kernel-density input, or the "
-                    "cumulative proportion for a proportion-under-the-surface input."},
+                    "cumulative proportion for a proportion-under-the-surface input. "
+                    "(For an expected-counts raster in latitude/longitude it is the "
+                    "count a cell of average size would hold. The 100% isopleth is "
+                    "the edge of the positive cells, and carries the smallest "
+                    "positive value.)"},
     {"name": "Isopleth",
      "description": "The home-range isopleth level: the proportion (0-1) of the total "
                     "volume under the surface enclosed by this contour (e.g. 0.95 is "
@@ -112,9 +126,11 @@ def _today():
     return "{:%B} {}, {}".format(n, n.day, n.year)
 
 
-def _kd_write_meta(target, title, summary, description, proportion=False, messages=None):
+def _kd_write_meta(target, title, summary, description, proportion=False, messages=None,
+                   kind_tag=None):
     """Write short title/tags/summary/description metadata onto an output. Stamps the
-    proportion-surface marker when ``proportion`` is True. Never raises.
+    proportion-surface marker when ``proportion`` is True, and ``kind_tag``
+    (_DENS_TAG / _COUNT_TAG) when given. Never raises.
 
     Memory-workspace outputs are SKIPPED entirely: they cannot hold
     metadata, and the arcpy metadata layer's save failure leaves the
@@ -142,6 +158,9 @@ def _kd_write_meta(target, title, summary, description, proportion=False, messag
         if proportion:
             tags += ", " + _PROP_TAG
             description = description + "\n[" + _PROP_TAG + "]"
+        elif kind_tag:
+            tags += ", " + kind_tag
+            description = description + "\n[" + kind_tag + "]"
         m.tags = tags
         m.summary = summary
         m.description = description
@@ -159,6 +178,118 @@ def _is_marked_proportion(raster):
         return _PROP_TAG in " ".join([m.tags or "", m.description or "", m.summary or ""])
     except Exception:
         return False
+
+
+def detect_value_kind(raster):
+    """What the raster's metadata says its cell values are:
+    ``(kind, source)`` with kind one of KIND_PROPORTION / KIND_DENSITIES /
+    KIND_COUNTS, or ``(None, None)`` when the metadata holds no information.
+
+    Looked for, in order: this suite's own markers; the run summary this
+    suite has always written ("Output values: ..."); and the raster's
+    geoprocessing history, where Esri's Kernel Density records its
+    DENSITIES / EXPECTED_COUNTS choice (the most recent kernel-density
+    process wins). Never raises."""
+    import re
+    try:
+        from arcpy import metadata as md
+        m = md.Metadata(raster)
+        text = " ".join([m.tags or "", m.description or "", m.summary or ""])
+        if _PROP_TAG in text:
+            return KIND_PROPORTION, "this suite's proportion-surface marker"
+        if _COUNT_TAG in text:
+            return KIND_COUNTS, "this suite's marker in the metadata"
+        if _DENS_TAG in text:
+            return KIND_DENSITIES, "this suite's marker in the metadata"
+        low = text.lower()
+        if "output values: expected point counts" in low:
+            return KIND_COUNTS, "the run summary in the metadata"
+        if "output values: densities" in low:
+            return KIND_DENSITIES, "the run summary in the metadata"
+        if "output values: proportion under the surface" in low:
+            return KIND_PROPORTION, "the run summary in the metadata"
+        xml = m.xml or ""
+        found = None
+        for mm in re.finditer(r"<Process\b([^>]*)>(.*?)</Process>", xml,
+                              re.S | re.I):
+            proc = (mm.group(1) + " " + mm.group(2)).upper()
+            if "KERNELDENSITY" not in proc.replace(" ", "").replace("_", ""):
+                continue
+            if re.search(r"EXPECTED[_ ]COUNTS", proc):
+                found = KIND_COUNTS
+            elif re.search(r"\bDENSITIES\b", proc):
+                found = KIND_DENSITIES
+        if found:
+            return found, "the geoprocessing history in the metadata"
+    except Exception:
+        pass
+    return None, None
+
+
+def resolve_value_kind(kd, value_kind, messages=None):
+    """The kind to use: the caller's explicit choice, else what the metadata
+    says, else Densities (Esri's default, and the usual case)."""
+    if value_kind in (KIND_DENSITIES, KIND_COUNTS):
+        return value_kind, "as specified"
+    kind, source = detect_value_kind(kd)
+    if kind in (KIND_DENSITIES, KIND_COUNTS):
+        return kind, "from " + source
+    return KIND_DENSITIES, "assumed: the raster's metadata does not say"
+
+
+def _row_area_weights(kd, gt, height):
+    """Relative cell area of each ROW of a latitude/longitude raster (cells
+    narrow toward the poles), or None for a projected raster, whose cells
+    are all the same size."""
+    try:
+        sr = arcpy.Describe(kd).spatialReference
+        if sr is None or sr.type != "Geographic":
+            return None
+    except Exception:
+        return None
+    lat_c = gt[3] + (np.arange(height) + 0.5) * gt[5]
+    half = abs(gt[5]) / 2.0
+    w = np.abs(np.sin(np.radians(lat_c + half)) - np.sin(np.radians(lat_c - half)))
+    return w if float(w.max()) > 0 else None
+
+
+def _volume_model(kd, gt, arr, value_kind, messages):
+    """How to add up the volume under a kernel-density raster:
+    ``(order, vol, rescaled)``.
+
+    ``order`` is the array that ranks the cells from sparse to dense and that
+    the isopleths are contoured on; ``vol`` is each cell's share of the
+    volume (None = the same as ``order``); ``rescaled`` is True when
+    ``order`` is not the raster's own values.
+
+    * projected raster: every cell has the same area, so the values serve
+      as both (densities and expected counts differ only by a constant).
+    * latitude/longitude, DENSITIES: rank by the values; volume = value x
+      cell area.
+    * latitude/longitude, EXPECTED COUNTS: the values ARE the volume, but
+      they rank the cells by count, not density (a cell nearer the pole is
+      smaller, so the same density gives it a smaller count). Rank by
+      count / relative cell area instead -- the count a cell of average
+      size would hold."""
+    row_w = _row_area_weights(kd, gt, arr.shape[0])
+    if row_w is None:
+        return arr, None, False
+    w2d = np.repeat((row_w / float(row_w.mean()))[:, None], arr.shape[1], axis=1)
+    kind, how = resolve_value_kind(kd, value_kind, messages)
+    if kind == KIND_DENSITIES:
+        if messages is not None:
+            messages.addMessage(
+                "Latitude/longitude raster of densities ({}): each cell is "
+                "weighted by its true area when the volume is added "
+                "up.".format(how))
+        return arr, arr * w2d, False
+    if messages is not None:
+        messages.addMessage(
+            "Latitude/longitude raster of expected counts ({}): the values "
+            "already include the cell areas, so no area weighting is "
+            "applied to the volume; the cells are ranked by count per cell "
+            "of average size, which is their density.".format(how))
+    return arr / w2d, arr, True
 
 
 # --------------------------------------------------------------------------- #
@@ -191,9 +322,11 @@ def _read_positive(src):
     return arr, valid
 
 
-def _cumulative_volume(arr, valid, from_below):
+def _cumulative_volume(arr, valid, from_below, vol=None):
     """Per-cell cumulative-volume fraction (0..1). Ties share a value. Returns a
-    float64 array (NaN outside ``valid``).
+    float64 array (NaN outside ``valid``). ``arr`` ranks the cells; ``vol``
+    (same shape) is each cell's volume, None when it is ``arr`` itself (see
+    ``_volume_model``).
 
     from_below=True : share of volume with density <= this cell's density
                       (0 at the outer edge, 1 at the peak -- the "proportion under
@@ -202,8 +335,10 @@ def _cumulative_volume(arr, valid, from_below):
                       (enclosed-volume / home-range orientation).
     """
     vals = arr[valid]
-    uvals, inv, counts = np.unique(vals, return_inverse=True, return_counts=True)
-    vol_per_uval = uvals * counts                       # density-weighted volume per level
+    uvals, inv = np.unique(vals, return_inverse=True)
+    v = vals if vol is None else vol[valid]
+    # volume per density level, summed over the cells at that level
+    vol_per_uval = np.bincount(inv.ravel(), weights=v, minlength=uvals.size)
     total = vol_per_uval.sum()
     if from_below:
         cum = np.cumsum(vol_per_uval) / total           # density <= u
@@ -214,8 +349,9 @@ def _cumulative_volume(arr, valid, from_below):
     return out
 
 
-def compute_contour_levels(arr, valid):
-    """The legacy "Probability" contour levels.
+def compute_contour_levels(arr, valid, vol=None):
+    """The legacy "Probability" contour levels. ``arr`` and ``vol`` as in
+    ``_cumulative_volume``.
 
     Sort positive densities ascending; step upward accumulating density/total; the
     first cell whose cumulative-from-below fraction reaches each internal threshold
@@ -224,9 +360,12 @@ def compute_contour_levels(arr, valid):
     keys: density, percentile (label fraction), label (str), primary (bool),
     ascending by density and de-duplicated on density.
     """
-    vals = np.sort(arr[valid])
-    total = vals.sum()
-    frac = np.cumsum(vals) / total
+    vals = arr[valid]
+    order = np.argsort(vals, kind="mergesort")
+    vals = vals[order]
+    v = vals if vol is None else vol[valid][order]
+    total = v.sum()
+    frac = np.cumsum(v) / total
     seen = set()
     levels = []
     for i in range(0, 20):                              # 0, .05, ..., .95
@@ -251,7 +390,8 @@ def _proportion_levels():
     """Contour levels for a proportion-under-the-surface raster, whose values are
     already the cumulative-from-below volume (~0 at the edge, 1 at the peak). The X%
     home-range isopleth is simply the contour at raster value (1 - X), so we emit
-    X = 95%, 90%, ..., 5% (the 100% "contour" is just the data edge and is omitted).
+    X = 95%, 90%, ..., 5%. (The 100% isopleth is the edge of the data; the
+    caller adds it from the smoothed positive-cell mask.)
     """
     levels = []
     for i in range(1, 20):                  # raster value p = 0.05 .. 0.95
@@ -267,7 +407,7 @@ def _proportion_levels():
 # --------------------------------------------------------------------------- #
 # Tool 1 -- Proportion Under the Surface raster
 # --------------------------------------------------------------------------- #
-def run_proportion_surface(kd, out_raster, messages):
+def run_proportion_surface(kd, out_raster, messages, value_kind=None):
     """KD raster -> proportion-under-the-surface raster (0..1).
 
     Each cell holds the share of the total volume with density <= that cell's
@@ -289,7 +429,9 @@ def run_proportion_surface(kd, out_raster, messages):
             raise arcpy.ExecuteError(
                 "The input raster has no positive-density cells to analyze.")
         mh._set_label("Computing proportion under the surface...")
-        cum = _cumulative_volume(arr, valid, from_below=True)   # 0 at edge -> 1 at peak
+        order, vol, _rescaled = _volume_model(kd, gt, arr, value_kind, messages)
+        cum = _cumulative_volume(order, valid, from_below=True,
+                                 vol=vol)   # 0 at edge -> 1 at peak
 
         out = np.full(arr.shape, _NODATA, dtype=np.float32)
         out[valid] = cum[valid].astype(np.float32)
@@ -439,175 +581,310 @@ def _reproject_in_place(fc, out_cs, messages):
         return
     if not out_cs or _same_cs(sr, out_cs):
         return
-    tmp = arcpy.CreateUniqueName("kd_reproj", arcpy.env.scratchGDB)
-    arcpy.management.Project(fc, tmp, out_cs,
+    # Produce, then swap: the projected copy is written beside the output
+    # before the original is removed.
+    ws, name = os.path.split(str(fc))
+    stem, ext = os.path.splitext(name)
+    sibling = arcpy.CreateUniqueName(stem + "_prj" + ext, ws)
+    arcpy.management.Project(fc, sibling, out_cs,
                              _ct.transformation_name(sr, out_cs) or "")
     arcpy.management.Delete(fc)
-    arcpy.management.CopyFeatures(tmp, fc)
-    arcpy.management.Delete(tmp)
+    arcpy.management.Rename(sibling, fc)
     messages.addMessage("Reprojected output to Output Coordinate System: {}.".format(out_cs.name))
 
 
-def _build_contours(kd, out_lines, out_polys, messages):
+def _vector_mem_layer(gdal, ogr, geom_type, field_names):
+    """An in-memory OGR layer for the contour generator: (dataset, layer)."""
+    drv = gdal.GetDriverByName("MEM") or gdal.GetDriverByName("Memory")
+    vds = drv.Create("", 0, 0, 0, gdal.GDT_Unknown)
+    lyr = vds.CreateLayer("contours", None, geom_type)
+    for nm in field_names:
+        lyr.CreateField(ogr.FieldDefn(nm, ogr.OFTReal))
+    return vds, lyr
+
+
+def _level_text(values):
+    # 17 significant digits round-trip a double exactly
+    return ",".join(repr(float(v)) for v in values)
+
+
+def _gdal_contour_lines(gdal, band, nodata, densities):
+    """Contour ``band`` at the fixed ``densities``: a list of (WKB, value),
+    one entry per contour line. GDAL's contour generator needs no extension
+    license (Esri's Contour List needs 3D Analyst or Spatial Analyst)."""
+    from osgeo import ogr
+    vds, lyr = _vector_mem_layer(gdal, ogr, ogr.wkbLineString, ["elev"])
+    opts = ["FIXED_LEVELS=" + _level_text(densities), "ELEV_FIELD=elev"]
+    if nodata is not None:
+        opts.append("NODATA=" + repr(float(nodata)))
+    gdal.ContourGenerateEx(band, lyr, options=opts)
+    out = []
+    lyr.ResetReading()
+    for f in lyr:
+        g = f.GetGeometryRef()
+        if g is None or g.IsEmpty():
+            continue
+        out.append((bytes(g.ExportToWkb()), float(f.GetField("elev"))))
+    lyr = None
+    vds = None
+    return out
+
+
+def _gdal_level_polygons(gdal, band, nodata, density, ceiling):
+    """The region where ``band`` is at or above ``density``, as a list of
+    polygon WKBs (one per separate area, each with its own holes).
+
+    Built as the single polygon band between ``density`` and ``ceiling`` (a
+    value above the raster's maximum), so the result is exactly "density >=
+    level": a hollow in the surface stays a hole, and an area that runs off
+    the edge of the raster is closed along the edge. (Closing each contour
+    loop separately, as this tool used to with Feature To Polygon, filled the
+    hollows -- and needed an Advanced license.)"""
+    from osgeo import ogr
+    vds, lyr = _vector_mem_layer(gdal, ogr, ogr.wkbMultiPolygon,
+                                 ["emin", "emax"])
+    opts = ["FIXED_LEVELS=" + _level_text([density, ceiling]),
+            "ELEV_FIELD_MIN=emin", "ELEV_FIELD_MAX=emax", "POLYGONIZE=YES"]
+    if nodata is not None:
+        opts.append("NODATA=" + repr(float(nodata)))
+    gdal.ContourGenerateEx(band, lyr, options=opts)
+    parts = []
+    lyr.ResetReading()
+    for f in lyr:
+        g = f.GetGeometryRef()
+        if g is None or g.IsEmpty():
+            continue
+        name = g.GetGeometryName().upper()
+        if name == "POLYGON":
+            parts.append(bytes(g.ExportToWkb()))
+        else:                                   # MULTIPOLYGON / collection
+            for k in range(g.GetGeometryCount()):
+                sub = g.GetGeometryRef(k)
+                if sub is not None and not sub.IsEmpty() and \
+                        sub.GetGeometryName().upper() == "POLYGON":
+                    parts.append(bytes(sub.ExportToWkb()))
+    lyr = None
+    vds = None
+    return parts
+
+
+def _create_contour_fc(out_fc, geometry_type, sr, with_contour_field):
+    """Create an output feature class with the level fields. Returns the
+    insert-cursor field list (after SHAPE@)."""
+    arcpy.management.CreateFeatureclass(
+        os.path.dirname(out_fc), os.path.basename(out_fc),
+        geometry_type, spatial_reference=mh.clean_sr(sr))
+    if with_contour_field:
+        arcpy.management.AddField(out_fc, "Contour", "DOUBLE")
+    cum = _add_level_fields(out_fc)
+    if mh.is_shapefile_target(str(out_fc)):
+        # a new shapefile carries a default "Id" field; drop it now that
+        # our own fields exist
+        if any(f.name.lower() == "id" for f in arcpy.ListFields(out_fc)):
+            try:
+                arcpy.management.DeleteField(out_fc, "Id")
+            except Exception:
+                pass
+    return ((["Contour"] if with_contour_field else [])
+            + ["Density", "Isopleth", cum, "Label", "Primary"])
+
+
+def _outer_edge_band(gdal, src, valid):
+    """An in-memory band for the OUTERMOST isopleth, where the surface trails
+    off to nothing: the positive-density cells as 1 and everything else as 0,
+    lightly smoothed, to be contoured at 0.5.
+
+    The edge of the positive cells is a staircase of cell sides. The smoothed
+    mask's 0.5 line follows the same edge without the steps (and stays on it
+    wherever the edge is straight), and is always a closed loop. Returns
+    (dataset, band); keep the dataset alive while the band is in use."""
+    from scipy.ndimage import gaussian_filter
+    # A margin of empty cells all round, so the line closes on itself even
+    # where the surface reaches the edge of the raster (there it runs along
+    # the edge, half a cell outside it).
+    pad = 3
+    soft = gaussian_filter(np.pad(valid.astype(np.float64), pad),
+                           sigma=1.0, mode="constant", cval=0.0)
+    h, w = soft.shape
+    gt = src.GetGeoTransform()
+    zds = gdal.GetDriverByName("MEM").Create("", w, h, 1, gdal.GDT_Float32)
+    zds.SetGeoTransform((gt[0] - pad * gt[1], gt[1], gt[2],
+                         gt[3] - pad * gt[5], gt[4], gt[5]))
+    zb = zds.GetRasterBand(1)
+    zb.WriteArray(soft.astype(np.float32))
+    zb.FlushCache()
+    return zds, zb
+
+
+def _build_contours(kd, out_lines, out_polys, messages, value_kind=None):
     """Generate the probability isopleths (polylines and/or polygon areas) in the
-    raster's native coordinate system. Returns a list of outputs."""
+    raster's native coordinate system. Returns a list of outputs.
+
+    Contouring is done with GDAL (bundled with ArcGIS Pro), so the tool needs
+    no extension license and no particular license level."""
     scratch = arcpy.env.scratchFolder
-    if _is_marked_proportion(kd):
-        # The raster already holds the cumulative volume (proportion under the
-        # surface): the home-range isopleths are just fixed proportion contours, so
-        # skip the volume-weighted level search and contour the levels directly.
-        levels = _proportion_levels()
-        messages.addMessage(
-            "Input is a proportion-under-the-surface raster; contouring the standard "
-            "proportion levels directly ({} levels).".format(len(levels)))
-    else:
-        # A kernel-density raster (Esri Kernel Density, or our tool's Densities /
-        # Expected counts output): derive the volume-weighted contour density levels
-        # from the cell values, exactly as before.
-        gdal, src, tmp = _open_kd(kd, scratch)
+    proportion = _is_marked_proportion(kd)
+    gdal, src, tmp = _open_kd(kd, scratch)
+    rds = zds = None
+    try:
+        band = src.GetRasterBand(1)
+        nodata = band.GetNoDataValue()
+        arr, valid = _read_positive(src)
+        if not valid.any():
+            raise arcpy.ExecuteError(
+                "The input raster has no positive-density cells to analyze.")
+        if proportion:
+            # The raster already holds the cumulative volume (proportion under
+            # the surface): the home-range isopleths are just fixed proportion
+            # contours, so skip the volume-weighted level search.
+            levels = _proportion_levels()
+            messages.addMessage(
+                "Input is a proportion-under-the-surface raster; contouring the standard "
+                "proportion levels directly ({} levels).".format(len(levels)))
+        else:
+            # A kernel-density raster (Esri Kernel Density, or our tool's
+            # Densities / Expected counts output): derive the volume-weighted
+            # contour density levels from the cell values.
+            order, vol, rescaled = _volume_model(kd, src.GetGeoTransform(), arr,
+                                                 value_kind, messages)
+            levels = compute_contour_levels(order, valid, vol=vol)
+            messages.addMessage(
+                "Input is a kernel-density raster; computed {} volume-weighted contour "
+                "levels.".format(len(levels)))
+            if rescaled:
+                # contour the density-ranked surface, not the raw counts
+                h_, w_ = order.shape
+                rds = gdal.GetDriverByName("MEM").Create("", w_, h_, 1, gdal.GDT_Float32)
+                rds.SetGeoTransform(src.GetGeoTransform())
+                band = rds.GetRasterBand(1)
+                band.SetNoDataValue(float(_NODATA))      # before writing (MEM)
+                band.WriteArray(np.where(valid, order, _NODATA).astype(np.float32))
+                band.FlushCache()
+                nodata = float(_NODATA)
+                arr = order
+        vmax = float(arr[valid].max())
+        vmin = float(arr[valid].min())
+        del arr
+        ceiling = max(abs(vmax) * 2.0, 1.0) + abs(vmax)     # above every cell
+
+        # The outermost (100%) isopleth: the edge of the positive cells, where
+        # the surface trails off to nothing. Contouring the raster at its
+        # smallest positive value gives no usable line there, so this one
+        # level is drawn from a lightly smoothed positive/zero mask.
+        outer = None
+        for lv in levels:
+            if lv["label"] == "100%":
+                outer = lv
+        if outer is None:
+            outer = {"density": (0.0 if proportion else float(np.float32(vmin))),
+                     "isopleth": 1.0, "cumprop": 0.0, "label": "100%",
+                     "primary": False}
+            levels = [outer] + levels
+        outer["outer"] = True
+        inner = [lv for lv in levels if not lv.get("outer")]
+        zds, zband = _outer_edge_band(gdal, src, valid)
+
         try:
-            arr, valid = _read_positive(src)
-            if not valid.any():
-                raise arcpy.ExecuteError(
-                    "The input raster has no positive-density cells to analyze.")
-            levels = compute_contour_levels(arr, valid)
-        finally:
-            src = None
+            sr = arcpy.Describe(kd).spatialReference
+        except Exception:
+            sr = None
+
+        def attrs(lv):
+            return [lv["density"], lv["isopleth"], lv["cumprop"], lv["label"],
+                    "True" if lv["primary"] else "False"]
+
+        outputs = []
+        steps = (1 if out_lines else 0) + (len(levels) if out_polys else 0)
+        try:
+            arcpy.SetProgressor("step", "Generating probability contours...",
+                                0, max(steps, 1), 1)
+        except Exception:
+            pass
+        done = 0
+        if out_lines:
+            mh._set_label("Generating probability contours...")
+            lines = _gdal_contour_lines(gdal, band, nodata,
+                                        [lv["density"] for lv in inner])
+            edge = _gdal_contour_lines(gdal, zband, None, [0.5])
+            fields = _create_contour_fc(out_lines, "POLYLINE", sr, True)
+            with arcpy.da.InsertCursor(out_lines, ["SHAPE@"] + fields) as ins:
+                for wkb, _half in edge:                 # the outer edge first
+                    geom = arcpy.FromWKB(bytearray(wkb), sr)
+                    if geom is not None:
+                        ins.insertRow([geom, outer["density"]] + attrs(outer))
+                for wkb, value in lines:
+                    geom = arcpy.FromWKB(bytearray(wkb), sr)
+                    if geom is None:
+                        continue
+                    lv = inner[_match_index(inner, value)]
+                    ins.insertRow([geom, lv["density"]] + attrs(lv))
+            outputs.append(out_lines)
+            messages.addMessage("Saved contour polylines: {}".format(out_lines))
+            done += 1
+            try:
+                arcpy.SetProgressorPosition(done)
+            except Exception:
+                pass
+
+        if out_polys:
+            mh._set_label("Building contour polygon areas...")
+            fields = _create_contour_fc(out_polys, "POLYGON", sr, False)
+            with arcpy.da.InsertCursor(out_polys, ["SHAPE@"] + fields) as ins:
+                for lv in levels:
+                    if lv.get("outer"):
+                        parts = _gdal_level_polygons(gdal, zband, None, 0.5, 10.0)
+                    else:
+                        parts = _gdal_level_polygons(gdal, band, nodata,
+                                                     lv["density"], ceiling)
+                    for wkb in parts:
+                        geom = arcpy.FromWKB(bytearray(wkb), sr)
+                        if geom is None or geom.area == 0:
+                            continue
+                        ins.insertRow([geom] + attrs(lv))
+                    done += 1
+                    try:
+                        arcpy.SetProgressorPosition(done)
+                    except Exception:
+                        pass
+            outputs.append(out_polys)
+            messages.addMessage("Saved contour polygon areas: {}".format(out_polys))
+        try:
+            arcpy.ResetProgressor()
+        except Exception:
+            pass
+    finally:
+        zband = None
+        zds = None
+        band = None
+        rds = None
+        src = None
         if tmp:
             try:
                 arcpy.management.Delete(tmp)
             except Exception:
                 pass
-        messages.addMessage(
-            "Input is a kernel-density raster; computed {} volume-weighted contour "
-            "levels.".format(len(levels)))
-
-    densities = [lv["density"] for lv in levels]
-
-    checked_3d = arcpy.CheckExtension("3D") == "Available"
-    if checked_3d:
-        arcpy.CheckOutExtension("3D")
-    else:
-        arcpy.CheckOutExtension("Spatial")
-
-    # Build the master polyline set once in a file-GDB scratch (full double
-    # precision -- a shapefile DBF would truncate the density values), attribute
-    # it (with an integer LevelID for robust per-level selection), then derive
-    # whichever outputs were requested.
-    sgdb = arcpy.env.scratchGDB
-    tmp_lines = arcpy.CreateUniqueName("kd_contours", sgdb)
-    mh._set_label("Generating probability contours...")
-    arcpy.ddd.ContourList(kd, tmp_lines, densities)
-    cfield = _contour_value_field(tmp_lines)
-    cum_lines = _add_level_fields(tmp_lines)
-    arcpy.management.AddField(tmp_lines, "LevelID", "LONG")
-    with arcpy.da.UpdateCursor(
-            tmp_lines,
-            [cfield, "Density", "Isopleth", cum_lines, "Label", "Primary", "LevelID"]) as cur:
-        for row in cur:
-            i = _match_index(levels, row[0])
-            lv = levels[i]
-            row[1] = lv["density"]
-            row[2] = lv["isopleth"]
-            row[3] = lv["cumprop"]
-            row[4] = lv["label"]
-            row[5] = "True" if lv["primary"] else "False"
-            row[6] = i
-            cur.updateRow(row)
-
-    outputs = []
-    if out_lines:
-        mh._set_label("Saving contour polylines...")
-        arcpy.management.CopyFeatures(tmp_lines, out_lines)
-        try:
-            arcpy.management.DeleteField(out_lines, "LevelID")
-        except Exception:
-            pass
-        outputs.append(out_lines)
-        messages.addMessage("Saved contour polylines: {}".format(out_lines))
-
-    if out_polys:
-        mh._set_label("Building contour polygon areas...")
-        sr = arcpy.Describe(tmp_lines).spatialReference
-        arcpy.management.CreateFeatureclass(
-            os.path.dirname(out_polys), os.path.basename(out_polys),
-            "POLYGON", spatial_reference=mh.clean_sr(sr))
-        cum_polys = _add_level_fields(out_polys)
-        ins_fields = ["SHAPE@", "Density", "Isopleth", cum_polys, "Label", "Primary"]
-        delim = arcpy.AddFieldDelimiters(tmp_lines, "LevelID")
-        with arcpy.da.InsertCursor(out_polys, ins_fields) as ins:
-            for i, lv in enumerate(levels):
-                lyr = "lvl_lyr"
-                arcpy.management.MakeFeatureLayer(
-                    tmp_lines, lyr, "{} = {}".format(delim, i))
-                if int(arcpy.management.GetCount(lyr)[0]) == 0:
-                    arcpy.management.Delete(lyr)
-                    continue
-                poly = arcpy.CreateUniqueName("kd_poly", sgdb)
-                arcpy.management.FeatureToPolygon(lyr, poly)
-                arcpy.management.Delete(lyr)
-                with arcpy.da.SearchCursor(poly, ["SHAPE@"]) as scur:
-                    for srow in scur:
-                        if srow[0] is None:
-                            continue
-                        ins.insertRow([srow[0], lv["density"], lv["isopleth"], lv["cumprop"],
-                                       lv["label"], "True" if lv["primary"] else "False"])
-                try:
-                    arcpy.management.Delete(poly)
-                except Exception:
-                    pass
-        outputs.append(out_polys)
-        messages.addMessage("Saved contour polygon areas: {}".format(out_polys))
-
-    try:
-        arcpy.management.Delete(tmp_lines)
-    except Exception:
-        pass
     return outputs
 
 
-def run_probability_contours(kd, out_lines, out_polys, messages):
+def run_probability_contours(kd, out_lines, out_polys, messages, value_kind=None):
     """KD raster -> probability isopleths as polylines and/or polygon areas.
 
-    At least one of ``out_lines`` / ``out_polys`` must be supplied. Polygons are
-    built by closing each level's contour loops (FeatureToPolygon), so polygon
-    boundaries coincide exactly with the polylines. Contours are computed in the
+    At least one of ``out_lines`` / ``out_polys`` must be supplied. Lines and
+    polygons both come from GDAL's contour generator (no extension license),
+    so polygon boundaries coincide exactly with the polylines; a polygon is
+    the region at or above its level, holes included. Contours are computed in the
     raster's native CS; if the Output Coordinate System environment is set, the
     finished outputs are reprojected to it (the only environment this tool honors).
     """
     if not out_lines and not out_polys:
         raise arcpy.ExecuteError(
             "Choose at least one output: contour polylines and/or polygon areas.")
-    # A raster without up-to-date statistics stops 3D ContourList cold
-    # (ERROR 010667). Memory-workspace rasters NEVER satisfy its
-    # up-to-date flag (our written stats are readable, but the internal
-    # flag stays stale), so recalculate unconditionally for those; for
-    # disk rasters, probe first. This is an INPUT repair, not our
-    # output-stats path, so the never-CalculateStatistics-on-outputs
-    # rule is untouched.
-    try:
-        kd_path = arcpy.Describe(kd).catalogPath
-    except Exception:                                        # noqa: BLE001
-        kd_path = str(kd)
-    need_stats = mh.is_memory_workspace(kd_path)
-    if not need_stats:
-        try:
-            arcpy.management.GetRasterProperties(kd, "MEAN")
-        except Exception:                                    # noqa: BLE001
-            need_stats = True
-    if need_stats:
-        try:
-            messages.addMessage(
-                "Refreshing the input raster's statistics...")
-            arcpy.management.CalculateStatistics(kd)
-        except Exception as e:                               # noqa: BLE001
-            messages.addWarningMessage(
-                "Could not compute input statistics: {}".format(e))
     target_cs = arcpy.env.outputCoordinateSystem
     prev = arcpy.env.outputCoordinateSystem
     arcpy.env.outputCoordinateSystem = None       # contour in the raster's native CS
     try:
-        outputs = _build_contours(kd, out_lines, out_polys, messages)
+        outputs = _build_contours(kd, out_lines, out_polys, messages,
+                                  value_kind=value_kind)
     finally:
         arcpy.env.outputCoordinateSystem = prev
     if target_cs:
@@ -961,6 +1238,108 @@ def _snap(extent, csx, csy):
         return extent
 
 
+def _max_local_scale(sr, x, y, mpu):
+    """Largest ratio of projected meters to true (geodesic) meters at the
+    corners and center of the data: 1.0 where the projection is true to
+    scale, about 2 for Web Mercator at 60 degrees. Never below 1."""
+    try:
+        xs = np.array([x.min(), x.max(), x.min(), x.max(), (x.min() + x.max()) / 2.0])
+        ys = np.array([y.min(), y.min(), y.max(), y.max(), (y.min() + y.max()) / 2.0])
+        d = max(1000.0 / mpu, 1e-6)                      # about a kilometer
+        lat0, lon0 = _projected_to_latlon(sr, xs, ys)
+        lat1, lon1 = _projected_to_latlon(sr, xs + d, ys)
+        lat2, lon2 = _projected_to_latlon(sr, xs, ys + d)
+        ex = wg.haversine_distance(lat0, lon0, lat1, lon1)
+        ny = wg.haversine_distance(lat0, lon0, lat2, lon2)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            k = np.concatenate([d * mpu / ex, d * mpu / ny])
+        k = k[np.isfinite(k)]
+        return float(max(1.0, k.max() * 1.05)) if k.size else 1.0
+    except Exception:
+        return 1.0
+
+
+def _kd_mask(xmin, ymax, csx, csy, ncols, nrows, sr, messages):
+    """The Mask environment on the output grid: a boolean array (True = keep),
+    or None when no mask is set or it could not be read. Raster masks keep
+    their valid cells; feature masks keep the cells whose centers fall inside
+    a feature. Uses GDAL only, so no Spatial Analyst license is needed."""
+    mask = arcpy.env.mask
+    if not mask:
+        return None
+    gdal = mh._gdal()
+    gt = (xmin, csx, 0.0, ymax, 0.0, -csy)
+    try:
+        wkt = sr.exportToString().split(";")[0]
+    except Exception:
+        wkt = ""
+    try:
+        d = arcpy.Describe(mask)
+        if hasattr(d, "bandCount"):                       # a raster mask
+            path, tmp = mh._gdal_source_path(mask, arcpy.env.scratchFolder)
+            try:
+                try:
+                    src_wkt = d.spatialReference.exportToString().split(";")[0]
+                except Exception:
+                    src_wkt = None
+                vrt = gdal.Warp(
+                    "", path, format="VRT", outputType=gdal.GDT_Float64,
+                    srcSRS=(src_wkt or None), dstSRS=(wkt or None),
+                    outputBounds=(xmin, ymax - nrows * csy, xmin + ncols * csx, ymax),
+                    width=ncols, height=nrows, resampleAlg="near",
+                    dstNodata=float("nan"))
+                keep = np.isfinite(vrt.GetRasterBand(1).ReadAsArray())
+                vrt = None
+            finally:
+                if tmp:
+                    try:
+                        arcpy.management.Delete(tmp)
+                    except Exception:
+                        pass
+        else:                                             # a feature mask
+            from osgeo import ogr
+            msr = d.spatialReference
+            geoms = []
+            with arcpy.da.SearchCursor(mask, ["SHAPE@"]) as cur:
+                for (g,) in cur:
+                    if g is None:
+                        continue
+                    if getattr(g, "hasCurves", False):    # true curves: densify
+                        step = (csx if (msr is not None and msr.type == sr.type)
+                                else max(g.length / 500.0, 1e-9))
+                        g = g.densify("DISTANCE", step, step)
+                    if msr is not None and not _same_cs(msr, sr):
+                        g = _ct.project_geometry(g, sr)
+                    geoms.append(g)
+            if not geoms:
+                messages.addWarningMessage(
+                    "The Mask environment has no features; it was ignored.")
+                return None
+            shp = arcpy.CreateUniqueName("kd_mask.shp", arcpy.env.scratchFolder)
+            with mh.neutral_grid_env():
+                arcpy.management.CopyFeatures(geoms, shp)
+            mds = gdal.GetDriverByName("MEM").Create("", ncols, nrows, 1, gdal.GDT_Byte)
+            mds.SetGeoTransform(gt)
+            vec = ogr.Open(shp)
+            try:
+                gdal.RasterizeLayer(mds, [1], vec.GetLayer(0), burn_values=[1])
+            finally:
+                vec = None
+            mds.FlushCache()
+            keep = mds.GetRasterBand(1).ReadAsArray().astype(bool)
+            mds = None
+            try:
+                arcpy.management.Delete(shp)
+            except Exception:
+                pass
+        messages.addMessage("Honoring Mask environment.")
+        return keep
+    except Exception as e:                                # noqa: BLE001
+        messages.addWarningMessage(
+            "Could not apply the Mask environment: {}".format(e))
+        return None
+
+
 def run_kernel_density(points, pop_field, out_raster, cell_size, search_radius,
                        kernel, distance_method, out_value, area_unit, messages):
     """Custom kernel-density surface from point features (see module docstring and
@@ -976,7 +1355,9 @@ def run_kernel_density(points, pop_field, out_raster, cell_size, search_radius,
     # Read points (respects any selection on a layer) + weights, in the input CS.
     fields = ["SHAPE@X", "SHAPE@Y"] + ([pop_field] if pop_field and pop_field.upper() != "NONE" else [])
     xs_l, ys_l, ws_l = [], [], []
-    with arcpy.da.SearchCursor(points, fields) as cur:
+    # explode_to_points: every point of a multipoint feature (SHAPE@X/Y is
+    # otherwise the feature's centroid); the weight repeats for each of them.
+    with arcpy.da.SearchCursor(points, fields, explode_to_points=True) as cur:
         for row in cur:
             if row[0] is None:
                 continue
@@ -1091,7 +1472,14 @@ def run_kernel_density(points, pop_field, out_raster, cell_size, search_radius,
         cs_ext = (float(x.min()), float(y.min()), float(x.max()), float(y.max()))
     radius_units = (h_m / _M_PER_DEG) if geographic else (h_m / mpu)
     csx, csy = _resolve_cell_size(cell_size, cs_ext, geographic, mpu, radius_units)
-    extent = _resolve_extent(x, y, sr, geographic, h_m, mpu)
+    # Geodesic distances on PROJECTED data: a true distance of h_m meters can
+    # span more (or fewer) projected meters where the projection stretches
+    # the ground (Web Mercator at 60 degrees doubles it), so the margin is
+    # sized by the local scale, not by h_m alone.
+    scale_max = 1.0
+    if geod and not geographic:
+        scale_max = _max_local_scale(sr, x, y, mpu)
+    extent = _resolve_extent(x, y, sr, geographic, h_m * scale_max, mpu)
     extent = _snap(extent, csx, csy)
     xmin, ymin, xmax, ymax = extent
     ncols = max(1, int(round((xmax - xmin) / csx)))
@@ -1112,16 +1500,53 @@ def run_kernel_density(points, pop_field, out_raster, cell_size, search_radius,
             lat, lon = _projected_to_latlon(sr, X.ravel(), Y.ravel())
             LATg = lat.reshape(X.shape); LONg = lon.reshape(X.shape)
 
+    # Geodesic on projected data: the TRUE ground size of every cell (meters),
+    # from the distances between neighboring cell centers. It sizes each
+    # point's search window and gives the cell areas; the projected cell size
+    # is wrong for both wherever the projection distorts scale.
+    cellw_true = cellh_true = None
+    if geod and not geographic:
+        if ncols > 1:
+            dxm = wg.haversine_distance(LATg[:, 1:], LONg[:, 1:],
+                                        LATg[:, :-1], LONg[:, :-1])
+            cellw_true = np.concatenate([dxm, dxm[:, -1:]], axis=1)
+        else:
+            cellw_true = np.full((nrows, ncols), csx * mpu)
+        if nrows > 1:
+            dym = wg.haversine_distance(LATg[1:, :], LONg[1:, :],
+                                        LATg[:-1, :], LONg[:-1, :])
+            cellh_true = np.concatenate([dym, dym[-1:, :]], axis=0)
+        else:
+            cellh_true = np.full((nrows, ncols), csy * mpu)
+
     # Accumulate density (per m^2).
     dens = np.zeros((nrows, ncols), dtype=np.float64)
     coef = cnorm / (h_m * h_m)
     rnative = h_m / mpu                            # radius in projected units
     mh._set_label("Accumulating kernel density...")
+    try:
+        arcpy.SetProgressor("step", "Accumulating kernel density...", 0,
+                            max(int(x.size), 1), 1)
+    except Exception:
+        pass
+    tick = max(1, int(x.size) // 100)
     for i in range(x.size):
+        if i % tick == 0:
+            try:
+                arcpy.SetProgressorPosition(i)
+            except Exception:
+                pass
         xp, yp = x[i], y[i]
         if geographic:
             clat = math.cos(math.radians(yp)) or 1e-6
             rx = h_m / (_M_PER_DEG * abs(clat)); ry = h_m / _M_PER_DEG
+        elif cellw_true is not None:
+            # window half-widths from the true cell size at the point (a 15%
+            # margin covers the change of scale across the window)
+            jc = min(max(int((xp - xmin) / csx), 0), ncols - 1)
+            ic = min(max(int((ymax - yp) / csy), 0), nrows - 1)
+            rx = 1.15 * h_m / max(float(cellw_true[ic, jc]), 1e-9) * csx
+            ry = 1.15 * h_m / max(float(cellh_true[ic, jc]), 1e-9) * csy
         else:
             rx = ry = rnative
         jmin = max(0, int(math.floor((xp - rx - xmin) / csx)))
@@ -1143,9 +1568,16 @@ def run_kernel_density(points, pop_field, out_raster, cell_size, search_radius,
             contrib = np.zeros_like(D)
             contrib[inside] = w[i] * coef * kfunc(D[inside] / h_m)
             dens[imin:imax + 1, jmin:jmax + 1] += contrib
+    try:
+        arcpy.ResetProgressor()
+    except Exception:
+        pass
 
-    # Cell area (m^2): per-row spheroidal for geographic, constant otherwise.
-    if geographic:
+    # Cell area (m^2): per-row spheroidal for geographic, the true ground area
+    # for a geodesic analysis of projected data, constant otherwise.
+    if cellw_true is not None:
+        area2d = cellw_true * cellh_true
+    elif geographic:
         lat_top = np.radians(ys + csy / 2.0); lat_bot = np.radians(ys - csy / 2.0)
         row_area = (wg.HAVERSINE_RADIUS ** 2) * (np.sin(lat_top) - np.sin(lat_bot)) * math.radians(csx)
         area2d = np.repeat(row_area[:, None], ncols, axis=1)
@@ -1179,24 +1611,13 @@ def run_kernel_density(points, pop_field, out_raster, cell_size, search_radius,
             cum = (np.cumsum(vsum) / total_vol)[inv].reshape(dens.shape)
             out[positive] = cum[positive]     # only positive-density cells carry a value
 
-    _write_grid(out, xmin, ymax, csx, csy, sr, out_raster, messages)
+    # Mask environment, applied to the finished grid with GDAL (no Spatial
+    # Analyst): cells outside the mask become NoData.
+    keep = _kd_mask(xmin, ymax, csx, csy, ncols, nrows, sr, messages)
+    if keep is not None:
+        out = np.where(keep, out, np.nan)
 
-    # env.mask (applied post hoc since we write through GDAL). Extract to a scratch
-    # raster first, then copy back -- ExtractByMask cannot reliably read and overwrite
-    # the same path (a "cannot overwrite input" / lock error, silently dropping the mask).
-    if arcpy.env.mask:
-        try:
-            from arcpy.sa import ExtractByMask
-            arcpy.CheckOutExtension("Spatial")
-            masked = ExtractByMask(out_raster, arcpy.env.mask)
-            tmp_mask = arcpy.CreateUniqueName("kd_masked.tif", arcpy.env.scratchFolder)
-            masked.save(tmp_mask)
-            del masked
-            arcpy.management.Delete(out_raster)
-            arcpy.management.CopyRaster(tmp_mask, out_raster)
-            arcpy.management.Delete(tmp_mask)
-        except Exception as e:
-            messages.addWarningMessage("Could not apply the mask environment: {}".format(e))
+    _write_grid(out, xmin, ymax, csx, csy, sr, out_raster, messages)
 
     # Output metadata: conceptual description + plain-English run summary.
     try:
@@ -1231,7 +1652,10 @@ def run_kernel_density(points, pop_field, out_raster, cell_size, search_radius,
         title = "Kernel Density Enhanced"
     _kd_write_meta(out_raster, title=title, summary=summary,
                    description=_DESC_KDE + " " + desc_extra,
-                   proportion=(out_value == OUTV_PROPORTION), messages=messages)
+                   proportion=(out_value == OUTV_PROPORTION), messages=messages,
+                   kind_tag=(_COUNT_TAG if out_value == OUTV_COUNTS
+                             else _DENS_TAG if out_value == OUTV_DENSITIES
+                             else None))
     return out_raster
 
 

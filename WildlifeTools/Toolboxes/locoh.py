@@ -67,14 +67,17 @@ def read_points(in_features):
     """Read non-empty point geometries into an (N, 2) array of (x, y).
 
     Returns (xy, spatial_reference, is_geographic). For geographic data x is
-    longitude and y is latitude.
+    longitude and y is latitude. Every point of a multipoint feature is read
+    (explode_to_points); without it SHAPE@XY is the feature's centroid, and a
+    multipoint of fifty locations would count as one.
     """
     desc = arcpy.Describe(in_features)
     sr = desc.spatialReference
     is_geographic = (sr is not None and sr.type == "Geographic")
 
     coords = []
-    with arcpy.da.SearchCursor(in_features, ["SHAPE@XY"]) as cur:
+    with arcpy.da.SearchCursor(in_features, ["SHAPE@XY"],
+                               explode_to_points=True) as cur:
         for (xy,) in cur:
             if xy is None:
                 continue
@@ -84,6 +87,25 @@ def read_points(in_features):
             coords.append((x, y))
 
     return np.asarray(coords, dtype=float), sr, is_geographic
+
+
+# ---------------------------------------------------------------------------
+# Progress (determinate; standing rule)
+# ---------------------------------------------------------------------------
+def _prog_start(label, total):
+    try:
+        arcpy.SetProgressor("step", label, 0, max(int(total), 1), 1)
+    except Exception:
+        pass
+
+
+def _prog(done, total):
+    # about a hundred updates per pass
+    if done == total or done % max(1, int(total) // 100) == 0:
+        try:
+            arcpy.SetProgressorPosition(int(done))
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +178,9 @@ def build_local_hulls(xy, k, sr, is_geographic, messages=None):
     areas = []
     skipped = 0
 
+    _prog_start("Building local convex hulls...", n)
     for i in range(n):
+        _prog(i + 1, n)
         if is_geographic:
             dist = wg.haversine_distance(y[i], x[i], y, x)
         else:
@@ -188,7 +212,9 @@ def cumulative_unions(hulls_sorted, messages=None):
     cumulative = []
     acc = hulls_sorted[0]
     cumulative.append(acc)
+    _prog_start("Building cumulative isopleths...", len(hulls_sorted))
     for idx, hull in enumerate(hulls_sorted[1:], start=1):
+        _prog(idx + 1, len(hulls_sorted))
         acc = acc.union(hull)
         cumulative.append(acc)
         if messages is not None and (idx + 1) % 250 == 0:
@@ -209,7 +235,9 @@ def cumulative_point_counts(cumulative, xy, sr):
     first_idx = [m] * n          # m == "never enclosed" (should not happen)
     remaining = list(range(n))
 
+    _prog_start("Counting the points each isopleth encloses...", m)
     for i, poly in enumerate(cumulative):
+        _prog(i + 1, m)
         if not remaining:
             break
         still = []
@@ -541,13 +569,17 @@ def _reproject_in_place(fc, src_sr, messages=None):
         return
     try:
         base = arcpy.Describe(fc).baseName
-        tmp = arcpy.CreateUniqueName("loc_reproj", "memory")
         import clip_tools as _ct
-        arcpy.management.Project(fc, tmp, target,
+        # Produce, then swap: the projected copy is written BESIDE the output
+        # (same workspace and format) before the original is removed, so a
+        # failure part-way never leaves the user with no output at all.
+        ws, name = os.path.split(str(fc))
+        stem, ext = os.path.splitext(name)
+        sibling = arcpy.CreateUniqueName(stem + "_prj" + ext, ws)
+        arcpy.management.Project(fc, sibling, target,
                                  _ct.transformation_name(src_sr, target) or "")
         arcpy.management.Delete(fc)
-        arcpy.management.CopyFeatures(tmp, fc)       # rebuild at the original path/format
-        arcpy.management.Delete(tmp)
+        arcpy.management.Rename(sibling, fc)
         if messages is not None:
             messages.addMessage(
                 "Reprojected {} to {} (Output Coordinate System).".format(
@@ -664,7 +696,9 @@ def build_adaptive_hulls(xy, sr, is_geographic, dist_mpu, a_meters, messages=Non
     n = xy.shape[0]
     hulls, areas, counts, cumdists = [], [], [], []
     skipped = 0
+    _prog_start("Building adaptive local convex hulls...", n)
     for i in range(n):
+        _prog(i + 1, n)
         d = _focal_distances_m(xy, i, is_geographic, dist_mpu)
         order = np.argsort(d, kind="stable")
         cum = np.cumsum(d[order])
@@ -810,7 +844,9 @@ def build_fixed_sphere_hulls(xy, sr, is_geographic, dist_mpu, r_meters, messages
     n = xy.shape[0]
     hulls, areas, counts, sphere_counts = [], [], [], []
     skipped = 0
+    _prog_start("Building fixed-sphere local convex hulls...", n)
     for i in range(n):
+        _prog(i + 1, n)
         d = _focal_distances_m(xy, i, is_geographic, dist_mpu)
         order = np.argsort(d, kind="stable")
         within = int(np.count_nonzero(d <= r_meters))     # points within r (incl. focal)

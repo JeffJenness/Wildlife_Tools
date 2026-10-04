@@ -270,6 +270,9 @@ namespace WildlifeTools.DataTools
             }
         }
 
+        private void OnHelp(object sender, RoutedEventArgs e)
+            => WebHelp.Open("data-tools/attribute-summary-reports.html");
+
         private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
 
         // ---- transient toast ------------------------------------------------
