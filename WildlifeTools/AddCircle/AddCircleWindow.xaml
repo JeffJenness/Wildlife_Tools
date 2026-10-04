@@ -52,7 +52,7 @@
     <TextBlock Grid.Row="4" Grid.Column="0" x:Name="RadiusLabel" Text="Radius (% of extent):" VerticalAlignment="Center" Margin="0,0,10,10" />
     <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,10">
       <TextBox x:Name="RadiusBox" Text="100" Width="100"
-               ToolTip="As a percent: 100% draws the circle that exactly contains the selected extent. In a linear unit: the margin added beyond that circle (0 = the containing circle itself)." />
+               ToolTip="As a percent: 100% draws the smallest circle that contains the selected objects. In a linear unit: the margin added beyond that circle (0 = the containing circle itself)." />
       <ComboBox x:Name="UnitCombo" Width="118" Margin="8,0,0,0" SelectionChanged="OnUnitChanged"
                 ToolTip="Size the radius as a percent of the containing circle, or as a margin in page or map units beyond it." />
     </StackPanel>
@@ -68,6 +68,16 @@
     <!-- Buttons -->
     <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal"
                 HorizontalAlignment="Right">
+      <Button VerticalAlignment="Center" Margin="0,0,12,0" Width="20" Height="20" Padding="0"
+              Background="Transparent" BorderThickness="0" Cursor="Hand" Click="OnHelp"
+              ToolTip="Open the online help page for this tool">
+        <Grid>
+          <Ellipse Width="18" Height="18" Fill="#0079C1"/>
+          <TextBlock Text="?" Foreground="White" FontWeight="Bold" FontSize="12"
+                     HorizontalAlignment="Center" VerticalAlignment="Center"
+                     Margin="0,-1,0,0"/>
+        </Grid>
+      </Button>
       <Button Content="OK" Click="OnOk" Width="84" Margin="0,0,8,0" IsDefault="True" />
       <Button Content="Cancel" Click="OnCancel" Width="84" IsCancel="True" />
     </StackPanel>

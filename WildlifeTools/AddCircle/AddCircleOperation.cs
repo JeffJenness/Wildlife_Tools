@@ -38,7 +38,7 @@ namespace WildlifeTools
         public CIMSymbolReference SymbolReference { get; set; }
         public double FillTransparency { get; set; }      // 0..100 (% transparent)
         public double OutlineTransparency { get; set; }   // 0..100 (% transparent)
-        public double RadiusPercent { get; set; }         // 100 = circle exactly contains the extent
+        public double RadiusPercent { get; set; }         // 100 = circle exactly contains the selected objects
         /// <summary>True: the radius is the containing circle's radius PLUS
         /// <see cref="RadiusMargin"/>; false: <see cref="RadiusPercent"/> applies.</summary>
         public bool UseMargin { get; set; }
@@ -250,12 +250,14 @@ namespace WildlifeTools
                 cy = (ctx.Extent.YMin + ctx.Extent.YMax) / 2.0;
             }
 
-            // Radius: 100% = the circle that just reaches the extent EDGES (the edge
-            // midpoints), not the corners. For a symmetric graphic (e.g. a compass whose
-            // cardinal points touch the extent edges) this hugs the graphic; centered,
-            // it equals max(width, height) / 2. Using the corners (half-diagonal) instead
-            // overshoots by a factor of sqrt(2).
-            double r100 = MaxEdgeMidpointDistance(cx, cy, ctx.Extent);
+            // Radius: 100% (or a zero margin) = the smallest circle about the center
+            // that CONTAINS THE OBJECTS THEMSELVES as drawn -- not their extent
+            // rectangle (Jeff, 2026-10-04). A rectangle is contained through its
+            // corners; a compass rose or north arrow is hugged at its points. The
+            // old rule reached only the extent's edges, which left a rectangle's
+            // corners sticking out; the extent's corners would leave a round
+            // element floating in a circle 41% too wide.
+            double r100 = MaxShapeDistance(ctx, cx, cy);
             double radius = opt.UseMargin
                 ? r100 + opt.RadiusMargin                  // linear margin beyond the containing circle
                 : r100 * (opt.RadiusPercent / 100.0);
@@ -309,18 +311,77 @@ namespace WildlifeTools
             return group;
         }
 
-        /// <summary>The greatest distance from (cx,cy) to any of the four edge midpoints
-        /// of <paramref name="extent"/>. Centered, this equals max(width, height) / 2 —
-        /// the radius that just reaches the farthest extent edge.</summary>
-        private static double MaxEdgeMidpointDistance(double cx, double cy, Envelope extent)
+        /// <summary>
+        /// The greatest distance from (cx,cy) to any vertex of the selected elements'
+        /// DRAWN shapes (symbol widths included; curves densified; rotation applied) --
+        /// the radius of the smallest circle about that center that contains them.
+        /// Groups are opened so each member is traced by itself. An element with no
+        /// traceable outline (text, legends, pictures, map frames) contributes its
+        /// drawn bounds; one of our own compass graphics contributes the four points
+        /// where its artwork meets its bounds. Falls back to the extent's corners if
+        /// nothing can be traced.
+        /// </summary>
+        private static double MaxShapeDistance(AddCircleContext ctx, double cx, double cy)
         {
-            double xmid = (extent.XMin + extent.XMax) / 2.0;
-            double ymid = (extent.YMin + extent.YMax) / 2.0;
+            var coords = new List<Coordinate2D>();
+            try
+            {
+                foreach (Element sel in ctx.Selected)
+                {
+                    IEnumerable<Element> members = sel is GroupElement grp
+                        ? grp.GetElementsAsFlattenedList().Where(m => m is not GroupElement)
+                        : new[] { sel };
+                    foreach (Element el in members)
+                    {
+                        // One of our compass graphics / north arrows (it carries a
+                        // stamped focal point). Pro reports no outline for these,
+                        // only a bounding box, and the box's corners are empty
+                        // space: the artwork is a star whose points touch the
+                        // box's EDGES. Fit those points, not the corners (Jeff,
+                        // 2026-10-04: the corner fit drew a circle far larger
+                        // than the north arrow).
+                        if (CompassRose.TryGetFocalPoint(el, out _))
+                        {
+                            Envelope b = null;
+                            try { b = el.GetBounds(true); } catch { }
+                            if (b != null && !b.IsEmpty)
+                            {
+                                double xm = (b.XMin + b.XMax) / 2.0, ym = (b.YMin + b.YMax) / 2.0;
+                                coords.Add(new Coordinate2D(xm, b.YMin));
+                                coords.Add(new Coordinate2D(xm, b.YMax));
+                                coords.Add(new Coordinate2D(b.XMin, ym));
+                                coords.Add(new Coordinate2D(b.XMax, ym));
+                                continue;
+                            }
+                        }
+                        AddMcpOperation.CollectCoordinates(
+                            AddPolygonOperation.ShapeOf(el, ctx.Container, true), coords);
+                    }
+                }
+            }
+            catch
+            {
+                coords.Clear();
+            }
+            if (coords.Count == 0)
+                return MaxCornerDistance(cx, cy, ctx.Extent);
+            double d2 = 0;
+            foreach (Coordinate2D c in coords)
+                d2 = Math.Max(d2, (c.X - cx) * (c.X - cx) + (c.Y - cy) * (c.Y - cy));
+            return d2 > 0 ? Math.Sqrt(d2) : MaxCornerDistance(cx, cy, ctx.Extent);
+        }
+
+        /// <summary>The greatest distance from (cx,cy) to any of the four corners of
+        /// <paramref name="extent"/>: the radius of the smallest circle about that
+        /// center that contains the whole extent. Centered, this is half the
+        /// extent's diagonal.</summary>
+        private static double MaxCornerDistance(double cx, double cy, Envelope extent)
+        {
             double d = 0;
             foreach ((double x, double y) in new[]
             {
-                (xmid, extent.YMin), (xmid, extent.YMax),
-                (extent.XMin, ymid), (extent.XMax, ymid),
+                (extent.XMin, extent.YMin), (extent.XMin, extent.YMax),
+                (extent.XMax, extent.YMin), (extent.XMax, extent.YMax),
             })
                 d = Math.Max(d, Math.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)));
             return d;

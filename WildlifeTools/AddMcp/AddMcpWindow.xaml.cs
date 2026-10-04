@@ -139,6 +139,9 @@ namespace WildlifeTools
             }
         }
 
+        private void OnHelp(object sender, RoutedEventArgs e)
+            => WebHelp.Open("cartography/minimum-convex-polygon-background.html");
+
         private void OnOk(object sender, RoutedEventArgs e)
         {
             if (!TryParseNumber(FillTranspBox.Text, "Fill transparency", 0, 100, out double fillT) ||

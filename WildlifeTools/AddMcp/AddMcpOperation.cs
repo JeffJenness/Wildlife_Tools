@@ -110,7 +110,7 @@ namespace WildlifeTools
         /// outlines with round joins) are densified first so arc bulges contribute
         /// points beyond their chord endpoints and the hull does not clip them.
         /// </summary>
-        private static void CollectCoordinates(Geometry g, List<Coordinate2D> coords)
+        internal static void CollectCoordinates(Geometry g, List<Coordinate2D> coords)
         {
             if (g == null || g.IsEmpty)
                 return;

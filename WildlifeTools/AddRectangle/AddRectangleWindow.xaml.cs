@@ -136,6 +136,9 @@ namespace WildlifeTools
             }
         }
 
+        private void OnHelp(object sender, RoutedEventArgs e)
+            => WebHelp.Open("cartography/rectangle-background.html");
+
         private void OnOk(object sender, RoutedEventArgs e)
         {
             bool linear = BackgroundUnits.IsLinear(UnitCombo.SelectedIndex);

@@ -70,6 +70,16 @@
     <!-- Buttons -->
     <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal"
                 HorizontalAlignment="Right">
+      <Button VerticalAlignment="Center" Margin="0,0,12,0" Width="20" Height="20" Padding="0"
+              Background="Transparent" BorderThickness="0" Cursor="Hand" Click="OnHelp"
+              ToolTip="Open the online help page for this tool">
+        <Grid>
+          <Ellipse Width="18" Height="18" Fill="#0079C1"/>
+          <TextBlock Text="?" Foreground="White" FontWeight="Bold" FontSize="12"
+                     HorizontalAlignment="Center" VerticalAlignment="Center"
+                     Margin="0,-1,0,0"/>
+        </Grid>
+      </Button>
       <Button Content="OK" Click="OnOk" Width="84" Margin="0,0,8,0" IsDefault="True" />
       <Button Content="Cancel" Click="OnCancel" Width="84" IsCancel="True" />
     </StackPanel>
