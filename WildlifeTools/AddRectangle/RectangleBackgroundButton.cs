@@ -64,7 +64,8 @@ namespace WildlifeTools
                 var startSymbol = AddCircleOperation.SavedSymbolOrNull(Module1.RectangleSymbolJson)
                                   ?? ctx.DefaultSymbol;
                 var win = new AddRectangleWindow(startSymbol, ctx.IsLayout, ctx.MapUnitName,
-                    ctx.MetersPerPageUnit, Module1.RectanglePrefs)
+                    ctx.MetersPerPageUnit, Module1.RectanglePrefs,
+                    Math.Max(ctx.Extent.Width, ctx.Extent.Height) * 0.5)
                 {
                     Owner = FrameworkApplication.Current.MainWindow,
                 };

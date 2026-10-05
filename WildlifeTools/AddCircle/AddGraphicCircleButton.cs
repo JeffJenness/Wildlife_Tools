@@ -63,7 +63,8 @@ namespace WildlifeTools
                 var startSymbol = AddCircleOperation.SavedSymbolOrNull(Module1.CircleSymbolJson)
                                   ?? ctx.DefaultSymbol;
                 var win = new AddCircleWindow(ctx.SingleHasFocal, startSymbol, ctx.IsLayout,
-                    ctx.MapUnitName, ctx.MetersPerPageUnit, Module1.CirclePrefs)
+                    ctx.MapUnitName, ctx.MetersPerPageUnit, Module1.CirclePrefs,
+                    Math.Max(ctx.Extent.Width, ctx.Extent.Height) * 0.5)
                 {
                     Owner = FrameworkApplication.Current.MainWindow,
                 };

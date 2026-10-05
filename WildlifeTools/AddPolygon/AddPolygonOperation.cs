@@ -35,6 +35,8 @@ namespace WildlifeTools
     {
         public string Name { get; set; }
         public CIMSymbolReference SymbolReference { get; set; }
+        /// <summary>Optional drop shadow beneath the background (null = none).</summary>
+        public ShadowOptions Shadow { get; set; }
         public double FillTransparency { get; set; }      // 0..100 (% transparent)
         public double OutlineTransparency { get; set; }   // 0..100 (% transparent)
         /// <summary>True: trace the symbolized shape (symbol widths included — the
@@ -122,7 +124,13 @@ namespace WildlifeTools
             GraphicElement bg = ElementFactory.Instance.CreateGraphicElement(
                 ctx.Container, result, polySym, name, false, null);
 
-            return AddCircleOperation.GroupBehind(ctx, bg, name, "Graphic Polygon Group");
+            // Optional drop shadow: a stack of translucent copies of the shape,
+            // grouped beneath it.
+            Element shadow = null;
+            try { shadow = BackgroundShadow.Build(ctx.Container, result, opt.Shadow, name ?? "Polygon"); }
+            catch { shadow = null; }      // a shadow problem must not lose the background
+
+            return AddCircleOperation.GroupBehind(ctx, bg, name, "Graphic Polygon Group", shadow);
         }
 
         /// <summary>

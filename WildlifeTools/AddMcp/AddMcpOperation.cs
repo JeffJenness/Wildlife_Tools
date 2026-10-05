@@ -34,6 +34,8 @@ namespace WildlifeTools
     {
         public string Name { get; set; }
         public CIMSymbolReference SymbolReference { get; set; }
+        /// <summary>Optional drop shadow beneath the background (null = none).</summary>
+        public ShadowOptions Shadow { get; set; }
         public double FillTransparency { get; set; }      // 0..100 (% transparent)
         public double OutlineTransparency { get; set; }   // 0..100 (% transparent)
         /// <summary>True: hull the symbolized shapes; false: the source geometries.</summary>
@@ -102,7 +104,13 @@ namespace WildlifeTools
             GraphicElement bg = ElementFactory.Instance.CreateGraphicElement(
                 ctx.Container, result, polySym, name, false, null);
 
-            return AddCircleOperation.GroupBehind(ctx, bg, name, "Minimum Convex Polygon Group");
+            // Optional drop shadow: a stack of translucent copies of the shape,
+            // grouped beneath it.
+            Element shadow = null;
+            try { shadow = BackgroundShadow.Build(ctx.Container, result, opt.Shadow, name ?? "Minimum Convex Polygon"); }
+            catch { shadow = null; }      // a shadow problem must not lose the background
+
+            return AddCircleOperation.GroupBehind(ctx, bg, name, "Minimum Convex Polygon Group", shadow);
         }
 
         /// <summary>

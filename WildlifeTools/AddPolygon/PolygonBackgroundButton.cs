@@ -64,7 +64,8 @@ namespace WildlifeTools
                 var startSymbol = AddCircleOperation.SavedSymbolOrNull(Module1.PolygonSymbolJson)
                                   ?? ctx.DefaultSymbol;
                 var win = new AddPolygonWindow(startSymbol, ctx.IsLayout, ctx.MapUnitName,
-                    ctx.MetersPerPageUnit, Module1.PolygonPrefs)
+                    ctx.MetersPerPageUnit, Module1.PolygonPrefs,
+                    Math.Max(ctx.Extent.Width, ctx.Extent.Height) * 0.5)
                 {
                     Owner = FrameworkApplication.Current.MainWindow,
                 };

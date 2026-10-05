@@ -64,7 +64,8 @@ namespace WildlifeTools
                 var startSymbol = AddCircleOperation.SavedSymbolOrNull(Module1.McpSymbolJson)
                                   ?? ctx.DefaultSymbol;
                 var win = new AddMcpWindow(startSymbol, ctx.IsLayout, ctx.MapUnitName,
-                    ctx.MetersPerPageUnit, Module1.McpPrefs)
+                    ctx.MetersPerPageUnit, Module1.McpPrefs,
+                    Math.Max(ctx.Extent.Width, ctx.Extent.Height) * 0.5)
                 {
                     Owner = FrameworkApplication.Current.MainWindow,
                 };

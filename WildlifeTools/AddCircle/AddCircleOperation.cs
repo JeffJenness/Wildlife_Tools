@@ -36,6 +36,8 @@ namespace WildlifeTools
     {
         public string Name { get; set; }
         public CIMSymbolReference SymbolReference { get; set; }
+        /// <summary>Optional drop shadow beneath the background (null = none).</summary>
+        public ShadowOptions Shadow { get; set; }
         public double FillTransparency { get; set; }      // 0..100 (% transparent)
         public double OutlineTransparency { get; set; }   // 0..100 (% transparent)
         public double RadiusPercent { get; set; }         // 100 = circle exactly contains the selected objects
@@ -277,7 +279,20 @@ namespace WildlifeTools
             GraphicElement circle = ElementFactory.Instance.CreatePredefinedShapeGraphicElement(
                 ctx.Container, PredefinedShape.Circle, circleEnv, polySym, circleName, false, null);
 
-            return GroupBehind(ctx, circle, circleName, "Graphic Circle Group");
+            // Optional drop shadow: a stack of translucent copies of the circle,
+            // grouped beneath it. The predefined circle is an envelope to Pro, so
+            // the shadow works from a true disc of the same center and radius.
+            Element shadow = null;
+            try
+            {
+                if (opt.Shadow != null && opt.Shadow.Enabled &&
+                    GeometryEngine.Instance.Buffer(
+                        MapPointBuilderEx.CreateMapPoint(cx, cy, ctx.SpatialRef), radius) is Polygon disc)
+                    shadow = BackgroundShadow.Build(ctx.Container, disc, opt.Shadow, circleName ?? "Circle");
+            }
+            catch { shadow = null; }      // a shadow problem must not lose the background
+
+            return GroupBehind(ctx, circle, circleName, "Graphic Circle Group", shadow);
         }
 
         /// <summary>
@@ -285,10 +300,14 @@ namespace WildlifeTools
         /// entries into a new group, and sends the background to the bottom of the
         /// group's draw order. Shared by the Circle and Rectangle Background tools. MCT.
         /// </summary>
+        /// <param name="beneath">Optional element (a drop shadow) that joins the
+        /// group and is sent below the background itself.</param>
         internal static GroupElement GroupBehind(AddCircleContext ctx, GraphicElement background,
-            string backgroundName, string defaultGroupName)
+            string backgroundName, string defaultGroupName, Element beneath = null)
         {
             var toGroup = new List<Element>(ctx.TopLevelEntries) { background };
+            if (beneath != null)
+                toGroup.Add(beneath);
             string groupName = string.IsNullOrWhiteSpace(backgroundName)
                 ? defaultGroupName
                 : backgroundName.Trim() + " Group";
@@ -306,6 +325,11 @@ namespace WildlifeTools
                 if (backgroundName != null &&
                     group.GetElementsAsFlattenedList().FirstOrDefault(e => e.Name == backgroundName) is Element c)
                     c.SetTOCPositionAbsolute(group, false);
+            }
+            if (beneath != null)
+            {
+                // sent to the bottom AFTER the background, so it ends up below it
+                try { beneath.SetTOCPositionAbsolute(group, false); } catch { }
             }
 
             return group;

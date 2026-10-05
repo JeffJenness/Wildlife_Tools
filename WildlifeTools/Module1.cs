@@ -64,6 +64,18 @@ namespace WildlifeTools
         public double BufferValue { get; set; }                  // polygon (raw value)
         public int LayoutUnitIndex { get; set; } = 2;            // polygon (Inches)
         public bool RemoveHoles { get; set; }                    // polygon
+        // Drop shadow (rectangle first; raw dialog values -- Distance and Size
+        // in points on a layout, map units on a map)
+        public bool ShadowEnabled { get; set; }
+        public double ShadowR { get; set; }
+        public double ShadowG { get; set; }
+        public double ShadowB { get; set; }
+        public double ShadowOpacity { get; set; } = 60;
+        public double ShadowAngle { get; set; } = 135;
+        public double ShadowDistance { get; set; } = 5;
+        public double ShadowSpread { get; set; }
+        public double ShadowSize { get; set; } = 5;
+        public int ShadowLayers { get; set; } = 10;
     }
 
     internal class Module1 : Module

@@ -58,7 +58,8 @@ namespace WildlifeTools
         /// initialized from and written back to on OK. The name is never persisted.</param>
         public AddCircleWindow(bool showFocalOption, CIMSymbolReference defaultSymbol,
             bool isLayout, string mapUnitName, double metersPerPageUnit,
-            BackgroundToolPrefs prefs)
+            BackgroundToolPrefs prefs,
+            double mapShadowMax = 100)
         {
             InitializeComponent();
             _symbol = defaultSymbol;
@@ -73,6 +74,7 @@ namespace WildlifeTools
             UnitCombo.SelectedIndex = Math.Clamp(_prefs.SizeUnitIndex, 0, UnitCombo.Items.Count - 1);
             RadiusBox.Text = _prefs.RadiusPercent.ToString(CultureInfo.CurrentCulture);
             FocalCheck.IsChecked = _prefs.UseFocalPoint;
+            ShadowBox.Init(_prefs, isLayout, mapUnitName, _metersPerPageUnit, mapShadowMax);
             UpdateSwatch();
         }
 
@@ -152,8 +154,12 @@ namespace WildlifeTools
                                  linear ? -1e9 : 0.01, linear ? 1e9 : 100000, out double radius))
                 return;
 
+            if (!ShadowBox.TryGetOptions(Title, out ShadowOptions shadow))
+                return;
+
             Result = new AddCircleOptions
             {
+                Shadow = shadow,
                 Name = NameBox.Text,
                 SymbolReference = _symbol,
                 FillTransparency = fillT,
@@ -172,6 +178,8 @@ namespace WildlifeTools
             _prefs.SizeUnitIndex = Math.Max(0, UnitCombo.SelectedIndex);
             if (FocalCheck.Visibility == Visibility.Visible)
                 _prefs.UseFocalPoint = FocalCheck.IsChecked == true;
+
+            ShadowBox.Save(_prefs);
 
             DialogResult = true;
         }

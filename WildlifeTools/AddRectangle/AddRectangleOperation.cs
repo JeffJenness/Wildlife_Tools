@@ -47,6 +47,8 @@ namespace WildlifeTools
         public double RoundingPct { get; set; }           // corner radius as % of the smaller
                                                           // dimension; capped at 50 (= capsule /
                                                           // perfect circle on a square)
+        /// <summary>Optional drop shadow beneath the rectangle (null = none).</summary>
+        public ShadowOptions Shadow { get; set; }
     }
 
     /// <summary>
@@ -103,7 +105,13 @@ namespace WildlifeTools
             GraphicElement rect = ElementFactory.Instance.CreateGraphicElement(
                 ctx.Container, poly, polySym, name, false, null);
 
-            return AddCircleOperation.GroupBehind(ctx, rect, name, "Graphic Rectangle Group");
+            // Optional drop shadow: a stack of translucent copies of the rectangle,
+            // grouped beneath it.
+            Element shadow = null;
+            try { shadow = BackgroundShadow.Build(ctx.Container, poly, opt.Shadow, name ?? "Rectangle"); }
+            catch { shadow = null; }      // a shadow problem must not lose the background
+
+            return AddCircleOperation.GroupBehind(ctx, rect, name, "Graphic Rectangle Group", shadow);
         }
 
         /// <summary>

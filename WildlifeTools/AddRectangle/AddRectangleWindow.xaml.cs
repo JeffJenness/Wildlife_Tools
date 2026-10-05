@@ -56,7 +56,8 @@ namespace WildlifeTools
         /// <param name="prefs">Last-used parameters (persisted with the project);
         /// initialized from and written back to on OK. The name is never persisted.</param>
         public AddRectangleWindow(CIMSymbolReference defaultSymbol, bool isLayout,
-            string mapUnitName, double metersPerPageUnit, BackgroundToolPrefs prefs)
+            string mapUnitName, double metersPerPageUnit, BackgroundToolPrefs prefs,
+            double mapShadowMax = 100)
         {
             InitializeComponent();
             _symbol = defaultSymbol;
@@ -71,6 +72,7 @@ namespace WildlifeTools
             HorizExtentBox.Text = _prefs.HorizontalExtentPct.ToString(CultureInfo.CurrentCulture);
             VertExtentBox.Text = _prefs.VerticalExtentPct.ToString(CultureInfo.CurrentCulture);
             RoundingBox.Text = _prefs.RoundingPct.ToString(CultureInfo.CurrentCulture);
+            ShadowBox.Init(_prefs, isLayout, mapUnitName, _metersPerPageUnit, mapShadowMax);
             UpdateSwatch();
         }
 
@@ -151,8 +153,12 @@ namespace WildlifeTools
                 return;
 
             int unit = Math.Max(0, UnitCombo.SelectedIndex);
+            if (!ShadowBox.TryGetOptions(Title, out ShadowOptions shadow))
+                return;
+
             Result = new AddRectangleOptions
             {
+                Shadow = shadow,
                 Name = NameBox.Text,
                 SymbolReference = _symbol,
                 FillTransparency = fillT,
@@ -172,6 +178,8 @@ namespace WildlifeTools
             _prefs.VerticalExtentPct = vert;
             _prefs.SizeUnitIndex = unit;
             _prefs.RoundingPct = rounding;
+
+            ShadowBox.Save(_prefs);
 
             DialogResult = true;
         }

@@ -63,7 +63,8 @@ namespace WildlifeTools
         /// <param name="prefs">Last-used parameters (persisted with the project);
         /// initialized from and written back to on OK. The name is never persisted.</param>
         public AddMcpWindow(CIMSymbolReference defaultSymbol, bool isLayout,
-            string mapUnitName, double metersPerPageUnit, BackgroundToolPrefs prefs)
+            string mapUnitName, double metersPerPageUnit, BackgroundToolPrefs prefs,
+            double mapShadowMax = 100)
         {
             InitializeComponent();
             _symbol = defaultSymbol;
@@ -90,6 +91,7 @@ namespace WildlifeTools
                     ? "map units" : mapUnitName;
                 MapUnitLabel.Visibility = Visibility.Visible;
             }
+            ShadowBox.Init(_prefs, isLayout, mapUnitName, _metersPerPageUnit, mapShadowMax);
             UpdateSwatch();
         }
 
@@ -157,8 +159,12 @@ namespace WildlifeTools
                 distance = buffer * LayoutUnits[i].MetersPerUnit / _metersPerPageUnit;
             }
 
+            if (!ShadowBox.TryGetOptions(Title, out ShadowOptions shadow))
+                return;
+
             Result = new AddMcpOptions
             {
+                Shadow = shadow,
                 Name = NameBox.Text,
                 SymbolReference = _symbol,
                 FillTransparency = fillT,
@@ -174,6 +180,8 @@ namespace WildlifeTools
             _prefs.BufferValue = buffer;
             if (_isLayout && UnitCombo.SelectedIndex >= 0)
                 _prefs.LayoutUnitIndex = UnitCombo.SelectedIndex;
+
+            ShadowBox.Save(_prefs);
 
             DialogResult = true;
         }

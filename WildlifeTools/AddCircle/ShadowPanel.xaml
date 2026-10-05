@@ -1,0 +1,86 @@
+<UserControl x:Class="WildlifeTools.ShadowPanel"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:mapctl="clr-namespace:ArcGIS.Desktop.Mapping.Controls;assembly=ArcGIS.Desktop.Mapping">
+  <!-- Drop shadow controls shared by the four Graphic Background dialogs,
+       modeled on Photoshop's Drop Shadow "Structure" panel. -->
+  <GroupBox Padding="6,6,6,2">
+    <GroupBox.Header>
+      <CheckBox x:Name="ShadowCheck" Content="Drop shadow"
+                ToolTip="Draw a soft drop shadow beneath the background, built from a stack of translucent copies of its shape." />
+    </GroupBox.Header>
+    <Grid x:Name="ShadowGrid" IsEnabled="{Binding IsChecked, ElementName=ShadowCheck}">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="52" />
+        <ColumnDefinition Width="Auto" MinWidth="26" />
+      </Grid.ColumnDefinitions>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+      </Grid.RowDefinitions>
+
+      <TextBlock Grid.Row="0" Grid.Column="0" Text="Color:" VerticalAlignment="Center" Margin="0,0,10,8" />
+      <mapctl:ColorPickerControl Grid.Row="0" Grid.Column="1" x:Name="ShadowColor" Height="22" Width="70"
+          HorizontalAlignment="Left" Margin="0,0,0,8" IsNoColorVisible="False" Loaded="OnShadowPickerLoaded"
+          ToolTip="The color of the shadow. Black or a dark gray is usual." />
+
+      <TextBlock Grid.Row="1" Grid.Column="0" Text="Opacity:" VerticalAlignment="Center" Margin="0,0,10,8" />
+      <Slider Grid.Row="1" Grid.Column="1" x:Name="OpacitySlider" Minimum="0" Maximum="100" Value="60"
+              VerticalAlignment="Center" Margin="0,0,8,8"
+              ToolTip="How dark the shadow is at its darkest, where all of its layers overlap." />
+      <TextBox Grid.Row="1" Grid.Column="2" Margin="0,0,0,8"
+               Text="{Binding Value, ElementName=OpacitySlider, StringFormat={}{0:0.#}}" />
+      <TextBlock Grid.Row="1" Grid.Column="3" Text="%" VerticalAlignment="Center" Margin="5,0,0,8" />
+
+      <TextBlock Grid.Row="2" Grid.Column="0" Text="Angle:" VerticalAlignment="Center" Margin="0,0,10,8" />
+      <Grid Grid.Row="2" Grid.Column="1" x:Name="AngleDial" Width="40" Height="40" HorizontalAlignment="Left"
+            Margin="0,0,0,8" Background="Transparent" Cursor="Hand"
+            MouseLeftButtonDown="OnDialDown" MouseMove="OnDialMove" MouseLeftButtonUp="OnDialUp"
+            ToolTip="Click or drag to set the direction the light comes from. The shadow falls on the opposite side.">
+        <Ellipse Stroke="#606060" StrokeThickness="1.2" Fill="White" />
+        <Line x:Name="AngleNeedle" X1="20" Y1="20" X2="37" Y2="20" Stroke="#202020" StrokeThickness="1.5"
+              StrokeEndLineCap="Round" />
+        <Ellipse Width="4" Height="4" Fill="#202020" />
+      </Grid>
+      <TextBox Grid.Row="2" Grid.Column="2" x:Name="AngleBox" VerticalAlignment="Center" Margin="0,0,0,8"
+               TextChanged="OnAngleText"
+               ToolTip="The direction the light comes from, in degrees counterclockwise from east: 90 is from the top, 135 from the upper left." />
+      <TextBlock Grid.Row="2" Grid.Column="3" Text="&#176;" VerticalAlignment="Center" Margin="5,0,0,8" />
+
+      <TextBlock Grid.Row="3" Grid.Column="0" Text="Distance:" VerticalAlignment="Center" Margin="0,0,10,8" />
+      <Slider Grid.Row="3" Grid.Column="1" x:Name="DistanceSlider" Minimum="0" Maximum="50" Value="5"
+              VerticalAlignment="Center" Margin="0,0,8,8"
+              ToolTip="How far the shadow is shifted away from the light." />
+      <TextBox Grid.Row="3" Grid.Column="2" Margin="0,0,0,8"
+               Text="{Binding Value, ElementName=DistanceSlider, StringFormat={}{0:0.##}}" />
+      <TextBlock Grid.Row="3" Grid.Column="3" x:Name="DistanceUnit" Text="pt" VerticalAlignment="Center" Margin="5,0,0,8" />
+
+      <TextBlock Grid.Row="4" Grid.Column="0" Text="Spread:" VerticalAlignment="Center" Margin="0,0,10,8" />
+      <Slider Grid.Row="4" Grid.Column="1" x:Name="SpreadSlider" Minimum="0" Maximum="100" Value="0"
+              VerticalAlignment="Center" Margin="0,0,8,8"
+              ToolTip="How much of the soft edge is made solid. 0 is the softest edge; 100 is a hard-edged shadow." />
+      <TextBox Grid.Row="4" Grid.Column="2" Margin="0,0,0,8"
+               Text="{Binding Value, ElementName=SpreadSlider, StringFormat={}{0:0.#}}" />
+      <TextBlock Grid.Row="4" Grid.Column="3" Text="%" VerticalAlignment="Center" Margin="5,0,0,8" />
+
+      <TextBlock Grid.Row="5" Grid.Column="0" Text="Size:" VerticalAlignment="Center" Margin="0,0,10,8" />
+      <Slider Grid.Row="5" Grid.Column="1" x:Name="SizeSlider" Minimum="0" Maximum="50" Value="5"
+              VerticalAlignment="Center" Margin="0,0,8,8"
+              ToolTip="The width of the soft edge on each side of the shadow's outline. 0 is a hard edge." />
+      <TextBox Grid.Row="5" Grid.Column="2" Margin="0,0,0,8"
+               Text="{Binding Value, ElementName=SizeSlider, StringFormat={}{0:0.##}}" />
+      <TextBlock Grid.Row="5" Grid.Column="3" x:Name="SizeUnit" Text="pt" VerticalAlignment="Center" Margin="5,0,0,8" />
+
+      <TextBlock Grid.Row="6" Grid.Column="0" Text="Layers:" VerticalAlignment="Center" Margin="0,0,10,6" />
+      <TextBox Grid.Row="6" Grid.Column="2" x:Name="LayersBox" Text="10" Margin="0,0,0,6"
+               ToolTip="The number of stacked polygons the soft edge is built from, 1 to 60. More layers give a smoother edge and more graphics." />
+    </Grid>
+  </GroupBox>
+</UserControl>
