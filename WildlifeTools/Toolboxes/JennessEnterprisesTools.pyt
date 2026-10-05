@@ -1365,9 +1365,13 @@ class MahalanobisRaster(object):
             source = P["stats_source"].valueAsText
             points = P["points"].valueAsText if source == mahalanobis.SRC_POINTS else None
             use_selected = bool(P["use_selected"].value)
+            # unchecked: read every point the LAYER shows -- step around
+            # the selection, but keep the layer's definition query
+            _pts_tmp = None
             if points and not use_selected:
                 try:
-                    points = arcpy.Describe(points).catalogPath
+                    points, _pts_tmp = mahalanobis.without_selection(
+                        points, "jenness_mahal_all_points")
                 except Exception:
                     pass
 
@@ -1401,6 +1405,11 @@ class MahalanobisRaster(object):
                     P["out_raster"].symbology = out_lyrx
                 except Exception as e:
                     messages.addWarningMessage("Could not set output symbology: {}".format(e))
+            if _pts_tmp:
+                try:
+                    arcpy.management.Delete(_pts_tmp)
+                except Exception:
+                    pass
         except arcpy.ExecuteError as e:
             # Clean, expected failure (bad input, a validation check that
             # correctly caught something -- not a code bug). e's message
@@ -1502,9 +1511,13 @@ class MahalanobisPoints(object):
             stats_points = (P["stats_points"].valueAsText
                             if source == mahalanobis.SRC_POINTS else None)
             use_selected = bool(P["use_selected"].value)
+            # unchecked: read every point the LAYER shows -- step around
+            # the selection, but keep the layer's definition query
+            _pts_tmp = None
             if stats_points and not use_selected:
                 try:
-                    stats_points = arcpy.Describe(stats_points).catalogPath
+                    stats_points, _pts_tmp = mahalanobis.without_selection(
+                        stats_points, "jenness_mahal_all_points")
                 except Exception:
                     pass
 
@@ -1533,6 +1546,11 @@ class MahalanobisPoints(object):
                      if P[gen].value and P[tbl].valueAsText]
             _writeback_dbf_tables(P, _tbls)
             _add_tables_to_map(P, _tbls, messages)
+            if _pts_tmp:
+                try:
+                    arcpy.management.Delete(_pts_tmp)
+                except Exception:
+                    pass
         except arcpy.ExecuteError as e:
             # Clean, expected failure (bad input, a validation check that
             # correctly caught something -- not a code bug). e's message
@@ -1675,9 +1693,13 @@ class MahalanobisCovariance(object):
             source = P["stats_source"].valueAsText
             points = P["points"].valueAsText if source == mahalanobis.SRC_POINTS else None
             use_selected = bool(P["use_selected"].value)
+            # unchecked: read every point the LAYER shows -- step around
+            # the selection, but keep the layer's definition query
+            _pts_tmp = None
             if points and not use_selected:
                 try:
-                    points = arcpy.Describe(points).catalogPath
+                    points, _pts_tmp = mahalanobis.without_selection(
+                        points, "jenness_mahal_all_points")
                 except Exception:
                     pass
 
@@ -1704,6 +1726,11 @@ class MahalanobisCovariance(object):
                       if P[name].valueAsText]
             _writeback_dbf_tables(P, filled)
             _add_tables_to_map(P, filled[1:], messages)
+            if _pts_tmp:
+                try:
+                    arcpy.management.Delete(_pts_tmp)
+                except Exception:
+                    pass
         except arcpy.ExecuteError as e:
             # Clean, expected failure (bad input, a validation check that
             # correctly caught something -- not a code bug). e's message
@@ -15324,8 +15351,8 @@ class ClassificationAccuracy(object):
         design.value = AA.DESIGN_STRAT
         map_props = arcpy.Parameter(
             displayName="Map class proportions (optional override "
-                        "-- else computed from the predicted "
-                        "layer)",
+                        "-- else computed from the classification "
+                        "dataset)",
             name="map_props", datatype="GPValueTable",
             parameterType="Optional", direction="Input",
             category=aw)

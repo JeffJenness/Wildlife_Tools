@@ -260,6 +260,8 @@ def _build_grid(inputs, out_sr, cell_size, opened, messages):
     rasters are opened ONCE for the whole run (the old open-read-delete-
     reopen doubled a whole-raster scratch export on formats GDAL can only
     reach through the CopyRaster fallback)."""
+    import arcpy
+
     xmin = ymin = xmax = ymax = None
     best = None          # (cell, origin_x, origin_y) of the smallest-cell raster
     for kind, ds, d, path, name in inputs:
@@ -358,18 +360,27 @@ def _raster_presence(counts, src, path, gt, width, height, messages):
 
 
 def _polygon_geoms(ds, path, name, use_selected, out_sr, densify_step,
-                   messages, pin=None):
+                   messages, pin=None, dq=None):
     """One polygon input's geometries, projected to ``out_sr`` and
     true-curve densified. With ``use_selected`` the map layer's selection
     is honored via ``pin`` -- its selected OIDs, captured at RUN ENTRY (a
     live layer's selection can be dropped while earlier inputs are
     processed; standing rule, see ``mahalanobis.pin_selection``). An
     absent/empty selection falls back to ALL polygons, the original's
-    rule. Returns ``(geoms, n_total, n_selected, selected_used)``."""
+    rule. ``dq`` is the layer's definition query, also captured at run
+    entry: the polygons are read through the catalog path, which knows
+    nothing of the layer, so the query rides along as the cursor's where
+    clause (without it the tool counted polygons the layer had filtered
+    out -- 2026-10-04). "All polygons" always means all the polygons the
+    LAYER shows. Returns ``(geoms, n_total, n_selected, selected_used)``."""
     import arcpy
 
     try:
-        n_total = int(arcpy.management.GetCount(path)[0])
+        if dq:
+            with arcpy.da.SearchCursor(path, ["OID@"], where_clause=dq) as c0:
+                n_total = sum(1 for _ in c0)
+        else:
+            n_total = int(arcpy.management.GetCount(path)[0])
     except Exception:                                            # noqa: BLE001
         n_total = None
     has_sel = pin is not None
@@ -391,7 +402,9 @@ def _polygon_geoms(ds, path, name, use_selected, out_sr, densify_step,
     last = None
     for s in ([path, ds, str(ds)] if not use_sel else [path]):
         try:
-            cur = arcpy.da.SearchCursor(s, cols)
+            # the layer itself already applies its own definition query
+            cur = arcpy.da.SearchCursor(
+                s, cols, where_clause=(dq if s is path else None))
             break
         except Exception as e:                                   # noqa: BLE001
             last = e
@@ -578,6 +591,9 @@ def run_cumulative_surface(datasets, out_raster, per_feature=False,
     # processed (standing rule, see mahalanobis.pin_selection)
     pins = [(_mh.pin_selection(ds) if kind != "raster" else None)
             for kind, ds, _d, _path, _name in inputs]
+    # ... and its definition query, which a path-based read would lose
+    dqs = [(_mh.definition_query(ds) if kind != "raster" else None)
+           for kind, ds, _d, _path, _name in inputs]
     if per_feature:
         _say(messages, "Each polygon feature counts as its own layer "
                        "(overlapping polygons add up).")
@@ -644,7 +660,7 @@ def run_cumulative_surface(datasets, out_raster, per_feature=False,
             else:
                 geoms, n_total, n_selected, sel_used = _polygon_geoms(
                     ds, path, name, True, out_sr, densify_step,
-                    messages, pin=pins[i - 1])
+                    messages, pin=pins[i - 1], dq=dqs[i - 1])
                 entry.update({"n_total": n_total, "n_selected": n_selected,
                               "selected": sel_used,
                               "per_feature": bool(per_feature),

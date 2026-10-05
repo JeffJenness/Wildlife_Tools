@@ -696,7 +696,8 @@ def run_bottleneck(corridor, block_a, block_b,
 
     def _fc(path, gtype):
         ws, name = os.path.split(str(path).rstrip("\\/"))
-        if ws and not _is_memory(path) and not _mh.is_gdb_workspace(ws) \
+        # in_gdb_container: a feature dataset is inside a geodatabase too
+        if ws and not _is_memory(path) and not _mh.in_gdb_container(ws) \
                 and not name.lower().endswith(".shp"):
             name += ".shp"
         arcpy.management.CreateFeatureclass(

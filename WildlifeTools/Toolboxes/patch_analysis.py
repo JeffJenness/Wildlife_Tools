@@ -953,7 +953,9 @@ def run_patch_analysis(corridor, termini, out_fc, name_field=None,
     if not out_fc:
         raise arcpy.ExecuteError("An output feature class is required.")
     out_ws, out_name = os.path.split(out_fc)
-    if out_ws and not _mh.is_gdb_workspace(out_ws):
+    # in_gdb_container, not is_gdb_workspace: an output inside a FEATURE
+    # DATASET (x.gdb\\fds\\name) is in a geodatabase too
+    if out_ws and not _mh.in_gdb_container(out_ws):
         if not out_name.lower().endswith(".shp"):
             out_name += ".shp"
             out_fc = os.path.join(out_ws, out_name)

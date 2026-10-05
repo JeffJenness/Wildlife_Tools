@@ -1456,6 +1456,47 @@ def pin_selection(item):
     return {int(v) for v in vals} if vals else None
 
 
+def definition_query(item):
+    """The definition query of a feature LAYER, or None (a bare dataset
+    path has none). STANDING RULE (2026-10-04, found in Cumulative Surface
+    and the Mahalanobis sample points): a tool that reads a layer through
+    its CATALOG PATH -- to step around the selection, or to read with pinned
+    OIDs -- silently drops the layer's definition query too, and then works
+    on features the user had filtered out of the layer. Any path-based read
+    of a layer input must carry this query along as its where clause."""
+    try:
+        d = arcpy.Describe(item)
+    except Exception:                                              # noqa: BLE001
+        return None
+    for attr in ("whereClause", "definitionQuery"):
+        v = getattr(d, attr, None)
+        if v and str(v).strip():
+            return str(v)
+    return None
+
+
+def without_selection(item, name):
+    """``(source, temp_layer)`` for reading ALL of a layer's features,
+    ignoring its selection but KEEPING its definition query. With no
+    definition query the source is the catalog path and ``temp_layer`` is
+    None; with one, a scratch layer over the path carries the query, and the
+    caller deletes it (arcpy.management.Delete) when done. A bare path or an
+    unreadable item comes back unchanged."""
+    try:
+        path = arcpy.Describe(item).catalogPath
+    except Exception:                                              # noqa: BLE001
+        return item, None
+    dq = definition_query(item)
+    if not dq:
+        return path, None
+    try:
+        arcpy.management.Delete(name)
+    except Exception:                                              # noqa: BLE001
+        pass
+    arcpy.management.MakeFeatureLayer(path, name, dq)
+    return name, name
+
+
 def pinned_layer(path, oids, name):
     """A scratch feature layer holding exactly ``oids`` of ``path``
     (an explicit OID definition query -- immune to live-selection

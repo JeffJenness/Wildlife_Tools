@@ -1428,6 +1428,8 @@ namespace WildlifeTools.Corridor
         {
             string target = AskSavePath("Save the widest route");
             if (target == null) return;
+            try
+            {
             if (await CopyFc(_routeFc, target, "route"))
             {
                 await StampSavedDataset(target);
@@ -1435,12 +1437,20 @@ namespace WildlifeTools.Corridor
                 txtStatus.Text = "Saved route (with analysis record): "
                     + target;
             }
+            }
+            catch (Exception ex)
+            {
+                // an async void handler must not let an exception escape
+                txtStatus.Text = "Save failed: " + ex.Message;
+            }
         }
 
         private async void OnSavePoints(object sender, RoutedEventArgs e)
         {
             string target = AskSavePath("Save the width station points");
             if (target == null) return;
+            try
+            {
             if (await CopyFc(_pointsFc, target, "points"))
             {
                 string belowVal = null, aboveVal = null;
@@ -1474,6 +1484,12 @@ namespace WildlifeTools.Corridor
                 txtStatus.Text = "Saved points (with analysis record): "
                     + target;
             }
+            }
+            catch (Exception ex)
+            {
+                // an async void handler must not let an exception escape
+                txtStatus.Text = "Save failed: " + ex.Message;
+            }
         }
 
         private async void OnSaveSegments(object sender, RoutedEventArgs e)
@@ -1494,6 +1510,17 @@ namespace WildlifeTools.Corridor
                 string tl = ThresholdLabel();
                 string belowVal = "Below " + tl, aboveVal = "Above " + tl;
                 var (ws, name, _gdb) = SplitFcPath(target);
+                if (_gdb)
+                {
+                    // SplitFcPath returns the geodatabase ROOT (what the
+                    // open-by-name callers need). Create the segments in
+                    // the folder the user actually chose, so a target
+                    // inside a FEATURE DATASET lands there and not at the
+                    // top level of the geodatabase (review of 2026-10-04).
+                    string full = target.Replace('/', '\\').TrimEnd('\\');
+                    int cut = full.LastIndexOf('\\');
+                    if (cut > 0) ws = full.Substring(0, cut);
+                }
                 var r1 = await RunGpQuiet("management.CreateFeatureclass",
                     Geoprocessing.MakeValueArray(ws, name, "POLYLINE", "", "",
                         "", _routePts[0].SpatialReference));

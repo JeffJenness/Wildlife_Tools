@@ -24,7 +24,6 @@ A modernized port of the Land Facet Corridor Designer's ArcMap "Identify
 Termini Polygons" tool (``cmdTermini.cls`` / ``LandFacetFunctions.bas``
 ``CalcLandFacetTermini``; manual pp. 44-46). Land facet corridors do not run
 from the edge of one Wildland Block to the edge of the other -- they run
-import clip_tools as _ct
 between the concentrations of the facet INSIDE the blocks. This tool finds
 those concentrations:
 
@@ -84,6 +83,7 @@ import os
 
 import numpy as np
 
+import clip_tools as _ct
 import mahalanobis as _mh
 import hillshade as _hs
 import topographic_tools as _tt

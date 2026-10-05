@@ -801,14 +801,39 @@ namespace WildlifeTools.Corridor
 
         // Either category selector changed -> switch the working category (and, on the
         // clustering step, auto-analyse a category whose outliers are not set yet).
+        /// <summary>A number typed into the window, read in the user's own
+        /// regional format first and then in the plain "1.5" form. A bare
+        /// double.TryParse(text, out v) allows thousands separators, so on a
+        /// comma-decimal system the default "1.5" was read as 15 and "0.6" as
+        /// 6 (review of 2026-10-04): the fuzziness ran at ten times its
+        /// setting and the default confusion threshold was refused.
+        /// NumberStyles.Float admits no thousands separator, which is what
+        /// makes the two-step read safe.</summary>
+        private static bool TryParseDecimal(string text, out double value)
+        {
+            string t = (text ?? "").Trim();
+            return double.TryParse(t, NumberStyles.Float, CultureInfo.CurrentCulture, out value)
+                || double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+        }
+
         private async void OnCategoryComboChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_syncingCat) return;
+            try
+            {
             if ((sender as System.Windows.Controls.Primitives.Selector)?.SelectedItem is CategoryItem ci)
             {
                 SelectCategory(ci);
                 if (_step == 3 && _current != null && !_current.OutliersReady)
                     await EnsureOutliersAsync(announce: true);
+            }
+            }
+            catch (Exception ex)
+            {
+                // an async void handler must not let an exception escape:
+                // it would take ArcGIS Pro down with it
+                MessageBox.Show("Could not switch categories:\n" + ex.Message,
+                    "Land Facet Clustering");
             }
         }
 
@@ -1159,7 +1184,7 @@ namespace WildlifeTools.Corridor
         // ---- step 3: clusters -----------------------------------------------
         private async void OnRunClustering(object sender, RoutedEventArgs e)
         {
-            if (!double.TryParse(txtPsi.Text, out double psi) || psi <= 1.0)
+            if (!TryParseDecimal(txtPsi.Text, out double psi) || psi <= 1.0)
             { MessageBox.Show("Fuzziness must be greater than 1 (for example 1.5).", "Land Facet Clustering"); return; }
             if (!int.TryParse(txtRestarts.Text, out int restarts) || restarts < 1) restarts = 12;
 
@@ -1599,7 +1624,7 @@ namespace WildlifeTools.Corridor
             { MessageBox.Show("Set the outliers and clustering for at least one category first.", "Land Facet Clustering"); return; }
             if (string.IsNullOrWhiteSpace(txtOut.Text))
             { MessageBox.Show("Enter an output raster name or path.", "Land Facet Clustering"); return; }
-            if (!double.TryParse(txtConf.Text, out double confThresh) || confThresh <= 0 || confThresh > 1)
+            if (!TryParseDecimal(txtConf.Text, out double confThresh) || confThresh <= 0 || confThresh > 1)
             { MessageBox.Show("The confusion-index threshold must be between 0 and 1 (for example 0.6).", "Land Facet Clustering"); return; }
 
             int unset = _categoryItems.Count - setItems.Count;
