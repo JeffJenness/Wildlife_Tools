@@ -217,7 +217,7 @@
             <ScrollViewer VerticalScrollBarVisibility="Auto">
               <StackPanel>
                 <TextBlock Text="Records" Style="{StaticResource HeadLabel}" Margin="0,0,0,2" />
-                <StackPanel Orientation="Horizontal">
+                <WrapPanel>
                   <RadioButton x:Name="rbAll" Content="Analyze all records" IsChecked="True"
                       GroupName="Rec" Margin="0,0,14,0"
                       FontFamily="{StaticResource BodyFontFam}" FontSize="14"
@@ -227,8 +227,8 @@
                       GroupName="Rec"
                       FontFamily="{StaticResource BodyFontFam}" FontSize="14"
                       Foreground="{StaticResource InkBrush}"
-                      ToolTip="Summarize only the currently selected records; if nothing is selected, all records are used." />
-                </StackPanel>
+                      ToolTip="Summarize only the currently selected records; if nothing is selected, all records are used. The number selected right now is shown in parentheses and follows the map." />
+                </WrapPanel>
                 <CheckBox x:Name="chkCombine" Margin="0,7,0,0"
                     Content="Combine fields (summarize unique value combinations)"
                     FontFamily="{StaticResource BodyFontFam}" FontSize="14"
@@ -245,15 +245,32 @@
                     FontFamily="{StaticResource BodyFontFam}" FontSize="14"
                     Foreground="{StaticResource InkBrush}"
                     Checked="OnOptionChanged" Unchecked="OnOptionChanged"
-                    ToolTip="Also total each class's geodesic length (polylines), area (polygons), or cell count (rasters with an attribute table), enabling the Geom tokens, the header total, and extra columns in the copied table. The class's share of total LENGTH or AREA is the per-unit-landscape proportion -- the ecologically meaningful one when features differ in size: a class covering one huge polygon and a class covering fifty slivers can have identical record counts and wildly different footprints on the ground. Points and standalone tables have no geometry to total." />
+                    ToolTip="Also total each class's geodesic length (polylines), area (polygons), or cell count (rasters with an attribute table), showing the Geometry buttons that suit the dataset and adding the header total and extra columns in the copied table. The class's share of total LENGTH or AREA is the per-unit-landscape proportion -- the ecologically meaningful one when features differ in size: a class covering one huge polygon and a class covering fifty slivers can have identical record counts and wildly different footprints on the ground. Points and standalone tables have no geometry to total." />
+                <CheckBox x:Name="chkStats" Margin="0,4,0,0"
+                    Content="Include statistics of numeric fields"
+                    FontFamily="{StaticResource BodyFontFam}" FontSize="14"
+                    Foreground="{StaticResource InkBrush}"
+                    Checked="OnOptionChanged" Unchecked="OnOptionChanged"
+                    ToolTip="Also work out statistics of numeric fields within each class: the minimum, mean, median, maximum, range, standard deviation and sum, and the number of values used. Checking this shows the statistics buttons under the Format Text box. Null values of the field are skipped. For a raster, every CELL is one observation: each row of the attribute table is weighted by its cell count." />
 
                 <TextBlock Text="Format Text" Style="{StaticResource HeadLabel}"
-                    ToolTip="The template for each report line. Tokens in {braces} are replaced per class; everything else is literal text. Click the buttons below to insert tokens at the cursor." />
-                <TextBox x:Name="txtFormat" AcceptsReturn="False" TextWrapping="Wrap"
-                    MinHeight="52" VerticalScrollBarVisibility="Auto"
-                    FontFamily="Consolas" FontSize="13"
-                    TextChanged="OnFormatChanged"
-                    ToolTip="Example:  {increment}] {val1} (n = {Count}; {Prop2} of {total_count}){commas}" />
+                    ToolTip="The template for each report line. Tokens in {braces} are replaced per class; everything else is literal text. Click the buttons below to insert tokens at the cursor. A token underlined in red names a field this dataset does not have; one underlined in amber will print nothing as things are set." />
+                <!-- cvMarks sits exactly over the text box and carries the
+                     underlines drawn beneath placeholders that are wrong
+                     (red) or that will print nothing (amber). -->
+                <Grid>
+                  <TextBox x:Name="txtFormat" AcceptsReturn="False" TextWrapping="Wrap"
+                      MinHeight="52" VerticalScrollBarVisibility="Auto"
+                      FontFamily="Consolas" FontSize="13"
+                      TextChanged="OnFormatChanged"
+                      SizeChanged="OnFormatLayoutChanged"
+                      ScrollViewer.ScrollChanged="OnFormatScrolled"
+                      ToolTip="Example:  {increment}] {val1} (n = {Count}; {Prop2} of {total_count}){commas}" />
+                  <Canvas x:Name="cvMarks" IsHitTestVisible="False" ClipToBounds="True" />
+                </Grid>
+                <TextBlock x:Name="txtFormatNote" TextWrapping="Wrap"
+                    Visibility="Collapsed" Margin="2,3,0,0"
+                    FontFamily="{StaticResource BodyFontFam}" FontSize="13" />
                 <WrapPanel Margin="0,5,0,0">
                   <Button Content="Value" Margin="2" Click="OnToken" Tag="{}{val1}"
                       Style="{StaticResource ParchButton}"
@@ -294,22 +311,83 @@
                   <Button Content="Commas" Margin="2" Click="OnToken" Tag="{}{commas}"
                       Style="{StaticResource ParchButton}"
                       ToolTip="Insert the {commas} flag -- all numbers in the line get thousands separators (the token itself does not print)." />
-                  <Button Content="Geom Length" Margin="2" Click="OnToken" Tag="{}{GeomLength_km}"
-                      Style="{StaticResource ParchButton}"
-                      ToolTip="Insert {GeomLength_km} -- the class's total geodesic polyline length in kilometers ({GeomLength_m} for meters). Needs 'Include geometry totals'; renders empty for non-polyline sources." />
-                  <Button Content="Geom Area" Margin="2" Click="OnToken" Tag="{}{GeomArea_ha}"
-                      Style="{StaticResource ParchButton}"
-                      ToolTip="Insert {GeomArea_ha} -- the class's total geodesic area in hectares ({GeomArea_m2} / {GeomArea_km2} for square meters / kilometers). Works for polygons, and for rasters with an attribute table via cells x cell area. Needs 'Include geometry totals'." />
-                  <Button Content="Cells" Margin="2" Click="OnToken" Tag="{}{Cells}"
-                      Style="{StaticResource ParchButton}"
-                      ToolTip="Insert {Cells} -- the class's total cell count from a raster's attribute table (the Count column). Needs 'Include geometry totals'." />
-                  <Button Content="Geom Prop" Margin="2" Click="OnToken" Tag="{}{GeomProp2}"
-                      Style="{StaticResource ParchButton}"
-                      ToolTip="Insert {GeomProp2} -- the class's share of the TOTAL length / area / cells as a percentage with 2 decimals ({GeomProp0}, {GeomProp3}, ... for other precisions). This is the per-unit-LANDSCAPE proportion -- the ecologically meaningful one when features differ in size -- where {Prop2} is the per-record proportion. Needs 'Include geometry totals'." />
                   <Button Content="Simple List" Margin="2" Click="OnResetFormat"
                       Style="{StaticResource ParchButton}"
                       ToolTip="Reset the format to the default simple list." />
                 </WrapPanel>
+
+                <!-- Geometry placeholders: shown only while 'Include geometry
+                     totals' is checked, and only the buttons the dataset can
+                     use (UpdateTokenRows). -->
+                <WrapPanel x:Name="pnlGeom" Margin="0,3,0,0">
+                  <TextBlock Text="Geometry:" VerticalAlignment="Center" Margin="2,0,4,0"
+                      FontFamily="{StaticResource BodyFontFam}" FontSize="14"
+                      Foreground="{StaticResource InkBrush}" />
+                  <Button x:Name="btnGeomLength" Content="Geom Length" Margin="2" Click="OnToken" Tag="{}{GeomLength_km}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert {GeomLength_km} -- the class's total geodesic polyline length in kilometers ({GeomLength_m} for meters)." />
+                  <Button x:Name="btnGeomArea" Content="Geom Area" Margin="2" Click="OnToken" Tag="{}{GeomArea_ha}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert {GeomArea_ha} -- the class's total geodesic area in hectares ({GeomArea_m2} / {GeomArea_km2} for square meters / kilometers). Works for polygons, and for rasters with an attribute table via cells x cell area." />
+                  <Button x:Name="btnCells" Content="Cells" Margin="2" Click="OnToken" Tag="{}{Cells}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert {Cells} -- the class's total cell count from a raster's attribute table (the Count column)." />
+                  <Button x:Name="btnGeomProp" Content="Geom Prop" Margin="2" Click="OnToken" Tag="{}{GeomProp2}"
+                      Style="{StaticResource ParchButton}"
+                      ToolTip="Insert {GeomProp2} -- the class's share of the TOTAL length / area / cells as a percentage with 2 decimals ({GeomProp0}, {GeomProp3}, ... for other precisions). This is the per-unit-LANDSCAPE proportion -- the ecologically meaningful one when features differ in size -- where {Prop2} is the per-record proportion." />
+                </WrapPanel>
+
+                <!-- Statistics placeholders: shown while 'Include statistics of
+                     numeric fields' is checked. Pick the field and the
+                     decimals once; each button then inserts its placeholder
+                     for them, e.g. {Mean:ElevationM:1}. -->
+                <StackPanel x:Name="pnlStats" Margin="0,5,0,0" Visibility="Collapsed">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Statistics of:" VerticalAlignment="Center" Margin="2,0,5,0"
+                        FontFamily="{StaticResource BodyFontFam}" FontSize="14"
+                        Foreground="{StaticResource InkBrush}" />
+                    <ComboBox x:Name="cboStatField" Width="190"
+                        FontFamily="{StaticResource BodyFontFam}" FontSize="14"
+                        ToolTip="The numeric field the statistics buttons will refer to. Choose it once, then click as many of the buttons as you want. A format can hold statistics of several fields: choose another field and click again." />
+                    <TextBlock Text="Decimals:" VerticalAlignment="Center" Margin="12,0,5,0"
+                        FontFamily="{StaticResource BodyFontFam}" FontSize="14"
+                        Foreground="{StaticResource InkBrush}" />
+                    <ComboBox x:Name="cboStatDecimals" Width="50"
+                        FontFamily="{StaticResource BodyFontFam}" FontSize="14"
+                        ToolTip="The decimal places the next statistics placeholder will be written with. It is the last number inside the placeholder -- {Mean:ElevationM:1} -- and can be changed there by hand afterward." />
+                  </StackPanel>
+                  <TextBlock x:Name="txtNoNumeric" Visibility="Collapsed" Margin="2,3,0,0"
+                      Text="This dataset has no numeric fields to take statistics from."
+                      TextWrapping="Wrap" FontStyle="Italic"
+                      FontFamily="{StaticResource BodyFontFam}" FontSize="13"
+                      Foreground="{StaticResource HintBrush}" />
+                  <WrapPanel x:Name="pnlStatButtons" Margin="0,3,0,0">
+                    <Button Content="Min" Margin="2" Click="OnStatToken" Tag="Min"
+                        Style="{StaticResource ParchButton}"
+                        ToolTip="Insert {Min:Field:d} -- the smallest value of the chosen field in the class." />
+                    <Button Content="Mean" Margin="2" Click="OnStatToken" Tag="Mean"
+                        Style="{StaticResource ParchButton}"
+                        ToolTip="Insert {Mean:Field:d} -- the mean of the chosen field in the class." />
+                    <Button Content="Median" Margin="2" Click="OnStatToken" Tag="Median"
+                        Style="{StaticResource ParchButton}"
+                        ToolTip="Insert {Median:Field:d} -- the median of the chosen field in the class (the mean of the two middle values when their number is even)." />
+                    <Button Content="Max" Margin="2" Click="OnStatToken" Tag="Max"
+                        Style="{StaticResource ParchButton}"
+                        ToolTip="Insert {Max:Field:d} -- the largest value of the chosen field in the class." />
+                    <Button Content="Range" Margin="2" Click="OnStatToken" Tag="Range"
+                        Style="{StaticResource ParchButton}"
+                        ToolTip="Insert {Range:Field:d} -- the maximum minus the minimum." />
+                    <Button Content="St. Dev" Margin="2" Click="OnStatToken" Tag="StDev"
+                        Style="{StaticResource ParchButton}"
+                        ToolTip="Insert {StDev:Field:d} -- the sample standard deviation (n - 1) of the chosen field in the class. Prints nothing for a class with a single value." />
+                    <Button Content="Sum" Margin="2" Click="OnStatToken" Tag="Sum"
+                        Style="{StaticResource ParchButton}"
+                        ToolTip="Insert {Sum:Field:d} -- the total of the chosen field in the class. For a raster this is the sum over the class's cells: each row's value times its cell count." />
+                    <Button Content="N" Margin="2" Click="OnStatToken" Tag="N"
+                        Style="{StaticResource ParchButton}"
+                        ToolTip="Insert {N:Field} -- the number of values the statistics were taken from: the records of the class whose field is not null, or for a raster the cells." />
+                  </WrapPanel>
+                </StackPanel>
 
                 <TextBlock Text="Sample" Style="{StaticResource HeadLabel}"
                     ToolTip="A live preview of one report line, rendered from the format with example values." />

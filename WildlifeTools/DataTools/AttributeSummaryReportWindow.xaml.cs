@@ -47,7 +47,7 @@ namespace WildlifeTools.DataTools
             _result = r;
             _format = format;
             _plain = AttributeSummary.BuildPlainReport(r, format);
-            _tsv = AttributeSummary.BuildTsv(r);
+            _tsv = AttributeSummary.BuildTsv(r, format);
             rtb.Document = BuildDocument(r, format);
         }
 
@@ -109,14 +109,14 @@ namespace WildlifeTools.DataTools
                 if (sec.NullCount > 0)
                 {
                     inc++;
-                    AddLine(AttributeSummary.NullLine(r, sec, inc, commas));
+                    AddLine(AttributeSummary.NullLine(r, sec, inc, format));
                 }
                 foreach (var vc in sec.Classes)
                 {
                     inc++;
                     AddLine(AttributeSummary.Render(format, vc.Values, inc,
                         vc.Count, r.TotalCount, vc.Weight, r.TotalWeight,
-                        r.Kind, r.CellAreaM2));
+                        r.Kind, r.CellAreaM2, r.StatLookup(vc.Stats)));
                 }
                 doc.Blocks.Add(body);
             }
@@ -195,14 +195,14 @@ namespace WildlifeTools.DataTools
                 {
                     inc++;
                     sb.AppendLine(esc(AttributeSummary.NullLine(
-                        r, sec, inc, commas)));
+                        r, sec, inc, _format)));
                 }
                 foreach (var vc in sec.Classes)
                 {
                     inc++;
                     sb.AppendLine(esc(AttributeSummary.Render(_format, vc.Values,
                         inc, vc.Count, r.TotalCount, vc.Weight, r.TotalWeight,
-                        r.Kind, r.CellAreaM2)));
+                        r.Kind, r.CellAreaM2, r.StatLookup(vc.Stats))));
                 }
             }
             return sb.ToString();

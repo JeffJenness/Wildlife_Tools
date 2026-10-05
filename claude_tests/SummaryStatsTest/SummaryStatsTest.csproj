@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Headless test of the Attribute Summary Reports statistics engine.
+       Compiles the add-in's own SummaryStats.cs (no ArcGIS types in it).
+       Run from the repo root:  dotnet run (with the project option set to
+       claude_tests/SummaryStatsTest; see the top of Program.cs). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <RootNamespace>SummaryStatsTest</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\WildlifeTools\DataTools\SummaryStats.cs" Link="SummaryStats.cs" />
+  </ItemGroup>
+</Project>

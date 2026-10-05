@@ -55,6 +55,10 @@ namespace WildlifeTools.DataTools
     /// rasters), and {GeomPropN}, the class's share of the total length /
     /// area / cells -- the per-unit-LANDSCAPE proportion, where {PropN}
     /// is the per-record one. Inapplicable tokens render as empty text.
+    /// Statistics tokens (2026-10-05, see SummaryStats): {Min:Field},
+    /// {Mean:Field:1}, {Median:..}, {Max:..}, {Range:..}, {StDev:..},
+    /// {Sum:..}, {N:Field} -- a numeric field's statistics within the
+    /// class, the trailing digit being the decimal places.
     /// All token matching is case-insensitive, like the original.
     /// </summary>
     internal static class AttributeSummary
@@ -76,11 +80,16 @@ namespace WildlifeTools.DataTools
                                     long increment, long count, long totalCount,
                                     double weight = 0, double totalWeight = 0,
                                     WeightKind kind = WeightKind.None,
-                                    double cellAreaM2 = 0)
+                                    double cellAreaM2 = 0,
+                                    Func<string, SummaryStats.FieldStats> stats = null)
         {
             string fmt = format ?? DefaultFormat;
             bool commas = ContainsCI(fmt, "{commas}");
             if (commas) fmt = ReplaceCI(fmt, "{commas}", "");
+            // Statistics placeholders go first, while the text is still the
+            // template: a class VALUE that happens to look like one must
+            // not be replaced.
+            fmt = SummaryStats.Replace(fmt, stats, commas);
             string num(long v) => v.ToString(commas ? "#,##0" : "0",
                                              CultureInfo.InvariantCulture);
             string dnum(double v) => v.ToString(commas ? "#,##0.###" : "0.###",
@@ -198,6 +207,10 @@ namespace WildlifeTools.DataTools
             public IComparable[] SortKeys;         // typed, for ordering
             public long Count;
             public double Weight;                  // total geodesic size / cells
+            // per statistics field (SummaryResult.StatFields order): the
+            // values while reading, then the finished numbers
+            public SummaryStats.Accumulator[] Acc;
+            public SummaryStats.FieldStats[] Stats;
         }
 
         public sealed class Section
@@ -205,6 +218,8 @@ namespace WildlifeTools.DataTools
             public string Title = "";              // e.g. Attribute Field [A]
             public long NullCount;                 // separate mode only
             public double NullWeight;              // their geometry total
+            public SummaryStats.Accumulator[] NullAcc;
+            public SummaryStats.FieldStats[] NullStats;
             public List<ValueClass> Classes = new List<ValueClass>();
         }
 
@@ -219,6 +234,22 @@ namespace WildlifeTools.DataTools
             public double CellAreaM2;              // VAT rasters; 0 = unknown
             public List<string> FieldNames = new List<string>();
             public List<Section> Sections = new List<Section>();
+            // numeric fields whose per-class statistics were gathered
+            public List<string> StatFields = new List<string>();
+
+            /// <summary>The lookup Render needs for one class: a field name
+            /// (any capitalization) to that class's statistics.</summary>
+            public Func<string, SummaryStats.FieldStats> StatLookup(
+                SummaryStats.FieldStats[] stats)
+            {
+                if (stats == null || StatFields.Count == 0) return null;
+                return name =>
+                {
+                    int i = StatFields.FindIndex(f => string.Equals(
+                        f, name, StringComparison.OrdinalIgnoreCase));
+                    return i >= 0 && i < stats.Length ? stats[i] : null;
+                };
+            }
         }
 
         public const string NullMarker = "<Null>";
@@ -254,16 +285,48 @@ namespace WildlifeTools.DataTools
             return names;
         }
 
+        private static bool IsNumeric(FieldType t) =>
+            t == FieldType.SmallInteger || t == FieldType.Integer ||
+            t == FieldType.BigInteger || t == FieldType.Single ||
+            t == FieldType.Double;
+
+        /// <summary>The numeric fields statistics can be taken from (the
+        /// ObjectID is left out). MUST run on the MCT.</summary>
+        public static List<string> ListNumericFields(PolarPlots.PolarPlotData.Source src)
+        {
+            var names = new List<string>();
+            Table t = null;
+            try
+            {
+                t = src.IsRaster
+                    ? src.RasterLayer.GetRaster()?.GetAttributeTable()
+                    : PolarPlots.PolarPlotData.GetTable(src);
+                if (t == null) return names;
+                foreach (var f in t.GetDefinition().GetFields())
+                    if (IsNumeric(f.FieldType)) names.Add(f.Name);
+            }
+            catch { }
+            finally
+            {
+                if (t != null && !src.IsRaster) t.Dispose();
+            }
+            return names;
+        }
+
         /// <summary>Reads the table and builds the per-class counts. MUST run
         /// on the MCT (QueuedTask). ``fields`` is in ANALYSIS ORDER; it drives
         /// both the {valN} tokens and the sort precedence.
         /// ``includeGeometry``: also total each class's geodesic length
         /// (polylines) or area (polygons), or its cell count (VAT rasters) --
         /// the per-unit-landscape numbers behind the {Geom*}/{Cells} tokens
-        /// and the extra table columns.</summary>
+        /// and the extra table columns.
+        /// ``statFields``: numeric fields whose statistics are wanted for
+        /// each class (the {Mean:Field} family). One observation is one
+        /// record, or one CELL for a raster's attribute table.</summary>
         public static SummaryResult Gather(PolarPlots.PolarPlotData.Source src,
             IReadOnlyList<string> fields, bool selectedOnly, bool combine,
-            bool sort, bool includeGeometry = false)
+            bool sort, bool includeGeometry = false,
+            IReadOnlyList<string> statFields = null)
         {
             var res = new SummaryResult
             {
@@ -339,6 +402,63 @@ namespace WildlifeTools.DataTools
                         string.Equals(f.Name, "Count",
                             StringComparison.OrdinalIgnoreCase));
                     if (cellCountIdx < 0) res.Kind = WeightKind.None;
+                }
+
+                // ---- statistics fields ---------------------------------
+                int nStat = statFields?.Count ?? 0;
+                var sidx = new int[nStat];
+                for (int j = 0; j < nStat; j++)
+                {
+                    sidx[j] = def.FindField(statFields[j]);
+                    if (sidx[j] < 0 ||
+                        !IsNumeric(def.GetFields()[sidx[j]].FieldType))
+                        throw new InvalidOperationException(
+                            "No numeric field named " + statFields[j] +
+                            " in this dataset.");
+                    res.StatFields.Add(def.GetFields()[sidx[j]].Name);
+                }
+                // A raster's attribute-table row stands for Count cells, so
+                // each row is that many observations -- whether or not the
+                // geometry totals were asked for.
+                int statCountIdx = -1;
+                if (nStat > 0 && src.IsRaster)
+                    statCountIdx = def.GetFields().ToList().FindIndex(f =>
+                        string.Equals(f.Name, "Count",
+                            StringComparison.OrdinalIgnoreCase));
+                SummaryStats.Accumulator[] NewAcc()
+                {
+                    if (nStat == 0) return null;
+                    var a = new SummaryStats.Accumulator[nStat];
+                    for (int j = 0; j < nStat; j++)
+                        a[j] = new SummaryStats.Accumulator();
+                    return a;
+                }
+                void AddStats(SummaryStats.Accumulator[] acc, Row row)
+                {
+                    if (acc == null) return;
+                    double w = 1.0;
+                    if (statCountIdx >= 0)
+                    {
+                        try
+                        {
+                            object c = row[statCountIdx];
+                            w = c == null || c is DBNull ? 0.0
+                                : Convert.ToDouble(c,
+                                    CultureInfo.InvariantCulture);
+                        }
+                        catch { w = 0.0; }
+                    }
+                    for (int j = 0; j < nStat; j++)
+                    {
+                        object v = row[sidx[j]];
+                        if (v == null || v is DBNull) continue;
+                        try
+                        {
+                            acc[j].Add(Convert.ToDouble(v,
+                                CultureInfo.InvariantCulture), w);
+                        }
+                        catch { }
+                    }
                 }
 
                 // the geodesic size of one row's shape (0 when absent)
@@ -430,11 +550,13 @@ namespace WildlifeTools.DataTools
                                 if (!classes.TryGetValue(key, out var vc))
                                 {
                                     vc = new ValueClass
-                                    { Values = disp, SortKeys = keys };
+                                    { Values = disp, SortKeys = keys,
+                                      Acc = NewAcc() };
                                     classes[key] = vc;
                                 }
                                 vc.Count++;
                                 vc.Weight += wrow;
+                                AddStats(vc.Acc, row);
                             }
                         }
                     }
@@ -449,7 +571,8 @@ namespace WildlifeTools.DataTools
                     foreach (var (fname, fi) in fields.Select((f, i) => (f, i)))
                     {
                         var section = new Section
-                        { Title = "Attribute Field [" + fname + "]" };
+                        { Title = "Attribute Field [" + fname + "]",
+                          NullAcc = NewAcc() };
                         var classes = new Dictionary<string, ValueClass>();
                         long total = 0;
                         using (var cur = Rows())
@@ -466,6 +589,7 @@ namespace WildlifeTools.DataTools
                                     {
                                         section.NullCount++;
                                         section.NullWeight += wrow;
+                                        AddStats(section.NullAcc, row);
                                         continue;
                                     }
                                     string d = Display(v);
@@ -475,11 +599,13 @@ namespace WildlifeTools.DataTools
                                         {
                                             Values = new[] { d },
                                             SortKeys = new[] { SortKey(v, ftype[fi]) },
+                                            Acc = NewAcc(),
                                         };
                                         classes[d] = vc;
                                     }
                                     vc.Count++;
                                     vc.Weight += wrow;
+                                    AddStats(vc.Acc, row);
                                 }
                             }
                         }
@@ -494,6 +620,18 @@ namespace WildlifeTools.DataTools
             {
                 if (dispose && !src.IsRaster)
                     table.Dispose();
+            }
+            // turn the collected values into the finished numbers and let
+            // the value lists go
+            foreach (var sec in res.Sections)
+            {
+                sec.NullStats = sec.NullAcc?.Select(a => a.Finish()).ToArray();
+                sec.NullAcc = null;
+                foreach (var vc in sec.Classes)
+                {
+                    vc.Stats = vc.Acc?.Select(a => a.Finish()).ToArray();
+                    vc.Acc = null;
+                }
             }
             return res;
         }
@@ -617,7 +755,7 @@ namespace WildlifeTools.DataTools
                 if (sec.NullCount > 0)
                 {
                     inc++;
-                    sb.AppendLine(NullLine(r, sec, inc, commas));
+                    sb.AppendLine(NullLine(r, sec, inc, format));
                 }
                 foreach (var vc in sec.Classes)
                 {
@@ -625,35 +763,58 @@ namespace WildlifeTools.DataTools
                     sb.AppendLine(Render(format, vc.Values, inc, vc.Count,
                                          r.TotalCount, vc.Weight,
                                          r.TotalWeight, r.Kind,
-                                         r.CellAreaM2));
+                                         r.CellAreaM2,
+                                         r.StatLookup(vc.Stats)));
                 }
             }
             return sb.ToString();
         }
 
-        /// <summary>The "Null Values" report line, geometry-aware.</summary>
+        /// <summary>The null-value class of a section (separate mode),
+        /// rendered from the SAME format template as every other class, so
+        /// the whole report keeps one layout (a tab-delimited format pastes
+        /// into Excel with the nulls in the same columns). Its value text
+        /// is the NullMarker, as in combined mode and the TSV table. It was
+        /// a fixed "N] Null Values: Count = ..., Proportion = ..." phrase
+        /// until 2026-10-05, which broke any format that was not a
+        /// sentence.</summary>
         public static string NullLine(SummaryResult r, Section sec, long inc,
-                                      bool commas)
+                                      string format)
         {
-            string num(long v) => v.ToString(commas ? "#,##0" : "0",
-                                             CultureInfo.InvariantCulture);
-            double p = r.TotalCount > 0
-                ? (double)sec.NullCount / r.TotalCount : 0;
-            string line = "  " + inc + "] Null Values:  Count = " +
-                num(sec.NullCount) + ", Proportion = " +
-                p.ToString("P3", CultureInfo.InvariantCulture)
-                 .Replace(" %", "%");
-            if (r.Kind != WeightKind.None && sec.NullWeight > 0)
-                line += ", " + WeightText(r.Kind, sec.NullWeight,
-                                          r.CellAreaM2, commas);
-            return line;
+            return Render(format, new[] { NullMarker }, inc, sec.NullCount,
+                          r.TotalCount, sec.NullWeight, r.TotalWeight,
+                          r.Kind, r.CellAreaM2, r.StatLookup(sec.NullStats));
         }
 
         /// <summary>Tab-separated table (headers + one row per class) for a
-        /// clean paste into Excel, independent of the format template. The
-        /// geometry columns appear when geometry was gathered.</summary>
-        public static string BuildTsv(SummaryResult r)
+        /// clean paste into Excel, independent of the format template's
+        /// LAYOUT. The geometry columns appear when geometry was gathered,
+        /// and every statistic the format asks for gets a column of its own
+        /// (at full precision, whatever decimals the format shows).</summary>
+        public static string BuildTsv(SummaryResult r, string format = null)
         {
+            // distinct (statistic, field) pairs, in the format's order
+            var statCols = new List<(SummaryStats.Kind Stat, int Field)>();
+            foreach (var tk in SummaryStats.Parse(format))
+            {
+                int fi = r.StatFields.FindIndex(f => string.Equals(
+                    f, tk.Field, StringComparison.OrdinalIgnoreCase));
+                if (fi >= 0 && !statCols.Contains((tk.Stat, fi)))
+                    statCols.Add((tk.Stat, fi));
+            }
+            string statHead = string.Concat(statCols.Select(c =>
+                "\t" + c.Stat + "_" + r.StatFields[c.Field]));
+            string StatCols(SummaryStats.FieldStats[] st) =>
+                string.Concat(statCols.Select(c =>
+                {
+                    var fs = st != null && c.Field < st.Length
+                        ? st[c.Field] : null;
+                    // no values in the class: N is 0, the rest are NaN
+                    double v = fs == null ? double.NaN : fs.Get(c.Stat);
+                    return "\t" + (double.IsNaN(v) || double.IsInfinity(v)
+                        ? "" : v.ToString("0.######",
+                                          CultureInfo.InvariantCulture));
+                }));
             string geomHead;
             switch (r.Kind)
             {
@@ -697,16 +858,17 @@ namespace WildlifeTools.DataTools
                 sb.AppendLine(sec.Title);
                 if (r.Combined)
                     sb.AppendLine(string.Join("\t", r.FieldNames) +
-                                  "\tCount\tProportion" + geomHead);
+                                  "\tCount\tProportion" + geomHead + statHead);
                 else
-                    sb.AppendLine("Value\tCount\tProportion" + geomHead);
+                    sb.AppendLine("Value\tCount\tProportion" + geomHead +
+                                  statHead);
                 if (sec.NullCount > 0)
                 {
                     double p0 = r.TotalCount > 0
                         ? (double)sec.NullCount / r.TotalCount : 0;
                     sb.AppendLine(NullMarker + "\t" + sec.NullCount + "\t" +
                         p0.ToString("0.00000", CultureInfo.InvariantCulture) +
-                        GeomCols(sec.NullWeight));
+                        GeomCols(sec.NullWeight) + StatCols(sec.NullStats));
                 }
                 foreach (var vc in sec.Classes)
                 {
@@ -715,7 +877,7 @@ namespace WildlifeTools.DataTools
                     sb.AppendLine(string.Join("\t", vc.Values) + "\t" +
                         vc.Count + "\t" +
                         p.ToString("0.00000", CultureInfo.InvariantCulture) +
-                        GeomCols(vc.Weight));
+                        GeomCols(vc.Weight) + StatCols(vc.Stats));
                 }
             }
             return sb.ToString();
@@ -772,6 +934,8 @@ namespace WildlifeTools.DataTools
             public bool Sort { get; set; } = true;
             public bool SelectedOnly { get; set; }
             public bool IncludeGeometry { get; set; } = true;
+            public bool IncludeStatistics { get; set; }
+            public int StatDecimals { get; set; } = 2;
         }
 
         public static Settings LoadSettings()
