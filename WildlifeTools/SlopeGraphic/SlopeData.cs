@@ -158,7 +158,7 @@ namespace WildlifeTools.SlopeGraphic
                 int wIdx = (o.WeightOption == PolarWeightOption.ByAttribute)
                     ? def.FindField(o.WeightField) : -1;
 
-                try { res.TableRows = table.GetCount(); } catch { }
+                try { res.TableRows = PolarPlotData.CountRows(src); } catch { }
                 var qf = new QueryFilter();
                 if (o.UseSelectedOnly)
                 {
@@ -170,7 +170,7 @@ namespace WildlifeTools.SlopeGraphic
                     }
                     else res.SelectionEmpty = true;
                 }
-                using (RowCursor cur = table.Search(qf, false))
+                using (RowCursor cur = PolarPlotData.Search(src, qf, false))
                 {
                     while (cur.MoveNext())
                     {

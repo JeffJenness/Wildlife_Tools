@@ -167,6 +167,7 @@ namespace WildlifeTools.Classification
             Width = 720; Height = 420; MinWidth = 560; MinHeight = 320;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ShowInTaskbar = false;
+            Corridor.JennessIcon.Apply(this);
 
             var root = new Grid { Margin = new Thickness(12) };
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });

@@ -647,9 +647,9 @@ namespace WildlifeTools.Corridor
         /// (MCT).</summary>
         private static Polygon UnionPolygon(FeatureLayer layer)
         {
-            using var fc = layer.GetFeatureClass();
+            // the polygons the LAYER shows: its definition query applies
             var geoms = new List<ArcGIS.Core.Geometry.Geometry>();
-            using (var cursor = fc.Search(null, false))
+            using (var cursor = LayerRows.Search(layer, null, false))
             {
                 while (cursor.MoveNext())
                 {

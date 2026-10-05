@@ -127,8 +127,9 @@
           </ComboBox>
           <Button DockPanel.Dock="Right" Content="Reveal Cell" Style="{StaticResource PuzzleButton}"
                   Click="OnRevealCell" ToolTip="Fill the selected cell with its correct value (asks first)" />
-          <Button DockPanel.Dock="Right" Content="Check" Style="{StaticResource PuzzleButton}"
-                  Click="OnCheck" ToolTip="Color your entries: blue = correct, red = incorrect" />
+          <!-- ToolTip is set by ApplySkin: the two inks are named per skin -->
+          <Button DockPanel.Dock="Right" x:Name="CheckButton" Content="Check"
+                  Style="{StaticResource PuzzleButton}" Click="OnCheck" />
           <Button DockPanel.Dock="Right" Content="New Puzzle" Style="{StaticResource PuzzleButton}"
                   Click="OnNewPuzzle" />
         </DockPanel>

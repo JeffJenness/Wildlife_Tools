@@ -390,6 +390,15 @@ namespace WildlifeTools.DataTools
                         selectedOnly = false;      // nothing selected: use all
                 }
 
+                // A raster is read through its attribute table. A layer or
+                // standalone table is read AS THE MAP SHOWS IT, so its
+                // definition query applies (LayerRows): searching the
+                // table directly reported on all 203 points of a layer
+                // whose definition query showed 101 (Jeff, 2026-10-05).
+                RowCursor Rows() => src.IsRaster
+                    ? table.Search(qf, false)
+                    : PolarPlots.PolarPlotData.Search(src, qf, false);
+
                 if (combine)
                 {
                     var section = new Section
@@ -398,7 +407,7 @@ namespace WildlifeTools.DataTools
                             fields.Select(f => "[" + f + "]")),
                     };
                     var classes = new Dictionary<string, ValueClass>();
-                    using (var cur = table.Search(qf, false))
+                    using (var cur = Rows())
                     {
                         while (cur.MoveNext())
                         {
@@ -443,7 +452,7 @@ namespace WildlifeTools.DataTools
                         { Title = "Attribute Field [" + fname + "]" };
                         var classes = new Dictionary<string, ValueClass>();
                         long total = 0;
-                        using (var cur = table.Search(qf, false))
+                        using (var cur = Rows())
                         {
                             while (cur.MoveNext())
                             {

@@ -164,7 +164,7 @@ namespace WildlifeTools.Corridor
                 var v2 = new List<double>();
                 var w = new List<double>();
                 long done = 0;
-                using (var cur = table.Search(qf, true))
+                using (var cur = PolarPlotData.Search(src, qf, true))
                     while (cur.MoveNext())
                         using (var row = cur.Current)
                         {
@@ -280,9 +280,13 @@ namespace WildlifeTools.Corridor
                 var v2 = new List<double>();
                 var w = new List<double>();
                 long total = 0;
-                try { total = ta.GetCount(); } catch { }
+                try { total = LayerRows.Count(la); } catch { }
+                // layer B is searched once per polygon of A, straight on its
+                // table (the spatial index does the work); its definition
+                // query is applied by ObjectID afterward (null = it has none)
+                var shownB = LayerRows.DefinitionOids(lb);
                 long done = 0;
-                using (var curA = ta.Search(null, true))
+                using (var curA = LayerRows.Search(la, null, true))
                     while (curA.MoveNext())
                         using (var rowA = (Feature)curA.Current)
                         {
@@ -309,6 +313,9 @@ namespace WildlifeTools.Corridor
                                 while (curB.MoveNext())
                                     using (var rowB = (Feature)curB.Current)
                                     {
+                                        if (shownB != null && !shownB.Contains(
+                                                rowB.GetObjectID()))
+                                            continue;
                                         double vb = cB.Code(rowB[fb]);
                                         if (double.IsNaN(vb)) continue;
                                         Geometry gb = rowB.GetShape();
@@ -698,9 +705,9 @@ namespace WildlifeTools.Corridor
                         "Field not found: " + field);
                 var coder = new FieldCoder(def.GetFields()[fi]);
                 long total = 0;
-                try { total = t.GetCount(); } catch { }
+                try { total = LayerRows.Count(lyr); } catch { }
                 long done = 0;
-                using (var cur = t.Search(null, true))
+                using (var cur = LayerRows.Search(lyr, null, true))
                     while (cur.MoveNext())
                         using (var f = (Feature)cur.Current)
                         {

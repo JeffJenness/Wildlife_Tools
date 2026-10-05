@@ -96,7 +96,7 @@
                       ToolTip="Browse for datasets to add to this group: feature classes, rasters, tables, or web services (multi-select works). You will be asked for a short description of each; the description is what the list shows." />
               <Button Content="Remove" Margin="2,0" Click="OnRemoveClick"
                       Style="{StaticResource ParchButton}" Tag="{Binding}"
-                      ToolTip="Remove the checked item(s) from this group. The datasets themselves are not touched." />
+                      ToolTip="Remove the checked item(s) from this group, after asking. The datasets themselves are not touched." />
               <Button Content="Edit Description" Margin="2,0" Click="OnEditClick"
                       Style="{StaticResource ParchButton}" Tag="{Binding}"
                       ToolTip="Edit the description of the checked item(s)." />
@@ -120,7 +120,7 @@
                           <DataTrigger Binding="{Binding IsUnavailable}" Value="True">
                             <Setter Property="Foreground" Value="#C22718" />
                             <Setter Property="ToolTip"
-                                    Value="This dataset appears to be UNAVAILABLE (path or server not found)." />
+                                    Value="This dataset appears to be UNAVAILABLE (path, dataset or server not found)." />
                           </DataTrigger>
                         </Style.Triggers>
                       </Style>
@@ -182,13 +182,13 @@
             <Button x:Name="btnLoad" Content="Add Selected to Map" Margin="4,0"
                     Padding="14,5" Click="OnLoadClick" FontWeight="Bold"
                     Style="{StaticResource ParchButton}"
-                    ToolTip="Add every CHECKED dataset (from all four groups) to the active map. Local data and web services both load; anything that fails is reported and the rest still load." />
+                    ToolTip="Add every CHECKED dataset (from all four groups) to the active map. Local data and web services both load; anything that fails is reported and the rest still load. The check marks of the datasets that load are cleared." />
             <Button x:Name="btnSave" Content="Save Changes" Margin="4,0" Padding="14,5"
                     Click="OnSaveClick" Style="{StaticResource ParchButton}"
                     ToolTip="Save the lists (group names, items, descriptions) to your user profile. The window also offers to save when you close it with unsaved changes." />
             <Button Content="Check Availability" Margin="4,0" Padding="14,5"
                     Click="OnRecheckClick" Style="{StaticResource ParchButton}"
-                    ToolTip="Re-test every item: local paths are checked on disk, service connections and web services are pinged; unavailable datasets show in RED. Runs automatically when the window opens." />
+                    ToolTip="Re-test every item: local paths are checked on disk, datasets in file geodatabases are looked for inside the geodatabase, and service connections and web services are pinged; unavailable datasets show in RED. Runs automatically when the window opens." />
             <Button Content="Close" Margin="4,0" Padding="14,5" Click="OnCloseClick"
                     Style="{StaticResource ParchButton}" />
             <Button Style="{StaticResource HelpRound}" Click="OnHelp" />

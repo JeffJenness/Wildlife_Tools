@@ -446,7 +446,7 @@ namespace WildlifeTools.Corridor
                 var vals = new List<double>();
                 var wts = new List<double>();
                 long done = 0;
-                using (var cur = table.Search(qf, true))
+                using (var cur = PolarPlotData.Search(src, qf, true))
                     while (cur.MoveNext())
                         using (var row = cur.Current)
                         {

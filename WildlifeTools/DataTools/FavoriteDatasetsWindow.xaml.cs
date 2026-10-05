@@ -139,15 +139,35 @@ namespace WildlifeTools.DataTools
             var all = _groups.SelectMany(g => g.Items).ToList();
             if (all.Count == 0) return;
             SetStatus("Checking dataset availability...");
-            int bad = 0;
             var tasks = all.Select(async vm =>
             {
                 bool? ok = await FavoriteAvailability.CheckAsync(vm.Path);
                 // null = undeterminable (e.g. .sde): treat as available.
                 vm.IsUnavailable = ok == false;
-                if (ok == false) System.Threading.Interlocked.Increment(ref bad);
             });
             await System.Threading.Tasks.Task.WhenAll(tasks);
+
+            // Second look: where the first one found the file geodatabase,
+            // open it and look for the dataset itself. A feature class
+            // renamed or deleted inside a geodatabase that is still there
+            // otherwise showed as available.
+            var inside = all.Where(vm => !vm.IsUnavailable &&
+                FavoriteAvailability.SplitGeodatabasePath(vm.Path).Gdb != null)
+                .ToList();
+            if (inside.Count > 0)
+            {
+                try
+                {
+                    var probe = inside.Select(vm => (vm.Path, vm.TypeId)).ToList();
+                    var found = await QueuedTask.Run(() =>
+                        FavoriteAvailability.CheckInsideGeodatabases(probe));
+                    foreach (var vm in inside)
+                        if (found.TryGetValue(vm.Path, out bool? ok) && ok == false)
+                            vm.IsUnavailable = true;
+                }
+                catch { }       // the first look stands
+            }
+            int bad = all.Count(vm => vm.IsUnavailable);
             SetStatus(bad == 0
                 ? "All listed datasets appear to be available."
                 : bad + " dataset(s) appear to be UNAVAILABLE (shown in red).");
@@ -214,6 +234,26 @@ namespace WildlifeTools.DataTools
                     "Load Favorite Datasets");
                 return;
             }
+            // Ask first (Jeff, 2026-10-05): the check marks are also how
+            // datasets are picked for the map, so a stray click here could
+            // take a whole selection out of the list.
+            string listed = string.Join(Environment.NewLine,
+                doomed.Take(12).Select(d => "     " + d.Description));
+            if (doomed.Count > 12)
+                listed += Environment.NewLine + "     ... and "
+                    + (doomed.Count - 12) + " more";
+            var answer = MessageBox.Show(
+                (doomed.Count == 1
+                    ? "Remove this dataset from '" + g.Name + "'?"
+                    : "Remove these " + doomed.Count + " datasets from '"
+                      + g.Name + "'?")
+                + Environment.NewLine + Environment.NewLine + listed
+                + Environment.NewLine + Environment.NewLine
+                + "Only the list changes. The datasets themselves are not "
+                + "touched.",
+                "Load Favorite Datasets", MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (answer != MessageBoxResult.Yes) return;
             foreach (var d in doomed) g.Items.Remove(d);
             _dirty = true;
             SetStatus(doomed.Count + " item(s) removed from '" + g.Name +
@@ -268,7 +308,8 @@ namespace WildlifeTools.DataTools
                 (vm.IsTable ? "  (standalone table)" : "") + Environment.NewLine +
                 (string.IsNullOrEmpty(vm.Added) ? "" : "Added: " + vm.Added + Environment.NewLine) +
                 "Status: " + (vm.IsUnavailable
-                    ? "UNAVAILABLE (path or server not found)" : "available"),
+                    ? "UNAVAILABLE (path, dataset or server not found)"
+                    : "available"),
                 "Favorite Dataset");
         }
 
@@ -292,6 +333,7 @@ namespace WildlifeTools.DataTools
             btnLoad.IsEnabled = false;
             SetStatus("Adding " + chosen.Count + " dataset(s) to the map...");
             var failures = new List<string>();
+            var failed = new HashSet<ItemVM>();
             try
             {
                 await QueuedTask.Run(() =>
@@ -307,6 +349,7 @@ namespace WildlifeTools.DataTools
                         catch (Exception ex)
                         {
                             failures.Add(vm.Description + "  (" + ex.Message + ")");
+                            failed.Add(vm);
                         }
                     }
                     // Layers are created directly in their cartographic place
@@ -331,11 +374,18 @@ namespace WildlifeTools.DataTools
                         catch (Exception ex)
                         {
                             failures.Add(vm.Description + "  (" + ex.Message + ")");
+                            failed.Add(vm);
                         }
                     }
                 });
             }
             finally { btnLoad.IsEnabled = true; }
+            // Clear the check marks of everything that loaded (Jeff,
+            // 2026-10-05), so the next Add Selected to Map -- or a Remove --
+            // starts clean. A dataset that failed stays checked, to be tried
+            // again or removed.
+            foreach (var vm in chosen)
+                if (!failed.Contains(vm)) vm.IsChecked = false;
             int okCount = chosen.Count - failures.Count;
             SetStatus(okCount + " dataset(s) added to the map" +
                       (failures.Count > 0 ? "; " + failures.Count + " failed." : "."));
@@ -480,6 +530,7 @@ namespace WildlifeTools.DataTools
                     FindResource("BodyFontFam"),
                 FontSize = 14,
             };
+            Corridor.JennessIcon.Apply(win);
             var ok = new Button { Content = "OK", Width = 80, Margin = new Thickness(4, 0, 4, 0), IsDefault = true };
             var cancel = new Button { Content = "Cancel", Width = 80, Margin = new Thickness(4, 0, 4, 0), IsCancel = true };
             ok.Click += (_, __) => { result = box.Text; win.DialogResult = true; };

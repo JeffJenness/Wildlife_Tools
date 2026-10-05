@@ -43,6 +43,8 @@ namespace WildlifeTools.Sudoku
         // digits
         public Color InkGiven, InkEntry, InkCorrect, InkWrong;
         public Color InkNote;              // pencil-mark candidates
+        // what Check's two inks are called in this skin (tooltip + messages)
+        public string CorrectName = "blue", WrongName = "red";
         // typography (embedded OFL fonts; Georgia fallback baked into each)
         public FontFamily DigitFont, LabelFont, DisplayFont;
         public double DigitSize = 26;
@@ -125,6 +127,7 @@ namespace WildlifeTools.Sudoku
                 CellSelected = C("#4E7FB5"), GridLine = C("#9FC3E8"),
                 InkGiven = C("#FFFFFF"), InkEntry = C("#FFD166"),
                 InkCorrect = C("#7BE495"), InkWrong = C("#FF8585"),
+                CorrectName = "green",     // blue would vanish on the blue board
                 InkNote = C("#FF9E9E"),    // light red on blueprint blue
                 DigitFont = FontArchitect, LabelFont = FontArchitect,
                 DisplayFont = FontArchitect, DigitSize = 24,
@@ -238,6 +241,8 @@ namespace WildlifeTools.Sudoku
             _inkWrong.Color = s.InkWrong;
             _inkNote.Color = s.InkNote;
             _lineBrush.Color = s.GridLine;
+            CheckButton.ToolTip =
+                $"Color your entries: {s.CorrectName} = correct, {s.WrongName} = incorrect";
 
             // repaint every cell background -- but only once the board exists
             // (setting the combo's initial selection in the ctor fires this
@@ -528,7 +533,7 @@ namespace WildlifeTools.Sudoku
                 MessageBox.Show(
                     "The puzzle is complete, but at least one entry is incorrect.\n\n"
                     + "Use the Check button to see which entries are wrong "
-                    + "(blue = correct, red = incorrect).",
+                    + $"({_skin.CorrectName} = correct, {_skin.WrongName} = incorrect).",
                     "Sudoku", MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }

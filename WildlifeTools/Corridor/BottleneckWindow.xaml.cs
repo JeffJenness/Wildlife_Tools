@@ -331,7 +331,10 @@ namespace WildlifeTools.Corridor
                         t = src.Layer != null
                             ? src.Layer.GetTable()
                             : OpenTableFromPath(src.Path, out ds);
-                        total = t.GetCount();
+                        // a layer is counted AS THE MAP SHOWS IT (its
+                        // definition query applied); a path has none
+                        total = src.Layer != null
+                            ? LayerRows.Count(src.Layer) : t.GetCount();
                         if (!string.IsNullOrEmpty(where))
                         {
                             try
@@ -347,7 +350,9 @@ namespace WildlifeTools.Corridor
                                     SubFields = t.GetDefinition()
                                         .GetObjectIDField(),
                                 };
-                                using (var cur = t.Search(qf, true))
+                                using (var cur = src.Layer != null
+                                    ? LayerRows.Search(src.Layer, qf, true)
+                                    : t.Search(qf, true))
                                     while (cur.MoveNext())
                                         using (cur.Current) sel++;
                             }

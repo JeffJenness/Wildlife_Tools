@@ -485,8 +485,8 @@ namespace WildlifeTools.Geometric
             {
                 var (total, sel) = await QueuedTask.Run(() =>
                 {
-                    using var t = src.Layer.GetTable();
-                    return ((int)t.GetCount(),
+                    // counted as the map shows it (definition query applied)
+                    return ((int)LayerRows.Count(src.Layer),
                             (int)src.Layer.SelectionCount);
                 });
                 if (_closedDown) return;

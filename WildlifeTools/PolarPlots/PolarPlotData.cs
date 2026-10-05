@@ -151,6 +151,29 @@ namespace WildlifeTools.PolarPlots
             return src.StandaloneTable?.GetTable();
         }
 
+        /// <summary>The source's rows AS THE MAP SHOWS THEM: the layer's or
+        /// standalone table's definition query applied (see
+        /// <see cref="LayerRows"/>). GetTable() is still the place to read
+        /// the definition and field indexes from -- but never search it
+        /// directly, or the definition query is lost. MCT.</summary>
+        internal static RowCursor Search(Source src, QueryFilter filter,
+                                         bool recycling)
+        {
+            if (src == null) return null;
+            if (src.FeatureLayer != null)
+                return LayerRows.Search(src.FeatureLayer, filter, recycling);
+            return LayerRows.Search(src.StandaloneTable, filter, recycling);
+        }
+
+        /// <summary>How many rows the source shows (its definition query
+        /// applied); -1 when it cannot be counted. MCT.</summary>
+        internal static long CountRows(Source src)
+        {
+            if (src?.FeatureLayer != null) return LayerRows.Count(src.FeatureLayer);
+            if (src?.StandaloneTable != null) return LayerRows.Count(src.StandaloneTable);
+            return -1;
+        }
+
         /// <summary>Finished binned raster read, cached by the window for as
         /// long as the Polar Plots window stays open so switching back to an
         /// already-read raster is instant. Counts are PRE-reverse-fold, so the
@@ -184,7 +207,7 @@ namespace WildlifeTools.PolarPlots
                 res.WeightsAreCounts = s.WeightsAreCounts &&
                     s.WeightOption == PolarWeightOption.ByAttribute;
                 res.HasMagnitudes = magIdx >= 0;
-                try { res.TableRows = table.GetCount(); } catch { }
+                try { res.TableRows = CountRows(src); } catch { }
 
                 var qf = new QueryFilter();
                 if (s.UseSelectedOnly)
@@ -198,7 +221,7 @@ namespace WildlifeTools.PolarPlots
                     else res.SelectionEmpty = true;
                 }
 
-                using (RowCursor cur = table.Search(qf, false))
+                using (RowCursor cur = Search(src, qf, false))
                 {
                     while (cur.MoveNext())
                     {
