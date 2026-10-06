@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Draws the content of the Manage Custom Graphics and North Arrows window
+       (the add-in's ManageGraphicsPanel) to PNG files without ArcGIS Pro,
+       from the BUILT add-in DLL, so its layout can be looked at after a
+       change. Build the add-in first (Release), then run this project from
+       the repo root; see the top of Program.cs. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>disable</Nullable>
+    <RootNamespace>ManageGraphicsRender</RootNamespace>
+  </PropertyGroup>
+</Project>

@@ -26,12 +26,17 @@ using ArcGIS.Desktop.Mapping;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using WildlifeTools.CustomGraphics;
 
 namespace WildlifeTools
 {
     /// <summary>
-    /// Graphics-group tool for placing the Jennessent Compass Rose SVG as a single picture
-    /// graphic element on a layout or a map's graphics layer.
+    /// The Add Graphics tool: places a picture as a single graphic element on a layout or
+    /// on a map's graphics layer. WHICH picture is whatever the Add Graphics gallery
+    /// chose last (<see cref="GraphicLibrary.Current"/>): one of the add-in's compass
+    /// designs or an image the user registered. The tool is the top half of the Add
+    /// Graphics split button; the gallery below it sets the choice and activates the
+    /// tool (the same arrangement as Esri's Insert &gt; North Arrow).
     ///
     /// Built on Esri's own element tool base,
     /// ArcGIS.Desktop.Internal.Layouts.Ribbon.NewElementToolBase — the same class behind
@@ -43,13 +48,13 @@ namespace WildlifeTools
     /// </summary>
     internal class CompassRoseGraphicTool : NewElementToolBase
     {
-        /// <summary>Which compass artwork this tool places; subclasses override to supply
-        /// a variant (see <see cref="CompassRoseDotGraphicTool"/>).</summary>
-        protected virtual CompassArt Art => CompassArt.Classic;
+        /// <summary>The artwork to place: the Add Graphics gallery's current choice.</summary>
+        protected virtual CompassArt Art =>
+            CompassArt.From(GraphicLibrary.Current(GraphicKind.Graphic));
 
         public CompassRoseGraphicTool()
             : base(SketchGeometryType.Rectangle, ServiceContracts.LayoutElementType.Picture,
-                   CompassRose.InsertCursor, "Compass Rose")
+                   CompassRose.InsertCursor, "Add Graphic")
         {
         }
 
@@ -90,6 +95,7 @@ namespace WildlifeTools
             {
                 await QueuedTask.Run(() =>
                 {
+                    CompassArt art = Art;       // one choice for the whole placement
                     // Geometry XML (e.g. <PolygonN>), not JSON — see SketchGeometryFromString.
                     Geometry sketch = CompassRose.SketchGeometryFromString(geomStr);
                     Envelope box = sketch?.Extent;
@@ -99,9 +105,10 @@ namespace WildlifeTools
                     {
                         box = CompassRose.DefaultIfTiny(box, layout);
                         var el = ElementFactory.Instance.CreatePictureGraphicElement(
-                            layout, CompassRose.FitAspect(box, Art.Aspect), Art.SvgPath, Art.GraphicName);
-                        // Compass center, for relative-placement tools.
-                        CompassRose.StampFocalPoint(el, Art.FocalX, Art.FocalY);
+                            layout, CompassRose.FitAspect(box, art.Aspect), art.ArtPath, art.GraphicName);
+                        // The artwork's focal point (a compass's hub), for the
+                        // Circle Background tool.
+                        CompassRose.StampFocalPoint(el, art.FocalX, art.FocalY);
                         try { lv.SelectElement(el); } catch { }
                     }
                     else if (MapView.Active?.Map is Map map)
@@ -123,14 +130,14 @@ namespace WildlifeTools
                                 ve.SpatialReference);
                         }
                         var el = ElementFactory.Instance.CreatePictureGraphicElement(
-                            gl, CompassRose.FitAspect(box, Art.Aspect), Art.SvgPath, Art.GraphicName);
-                        CompassRose.StampFocalPoint(el, Art.FocalX, Art.FocalY);
+                            gl, CompassRose.FitAspect(box, art.Aspect), art.ArtPath, art.GraphicName);
+                        CompassRose.StampFocalPoint(el, art.FocalX, art.FocalY);
                     }
                 });
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Unable to add the compass rose graphic:" + Environment.NewLine + ex.Message,
+                MessageBox.Show("Unable to add the graphic:" + Environment.NewLine + ex.Message,
                     "Wildlife and Forestry Tools");
             }
             // Same post-insert behavior as Esri's element tools (their FinishSketch does

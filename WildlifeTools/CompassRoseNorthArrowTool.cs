@@ -26,14 +26,18 @@ using ArcGIS.Desktop.Mapping;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using WildlifeTools.CustomGraphics;
 
 namespace WildlifeTools
 {
     /// <summary>
-    /// Cartography-group tool: draw a box (or single-click for a default size) on the active
-    /// layout to add a north arrow whose marker symbol is the Jennessent Compass Rose, tied
-    /// to the layout's map frame (or unassociated, "Map frame: &lt;None&gt;", if the layout
-    /// has none yet). Enabled only in a layout view via "esri_layouts_layoutPaneCondition".
+    /// The North Arrows tool: draw a box (or single-click for a default size) on the active
+    /// layout to add a north arrow whose marker symbol is the artwork the North Arrows
+    /// gallery chose last (<see cref="GraphicLibrary.Current"/>: one of the add-in's
+    /// compass designs or an image the user registered), tied to the layout's map frame
+    /// (or unassociated, "Map frame: &lt;None&gt;", if the layout has none yet). Enabled
+    /// only in a layout view via "esri_layouts_layoutPaneCondition". The tool is the top
+    /// half of the North Arrows split button; the gallery below it sets the choice.
     ///
     /// Built on Esri's own element tool base,
     /// ArcGIS.Desktop.Internal.Layouts.Ribbon.NewElementToolBase (see
@@ -42,13 +46,13 @@ namespace WildlifeTools
     /// </summary>
     internal class CompassRoseNorthArrowTool : NewElementToolBase
     {
-        /// <summary>Which compass artwork this tool places; subclasses override to supply
-        /// a variant (see <see cref="CompassRoseDotNorthArrowTool"/>).</summary>
-        protected virtual CompassArt Art => CompassArt.Classic;
+        /// <summary>The artwork to place: the North Arrows gallery's current choice.</summary>
+        protected virtual CompassArt Art =>
+            CompassArt.From(GraphicLibrary.Current(GraphicKind.NorthArrow));
 
         public CompassRoseNorthArrowTool()
             : base(SketchGeometryType.Rectangle, ServiceContracts.LayoutElementType.MarkerNorthArrow,
-                   CompassRose.InsertCursor, "Compass North Arrow")
+                   CompassRose.InsertCursor, "Add North Arrow")
         {
         }
 
@@ -65,10 +69,11 @@ namespace WildlifeTools
                     LayoutView lv = LayoutView.Active;
                     if (lv?.Layout is not Layout layout)
                         return;
+                    CompassArt art = Art;       // one choice for the whole placement
                     // Geometry XML (e.g. <PolygonN>), not JSON — see SketchGeometryFromString.
                     Geometry sketch = CompassRose.SketchGeometryFromString(geomStr);
                     Envelope box = CompassRose.DefaultIfTiny(sketch?.Extent, layout);
-                    Envelope env = CompassRose.FitAspect(box, Art.Aspect);
+                    Envelope env = CompassRose.FitAspect(box, art.Aspect);
 
                     // A null map frame is fine: the arrow is created unassociated and the
                     // user can tie it to a map frame later via Element Properties.
@@ -83,13 +88,13 @@ namespace WildlifeTools
                     }
                     MapPoint center = MapPointBuilderEx.CreateMapPoint(
                         (env.XMin + env.XMax) / 2.0, (env.YMin + env.YMax) / 2.0);
-                    var na = CompassRose.CreateNorthArrow(layout, mapFrame, center, env.Height, Art);
+                    var na = CompassRose.CreateNorthArrow(layout, mapFrame, center, env.Height, art);
                     try { if (na != null) lv.SelectElement(na); } catch { }
                 });
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Unable to add the compass north arrow:" + Environment.NewLine + ex.Message,
+                MessageBox.Show("Unable to add the north arrow:" + Environment.NewLine + ex.Message,
                     "Wildlife and Forestry Tools");
             }
             // Same post-insert behavior as Esri's element tools (their FinishSketch does

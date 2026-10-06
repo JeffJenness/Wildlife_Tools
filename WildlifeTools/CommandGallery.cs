@@ -182,10 +182,10 @@ namespace WildlifeTools
 
     /// <summary>
     /// The Cartography group's gallery: hillshades, graphic backgrounds
-    /// and the standalone cartographic helpers. The Add Graphics and
-    /// North Arrows tool palettes stay OUT of the gallery (map/layout
-    /// placement tools cannot be gallery items) and sit beside it in
-    /// the group.
+    /// and the standalone cartographic helpers. Add Graphics and North
+    /// Arrows stay OUT of this gallery: they are map/layout placement
+    /// TOOLS, each a split button with a gallery of its own beside this
+    /// one in the group (see CustomGraphics\GraphicGalleries.cs).
     /// </summary>
     internal class CartographyGallery : CommandGallery
     {

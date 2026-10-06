@@ -51,4 +51,35 @@
     </StackPanel>
   </DataTemplate>
 
+  <!-- Add Graphics / North Arrows gallery item, after the item of Esri's
+       Insert tab North Arrow gallery: a picture over a one-line name that is
+       cut short with an ellipsis (the full name is in the hover tooltip).
+       The picture sits on a white tile: invisible on the light theme's white
+       dropdown, and on the dark theme it keeps black artwork (and a user's
+       image drawn for white paper) legible. Binds GalleryItem.Thumbnail. -->
+  <DataTemplate x:Key="WildlifeGraphicGalleryItem">
+    <StackPanel Orientation="Vertical" Width="62" Height="62" Margin="1"
+                Background="Transparent">
+      <StackPanel.ToolTip>
+        <ToolTip>
+          <StackPanel MaxWidth="320">
+            <TextBlock Text="{Binding Text}" FontWeight="Bold"
+                       TextWrapping="Wrap" Margin="0,0,0,4" />
+            <TextBlock Text="{Binding Tooltip}" TextWrapping="Wrap" />
+          </StackPanel>
+        </ToolTip>
+      </StackPanel.ToolTip>
+      <Border Width="44" Height="44" Background="White" CornerRadius="2"
+              HorizontalAlignment="Center">
+        <Image Source="{Binding Thumbnail}" Margin="2" Stretch="Uniform"
+               RenderOptions.BitmapScalingMode="HighQuality"
+               HorizontalAlignment="Center" VerticalAlignment="Center" />
+      </Border>
+      <TextBlock Text="{Binding Text}" TextWrapping="NoWrap"
+                 TextTrimming="CharacterEllipsis"
+                 TextAlignment="Center" HorizontalAlignment="Center"
+                 MaxWidth="60" FontSize="11" Margin="0,2,0,0" />
+    </StackPanel>
+  </DataTemplate>
+
 </ResourceDictionary>

@@ -1,0 +1,184 @@
+<UserControl x:Class="WildlifeTools.CustomGraphics.ManageGraphicsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!-- The whole content of the Manage Custom Graphics and North Arrows window.
+       A UserControl of plain WPF controls, apart from the ProWindow that
+       hosts it, so its layout can be drawn and checked outside ArcGIS Pro
+       (claude_tests/ManageGraphicsRender). No colors are set on text: it
+       takes ArcGIS Pro's light or dark theme from the window. The picture
+       tiles are white in both themes, like a sheet of paper. -->
+  <UserControl.Resources>
+    <!-- Wrap every tooltip at a readable width instead of one screen-wide line. -->
+    <Style TargetType="ToolTip">
+      <Setter Property="MaxWidth" Value="420" />
+      <Setter Property="ContentTemplate">
+        <Setter.Value>
+          <DataTemplate>
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="400" />
+          </DataTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </UserControl.Resources>
+
+  <DockPanel Margin="14">
+    <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,10">
+      Register your own images here: a logo, an agency seal, a favorite north
+      arrow. Each one gets a thumbnail in the Add Graphics or North Arrows
+      gallery on the ribbon, ready to place with one click. The images are
+      kept with your user profile, so they are there in every project.
+    </TextBlock>
+
+    <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+      <Button DockPanel.Dock="Right" Content="Close" Width="84" Click="OnClose"
+              IsCancel="True" />
+      <Button DockPanel.Dock="Right" Content="Help" Width="84" Margin="0,0,8,0"
+              Click="OnHelp" ToolTip="Open the online help page for this tool." />
+      <TextBlock x:Name="txtStatus" TextWrapping="Wrap" VerticalAlignment="Center"
+                 Margin="0,0,12,0" />
+    </DockPanel>
+
+    <!-- Two tabs, one body: the body below is moved to whichever tab is
+         selected (see the code-behind), since both tabs work the same way. -->
+    <TabControl x:Name="tabs" SelectionChanged="OnTabChanged">
+      <TabItem Header="Graphics" x:Name="tabGraphics">
+        <Grid x:Name="body" Margin="10">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="300" />
+            <ColumnDefinition Width="16" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+
+          <TextBlock x:Name="txtKind" Grid.Row="0" Grid.ColumnSpan="3"
+                     TextWrapping="Wrap" Margin="0,0,0,10" />
+
+          <!-- LEFT: what the gallery holds -->
+          <DockPanel Grid.Row="1" Grid.Column="0">
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,8,0,0">
+              <Button x:Name="btnAdd" Content="Add Image..." Padding="12,3" Click="OnAdd"
+                      ToolTip="Browse for one or more image files to register (PNG, JPEG, BMP, GIF, TIFF, SVG or EMF). Each is copied into your user profile, so the original file can be moved or deleted afterwards, and named after its file; change the name in the Name box." />
+              <Button x:Name="btnRemove" Content="Remove" Padding="12,3" Margin="8,0,0,0"
+                      Click="OnRemove"
+                      ToolTip="Take the selected image out of the gallery, after asking. Graphics and north arrows already placed from it are not touched. The add-in's own designs cannot be removed." />
+            </StackPanel>
+            <ListBox x:Name="lstItems" SelectionChanged="OnSelect" KeyDown="OnListKey"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+              <ListBox.GroupStyle>
+                <GroupStyle>
+                  <GroupStyle.HeaderTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding Name}" FontWeight="Bold" Margin="4,6,0,3" />
+                    </DataTemplate>
+                  </GroupStyle.HeaderTemplate>
+                </GroupStyle>
+              </ListBox.GroupStyle>
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <DockPanel Margin="1,2">
+                    <Border DockPanel.Dock="Left" Width="44" Height="44" Background="White"
+                            BorderBrush="#C8C8C8" BorderThickness="1" Margin="0,0,8,0">
+                      <Image Source="{Binding Thumb}" Margin="2" Stretch="Uniform"
+                             RenderOptions.BitmapScalingMode="HighQuality" />
+                    </Border>
+                    <StackPanel VerticalAlignment="Center">
+                      <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding Sub}" FontSize="11" Opacity="0.65"
+                                 TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                  </DockPanel>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </DockPanel>
+
+          <!-- RIGHT: the selected image -->
+          <Grid Grid.Row="1" Grid.Column="2">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="*" />
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <DockPanel Grid.Row="0">
+              <TextBlock DockPanel.Dock="Left" Text="Name:" VerticalAlignment="Center"
+                         Margin="0,0,8,0" />
+              <TextBox x:Name="txtName" LostFocus="OnNameCommit" KeyDown="OnNameKey"
+                       VerticalContentAlignment="Center" Padding="2"
+                       ToolTip="The name shown under the image's thumbnail in the gallery, and given to the graphics and north arrows placed from it. Type a new name and press Enter." />
+            </DockPanel>
+            <TextBlock x:Name="txtFile" Grid.Row="1" Opacity="0.7" Margin="0,4,0,8"
+                       TextTrimming="CharacterEllipsis" />
+
+            <!-- The picture, with the focal-point crosshair over it. The inner
+                 frame is sized in code to the image's own shape, so a click's
+                 position within it IS the focal point's fraction of the image. -->
+            <Border Grid.Row="2" Background="White" BorderBrush="#A8A8A8" BorderThickness="1">
+              <Grid x:Name="previewHost" Margin="12" SizeChanged="OnPreviewSize">
+                <!-- Focusable: a click gives the picture the keyboard, and the
+                     arrow keys then nudge the crosshair (its dashed edge
+                     turns red while it has the keyboard). -->
+                <Grid x:Name="previewFrame" HorizontalAlignment="Center"
+                      VerticalAlignment="Center" Background="Transparent"
+                      Focusable="True" FocusVisualStyle="{x:Null}"
+                      MouseLeftButtonDown="OnPreviewDown" MouseMove="OnPreviewMove"
+                      MouseLeftButtonUp="OnPreviewUp" KeyDown="OnPreviewKey"
+                      GotKeyboardFocus="OnPreviewFocusChanged"
+                      LostKeyboardFocus="OnPreviewFocusChanged"
+                      ToolTip="Click (or drag) to put the crosshair on the image's focal point. After a click, the arrow keys move the crosshair one pixel at a time; hold Shift to move it ten pixels at a time.">
+                  <Image x:Name="imgPreview" Stretch="Fill"
+                         RenderOptions.BitmapScalingMode="HighQuality" />
+                  <Rectangle x:Name="frameEdge" Stroke="#B8B8B8" StrokeThickness="1"
+                             StrokeDashArray="3 3" IsHitTestVisible="False" />
+                  <Canvas x:Name="cvFocal" IsHitTestVisible="False" ClipToBounds="True">
+                    <Line x:Name="hUnder" Stroke="White" StrokeThickness="3" Opacity="0.75" />
+                    <Line x:Name="vUnder" Stroke="White" StrokeThickness="3" Opacity="0.75" />
+                    <Line x:Name="hOver" Stroke="#D11A1A" StrokeThickness="1" />
+                    <Line x:Name="vOver" Stroke="#D11A1A" StrokeThickness="1" />
+                    <Ellipse x:Name="ringUnder" Width="18" Height="18" Stroke="White"
+                             StrokeThickness="4" Opacity="0.75" />
+                    <Ellipse x:Name="ringOver" Width="16" Height="16" Stroke="#D11A1A"
+                             StrokeThickness="1.6" />
+                  </Canvas>
+                </Grid>
+              </Grid>
+            </Border>
+
+            <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,10,0,0">
+              <TextBlock Text="Focal point" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Text="X:" Margin="14,0,4,0" VerticalAlignment="Center" />
+              <TextBox x:Name="txtFx" Width="62" LostFocus="OnFocalCommit" KeyDown="OnFocalKey"
+                       VerticalContentAlignment="Center" Padding="2"
+                       ToolTip="The focal point's position across the image, as a fraction of its width: 0 is the left edge, 0.5 the middle, 1 the right edge." />
+              <TextBlock Text="Y:" Margin="12,0,4,0" VerticalAlignment="Center" />
+              <TextBox x:Name="txtFy" Width="62" LostFocus="OnFocalCommit" KeyDown="OnFocalKey"
+                       VerticalContentAlignment="Center" Padding="2"
+                       ToolTip="The focal point's position up the image, as a fraction of its height: 0 is the bottom edge, 0.5 the middle, 1 the top edge." />
+              <Button x:Name="btnCenter" Content="Center" Padding="12,2" Margin="14,0,0,0"
+                      Click="OnCenter"
+                      ToolTip="Put the focal point back in the middle of the image (X 0.5, Y 0.5)." />
+            </StackPanel>
+
+            <TextBlock x:Name="txtNote" Grid.Row="4" TextWrapping="Wrap" Opacity="0.8"
+                       Margin="0,8,0,0" />
+
+            <DockPanel Grid.Row="5" Margin="0,10,0,0">
+              <Button x:Name="btnApply" DockPanel.Dock="Left" Content="Apply to Selected Element"
+                      Padding="12,3" Click="OnApply" VerticalAlignment="Top"
+                      ToolTip="Stamp this focal point on the element (or elements) now selected on the active layout or map. An element keeps the focal point it was placed with, so use this after changing an image's focal point, or to give a focal point to an element that has none." />
+              <TextBlock x:Name="txtApply" TextWrapping="Wrap" VerticalAlignment="Center"
+                         Margin="10,0,0,0" Opacity="0.8" />
+            </DockPanel>
+          </Grid>
+        </Grid>
+      </TabItem>
+      <TabItem Header="North Arrows" x:Name="tabArrows" />
+    </TabControl>
+  </DockPanel>
+</UserControl>

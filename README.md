@@ -260,8 +260,12 @@ them.
 - **Remove SLC** – moves the Service Layer Credits text out of the map frame.
 - **Create Shadow Polygons** – concentric ring buffers with graded
   transparency, a soft shadow behind a feature class.
-- **Add Graphics** and **North Arrows** – compass-rose graphics and north
-  arrows for maps and layouts.
+- **Add Graphics** and **North Arrows** – galleries of compass-rose graphics
+  and north arrows for maps and layouts, which also hold your own registered
+  images.
+- **Manage Custom Graphics and North Arrows** *(window)* – registers your
+  own images (a logo, a seal, a north arrow) in those galleries and sets each
+  one's focal point.
 
 ### Take a Break
 
@@ -269,6 +273,9 @@ them.
 - **Sudoku** and **Sliding Puzzle** *(windows)* – the sliding puzzle is cut
   from a snapshot of your own map.
 - **ArcMap Easter Egg** – a small tribute to a classic.
+- **Lois Engelman Scholarship** – the Donate to the Lois Engelman Memorial
+  Scholarship Fund tool: what the scholarship is, and where to give (see
+  below).
 
 ## Help and tutorials
 

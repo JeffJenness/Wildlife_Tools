@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Headless test of the Add Graphics / North Arrows image library (the
+       store of registered images behind the galleries and the Manage Custom
+       Graphics and North Arrows window). Compiles the add-in's own
+       GraphicLibrary.cs, which uses WPF imaging but no ArcGIS type.
+       Run from the repo root; see the top of Program.cs. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>disable</Nullable>
+    <RootNamespace>GraphicLibraryTest</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\WildlifeTools\CustomGraphics\GraphicLibrary.cs" Link="GraphicLibrary.cs" />
+  </ItemGroup>
+</Project>

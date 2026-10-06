@@ -17,26 +17,33 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace WildlifeTools
+using System;
+using ArcGIS.Desktop.Framework.Contracts;
+using MessageBox = ArcGIS.Desktop.Framework.Dialogs.MessageBox;
+
+namespace WildlifeTools.Scholarship
 {
     /// <summary>
-    /// "Compass graphic 1 - dot" (Graphics group): identical behavior to
-    /// <see cref="CompassRoseGraphicTool"/> but places the CompassRoseDot.svg artwork —
-    /// the compass rose with the black "north dot" above the north arrowhead. The stamped
-    /// focal point is the compass center (feature-class origin 0,0), NOT the box center.
+    /// "Take a Break"-group ribbon button for the Lois Engelman Memorial
+    /// Scholarship Fund: the 100th tool, reserved for it. Opens the
+    /// <see cref="ScholarshipWindow"/> card, which says what the fund is and
+    /// links to the scholarship page and to the university's giving page.
+    /// Runs entirely on the UI thread; one shared non-modal window.
     /// </summary>
-    internal class CompassRoseDotGraphicTool : CompassRoseGraphicTool
+    internal sealed class ScholarshipButton : Button
     {
-        protected override CompassArt Art => CompassArt.Dot;
-    }
-
-    /// <summary>
-    /// "North arrow 1 - dot" (Cartography group, layout-only): identical behavior to
-    /// <see cref="CompassRoseNorthArrowTool"/> but places the CompassRoseDot.svg artwork,
-    /// with the focal point on the compass center.
-    /// </summary>
-    internal class CompassRoseDotNorthArrowTool : CompassRoseNorthArrowTool
-    {
-        protected override CompassArt Art => CompassArt.Dot;
+        protected override void OnClick()
+        {
+            try
+            {
+                ScholarshipWindow.ShowCard();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Could not open the scholarship window:{Environment.NewLine}{Environment.NewLine}{ex.Message}",
+                    ScholarshipInfo.FundName);
+            }
+        }
     }
 }

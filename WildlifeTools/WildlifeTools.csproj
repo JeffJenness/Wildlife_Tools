@@ -223,6 +223,10 @@
     <Content Include="Images\Sudoku_32.png" />
     <Content Include="DarkImages\Sudoku_16.png" />
     <Content Include="DarkImages\Sudoku_32.png" />
+    <Content Include="Images\Scholarship_16.png" />
+    <Content Include="Images\Scholarship_32.png" />
+    <Content Include="DarkImages\Scholarship_16.png" />
+    <Content Include="DarkImages\Scholarship_32.png" />
     <Content Include="Images\Jerry_16.png" />
     <Content Include="Images\Jerry_32.png" />
     <Content Include="DarkImages\Jerry_16.png" />
@@ -359,6 +363,15 @@
          picker works via pack URIs wherever the add-in is installed. -->
     <Resource Include="Geometric\Img\*.gif" />
     <Resource Include="Geometric\Img\*.png" />
+    <!-- Lois Engelman Memorial Scholarship Fund card: the photographs of
+         Lois and Jeff, embedded so the card loads them by pack URI
+         wherever the add-in is installed. -->
+    <Resource Include="Scholarship\*.jpg" />
+    <!-- Pictures of the four built-in compass designs (made by
+         DevScripts\make_compass_previews.ps1), embedded for the thumbnails in
+         the Add Graphics and North Arrows galleries and the preview in the
+         Manage Custom Graphics and North Arrows window. -->
+    <Resource Include="Cartography\Previews\*.png" />
     <Content Include="Fonts\Licenses\*.txt" />
     <Content Include="Images\LSRI_DEM_16.png" />
     <Content Include="Images\LSRI_DEM_32.png" />
