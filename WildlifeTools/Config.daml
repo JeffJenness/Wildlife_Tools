@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.99.48" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.99.49" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>Wildlife and Forestry Tools</Name>
     <Description>Wildlife and forestry analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -1119,7 +1119,7 @@ Orders a set of points into a short travel route -- a survey route you can load 
                 largeImage="Images\SelectRandom_32.png"
                 keytip="SX">
           <tooltip heading="Select Random Records">
-            Randomly or systematically select features or table rows: a fixed number, a percentage, a statistically derived sample size (Auto Calculate from a confidence level and margin of error, finite-population corrected), a fixed number with selection probability proportional to geodesic area or length, or systematic designs (every Xth record with an optional random start, or all odd- or even-numbered records, walked in a sort-field order). Offers the four standard selection methods -- Add-to draws only from the currently unselected records, while Remove-from and Subset-of treat the current selection as the population -- plus an analysis extent (intersecting or entirely within), standalone tables, and a reproducibility seed. A no-extension replication and extension of Esri's Data Reviewer Select Random Sample tool. Works at every license level.<disabledText />
+            Randomly or systematically select features or table rows: a fixed number, a percentage, a sample size calculated from a confidence level and margin of error (finite-population corrected), a fixed number with selection probability proportional to geodesic area or length, or systematic designs (every Xth record with an optional random start, or all odd- or even-numbered records, walked in a sort-field order). Offers the four standard selection methods -- Add-to selects only from the currently unselected records, while Remove-from and Subset-of treat the current selection as the population -- plus an analysis extent (intersecting or entirely within), standalone tables, and a reproducibility seed. It offers ways to select that ArcGIS Pro's own random selection tools do not, and needs no extension. Works at every license level.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_AttributeSummary"

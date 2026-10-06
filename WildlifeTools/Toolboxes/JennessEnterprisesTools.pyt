@@ -16358,25 +16358,25 @@ class SelectRandomRecords(object):
         self.label = "Select Random Records"
         self.description = (
             "Randomly or systematically selects features or table "
-            "rows -- a replication of Esri's Data Reviewer 'Select "
-            "Random Sample' tool that needs no extension and adds "
-            "more designs. Sample sizes: a fixed number, a "
-            "percentage, Auto Calculate (the statistical sample size "
-            "for a chosen confidence level and margin of error, "
-            "finite-population corrected), a fixed number with "
+            "rows, with ways to select that ArcGIS Pro's own random "
+            "selection tools do not offer, and with no extension "
+            "needed. Sample sizes: a fixed number, a "
+            "percentage, a sample size calculated from a chosen "
+            "confidence level and margin of error (finite-population "
+            "corrected), a fixed number with "
             "selection probability proportional to geodesic area or "
             "length, or systematic selection (every Xth record with "
             "an optional random start, or all odd- or even-numbered "
             "records, walked in a sort-field order defaulting to the "
             "ObjectID). The four standard selection methods are "
-            "offered; 'Add to the current selection' draws only from "
+            "offered; 'Add to the current selection' selects only from "
             "the currently unselected records, while 'Remove from' "
             "and 'Select subset from the current selection' treat "
             "the current selection as the population -- in every "
             "case before any calculation. An optional analysis "
             "extent restricts feature populations to features "
             "intersecting or entirely within it; an optional seed "
-            "makes draws exactly reproducible. Works on feature "
+            "makes selections exactly reproducible. Works on feature "
             "layers and standalone tables at every license level.")
         self.category = "Data Tools"
         self.canRunInBackground = False
@@ -16405,12 +16405,12 @@ class SelectRandomRecords(object):
             name="percent", datatype="GPDouble",
             parameterType="Optional", direction="Input")
         confidence = arcpy.Parameter(
-            displayName="Confidence level, percent (Auto Calculate)",
+            displayName="Confidence level, percent",
             name="confidence", datatype="GPDouble",
             parameterType="Optional", direction="Input")
         confidence.value = 95.0
         margin = arcpy.Parameter(
-            displayName="Margin of error, percent (Auto Calculate)",
+            displayName="Margin of error, percent",
             name="margin", datatype="GPDouble",
             parameterType="Optional", direction="Input")
         margin.value = 5.0
@@ -16468,7 +16468,7 @@ class SelectRandomRecords(object):
         extent_relation.value = SR.EXTENT_RELATIONS[0]
         random_seed = arcpy.Parameter(
             displayName="Random seed (optional -- same seed, same "
-                        "draw)",
+                        "selection)",
             name="random_seed", datatype="GPLong",
             parameterType="Optional", direction="Input")
         out_layer = arcpy.Parameter(

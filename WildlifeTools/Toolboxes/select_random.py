@@ -21,16 +21,18 @@
 """Select Random Records -- random and systematic SELECTION of
 existing features or table rows.
 
-A replication of Esri's Data Reviewer "Select Random Sample" tool
-(which needs the Data Reviewer extension), extended per Jeff Jenness's
-classic sampling tools -- and it works at every license level, on
-feature layers AND standalone tables.
+In the same family as Esri's Data Reviewer "Select Random Sample" tool
+(which needs the Data Reviewer extension), sharing its sample-size
+calculation and adding designs from Jeff Jenness's classic sampling
+tools -- and it works at every license level, on feature layers and
+standalone tables.
 
 SAMPLE-SIZE METHODS:
   * a fixed NUMBER of records;
   * a PERCENTAGE of the population;
-  * AUTO CALCULATE -- the statistical sample size for estimating a
-    proportion at a chosen confidence level and margin of error:
+  * a SAMPLE SIZE CALCULATED from a confidence level and margin of
+    error (Esri's 'Auto Calculate') -- the statistical sample size for
+    estimating a proportion at that precision:
     n = (z/m)^2 * p(1-p) with p = 0.5 (the conservative worst case),
     then the finite-population correction n' = n*N/(n + (N-1)),
     rounded up. 95%/5% needs ~384 records almost regardless of N;
@@ -45,11 +47,11 @@ SAMPLE-SIZE METHODS:
     (default: the ObjectID field).
 
 THE POPULATION depends on the SELECTION METHOD (Esri's four): New
-selection draws from ALL records; Add to the current selection draws
-only from the currently UNSELECTED records; Remove from and Select
+selection selects from ALL records; Add to the current selection
+selects only from the currently UNSELECTED records; Remove from and Select
 subset of the current selection consider ONLY the currently selected
 records. In every case the population rule applies BEFORE any
-calculation -- percentages, Auto Calculate's N, area/length totals
+calculation -- percentages, the calculated sample size's N, area/length totals
 and the systematic walk order all refer to that population alone.
 
 An optional analysis EXTENT and/or POLYGON ANALYSIS BOUNDARY (a
@@ -58,7 +60,7 @@ further restrict feature populations to features INTERSECTING them
 (default) or ENTIRELY WITHIN them; for entirely-within the boundary
 is dissolved first, so a feature straddling two ADJACENT boundary
 polygons still counts as inside their union. An optional seed makes
-every draw exactly reproducible.
+every selection exactly reproducible.
 """
 import math
 import os
@@ -79,7 +81,7 @@ METHOD_EVEN = "EVEN"
 SAMPLE_METHODS = [
     "Fixed number of records",
     "Percentage of records",
-    "Auto Calculate (from confidence level and margin of error)",
+    "Sample size calculated from a confidence level and margin of error",
     "Fixed number, probability proportional to area / length",
     "Systematic: every Xth record",
     "Systematic: odd-numbered records",
@@ -95,7 +97,9 @@ def canon_sample(s):
         return METHOD_FIXED
     if t.startswith("percentage"):
         return METHOD_PERCENT
-    if t.startswith("auto"):
+    # the option's current name, and its old name 'Auto Calculate'
+    # (Esri's term) so that saved models and scripts still run
+    if t.startswith("sample size calculated") or t.startswith("auto"):
         return METHOD_AUTO
     if t.startswith("fixed number, probability") or "proportional" in t:
         return METHOD_PPS
@@ -353,7 +357,7 @@ def run_select_random(in_layer, sample_method=None, n_records=None,
         int(random_seed) if random_seed not in (None, "") else None)
 
     _mh.begin_phases([("Reading the population...", 2),
-                      ("Drawing the sample...", 1),
+                      ("Selecting the sample...", 1),
                       ("Applying the selection...", 2)])
 
     if method == METHOD_PPS:
@@ -383,14 +387,14 @@ def run_select_random(in_layer, sample_method=None, n_records=None,
                  str(selection_method or sel)))
     elif sel == SEL_ADD and cur_sel:
         # only records NOT already selected are eligible -- every
-        # sampling method (counts, percentages, Auto Calculate's N,
+        # sampling method (counts, percentages, the calculated size's N,
         # area/length totals, systematic ordering) runs over the
         # unselected records alone
         pop_exclude = set(cur_sel)
         pop_filter = None
         _say(messages,
              "Population: the currently UNSELECTED records (the "
-             "'Add to the current selection' method draws only from "
+             "'Add to the current selection' method selects only from "
              "records not already selected; {:,} record{} are "
              "already in the selection).".format(
                  len(cur_sel), "" if len(cur_sel) == 1 else "s"))
@@ -490,10 +494,18 @@ def run_select_random(in_layer, sample_method=None, n_records=None,
         except ValueError as e:
             raise arcpy.ExecuteError(str(e))
         _say(messages,
-             "Auto Calculate: {:g}% confidence with a {:g}% margin of "
-             "error over {:,} records -> {:,} samples (worst-case "
-             "p = 0.5, finite-population corrected).".format(
+             "Calculated sample size: {:g}% confidence with a {:g}% "
+             "margin of error over {:,} records -> {:,} samples "
+             "(worst-case p = 0.5, finite-population corrected).".format(
                  float(confidence), float(margin), N, n))
+        if n >= N:
+            # a tiny population: the arithmetic asks for every record,
+            # and the user who expected a sample should be told why
+            _warn(messages,
+                  "The population is so small that the calculated sample "
+                  "is all of it: every one of the {:,} records is "
+                  "selected. A wider margin of error or a lower "
+                  "confidence level would allow a smaller sample.".format(N))
     else:
         n = None                                     # systematic
 
@@ -598,7 +610,7 @@ def run_select_random(in_layer, sample_method=None, n_records=None,
                             "" if len(sampled) == 1 else "s",
                             n_now, "" if n_now == 1 else "s"))
     if random_seed not in (None, ""):
-        _say(messages, "Seed {}: this draw is exactly "
+        _say(messages, "Seed {}: this selection is exactly "
                        "reproducible.".format(random_seed))
     _mh.end_phases()
     return n_now, len(sampled)
