@@ -27,12 +27,22 @@ behind the source features. Port of the VB6 ``CreateShadowPolys`` in
 legacy world-azimuthal reprojection replaced by true geodesic buffering for
 geographic inputs.
 
-Ring construction follows the legacy incremental approach: each iteration
-buffers the PREVIOUS shell outward by one increment (smoother seams and much
-faster than buffering the source at k increasing distances), and the ring is
-the buffer minus the previous shell. Because the rings are purely aesthetic,
-the dissolved source is generalized (Douglas-Peucker) before buffering so the
-output stays lightweight.
+The shadow has the controls of the Graphic Background tools' drop shadow
+(BackgroundShadow.cs in the add-in), so the two make the same shadow:
+- Size: the width of the soft edge; Spread: how much of it is solid (0 = the
+  softest edge, centered on the outline; 50 = the edge lies wholly outside
+  the outline, the original behavior of this tool; 100 = hard-edged);
+- Distance and the illumination source: the shadow is shifted away from the
+  light, whose direction is given as a COMPASS direction (0-360, clockwise
+  from north; 315 = from the northwest) and converted to the mathematical
+  angle (counterclockwise from east) the geometry uses;
+- the opacity rises along the soft edge as a smoothstep, from nothing at
+  the outer edge to the full opacity (100 - minimum transparency) inside.
+The rings are buffers of the shifted, generalized source at evenly spaced
+radii, each minus the next one in, and all of them minus the ORIGINAL
+source polygon, which the shadow must never cover. Because the rings are
+purely aesthetic, the dissolved source is generalized (Douglas-Peucker)
+before buffering so the output stays lightweight.
 """
 
 import json
@@ -147,10 +157,17 @@ def _write_layer_file(out_fc, name, messages, transp_field="Transparency"):
     # defeat a bare endswith), and .sde counts as a geodatabase too -- this
     # mirrors mahalanobis.is_gdb_workspace inline (no mahalanobis import here).
     ws_norm = ws.lower().replace("/", "\\").rstrip("\\")
-    if ws_norm.split("\\", 1)[0] in ("memory", "in_memory"):
-        return None                    # no on-disk home for a side .lyrx
+    in_memory = ws_norm.split("\\", 1)[0] in ("memory", "in_memory")
     is_gdb = ws_norm.endswith((".gdb", ".sde"))
-    lyr_dir = os.path.dirname(ws) if is_gdb else ws
+    if in_memory:
+        # The memory workspace has no folder, so the layer file goes to the
+        # scratch folder: the map layer still gets its fade, and a memory
+        # output is temporary by nature, so a temporary layer file suits it.
+        lyr_dir = arcpy.env.scratchFolder
+        factory = "InMemoryDB"
+    else:
+        lyr_dir = os.path.dirname(ws) if is_gdb else ws
+        factory = "FileGDB" if is_gdb else "Shapefile"
     lyrx = os.path.join(lyr_dir, name + ".lyrx")
 
     doc = {
@@ -170,7 +187,7 @@ def _write_layer_file(out_fc, name, messages, transp_field="Transparency"):
                 "dataConnection": {
                     "type": "CIMStandardDataConnection",
                     "workspaceConnectionString": "DATABASE=" + ws,
-                    "workspaceFactory": "FileGDB" if is_gdb else "Shapefile",
+                    "workspaceFactory": factory,
                     "dataset": name,
                     "datasetType": "esriDTFeatureClass",
                 },
@@ -233,10 +250,95 @@ def _reproject_in_place(fc, messages):
                    "environment).".format(out_cs.name))
 
 
+def _smoothstep(t):
+    return t * t * (3.0 - 2.0 * t)
+
+
+def plan_rings(num_rings, size_m, spread_pct, opacity_max):
+    """The rings of the soft edge, from the OUTSIDE in:
+    [(outer_radius_m, inner_radius_m, transparency_pct)], radii measured
+    from the shifted outline (negative = inside it). The band runs from
+    size*(2*spread-1) to +size and is cut into num_rings equal rings; a
+    ring's opacity is the smoothstep profile at its inner edge, so the
+    innermost ring has the full opacity, as the Graphic Background tools'
+    drop shadow does (BackgroundShadow.Plan). Pure arithmetic, no arcpy.
+    """
+    n = max(1, int(num_rings))
+    r_out = float(size_m)
+    r_in = r_out * (2.0 * float(spread_pct) / 100.0 - 1.0)
+    opacity_max = float(opacity_max)
+    plan = []
+    for j in range(1, n + 1):
+        outer = r_out - (j - 1) * (r_out - r_in) / n
+        inner = r_out - j * (r_out - r_in) / n
+        opacity = opacity_max * _smoothstep(j / float(n))
+        plan.append((outer, inner, 100.0 - opacity))
+    return plan
+
+
+def light_azimuth_to_math(azimuth_deg):
+    """A compass direction (degrees clockwise from north) as the mathematical
+    angle (degrees counterclockwise from east) the offset arithmetic uses:
+    north 0 -> 90, east 90 -> 0, northwest 315 -> 135."""
+    return (90.0 - float(azimuth_deg)) % 360.0
+
+
+def shadow_offset(angle_deg, distance):
+    """(dx, dy) of a shadow shifted `distance` AWAY from a light coming from
+    angle_deg degrees counterclockwise from east: the Graphic Background
+    tools' convention (BackgroundShadow.Offset). Pure arithmetic."""
+    a = math.radians(float(angle_deg))
+    return (-float(distance) * math.cos(a), -float(distance) * math.sin(a))
+
+
+def _translate(geom, dx, dy, tol_native):
+    """A copy of a polygon moved by (dx, dy) in its own units. True curves
+    (a geodatabase buffer circle) are densified first, or geom.JSON would
+    hold curveRings the ring walk never sees."""
+    if dx == 0 and dy == 0:
+        return geom
+    if getattr(geom, "hasCurves", False):
+        try:
+            geom = geom.densify("DISTANCE", tol_native, tol_native)
+        except Exception:
+            pass
+    j = json.loads(geom.JSON)
+    j["rings"] = [[[pt[0] + dx, pt[1] + dy] + list(pt[2:]) for pt in ring]
+                  for ring in j.get("rings", [])]
+    return arcpy.AsShape(j, True)
+
+
+def _geodesic_offset_degrees(geom, sr, angle_deg, dist_m):
+    """The shift, in degrees of longitude and latitude, that moves the
+    polygon's centroid `dist_m` meters away from the light."""
+    if dist_m <= 0:
+        return 0.0, 0.0
+    bearing = (270.0 - float(angle_deg)) % 360.0     # the shadow's bearing, clockwise from north
+    c = geom.centroid
+    pg = arcpy.PointGeometry(arcpy.Point(c.X, c.Y), sr)
+    dest = pg.pointFromAngleAndDistance(bearing, dist_m, "GEODESIC")
+    return dest.firstPoint.X - c.X, dest.firstPoint.Y - c.Y
+
+
+def _buffer_or_none(geom, dist_m, sr, geodesic):
+    """buffer(geom, dist_m), or None when a negative distance ate the polygon."""
+    if abs(dist_m) < 1e-9:
+        return geom
+    try:
+        out = _buffer_geometry(geom, dist_m, sr, geodesic)
+    except Exception:
+        return None
+    if out is None or out.area <= 0:
+        return None
+    return out
+
+
 def run_shadow_polygons(in_features, out_fc, num_rings=10, size_value=0.25,
                         size_units=SIZE_PROP_WIDTH, min_transparency=50.0,
+                        distance_value=0.0, angle=315.0, spread=50.0,
                         messages=None):
-    """Create the shadow-ring feature class. See the module docstring."""
+    """Create the shadow-ring feature class. See the module docstring.
+    `angle` is the illumination source as a compass direction, 0-360."""
     num_rings = int(num_rings)
     if num_rings < 1:
         raise arcpy.ExecuteError("The number of buffers must be at least 1.")
@@ -246,22 +348,37 @@ def run_shadow_polygons(in_features, out_fc, num_rings=10, size_value=0.25,
             "The minimum transparency must be at least 0 and less than 100.")
     size_value = float(size_value)
     if size_value <= 0:
-        raise arcpy.ExecuteError("The outermost buffer size must be positive.")
+        raise arcpy.ExecuteError("The size of the soft edge must be positive.")
+    distance_value = float(distance_value or 0.0)
+    if distance_value < 0:
+        raise arcpy.ExecuteError("The shadow distance cannot be negative.")
+    spread = float(spread if spread is not None else 50.0)
+    if not 0.0 <= spread <= 100.0:
+        raise arcpy.ExecuteError("The spread must be between 0 and 100 percent.")
+    angle = float(angle if angle is not None else 315.0)
+    if not 0.0 <= angle <= 360.0:
+        raise arcpy.ExecuteError(
+            "The illumination source must be a compass direction from 0 to 360.")
+    angle_math = light_azimuth_to_math(angle)
 
     src_geom, n_sel = _dissolve_source(in_features, messages)
     sr = src_geom.spatialReference
     geodesic = (sr.type == "Geographic")
-
-    outer_m = _outer_distance_meters(src_geom, sr, size_value, size_units, geodesic)
-    increment_m = outer_m / num_rings
-    _msg(messages, "Outermost ring: {:.1f} m ({} rings of {:.1f} m each, "
-                   "{} buffering).".format(outer_m, num_rings, increment_m,
-                                           "geodesic" if geodesic else "planar"))
+    size_m = _outer_distance_meters(src_geom, sr, size_value, size_units, geodesic)
+    dist_m = _outer_distance_meters(src_geom, sr, distance_value, size_units, geodesic) \
+        if distance_value > 0 else 0.0
+    plan = plan_rings(num_rings, size_m, spread, 100.0 - min_transparency)
+    band_m = plan[0][0] - plan[-1][1]
+    _msg(messages, "Soft edge {:.1f} m wide ({} rings of {:.1f} m), from {:.1f} m to "
+                   "{:.1f} m off the outline; shadow shifted {:.1f} m away from a light "
+                   "at compass direction {:.0f}; {} buffering.".format(
+                       band_m, num_rings, band_m / num_rings, plan[-1][1], plan[0][0],
+                       dist_m, angle, "geodesic" if geodesic else "planar"))
 
     # Generalize the dissolved source before buffering -- the rings are purely
-    # aesthetic, so a tolerance of 1/10 of one ring increment is invisible at
-    # any scale where the shadow reads, and keeps the output small.
-    tol_m = increment_m / 10.0
+    # aesthetic, so a tolerance of 1/10 of one ring width is invisible at any
+    # scale where the shadow reads, and keeps the output small.
+    tol_m = max(band_m / num_rings, 1e-6) / 10.0
     tol_native = tol_m / 111320.0 if geodesic else tol_m / (sr.metersPerUnit or 1.0)
     gen_geom = src_geom
     try:
@@ -273,24 +390,43 @@ def run_shadow_polygons(in_features, out_fc, num_rings=10, size_value=0.25,
     except Exception:
         pass
 
-    # Incremental ring construction (legacy approach): buffer the previous
-    # shell one increment outward; the ring is the new shell minus the old.
-    step = (100.0 - min_transparency) / num_rings
-    rows = [(src_geom, 0.0, 100.0)]              # the source, fully transparent
-    prev = gen_geom
-    for i in range(1, num_rings + 1):
-        arcpy.SetProgressorLabel("Buffer {} of {}...".format(i, num_rings)) \
-            if hasattr(arcpy, "SetProgressorLabel") else None
-        shell = _buffer_geometry(prev, increment_m, sr, geodesic)
-        ring = shell.difference(prev)
-        if ring is None or ring.area <= 0:
-            ring = shell
-        transparency = min_transparency + (i - 1) * step
-        rows.append((ring, i * increment_m, transparency))
-        prev = shell
+    # The shadow is the shifted source. Away from the light, by the distance.
+    if dist_m > 0:
+        if geodesic:
+            dx, dy = _geodesic_offset_degrees(gen_geom, sr, angle_math, dist_m)
+        else:
+            dx, dy = shadow_offset(angle_math, dist_m / (sr.metersPerUnit or 1.0))
+        moved = _translate(gen_geom, dx, dy, tol_native)
+    else:
+        moved = gen_geom
 
-    # Output feature class: Buffer_Size (meters, 0 for the source) and
-    # Transparency (percent) -- same schema as the legacy tool plus the source.
+    # Buffers of the shifted source at the plan's radii, outer to inner; each
+    # ring is one buffer minus the next one in, and every piece has the
+    # ORIGINAL source cut out of it, since the shadow lies beneath the source.
+    radii = [plan[0][0]] + [inner for (_, inner, _) in plan]
+    shells = [_buffer_or_none(moved, r, sr, geodesic) for r in radii]
+    rows = [(src_geom, 0.0, 100.0)]              # the source, fully transparent
+    for j, (outer, inner, transparency) in enumerate(plan):
+        if hasattr(arcpy, "SetProgressorLabel"):
+            arcpy.SetProgressorLabel("Ring {} of {}...".format(j + 1, num_rings))
+        shell, hole = shells[j], shells[j + 1]
+        if shell is None:
+            continue
+        ring = shell.difference(hole) if hole is not None else shell
+        ring = ring.difference(src_geom)
+        if ring is None or ring.area <= 0:
+            continue
+        rows.append((ring, outer, transparency))
+    # The solid core inside the innermost ring: a shifted shadow shows it
+    # beyond the source's edge; a shadow that is not shifted does not.
+    core = shells[-1]
+    if core is not None:
+        core = core.difference(src_geom)
+        if core is not None and core.area > 0:
+            rows.append((core, plan[-1][1], plan[-1][2]))
+
+    # Output feature class: Buffer_Size (meters from the shifted outline,
+    # negative inside it, 0 for the source) and Transparency (percent).
     out_ws, out_name = os.path.split(out_fc)
     if arcpy.Exists(out_fc):
         arcpy.management.Delete(out_fc)
@@ -308,8 +444,8 @@ def run_shadow_polygons(in_features, out_fc, num_rings=10, size_value=0.25,
     with arcpy.da.InsertCursor(out_fc, ["SHAPE@", f_size, f_transp]) as cur:
         for geom, dist, transp in rows:
             cur.insertRow((geom, dist, transp))
-    _msg(messages, "Wrote {} polygons (source + {} rings).".format(len(rows), num_rings))
-
+    _msg(messages, "Wrote {} polygons (source + {} shadow pieces).".format(
+        len(rows), len(rows) - 1))
     _reproject_in_place(out_fc, messages)
 
     # Metadata: conceptual description + per-run provenance (standing rule).
@@ -318,12 +454,14 @@ def run_shadow_polygons(in_features, out_fc, num_rings=10, size_value=0.25,
         md.title = out_name
         md.tags = "shadow, buffer, ring, cartography, Jenness Enterprises"
         md.summary = (
-            "Created by Create Shadow Polygons from {src}{sel}: {n} ring buffer(s), "
-            "outermost {val} {units} ({m:.1f} m), minimum transparency {mt}%, "
-            "{method} buffering. The dissolved source polygon is included with "
+            "Created by Create Shadow Polygons from {src}{sel}: {n} ring(s), soft edge "
+            "{val} {units} ({m:.1f} m) wide, spread {sp}%, shifted {dv} {units} "
+            "({dm:.1f} m) away from a light at compass direction {ang}, minimum transparency "
+            "{mt}%, {method} buffering. The dissolved source polygon is included with "
             "Transparency = 100 (fully transparent).").format(
                 src=str(in_features), n=num_rings, val=size_value,
-                units=size_units.lower(), m=outer_m, mt=min_transparency,
+                units=size_units.lower(), m=size_m, sp=spread, dv=distance_value,
+                dm=dist_m, ang=angle, mt=min_transparency,
                 sel=" (selected polygons only)" if n_sel else "",
                 method="geodesic" if geodesic else "planar")
         md.description = (
@@ -331,9 +469,10 @@ def run_shadow_polygons(in_features, out_fc, num_rings=10, size_value=0.25,
             "fading black shadow: each ring's Transparency value increases "
             "outward, so rendering the rings in black with per-feature "
             "transparency makes the source features appear to cast a soft "
-            "shadow. The rings are approximate (the source is generalized "
-            "before buffering) and intended for cartographic effect, not "
-            "analysis.")
+            "shadow. The shadow may be shifted away from a light direction and "
+            "its soft edge spread, as the Graphic Background tools' drop shadow "
+            "is. The rings are approximate (the source is generalized before "
+            "buffering) and intended for cartographic effect, not analysis.")
         md.save()
     except Exception:
         pass
@@ -343,9 +482,10 @@ def run_shadow_polygons(in_features, out_fc, num_rings=10, size_value=0.25,
             entity="One shadow ring per record, plus the dissolved source polygon.",
             fields=[
                 {"name": f_size,
-                 "description": "Outer distance of this ring from the source "
-                                "polygon, in meters. 0 for the source polygon "
-                                "itself."},
+                 "description": "Outer distance of this ring from the shadow's "
+                                "outline (the source polygon, shifted by the "
+                                "shadow distance), in meters; negative inside "
+                                "the outline. 0 for the source polygon itself."},
                 {"name": f_transp,
                  "description": "Percent transparency (0-100) to render this "
                                 "polygon with, when the layer varies "
@@ -355,7 +495,6 @@ def run_shadow_polygons(in_features, out_fc, num_rings=10, size_value=0.25,
             ])
     except Exception:
         pass
-
     return _write_layer_file(out_fc, out_name, messages, transp_field=f_transp)
 
 

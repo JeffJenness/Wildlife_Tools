@@ -2349,11 +2349,13 @@ class ShadowPolygons(object):
             "feature class, with a Transparency attribute that fades outward -- a "
             "soft black cartographic shadow behind the source features. If the "
             "input layer has selected polygons, only those are used; otherwise all "
-            "polygons are dissolved into the source. Geographic inputs are "
-            "buffered geodesically. The dissolved source polygon is included in "
-            "the output with Transparency = 100 (fully transparent). The rings "
-            "are approximate (the source is generalized before buffering) and "
-            "intended for cartographic effect, not analysis.")
+            "polygons are dissolved into the source. The shadow has the controls "
+            "of the Graphic Background tools' drop shadow: a size and spread for "
+            "its soft edge, and a distance and light angle to shift it. "
+            "Geographic inputs are buffered geodesically. The dissolved source "
+            "polygon is included in the output with Transparency = 100 (fully "
+            "transparent). The rings are approximate (the source is generalized "
+            "before buffering) and intended for cartographic effect, not analysis.")
         self.category = "Cartography Tools"
         self.canRunInBackground = False
         self._auto_out = None
@@ -2371,11 +2373,11 @@ class ShadowPolygons(object):
             datatype="GPLong", parameterType="Required", direction="Input")
         num_rings.value = 10
         size_value = arcpy.Parameter(
-            displayName="Size of outermost buffer", name="size_value",
+            displayName="Size of the soft edge (outermost buffer)", name="size_value",
             datatype="GPDouble", parameterType="Required", direction="Input")
         size_value.value = 0.25
         size_units = arcpy.Parameter(
-            displayName="Size units", name="size_units",
+            displayName="Units for the size and the distance", name="size_units",
             datatype="GPString", parameterType="Required", direction="Input")
         size_units.filter.type = "ValueList"
         size_units.filter.list = cartography_tools.SIZE_UNITS
@@ -2384,7 +2386,23 @@ class ShadowPolygons(object):
             displayName="Minimum transparency (percent)", name="min_transparency",
             datatype="GPDouble", parameterType="Required", direction="Input")
         min_transp.value = 50.0
-        return [in_features, out_fc, num_rings, size_value, size_units, min_transp]
+        # The drop-shadow controls of the Graphic Background tools. Their
+        # defaults reproduce this tool's original behavior: no shift, and the
+        # soft edge wholly outside the outline.
+        distance = arcpy.Parameter(
+            displayName="Shadow distance (shift away from the light)", name="distance_value",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        distance.value = 0.0
+        angle = arcpy.Parameter(
+            displayName="Illumination source (compass direction, 0 - 360°)", name="angle",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        angle.value = 315.0
+        spread = arcpy.Parameter(
+            displayName="Spread (percent of the soft edge made solid)", name="spread",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        spread.value = 50.0
+        return [in_features, out_fc, num_rings, size_value, size_units, min_transp,
+                distance, angle, spread]
 
     def isLicensed(self):
         return True
@@ -2415,6 +2433,16 @@ class ShadowPolygons(object):
         if mt is not None and not (0 <= mt < 100):
             P["min_transparency"].setErrorMessage(
                 "The minimum transparency must be at least 0 and less than 100.")
+        dv = P["distance_value"].value
+        if dv is not None and dv < 0:
+            P["distance_value"].setErrorMessage("The shadow distance cannot be negative.")
+        sp = P["spread"].value
+        if sp is not None and not (0 <= sp <= 100):
+            P["spread"].setErrorMessage("The spread must be between 0 and 100 percent.")
+        ang = P["angle"].value
+        if ang is not None and not (0 <= ang <= 360):
+            P["angle"].setErrorMessage(
+                "The illumination source must be a compass direction from 0 to 360.")
         return
 
     def execute(self, parameters, messages):
@@ -2429,6 +2457,9 @@ class ShadowPolygons(object):
                 size_value=P["size_value"].value,
                 size_units=P["size_units"].valueAsText,
                 min_transparency=P["min_transparency"].value,
+                distance_value=P["distance_value"].value or 0.0,
+                angle=P["angle"].value if P["angle"].value is not None else 315.0,
+                spread=P["spread"].value if P["spread"].value is not None else 50.0,
                 messages=messages)
             if lyrx:
                 try:
