@@ -303,6 +303,7 @@ namespace WildlifeTools
                 "WildlifeTools_Landform",
                 "WildlifeTools_GeneralClassification",
                 "WildlifeTools_ClassificationBuilder",
+                "WildlifeTools_TpiSampler",
             }),
             ("Aspect Tools", new[]
             {

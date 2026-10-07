@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+<!-- TPI Neighborhood Sampler: a hill with a circular neighborhood over its crest and a slider underneath, light theme -->
+<path d="M1 23 L7 15 L12 18 L18 7 L24 16 L27 13 L31 23 Z" fill="#C9A227" stroke="#8A6D12" stroke-width="1" stroke-linejoin="round"/>
+<path d="M1 23 L7 15 L12 18 L18 7 L24 16 L27 13 L31 23" fill="none" stroke="#8A6D12" stroke-width="1.2" stroke-linejoin="round"/>
+<circle cx="18" cy="12" r="7" fill="none" stroke="#1F6FD0" stroke-width="2" stroke-dasharray="3 2"/>
+<circle cx="18" cy="12" r="1.6" fill="#1F6FD0"/>
+<line x1="3" y1="28" x2="29" y2="28" stroke="#5A5A5A" stroke-width="2.2" stroke-linecap="round"/>
+<rect x="12" y="24.5" width="5" height="7" rx="1.2" fill="#B33A2B" stroke="#6E1F15" stroke-width="1"/>
+</svg>

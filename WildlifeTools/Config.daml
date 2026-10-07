@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.102.52.1" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.103.53.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>Wildlife and Forestry Tools</Name>
     <Description>Wildlife and forestry analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -1018,6 +1018,17 @@ Orders a set of points into a short travel route -- a survey route you can load 
             Create, edit, duplicate, and delete the reusable classification systems (class thresholds, names, and colors -- with optional per-class transparency) applied by the Slope Position, Landform, and General Raster Classification tools. Systems are saved as JSON in a per-user location that survives add-in reinstalls, so your custom classifications stay available; Export and Import buttons share them with colleagues as JSON files.<disabledText />
           </tooltip>
         </button>
+        <button id="WildlifeTools_TpiSampler"
+                caption="TPI Neighborhood Sampler"
+                className="TpiSampler.TpiSamplerButton"
+                loadOnClick="true"
+                smallImage="Images\TpiSampler_16.png"
+                largeImage="Images\TpiSampler_32.png"
+                keytip="NS">
+          <tooltip heading="TPI Neighborhood Sampler">
+            Try neighborhood sizes and classification thresholds for the Topographic Position Index before running the TPI or classification tools. Zoom the map to a feature you know how you want classified, take a snapshot of the DEM inside the view, and slide: the window paints the TPI for the neighborhood on one slider and draws the threshold on the other as a line, with the cells on the chosen side tinted. Click a cell to pin it and see its TPI at every neighborhood size. Circular neighborhoods, raw or neighborhood-standardized TPI, radius in cells or ground units. The snapshot is coarse and lives only in memory: nothing is added to the map and nothing is written to disk.<disabledText />
+          </tooltip>
+        </button>
         <button id="WildlifeTools_SimpleHypsometricShading"
                 caption="Simple Hypsometric Shading"
                 className="SimpleHypsometricShadingButton"
@@ -1498,6 +1509,7 @@ Orders a set of points into a short travel route -- a survey route you can load 
           <button refID="WildlifeTools_Landform" />
           <button refID="WildlifeTools_GeneralClassification" />
           <button refID="WildlifeTools_ClassificationBuilder" />
+          <button refID="WildlifeTools_TpiSampler" />
         </menu>
         <menu id="WildlifeTools_LandFacetCorridorMenu"
               caption="Land Facet Corridor Modeling"

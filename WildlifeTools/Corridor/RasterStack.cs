@@ -307,10 +307,10 @@ namespace WildlifeTools.Corridor
 
         internal static void ReadStrip(Raster raster, int w, int h, int y0,
                                        out double[,] values, out bool[,] valid,
-                                       object noData, bool useSentinel)
+                                       object noData, bool useSentinel, int x0 = 0)
         {
             var pb = raster.CreatePixelBlock(w, h);
-            raster.Read(0, y0, pb);
+            raster.Read(x0, y0, pb);
             Array data = pb.GetPixelData(0, true);   // 2-D array (own copy)
 
             // GetPixelData returns a 2-D array indexed [column, row] -- the order the

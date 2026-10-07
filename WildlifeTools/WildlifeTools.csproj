@@ -231,6 +231,10 @@
     <Content Include="Images\ColorHelper_32.png" />
     <Content Include="DarkImages\ColorHelper_16.png" />
     <Content Include="DarkImages\ColorHelper_32.png" />
+    <Content Include="Images\TpiSampler_16.png" />
+    <Content Include="Images\TpiSampler_32.png" />
+    <Content Include="DarkImages\TpiSampler_16.png" />
+    <Content Include="DarkImages\TpiSampler_32.png" />
     <Content Include="Images\Jerry_16.png" />
     <Content Include="Images\Jerry_32.png" />
     <Content Include="DarkImages\Jerry_16.png" />
