@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.101.50.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.102.51.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>Wildlife and Forestry Tools</Name>
     <Description>Wildlife and forestry analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -1159,6 +1159,17 @@ Orders a set of points into a short travel route -- a survey route you can load 
                 keytip="EE">
           <tooltip heading="ArcMap Easter Egg">
             Opens a little pop-up card celebrating a classic ArcMap easter egg: back in ArcMap 8.3 and 9.0, typing the letters "jerry" during an edit session made a picture of Jerry Garcia appear on your map. The card shows the original artwork (recovered from the ArcMap 8.3 install) and the story behind it, with a credited link to the source photograph.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_ElementColorHelper"
+                caption="Element Color Helper"
+                className="ColorHelper.ElementColorHelperButton"
+                loadOnClick="true"
+                smallImage="Images\ColorHelper_16.png"
+                largeImage="Images\ColorHelper_32.png"
+                keytip="CO">
+          <tooltip heading="Element Color Helper">
+            Changes the colors of the selected layout or map elements all at once: a legend's text, a scale bar's marks and labels, a north arrow, text, drawn graphics. Select the elements, and the window lists every color found in them by what it is used for (text, lines, fills, markers), one row per color and use. Check the rows to change, pick a new color, assign it and apply. Each color keeps its own transparency. Pictures, legend patches and color-locked symbol layers are left alone; element frames and text halos are changed only if asked. Restore Original Colors puts everything back. Works at every license level.<disabledText />
           </tooltip>
         </button>
         <!-- Tool #100, reserved for it. The tooltip carries the notice that

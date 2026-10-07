@@ -260,6 +260,9 @@ them.
 - **Remove SLC** – moves the Service Layer Credits text out of the map frame.
 - **Create Shadow Polygons** – concentric ring buffers with graded
   transparency, a soft shadow behind a feature class.
+- **Element Color Helper** *(window)* – changes the colors of the selected
+  elements (legend text, scale bar, north arrow, text, drawn graphics) all at
+  once, each color keeping its transparency.
 - **Add Graphics** and **North Arrows** – galleries of compass-rose graphics
   and north arrows for maps and layouts, which also hold your own registered
   images.

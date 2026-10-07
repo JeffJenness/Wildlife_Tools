@@ -210,6 +210,7 @@ namespace WildlifeTools
             {
                 "WildlifeTools_RemoveSlc",
                 "WildlifeTools_ShadowPolygons",
+                "WildlifeTools_ElementColorHelper",
             }),
         })
         {

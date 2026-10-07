@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Headless test of the Element Color Helper's color walker. Compiles the
+       add-in's own ColorWalker.cs against ArcGIS.Core (plain CIM data
+       classes, which build outside ArcGIS Pro). Run from the repo root; see
+       the top of Program.cs. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>disable</Nullable>
+    <RootNamespace>ColorWalkerTest</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\WildlifeTools\ColorHelper\ColorWalker.cs" Link="ColorWalker.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="ArcGIS.Core">
+      <HintPath>C:\Program Files\ArcGIS\Pro\bin\ArcGIS.Core.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

@@ -32,8 +32,16 @@
     <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
       <Button DockPanel.Dock="Right" Content="Close" Width="84" Click="OnClose"
               IsCancel="True" />
-      <Button DockPanel.Dock="Right" Content="Help" Width="84" Margin="0,0,8,0"
-              Click="OnHelp" ToolTip="Open the online help page for this tool." />
+      <!-- the suite's round blue help button (as on the Graphic Background dialogs) -->
+      <Button DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,12,0" Width="20" Height="20"
+              Padding="0" Background="Transparent" BorderThickness="0" Cursor="Hand" Click="OnHelp"
+              ToolTip="Open the online help page for this tool">
+        <Grid>
+          <Ellipse Width="18" Height="18" Fill="#0079C1" />
+          <TextBlock Text="?" Foreground="White" FontWeight="Bold" FontSize="12"
+                     HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0" />
+        </Grid>
+      </Button>
       <TextBlock x:Name="txtStatus" TextWrapping="Wrap" VerticalAlignment="Center"
                  Margin="0,0,12,0" />
     </DockPanel>

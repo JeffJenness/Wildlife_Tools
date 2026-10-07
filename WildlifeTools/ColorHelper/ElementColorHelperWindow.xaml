@@ -1,0 +1,11 @@
+<controls:ProWindow x:Class="WildlifeTools.ColorHelper.ElementColorHelperWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        xmlns:local="clr-namespace:WildlifeTools.ColorHelper"
+        Title="Element Color Helper"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Width="900" Height="560" MinWidth="760" MinHeight="420"
+        ResizeMode="CanResizeWithGrip">
+  <local:ElementColorHelperPanel x:Name="panel" />
+</controls:ProWindow>

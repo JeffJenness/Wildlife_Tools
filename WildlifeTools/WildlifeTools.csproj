@@ -227,6 +227,10 @@
     <Content Include="Images\Scholarship_32.png" />
     <Content Include="DarkImages\Scholarship_16.png" />
     <Content Include="DarkImages\Scholarship_32.png" />
+    <Content Include="Images\ColorHelper_16.png" />
+    <Content Include="Images\ColorHelper_32.png" />
+    <Content Include="DarkImages\ColorHelper_16.png" />
+    <Content Include="DarkImages\ColorHelper_32.png" />
     <Content Include="Images\Jerry_16.png" />
     <Content Include="Images\Jerry_32.png" />
     <Content Include="DarkImages\Jerry_16.png" />
