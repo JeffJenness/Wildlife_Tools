@@ -115,6 +115,7 @@ import inscribed_geometry  # noqa: E402
 import concave_hull  # noqa: E402
 import accuracy_assessment  # noqa: E402
 import select_random  # noqa: E402
+import unit_converter  # noqa: E402
 import weighted_stats  # noqa: E402
 import raster_extremes  # noqa: E402
 import tool_metadata  # noqa: E402
@@ -431,7 +432,7 @@ class Toolbox(object):
                       MaximumInscribedGeometry, ConcaveHull,
                       ClassificationAccuracy,
                       CompareAccuracyAnalyses, AccuracySampleSize,
-                      SelectRandomRecords]
+                      SelectRandomRecords, ConvertFieldUnits]
 
 
 class LoCoHStandard(object):
@@ -16661,3 +16662,135 @@ class SelectRandomRecords(object):
             # traceback appended by arcgisscripting, redundant with the
             # one above and pointing at this line instead of the real
             # failure.
+
+
+class ConvertFieldUnits(object):
+    """Convert Field Units -- converts every value of a numeric field from
+    one measurement unit to another, with the Unit Converter's catalog. See
+    ``unit_converter.run_convert_field``."""
+
+    def __init__(self):
+        self.label = "Convert Field Units"
+        self.description = (
+            "Converts every value of a numeric field from one measurement "
+            "unit to another, into a new field or in place, with the Unit "
+            "Converter's catalog of more than 1,200 units in 23 measurement "
+            "classes (length, area, volume, flow, weight and mass, force, "
+            "speed, time, energy, pressure, power, temperature, angles and "
+            "slope, circles, tree diameters and basal area, counts, volumes "
+            "and masses per area, density, fire intensity and heat, and "
+            "animal unit months) plus any units of your own added in the Unit Converter "
+            "window. A layer or table view converts only the records it "
+            "shows: its selection and definition query are honored. Works "
+            "at every license level.")
+        self.category = "Data Tools"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        in_table = arcpy.Parameter(
+            displayName="Input table or layer", name="in_table",
+            datatype=["GPTableView", "GPFeatureLayer", "DETable", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        in_field = arcpy.Parameter(
+            displayName="Field to convert", name="in_field", datatype="Field",
+            parameterType="Required", direction="Input")
+        in_field.parameterDependencies = [in_table.name]
+        in_field.filter.list = ["Short", "Long", "BigInteger", "Float", "Double"]
+        unit_class = arcpy.Parameter(
+            displayName="Measurement class", name="unit_class", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        unit_class.filter.type = "ValueList"
+        from_unit = arcpy.Parameter(
+            displayName="From unit (the units the field holds now)", name="from_unit",
+            datatype="GPString", parameterType="Required", direction="Input")
+        from_unit.filter.type = "ValueList"
+        to_unit = arcpy.Parameter(
+            displayName="To unit", name="to_unit", datatype="GPString",
+            parameterType="Required", direction="Input")
+        to_unit.filter.type = "ValueList"
+        out_field = arcpy.Parameter(
+            displayName="Output field name (a new field, or the input field to convert in place)",
+            name="out_field", datatype="GPString", parameterType="Optional", direction="Input")
+        out_table = arcpy.Parameter(
+            displayName="Updated table", name="out_table", datatype="GPTableView",
+            parameterType="Derived", direction="Output")
+        out_table.parameterDependencies = [in_table.name]
+        try:
+            cat = unit_converter.load_catalog()
+            unit_class.filter.list = cat.class_names()
+            names = [u.name for u in cat.units_in()]
+            from_unit.filter.list = names
+            to_unit.filter.list = names
+        except Exception:
+            pass
+        return [in_table, in_field, unit_class, from_unit, to_unit, out_field, out_table]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        try:
+            cat = unit_converter.load_catalog()
+        except Exception:
+            return
+        P["unit_class"].filter.list = cat.class_names()
+        cls = P["unit_class"].valueAsText
+        # choosing a unit with no class chosen sets the class
+        if not cls:
+            for nm in ("from_unit", "to_unit"):
+                u = cat.find(P[nm].valueAsText)
+                if u is not None:
+                    P["unit_class"].value = u.cls
+                    cls = u.cls
+                    break
+        names = [u.name for u in cat.units_in(cls)]
+        P["from_unit"].filter.list = names
+        P["to_unit"].filter.list = names
+        # suggest an output field name once, when the field or the TO unit changes
+        if (P["in_field"].valueAsText and P["to_unit"].valueAsText
+                and (not P["in_field"].hasBeenValidated or not P["to_unit"].hasBeenValidated)
+                and not P["out_field"].altered):
+            dbf = False
+            try:
+                dbf = unit_converter._is_dbf_target(P["in_table"].value or P["in_table"].valueAsText)
+            except Exception:
+                pass
+            P["out_field"].value = unit_converter.suggest_field_name(
+                P["in_field"].valueAsText, P["to_unit"].valueAsText, dbf)
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        try:
+            cat = unit_converter.load_catalog()
+        except Exception:
+            return
+        ua, ub = cat.find(P["from_unit"].valueAsText), cat.find(P["to_unit"].valueAsText)
+        if ua is not None and ub is not None and ua.cls.lower() != ub.cls.lower():
+            P["to_unit"].setErrorMessage(
+                "'%s' is a unit of %s, but '%s' is a unit of %s. Choose two units of the same "
+                "measurement class." % (ua.name, ua.cls, ub.name, ub.cls))
+        if (P["out_field"].valueAsText and P["in_field"].valueAsText
+                and P["out_field"].valueAsText.lower() == P["in_field"].valueAsText.lower()):
+            P["out_field"].setWarningMessage(
+                "The values of the input field will be replaced by the converted values.")
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(unit_converter)
+            P = {p.name: p for p in parameters}
+            table = P["in_table"].value or P["in_table"].valueAsText
+            unit_converter.run_convert_field(
+                table, P["in_field"].valueAsText, P["from_unit"].valueAsText,
+                P["to_unit"].valueAsText, P["out_field"].valueAsText, messages=messages)
+            P["out_table"].value = P["in_table"].valueAsText
+        except arcpy.ExecuteError as e:
+            # a clean, expected failure: post it without a traceback (see
+            # SelectRandomRecords.execute)
+            messages.addErrorMessage(str(e))
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)

@@ -235,6 +235,10 @@
     <Content Include="Images\TpiSampler_32.png" />
     <Content Include="DarkImages\TpiSampler_16.png" />
     <Content Include="DarkImages\TpiSampler_32.png" />
+    <Content Include="Images\UnitConverter_16.png" />
+    <Content Include="Images\UnitConverter_32.png" />
+    <Content Include="DarkImages\UnitConverter_16.png" />
+    <Content Include="DarkImages\UnitConverter_32.png" />
     <Content Include="Images\Jerry_16.png" />
     <Content Include="Images\Jerry_32.png" />
     <Content Include="DarkImages\Jerry_16.png" />

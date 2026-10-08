@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+<!-- Unit Converter: an inch ruler above a centimeter ruler, with arrows both ways between them, dark theme -->
+<rect x="2" y="4" width="28" height="8" rx="1" fill="#E9C46A" stroke="#F6E2A8" stroke-width="1"/>
+<g stroke="#5A420D" stroke-width="1">
+  <line x1="5" y1="4.5" x2="5" y2="10"/><line x1="11.5" y1="4.5" x2="11.5" y2="8"/><line x1="18" y1="4.5" x2="18" y2="10"/>
+  <line x1="24.5" y1="4.5" x2="24.5" y2="8"/>
+</g>
+<rect x="2" y="20" width="28" height="8" rx="1" fill="#8FC1E3" stroke="#CFE6F7" stroke-width="1"/>
+<g stroke="#1F4E79" stroke-width="1">
+  <line x1="5" y1="27.5" x2="5" y2="22"/><line x1="8.2" y1="27.5" x2="8.2" y2="24.5"/><line x1="11.4" y1="27.5" x2="11.4" y2="22"/>
+  <line x1="14.6" y1="27.5" x2="14.6" y2="24.5"/><line x1="17.8" y1="27.5" x2="17.8" y2="22"/><line x1="21" y1="27.5" x2="21" y2="24.5"/>
+  <line x1="24.2" y1="27.5" x2="24.2" y2="22"/><line x1="27.4" y1="27.5" x2="27.4" y2="24.5"/>
+</g>
+<path d="M10 13.5 L10 18.5 M7.6 16.2 L10 18.7 L12.4 16.2" fill="none" stroke="#F08A7E" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M22 18.5 L22 13.5 M19.6 15.8 L22 13.3 L24.4 15.8" fill="none" stroke="#F08A7E" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

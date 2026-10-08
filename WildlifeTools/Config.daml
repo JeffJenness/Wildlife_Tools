@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.103.53.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.105.54.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>Wildlife and Forestry Tools</Name>
     <Description>Wildlife and forestry analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -93,6 +93,7 @@
           <button refID="WildlifeTools_FavoriteDatasets" size="large" />
           <button refID="WildlifeTools_AttributeSummary" size="large" />
           <button refID="WildlifeTools_SelectRandom" size="large" />
+          <button refID="WildlifeTools_UnitConverter" size="large" />
         </subgroup>
         <!-- WildlifeTools_SubGeometric retired 2026-08-29: the Geometric Tools group now hosts its gallery directly. -->
         <subgroup id="WildlifeTools_SubBreak" size="LargeThenMediumWhenMedium">
@@ -1082,6 +1083,17 @@ Orders a set of points into a short travel route -- a survey route you can load 
                 keytip="FD">
           <tooltip heading="Load Favorite Datasets">
             Opens the Load Favorite Datasets window: keep your most-used datasets in four groups you name yourself, then check any combination and add them all to the active map with one click -- no more hunting through folders and web servers. Any dataset a browse dialog can reach can be saved: feature classes, rasters, tables, and online services alike. Add items, remove them, and edit their descriptions; the lists are saved with your user profile and shared across projects. Datasets that appear to be unavailable (a missing path or an unreachable server) show in RED. A modernized recreation of the Load Favorite Datasets tool from the Springs Stewardship Institute (SSI) toolbar for ArcMap.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_UnitConverter"
+                caption="Unit Converter"
+                className="UnitConverter.UnitConverterButton"
+                loadOnClick="true"
+                smallImage="Images\UnitConverter_16.png"
+                largeImage="Images\UnitConverter_32.png"
+                keytip="UV">
+          <tooltip heading="Unit Converter">
+            Converts values between more than 1,200 measurement units in 23 classes (length, area, volume, flow, weight and mass, force, speed, time, energy, pressure, power, temperature, angles and slope, circles, tree diameters and basal area, counts, volumes and masses per area, density, fire intensity and heat, and animal unit months), with a definition and a source for every unit. Convert one number at a time, with fractions such as 5 1/8 accepted and one-to-one factors shown, or convert every value of a field in a table or layer. Save the conversions you use often, and add units and measurement classes of your own, defined against any unit already in the catalog. A modernized version of Jeff Jenness's Unit Converter of 2000. Works at every license level.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_SelectRandom"

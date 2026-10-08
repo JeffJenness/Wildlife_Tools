@@ -1,0 +1,11 @@
+<controls:ProWindow x:Class="WildlifeTools.UnitConverter.UnitConverterWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        xmlns:local="clr-namespace:WildlifeTools.UnitConverter"
+        Title="Unit Converter"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Width="1000" Height="760" MinWidth="820" MinHeight="600"
+        ResizeMode="CanResizeWithGrip">
+  <local:UnitConverterPanel x:Name="panel" />
+</controls:ProWindow>

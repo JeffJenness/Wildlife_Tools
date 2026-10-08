@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<metadata xml:lang="en"><Esri><CreaDate>20261007</CreaDate><CreaTime>00000000</CreaTime><ArcGISFormat>1.0</ArcGISFormat><SyncOnce>TRUE</SyncOnce></Esri>
+	<tool name="ConvertFieldUnits" displayname="Convert Field Units" toolboxalias="jenness">
+		<arcToolboxHelpPath>c:\program files\arcgis\pro\Resources\Help\gp</arcToolboxHelpPath>
+		<summary>Converts every value of a numeric field from one measurement unit to another, into a new field or in place, using the Unit Converter's catalog of more than 1,200 units in 23 measurement classes, plus any units of your own.</summary>
+		<usage>Converts every value of a numeric field from one measurement unit to another: inches to millimeters, acres to hectares, degrees Fahrenheit to degrees Celsius, percent slope to degrees, tree diameters to basal area. The units come from the same catalog as the <b>Unit Converter</b> window on the ribbon: more than 1,200 units in 23 measurement classes, each with a definition and a source, plus any units and measurement classes you have added in its <b>My Units</b> tab.
+
+<b>Which records.</b> A layer or table view converts only the records it shows: when it has a <i>selection</i>, only the selected records are converted, and its <i>definition query</i> is honored. A table or feature class given by its path converts every record.
+
+<b>Where the values go.</b> The converted values go into the <b>Output field</b>. A name that is not a field yet becomes a new Double field; when the table is in a geodatabase, its alias says what the field holds (for example, "Length in millimeters (from inches)"). The name of an existing numeric field replaces that field's values, and the name of the input field itself converts the values in place. Values written into an integer field are rounded to whole numbers, with a warning. A converted value replaces the old one permanently: ArcGIS Pro's Undo does not bring back a geoprocessing edit, so keep a copy of the data or write to a new field when in doubt.
+
+<b>Empty values.</b> A record with no value, or with a value that has no converted value (a negative circle area has no diameter), is left empty. Shapefiles and dBASE tables cannot hold an empty value, so those records get -999 there instead, and the run messages say how many.
+
+<b>The field is documented.</b> The tool writes the field's description into the Fields section of the dataset's metadata: what the field holds, the field it was converted from, the two units, this tool and the date, the definition of the To unit with its value in its class's base unit, the unit as the field's units of measure, and the smallest and largest converted values. Converting in place records that the field held the From unit and now holds the To unit.
+
+<b>Measurement class.</b> The From and To units must be in the same measurement class. Choosing a class shortens both unit lists; choosing a From unit with no class chosen fills the class in.
+
+<b>Precision.</b> Units are converted through their exact definitions wherever one exists (the international foot of 0.3048 meter, the U.S. gallon of 231 cubic inches, the imperial gallon of 4.54609 liters, the avoirdupois pound of 0.45359237 kilogram, standard gravity, and the units built from them). Where no exact definition exists, the factor comes from a published table. The catalog also holds the U.S. survey units (retired at the end of 2022, kept for older records) and every length and angle unit ArcGIS Pro offers for coordinate systems.
+
+The same conversion can be made from the <b>Convert a Field</b> tab of the Unit Converter window, which runs this tool.</usage>
+		<parameters>
+			<param name="in_table" displayname="Input table or layer" type="Required" direction="Input" datatype="Table View; Feature Layer; Table; Feature Class" expression="in_table"><dialogReference><para>The table, feature class, layer or table view whose field is converted. A layer or table view converts only the records it shows: its <b>selection</b> and <b>definition query</b> are honored.</para></dialogReference></param>
+			<param name="in_field" displayname="Field to convert" type="Required" direction="Input" datatype="Field" expression="in_field"><dialogReference><para>The numeric field holding the values to convert.</para></dialogReference></param>
+			<param name="unit_class" displayname="Measurement class" type="Optional" direction="Input" datatype="String" expression="{unit_class}"><dialogReference><para>The measurement class of the two units: Length, Area, Volume, Flow, Weight/Mass and so on, including any class of your own. Choosing one shortens the two unit lists. Optional: choosing a From unit fills it in.</para></dialogReference></param>
+			<param name="from_unit" displayname="From unit (the units the field holds now)" type="Required" direction="Input" datatype="String" expression="from_unit"><dialogReference><para>The unit the field's values are in now, as named in the Unit Converter (for example <b>inches</b>, <b>acres</b>, <b>degrees Fahrenheit</b>).</para></dialogReference></param>
+			<param name="to_unit" displayname="To unit" type="Required" direction="Input" datatype="String" expression="to_unit"><dialogReference><para>The unit to convert to. It must be in the same measurement class as the From unit.</para></dialogReference></param>
+			<param name="out_field" displayname="Output field name (a new field, or the input field to convert in place)" type="Optional" direction="Input" datatype="String" expression="{out_field}"><dialogReference><para>The field that receives the converted values. A new name adds a <b>Double</b> field; the name of an existing numeric field replaces its values; the name of the input field converts the values <i>in place</i>. Left empty, a name is made from the input field and the To unit, no longer than 10 characters for a shapefile or dBASE table.</para></dialogReference></param>
+			<param name="out_table" displayname="Updated table" type="Derived" direction="Output" datatype="Table View" expression="out_table"><dialogReference><para>The input table or layer, with the converted values. For chaining the tool in ModelBuilder.</para></dialogReference></param>
+		</parameters>
+		<scriptExamples><scriptExample><title>Convert Field Units example (stand-alone script)</title><para>Converts a field of stream lengths from feet to meters into a new field, then the same field's values in place from inches to millimeters in a second table.</para><code>import arcpy
+arcpy.ImportToolbox(r"C:\path\to\JennessEnterprisesTools.pyt")  # your installed path is shown in this tool's run messages
+
+# ---- the units are named as in the Unit Converter window ------------------
+# unit_class:  "Length and Distance" | "Area" | "Volume" | "Flow Rate" |
+#              "Weight/Mass" | "Force" | "Speed and Velocity" | "Time" |
+#              "Energy/Work" | "Pressure/Stress" | "Power" | "Temperature" |
+#              "Angle and Slope" | "Circle Area and Diameter" |
+#              "Tree Diameter and Basal Area (Forestry)" |
+#              "Stand Basal Area (Forestry)" | "Count per Area" | "Volume per Area" |
+#              "Mass per Area" | "Density" | "Fireline Intensity (Fire)" |
+#              "Heat per Area (Fire)" | "Animal Unit Months (Grazing)" |
+#              any class of your own (optional)
+# from_unit, to_unit:  any unit name of the class, e.g. "feet", "meters",
+#              "inches", "millimeters", "acres", "hectares", "degrees Fahrenheit",
+#              "degrees Celsius", "% (Percent) Slope", "circ. degrees"
+
+arcpy.jenness.ConvertFieldUnits(
+    in_table=r"C:\data\streams.gdb\reaches",
+    in_field="Length_ft",
+    unit_class="Length and Distance",
+    from_unit="feet",
+    to_unit="meters",
+    out_field="Length_m")
+
+arcpy.jenness.ConvertFieldUnits(
+    in_table=r"C:\data\plots.gdb\trees",
+    in_field="Height",
+    from_unit="inches",
+    to_unit="millimeters",
+    out_field="Height")     # the input field itself: converted in place</code></scriptExample></scriptExamples>
+	</tool>
+	<dataIdInfo><searchKeys><keyword>unit conversion</keyword><keyword>convert units</keyword><keyword>measurement units</keyword><keyword>field calculation</keyword><keyword>metric</keyword><keyword>imperial</keyword><keyword>US customary</keyword><keyword>feet to meters</keyword><keyword>acres to hectares</keyword><keyword>temperature</keyword><keyword>slope</keyword><keyword>basal area</keyword></searchKeys><idCredit>Jeff Jenness, Jenness Enterprises (http://www.jennessent.com). The catalog of units and their definitions comes from Jeff Jenness's Unit Converter (2000-2001).</idCredit></dataIdInfo>
+</metadata>

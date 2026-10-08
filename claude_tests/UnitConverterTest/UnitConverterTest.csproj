@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Checks the Unit Converter engine (the add-in's
+       WildlifeTools/UnitConverter/UnitCatalog.cs, compiled in as source, no
+       ArcGIS) against the real bundled catalog: known conversions, round
+       trips through every unit, the nonlinear classes, user units and
+       classes, saving and reloading, and number parsing and formatting.
+       Run from the repo root with dotnet run and the project option: claude_tests/UnitConverterTest -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <RootNamespace>UnitConverterTest</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\WildlifeTools\UnitConverter\UnitCatalog.cs" />
+  </ItemGroup>
+</Project>

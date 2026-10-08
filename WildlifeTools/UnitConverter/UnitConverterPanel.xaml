@@ -1,0 +1,397 @@
+<UserControl x:Class="WildlifeTools.UnitConverter.UnitConverterPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!-- The whole content of the Unit Converter window: plain WPF, so it can be
+       drawn and checked outside ArcGIS Pro (claude_tests/UnitConverterRender).
+       Everything that needs Pro (the map's tables, running the Convert Field
+       Units tool, the help page) is in UnitConverterActions, reached from
+       clicks. No colors are set on text: the window's theme applies. -->
+  <UserControl.Resources>
+    <Style TargetType="ToolTip">
+      <Setter Property="MaxWidth" Value="420" />
+      <Setter Property="ContentTemplate">
+        <Setter.Value>
+          <DataTemplate>
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="400" />
+          </DataTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="Head" TargetType="TextBlock">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Margin" Value="0,0,0,4" />
+    </Style>
+    <Style x:Key="DefBox" TargetType="TextBox">
+      <Setter Property="IsReadOnly" Value="True" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+      <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
+      <Setter Property="Height" Value="96" />
+      <Setter Property="Margin" Value="0,6,0,0" />
+    </Style>
+    <!-- the find box above each unit list, one row -->
+    <Style x:Key="FindBox" TargetType="TextBox">
+      <Setter Property="Margin" Value="0,0,0,4" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="AcceptsReturn" Value="False" />
+      <Setter Property="TextWrapping" Value="NoWrap" />
+    </Style>
+    <!-- the faint "Find a unit" shown in an empty find box; each one's
+         trigger names its own box -->
+    <Style x:Key="FindHint" TargetType="TextBlock">
+      <Setter Property="Text" Value="Find a unit" />
+      <Setter Property="IsHitTestVisible" Value="False" />
+      <Setter Property="Opacity" Value="0.5" />
+      <Setter Property="Margin" Value="6,0,0,4" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Visibility" Value="Collapsed" />
+    </Style>
+  </UserControl.Resources>
+
+  <DockPanel Margin="12">
+    <!-- bottom bar -->
+    <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+      <Button DockPanel.Dock="Right" Content="Close" Width="84" Click="OnClose" IsCancel="True" />
+      <Button DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,12,0" Width="20" Height="20"
+              Padding="0" Background="Transparent" BorderThickness="0" Cursor="Hand" Click="OnHelp"
+              ToolTip="Open the online help page for this tool">
+        <Grid>
+          <Ellipse Width="18" Height="18" Fill="#0079C1" />
+          <TextBlock Text="?" Foreground="White" FontWeight="Bold" FontSize="12"
+                     HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0" />
+        </Grid>
+      </Button>
+      <TextBlock x:Name="txtStatus" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0" />
+    </DockPanel>
+
+    <TabControl x:Name="tabs">
+      <!-- ============================================================ numbers -->
+      <TabItem Header="Convert Numbers">
+        <Grid Margin="10">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+
+          <!-- class, search, saved conversions -->
+          <WrapPanel Grid.Row="0" Margin="0,0,0,8">
+            <TextBlock Text="Measurement class:" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <ComboBox x:Name="cmbClass" Width="190" VerticalAlignment="Center" SelectionChanged="OnClassChanged"
+                      ToolTip="Show only the units of one measurement class. Not required: with all classes shown, choosing a FROM unit picks its class." />
+            <TextBlock Text="Saved conversions:" VerticalAlignment="Center" Margin="14,0,6,0" />
+            <ComboBox x:Name="cmbSaved" Width="190" VerticalAlignment="Center" SelectionChanged="OnSavedChosen"
+                      ToolTip="Conversions you use often. Choose one to set the FROM and TO units in one step." />
+            <Button x:Name="btnSave" Content="Save" Padding="10,2" Margin="6,0,0,0" Click="OnSaveConversion" IsEnabled="False"
+                    ToolTip="Save the current FROM and TO units as a conversion you can choose again from the list, in this window and next time." />
+            <Button x:Name="btnUnsave" Content="Remove" Padding="10,2" Margin="4,0,0,0" Click="OnRemoveConversion" IsEnabled="False"
+                    ToolTip="Remove the chosen saved conversion from the list." />
+          </WrapPanel>
+
+          <!-- FROM and TO -->
+          <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <DockPanel Grid.Column="0">
+              <TextBlock DockPanel.Dock="Top" Style="{StaticResource Head}" Text="FROM unit" />
+              <Grid DockPanel.Dock="Top">
+                <TextBox x:Name="txtFindFrom" Style="{StaticResource FindBox}" TextChanged="OnFindChanged"
+                         ToolTip="Type part of a unit's name, or of a class's name, to shorten the FROM list: 'acre' finds acres, acre-feet and the units per acre; 'cattle' finds the cattle of every source of animal unit equivalents; ArcGIS Pro's names work too (FeetUS). With all classes listed, it searches every class. Two words must both appear." />
+                <TextBlock>
+                  <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource FindHint}">
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding Text, ElementName=txtFindFrom}" Value="">
+                          <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </TextBlock.Style>
+                </TextBlock>
+              </Grid>
+              <TextBox DockPanel.Dock="Bottom" x:Name="txtFromDef" Style="{StaticResource DefBox}"
+                       ToolTip="The definition of the FROM unit." />
+              <ListBox x:Name="lstFrom" SelectionChanged="OnFromChanged" MinHeight="140"
+                       ToolTip="The unit the value is in now." />
+            </DockPanel>
+            <Button Grid.Column="1" x:Name="btnReverse" Content="&#x21C4;" FontSize="16" Width="38" Height="30"
+                    Margin="10,0" VerticalAlignment="Center" Click="OnReverse" IsEnabled="False"
+                    ToolTip="Reverse: switch the FROM and TO units." />
+            <DockPanel Grid.Column="2">
+              <TextBlock DockPanel.Dock="Top" Style="{StaticResource Head}" Text="TO unit" />
+              <Grid DockPanel.Dock="Top">
+                <TextBox x:Name="txtFindTo" Style="{StaticResource FindBox}" TextChanged="OnFindChanged"
+                         ToolTip="Type part of a unit's name, or of a class's name, to shorten the TO list: 'hectare' finds hectares and the units per hectare; 'mule deer' finds the mule deer of every source of animal unit equivalents; ArcGIS Pro's names work too (FeetUS). With all classes listed, it searches every class. Two words must both appear." />
+                <TextBlock>
+                  <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource FindHint}">
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding Text, ElementName=txtFindTo}" Value="">
+                          <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </TextBlock.Style>
+                </TextBlock>
+              </Grid>
+              <TextBox DockPanel.Dock="Bottom" x:Name="txtToDef" Style="{StaticResource DefBox}"
+                       ToolTip="The definition of the TO unit." />
+              <ListBox x:Name="lstTo" SelectionChanged="OnToChanged" MinHeight="140"
+                       ToolTip="The unit to convert to." />
+            </DockPanel>
+          </Grid>
+
+          <!-- input and output -->
+          <Grid Grid.Row="2" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <DockPanel Grid.Column="0">
+              <TextBlock DockPanel.Dock="Top" Style="{StaticResource Head}" Text="Value to convert" />
+              <TextBlock DockPanel.Dock="Right" x:Name="txtInUnit" VerticalAlignment="Center" Margin="8,0,0,0" MinWidth="80" />
+              <TextBox x:Name="txtInput" FontSize="15" TextChanged="OnInputChanged"
+                       ToolTip="A number, scientific notation (1.5e3), a fraction (1/4) or a whole number and a fraction separated by a space (5 1/8 is 5.125). The result updates as you type." />
+            </DockPanel>
+            <TextBlock Grid.Column="1" Text="=" FontSize="18" VerticalAlignment="Bottom" Margin="14,0,14,2" />
+            <DockPanel Grid.Column="2">
+              <TextBlock DockPanel.Dock="Top" Style="{StaticResource Head}" Text="Converted value" />
+              <Button DockPanel.Dock="Right" x:Name="btnCopy" Content="Copy" Padding="10,2" Margin="8,0,0,0" Click="OnCopyResult" IsEnabled="False"
+                      ToolTip="Copy the converted value to the clipboard, as shown." />
+              <TextBlock DockPanel.Dock="Right" x:Name="txtOutUnit" VerticalAlignment="Center" Margin="8,0,0,0" MinWidth="80" />
+              <TextBox x:Name="txtOutput" FontSize="15" IsReadOnly="True" />
+            </DockPanel>
+          </Grid>
+
+          <!-- one-to-one -->
+          <Border Grid.Row="3" BorderBrush="#9A9A9A" BorderThickness="1" Padding="8,6" Margin="0,10,0,0">
+            <StackPanel>
+              <TextBlock Style="{StaticResource Head}" Text="One-to-one conversions" />
+              <TextBlock x:Name="txtOneA" TextWrapping="Wrap" FontFamily="Consolas" />
+              <TextBlock x:Name="txtOneB" TextWrapping="Wrap" FontFamily="Consolas" />
+            </StackPanel>
+          </Border>
+
+          <!-- format -->
+          <WrapPanel Grid.Row="4" Margin="0,10,0,0">
+            <TextBlock Text="Decimal places:" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <Button Content="&#x2212;" Width="24" Click="OnPlacesMinus" ToolTip="One decimal place fewer" />
+            <TextBlock x:Name="txtPlaces" Text="4" Width="26" TextAlignment="Center" VerticalAlignment="Center" />
+            <Button Content="+" Width="24" Click="OnPlacesPlus" ToolTip="One decimal place more" />
+            <RadioButton x:Name="rbDecimal" GroupName="fmt" Content="Decimal" IsChecked="True" Margin="18,0,0,0"
+                         VerticalAlignment="Center" Checked="OnFormatChanged" />
+            <RadioButton x:Name="rbScientific" GroupName="fmt" Content="Scientific notation" Margin="12,0,0,0"
+                         VerticalAlignment="Center" Checked="OnFormatChanged" />
+            <TextBlock x:Name="txtPrecision" Margin="18,0,0,0" VerticalAlignment="Center" Opacity="0.75" TextWrapping="Wrap"
+                       Text="The format follows the size of the result until you choose one." />
+          </WrapPanel>
+        </Grid>
+      </TabItem>
+
+      <!-- ============================================================ tables -->
+      <TabItem Header="Convert a Field">
+        <Grid Margin="10">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+          <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="220" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Table or layer:" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <ComboBox Grid.Column="1" x:Name="cmbTable" SelectionChanged="OnTableChanged"
+                      ToolTip="A layer or standalone table of the active map. Only the records it shows are converted: its selection and its definition query are honored." />
+            <Button Grid.Column="2" Content="&#x21BB;" Width="26" Margin="4,0,0,0" Click="OnRefreshTables"
+                    ToolTip="Read the map's layers and tables again." />
+            <TextBlock Grid.Column="3" Text="Field:" VerticalAlignment="Center" Margin="14,0,6,0" />
+            <ComboBox Grid.Column="4" x:Name="cmbField" SelectionChanged="OnFieldChanged"
+                      ToolTip="The numeric field whose values are converted." />
+          </Grid>
+          <TextBlock Grid.Row="1" x:Name="txtRecords" Margin="0,6,0,8" TextWrapping="Wrap" />
+
+          <Grid Grid.Row="2">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <WrapPanel Grid.Row="0" Grid.ColumnSpan="3" Margin="0,0,0,8">
+              <TextBlock Text="Measurement class:" VerticalAlignment="Center" Margin="0,0,6,0" />
+              <ComboBox x:Name="cmbClassT" Width="190" SelectionChanged="OnClassChangedT" />
+            </WrapPanel>
+            <DockPanel Grid.Row="1" Grid.Column="0">
+              <TextBlock DockPanel.Dock="Top" Style="{StaticResource Head}" Text="FROM unit (the units the field holds now)" />
+              <Grid DockPanel.Dock="Top">
+                <TextBox x:Name="txtFindFromT" Style="{StaticResource FindBox}" TextChanged="OnFindChangedT"
+                         ToolTip="Type part of a unit's name, or of a class's name, to shorten the FROM list. With all classes listed, it searches every class. Two words must both appear." />
+                <TextBlock>
+                  <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource FindHint}">
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding Text, ElementName=txtFindFromT}" Value="">
+                          <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </TextBlock.Style>
+                </TextBlock>
+              </Grid>
+              <TextBox DockPanel.Dock="Bottom" x:Name="txtFromDefT" Style="{StaticResource DefBox}" />
+              <ListBox x:Name="lstFromT" SelectionChanged="OnUnitsChangedT" MinHeight="120" />
+            </DockPanel>
+            <Button Grid.Row="1" Grid.Column="1" x:Name="btnReverseT" Content="&#x21C4;" FontSize="16" Width="38" Height="30"
+                    Margin="10,0" VerticalAlignment="Center" Click="OnReverseT" ToolTip="Reverse: switch the FROM and TO units." />
+            <DockPanel Grid.Row="1" Grid.Column="2">
+              <TextBlock DockPanel.Dock="Top" Style="{StaticResource Head}" Text="TO unit" />
+              <Grid DockPanel.Dock="Top">
+                <TextBox x:Name="txtFindToT" Style="{StaticResource FindBox}" TextChanged="OnFindChangedT"
+                         ToolTip="Type part of a unit's name, or of a class's name, to shorten the TO list. With all classes listed, it searches every class. Two words must both appear." />
+                <TextBlock>
+                  <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource FindHint}">
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding Text, ElementName=txtFindToT}" Value="">
+                          <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </TextBlock.Style>
+                </TextBlock>
+              </Grid>
+              <TextBox DockPanel.Dock="Bottom" x:Name="txtToDefT" Style="{StaticResource DefBox}" />
+              <ListBox x:Name="lstToT" SelectionChanged="OnUnitsChangedT" MinHeight="120" />
+            </DockPanel>
+          </Grid>
+
+          <WrapPanel Grid.Row="3" Margin="0,10,0,0">
+            <TextBlock Text="Output field:" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <TextBox x:Name="txtOutField" Width="170" VerticalAlignment="Center" TextChanged="OnOutFieldTyped"
+                     ToolTip="The name of a new field (Double) for the converted values. The name of an existing numeric field replaces its values." />
+            <CheckBox x:Name="chkInPlace" Content="Convert the values in place (replaces the field's values)" Margin="16,0,0,0"
+                      VerticalAlignment="Center" Checked="OnInPlaceChanged" Unchecked="OnInPlaceChanged"
+                      ToolTip="Write the converted values back into the field itself instead of a new field. The old values are gone afterwards; ArcGIS Pro's Undo does not bring back a geoprocessing edit." />
+          </WrapPanel>
+          <WrapPanel Grid.Row="4" Margin="0,10,0,0">
+            <Button x:Name="btnConvertField" Content="Convert Field" Padding="14,4" FontWeight="SemiBold" Click="OnConvertField" IsEnabled="False"
+                    ToolTip="Run the Convert Field Units tool with these settings. The run is recorded in the geoprocessing History, so it can be repeated or copied as Python." />
+            <Button x:Name="btnOpenTool" Content="Open as Geoprocessing Tool" Padding="12,4" Margin="8,0,0,0" Click="OnOpenTool"
+                    ToolTip="Open the Convert Field Units tool in the Geoprocessing pane with these settings filled in, for ModelBuilder, batch runs or Python." />
+          </WrapPanel>
+        </Grid>
+      </TabItem>
+
+      <!-- ============================================================ my units -->
+      <TabItem Header="My Units">
+        <Grid Margin="10">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="380" />
+          </Grid.ColumnDefinitions>
+          <DockPanel Grid.Column="0" Margin="0,0,12,0">
+            <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8">
+              Your own units and measurement classes. A unit is defined against any unit
+              already in its class, as "1 rod = 16.5 feet", and from then on converts to
+              every unit of the class, in this window and in the Convert Field Units tool.
+              They are kept in your user profile and survive reinstalling the add-in.
+            </TextBlock>
+            <ListView x:Name="lstMine" SelectionChanged="OnMineChosen">
+              <ListView.View>
+                <GridView>
+                  <GridViewColumn Header="Unit" Width="160" DisplayMemberBinding="{Binding Name}" />
+                  <GridViewColumn Header="Class" Width="130" DisplayMemberBinding="{Binding ClassName}" />
+                  <GridViewColumn Header="Defined as" Width="230" DisplayMemberBinding="{Binding DefinedText}" />
+                </GridView>
+              </ListView.View>
+            </ListView>
+          </DockPanel>
+          <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+              <TextBlock Style="{StaticResource Head}" x:Name="txtEditHead" Text="Add a unit" />
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Text="Name (plural):" VerticalAlignment="Center" Margin="0,0,6,4" />
+                <TextBox Grid.Row="0" Grid.Column="1" x:Name="txtNewName" Margin="0,0,0,4" TextChanged="OnNewNameChanged"
+                         ToolTip="The name in the unit lists, usually plural: 'rods'." />
+                <TextBlock Grid.Row="1" Text="Singular:" VerticalAlignment="Center" Margin="0,0,6,4" />
+                <TextBox Grid.Row="1" Grid.Column="1" x:Name="txtNewSingular" Margin="0,0,0,4" TextChanged="OnNewNameChanged"
+                         ToolTip="The name for exactly one: 'rod'." />
+                <TextBlock Grid.Row="2" Text="Class:" VerticalAlignment="Center" Margin="0,0,6,4" />
+                <ComboBox Grid.Row="2" Grid.Column="1" x:Name="cmbNewClass" Margin="0,0,0,4" SelectionChanged="OnNewClassChanged" />
+              </Grid>
+              <TextBlock Text="Defined as:" Margin="0,4,0,2" />
+              <WrapPanel>
+                <TextBlock x:Name="txtOneNew" Text="1 (unit) =" VerticalAlignment="Center" Margin="0,0,6,0" />
+                <TextBox x:Name="txtNewFactor" Width="90" VerticalAlignment="Center"
+                         ToolTip="How many of the unit on the right make one of yours. Fractions work: 1/12." />
+                <ComboBox x:Name="cmbNewRef" Width="170" Margin="6,0,0,0" VerticalAlignment="Center"
+                          ToolTip="The unit yours is defined against. Any unit of the class will do; yours then converts to all of them." />
+              </WrapPanel>
+              <WrapPanel Margin="0,4,0,0">
+                <TextBlock Text="plus" VerticalAlignment="Center" Margin="0,0,6,0" />
+                <TextBox x:Name="txtNewOffset" Width="90" Text="0" VerticalAlignment="Center"
+                         ToolTip="An offset, for scales that do not start at zero, as temperatures do. Leave it at 0 for nearly every unit." />
+                <TextBlock Text="(an offset, as for temperature scales; usually 0)" VerticalAlignment="Center" Margin="6,0,0,0" Opacity="0.75" />
+              </WrapPanel>
+              <TextBlock Text="Definition:" Margin="0,6,0,2" />
+              <TextBox x:Name="txtNewDef" Height="70" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" />
+              <WrapPanel Margin="0,8,0,0">
+                <Button Content="New" Padding="10,2" Click="OnNewUnit" ToolTip="Clear the form to add another unit." />
+                <Button x:Name="btnSaveUnit" Content="Save Unit" Padding="10,2" Margin="6,0,0,0" Click="OnSaveUnit" FontWeight="SemiBold" />
+                <Button x:Name="btnDeleteUnit" Content="Delete" Padding="10,2" Margin="6,0,0,0" Click="OnDeleteUnit" IsEnabled="False"
+                        ToolTip="Delete the chosen unit of yours. A unit others are defined against cannot be deleted until they are." />
+              </WrapPanel>
+
+              <Separator Margin="0,14,0,10" />
+              <TextBlock Style="{StaticResource Head}" Text="Add a measurement class" />
+              <TextBlock TextWrapping="Wrap" Margin="0,0,0,6" Opacity="0.85"
+                         Text="For a kind of measure that is not in the catalog. Name the class and its first unit; then add more units to it above." />
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Text="Class name:" VerticalAlignment="Center" Margin="0,0,6,4" />
+                <TextBox Grid.Row="0" Grid.Column="1" x:Name="txtClassName" Margin="0,0,0,4" />
+                <TextBlock Grid.Row="1" Text="First unit (plural):" VerticalAlignment="Center" Margin="0,0,6,4" />
+                <TextBox Grid.Row="1" Grid.Column="1" x:Name="txtClassBase" Margin="0,0,0,4" />
+                <TextBlock Grid.Row="2" Text="Singular:" VerticalAlignment="Center" Margin="0,0,6,4" />
+                <TextBox Grid.Row="2" Grid.Column="1" x:Name="txtClassBaseSingular" Margin="0,0,0,4" />
+              </Grid>
+              <Button Content="Add Class" Padding="10,2" HorizontalAlignment="Left" Margin="0,4,0,0" Click="OnAddClass" />
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </TabItem>
+    </TabControl>
+  </DockPanel>
+</UserControl>

@@ -1,0 +1,232 @@
+{
+ "citations": {
+  "fr1959": {
+   "short": "NBS, Refinement of values for the yard and the pound (1959)",
+   "full": "National Bureau of Standards. 1959. Refinement of values for the yard and the pound. Federal Register 24:5348 (July 1, 1959).",
+   "url": "https://www.ngs.noaa.gov/PUBS_LIB/FedRegister/FRdoc59-5442.pdf"
+  },
+  "fr2020": {
+   "short": "NIST and NGS, Deprecation of the U.S. survey foot (2020)",
+   "full": "National Institute of Standards and Technology and National Geodetic Survey. 2020. Deprecation of the United States (U.S.) survey foot. Federal Register 85:62698-62707 (October 5, 2020).",
+   "url": "https://www.govinfo.gov/content/pkg/FR-2020-10-05/pdf/2020-21902.pdf"
+  },
+  "uk_wma1985": {
+   "short": "UK Weights and Measures Act 1985, Schedule 1",
+   "full": "United Kingdom. Weights and Measures Act 1985 (c. 72), Schedule 1, as amended: the gallon is 4.54609 cubic decimetres.",
+   "url": "https://www.legislation.gov.uk/ukpga/1985/72/schedule/1"
+  },
+  "nbs_sp447": {
+   "short": "Judson, NBS SP 447 (1976), Appendix 4",
+   "full": "Judson, L. V. 1976. Weights and Measures Standards of the United States: A Brief History. NBS Special Publication 447 (first issued 1963, updated 1976). National Bureau of Standards, Washington, D.C. Appendix 4, The International Nautical Mile.",
+   "url": "https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nbsspecialpublication447.pdf"
+  },
+  "iau2012": {
+   "short": "IAU 2012 Resolution B2 (the astronomical unit)",
+   "full": "International Astronomical Union. 2012. Resolution B2 on the re-definition of the astronomical unit of length. XXVIII General Assembly, Beijing.",
+   "url": "https://iauarchive.eso.org/static/resolutions/IAU2012_English.pdf"
+  },
+  "iau2015": {
+   "short": "IAU 2015 Resolution B2, footnote 4 (the parsec)",
+   "full": "International Astronomical Union. 2015. Resolution B2 on recommended zero points for the absolute and apparent bolometric magnitude scales, footnote 4 (the parsec is exactly 648,000/pi astronomical units). XXIX General Assembly, Honolulu.",
+   "url": "https://iauarchive.eso.org/static/resolutions/IAU2015_English.pdf"
+  },
+  "iau_ly": {
+   "short": "IAU, Measuring the Universe (the light-year)",
+   "full": "International Astronomical Union. Measuring the Universe: the IAU and astronomical units. Web page, IAU archive. The light-year is the distance light travels in a vacuum in one Julian year of 365.25 days, 9,460,730,472,580.8 kilometers.",
+   "url": "https://iauarchive.eso.org/public/themes/measuring/"
+  },
+  "ahd_smoot": {
+   "short": "American Heritage Dictionary, smoot",
+   "full": "American Heritage Dictionary of the English Language. Online edition. Smoot: a unit of measurement equal to five feet, seven inches (1.7018 meters).",
+   "url": "https://www.ahdictionary.com/word/search.html?q=smoot"
+  },
+  "mit_smoot": {
+   "short": "MIT News (1998), Graffiti briefly defaces bridge smoots",
+   "full": "MIT News. 1998. Graffiti briefly defaces bridge smoots. MIT Tech Talk, May 6, 1998. Massachusetts Institute of Technology, Cambridge, Massachusetts.",
+   "url": "https://news.mit.edu/1998/smoot-0506"
+  },
+  "tx_nrc_21077": {
+   "short": "Texas Natural Resources Code, Section 21.077",
+   "full": "Texas Natural Resources Code, Section 21.077, Unit of Measurement (as amended in 2021): one vara is 33-1/3 inches exactly, with one meter equal to 39.37 inches exactly.",
+   "url": "https://statutes.capitol.texas.gov/Docs/NR/htm/NR.21.htm"
+  },
+  "blm_manual2009": {
+   "short": "BLM Manual of Surveying Instructions (2009)",
+   "full": "Bureau of Land Management. 2009. Manual of Surveying Instructions for the Survey of the Public Lands of the United States. U.S. Department of the Interior, Bureau of Land Management. Chapters II and III.",
+   "url": "https://www.blm.gov/sites/default/files/Manual_Of_Surveying_Instructions_2009.pdf"
+  },
+  "nbs_c459": {
+   "short": "NBS Circular C459 (1947)",
+   "full": "National Bureau of Standards. 1947. Announcement of Changes in Electrical and Photometric Units. NBS Circular C459. U.S. Department of Commerce, Washington, D.C.",
+   "url": "https://nvlpubs.nist.gov/nistpubs/Legacy/circ/nbscircular459.pdf"
+  },
+  "cgpm1901": {
+   "short": "3rd CGPM (1901), the conventional value of standard gravity",
+   "full": "General Conference on Weights and Measures (CGPM). 1901. Declaration on the unit of mass and on the definition of weight; conventional value of g(n) (3rd CGPM). Reproduced in the SI Brochure, 9th edition, Appendix 1.",
+   "url": "https://www.bipm.org/documents/20126/41483022/SI-Brochure-9-EN.pdf"
+  },
+  "codata_ev": {
+   "short": "NIST CODATA, electron volt-joule relationship",
+   "full": "National Institute of Standards and Technology. CODATA Internationally Recommended Values of the Fundamental Physical Constants: electron volt-joule relationship, exact since the 2019 revision of the SI.",
+   "url": "https://physics.nist.gov/cgi-bin/cuu/Value?evj"
+  },
+  "nbs_mp233": {
+   "short": "NBS Miscellaneous Publication 233 (1960)",
+   "full": "National Bureau of Standards. 1960. Units of Weight and Measure: Definitions and Tables of Equivalents. NBS Miscellaneous Publication 233. U.S. Department of Commerce, Washington, D.C.",
+   "url": "https://nvlpubs.nist.gov/nistpubs/Legacy/MP/nbsmiscellaneouspub233.pdf"
+  },
+  "osu_ec1127": {
+   "short": "Oester and Bowers, OSU Extension EC 1127 (2009)",
+   "full": "Oester, P., and S. Bowers. 2009. Measuring Timber Products Harvested from Your Woodland. EC 1127 (revised December 2009). Oregon State University Extension Service, Corvallis.",
+   "url": "https://extension.oregonstate.edu/sites/default/files/documents/ec1127.pdf"
+  }
+ },
+ "units": {
+  "fr1959": [
+   "yards",
+   "feet",
+   "inches",
+   "pounds",
+   "pounds (avdp)",
+   "grains",
+   "acres (US survey)",
+   "chains (Survey)",
+   "chains (US survey)",
+   "cu. feet (Survey)",
+   "feet (US Survey)",
+   "inches (US survey)",
+   "links (Survey)",
+   "links (US survey)",
+   "miles (US survey)",
+   "rods (US survey)",
+   "sq chains (Survey)",
+   "sq feet (Survey)",
+   "sq inches (US survey)",
+   "sq links (Survey)",
+   "sq miles (US survey)",
+   "sq yards (US survey)",
+   "yards (US survey)"
+  ],
+  "fr2020": [
+   "acres (US survey)",
+   "chains (Survey)",
+   "chains (US survey)",
+   "cu. feet (Survey)",
+   "feet (US Survey)",
+   "inches (US survey)",
+   "links (Survey)",
+   "links (US survey)",
+   "miles (US survey)",
+   "rods (US survey)",
+   "sq chains (Survey)",
+   "sq feet (Survey)",
+   "sq inches (US survey)",
+   "sq links (Survey)",
+   "sq miles (US survey)",
+   "sq yards (US survey)",
+   "yards (US survey)"
+  ],
+  "uk_wma1985": [
+   "gallons (Imp.)",
+   "gallons (Brit)"
+  ],
+  "bipm_si": [
+   "miles, nautical",
+   "sq nautical miles",
+   "light speed"
+  ],
+  "nbs_sp447": [
+   "nautical miles (US)",
+   "sq nautical miles (US)"
+  ],
+  "iau2012": [
+   "astronomical units",
+   "parsecs",
+   "cu. parsecs"
+  ],
+  "iau2015": [
+   "parsecs",
+   "cu. parsecs"
+  ],
+  "iau_ly": [
+   "light years",
+   "cu. light years"
+  ],
+  "ahd_smoot": [
+   "smoots"
+  ],
+  "mit_smoot": [
+   "smoots"
+  ],
+  "tx_nrc_21077": [
+   "varas (Texas)"
+  ],
+  "blm_manual2009": [
+   "chains (Survey)",
+   "chains (US survey)",
+   "links (Survey)",
+   "links (US survey)",
+   "rods (US survey)",
+   "sq chains (Survey)",
+   "sections",
+   "townships",
+   "varas (Texas)"
+  ],
+  "nbs_c459": [
+   "attowatts (Int)",
+   "centiwatts (Int)",
+   "deciwatts (Int)",
+   "dekawatts (Int)",
+   "exawatts (Int)",
+   "femtowatts (Int)",
+   "gigawatts (Int)",
+   "hectowatts (Int)",
+   "joules (Int)",
+   "joules (Int) / hr",
+   "joules (Int) / min",
+   "joules (Int) / sec",
+   "kilowatts (Int)",
+   "megawatts (Int)",
+   "microwatts (Int)",
+   "milliwatts (Int)",
+   "myriawatts (Int)",
+   "nanowatts (Int)",
+   "petawatts (Int)",
+   "picowatts (Int)",
+   "terawatts (Int)",
+   "volt-coul. (Int) / hr",
+   "volt-coul. (Int) / min",
+   "volt-coul. (Int) / sec",
+   "volt-coulombs (Int)",
+   "watt-hours (Int)",
+   "watt-seconds (Int)",
+   "watts (Int)",
+   "yoctowatts (Int)",
+   "yottawatts (Int)",
+   "zeptowatts (Int)",
+   "zettawatts (Int)"
+  ],
+  "cgpm1901": [
+   "kilograms-force",
+   "ounces-force",
+   "pounds-force (avdp)",
+   "tons-force"
+  ],
+  "codata_ev": [
+   "electron-volts"
+  ],
+  "nbs_mp233": [
+   "board feet",
+   "board feet per acre"
+  ],
+  "osu_ec1127": [
+   "board feet",
+   "board feet per acre",
+   "MBF (thousand board feet)",
+   "MBF per acre",
+   "MMBF (million board feet)",
+   "cunits",
+   "cunits per acre"
+  ]
+ }
+}
