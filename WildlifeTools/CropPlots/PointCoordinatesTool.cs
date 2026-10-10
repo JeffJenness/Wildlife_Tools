@@ -349,30 +349,60 @@ namespace WildlifeTools.CropPlots
             ElementFactory.Instance.CreateGraphicElement(container, graphic, GraphicName, false, null);
             if (s.Marker)
             {
-                CIMPointSymbol marker = SymbolFactory.Instance.ConstructPointSymbol(Rgb(s.MarkerColor), s.MarkerSize,
-                    SimpleMarkerStyle.Circle);
+                CIMSymbol marker = MarkerSymbol(s);
+                ElementFactory.Instance.CreateGraphicElement(container, anchor, marker, GraphicName + " marker", false, null);
+            }
+        }
+
+        /// <summary>The marker to draw: the user's own point symbol from
+        /// Point Coordinates Settings (any ArcGIS Pro marker, saved as CIM
+        /// JSON), or the default circle when none is saved or it cannot be
+        /// read.</summary>
+        internal static CIMPointSymbol MarkerSymbol(PointCoordinatesSettings s)
+        {
+            if (!string.IsNullOrWhiteSpace(s.MarkerSymbol))
+            {
                 try
                 {
-                    if (marker.SymbolLayers?.FirstOrDefault() is CIMVectorMarker vm)
+                    if (CIMSymbolReference.FromJson(s.MarkerSymbol, null)?.Symbol is CIMPointSymbol own)
                     {
-                        foreach (CIMMarkerGraphic mg in vm.MarkerGraphics ?? Array.Empty<CIMMarkerGraphic>())
-                        {
-                            if (mg.Symbol is CIMPolygonSymbol ps)
-                            {
-                                var layers = new List<CIMSymbolLayer>(ps.SymbolLayers ?? Array.Empty<CIMSymbolLayer>())
-                                {
-                                    SymbolFactory.Instance.ConstructStroke(Rgb("#4E4E4E"), 1.2, SimpleLineStyle.Solid),
-                                };
-                                ps.SymbolLayers = layers.ToArray();
-                            }
-                        }
+                        return own;
                     }
                 }
                 catch
                 {
                 }
-                ElementFactory.Instance.CreateGraphicElement(container, anchor, marker, GraphicName + " marker", false, null);
             }
+            return DefaultMarker(s.MarkerColor, s.MarkerSize);
+        }
+
+        /// <summary>The default marker: a circle of <paramref name="color"/>
+        /// and <paramref name="size"/> points with a thin dark gray outline.</summary>
+        internal static CIMPointSymbol DefaultMarker(string color, double size)
+        {
+            CIMPointSymbol marker = SymbolFactory.Instance.ConstructPointSymbol(Rgb(color), size,
+                SimpleMarkerStyle.Circle);
+            try
+            {
+                if (marker.SymbolLayers?.FirstOrDefault() is CIMVectorMarker vm)
+                {
+                    foreach (CIMMarkerGraphic mg in vm.MarkerGraphics ?? Array.Empty<CIMMarkerGraphic>())
+                    {
+                        if (mg.Symbol is CIMPolygonSymbol ps)
+                        {
+                            var layers = new List<CIMSymbolLayer>(ps.SymbolLayers ?? Array.Empty<CIMSymbolLayer>())
+                            {
+                                SymbolFactory.Instance.ConstructStroke(Rgb("#4E4E4E"), 1.2, SimpleLineStyle.Solid),
+                            };
+                            ps.SymbolLayers = layers.ToArray();
+                        }
+                    }
+                }
+            }
+            catch
+            {
+            }
+            return marker;
         }
     }
 }

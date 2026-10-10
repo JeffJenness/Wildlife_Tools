@@ -81,9 +81,10 @@
             <CheckBox x:Name="chkLabels" Content="Label the lines (Lat, Lon, X, Y)" Checked="OnChanged" Unchecked="OnChanged" />
           </WrapPanel>
           <StackPanel Orientation="Horizontal" Margin="8,4,0,0">
-            <TextBlock Style="{StaticResource Lbl}" Text="Decimal places: degrees" />
+            <TextBlock Style="{StaticResource Lbl}" Text="Decimal places:" />
+            <TextBlock Style="{StaticResource Lbl}" Text="Decimal degrees" Margin="4,0,6,0" />
             <TextBox x:Name="txtDdDec" Width="36" TextChanged="OnChanged" ToolTip="Decimal places of the decimal-degree lines." />
-            <TextBlock Style="{StaticResource Lbl}" Text="seconds" Margin="12,0,6,0" />
+            <TextBlock Style="{StaticResource Lbl}" Text="DMS seconds" Margin="12,0,6,0" />
             <TextBox x:Name="txtDmsDec" Width="36" TextChanged="OnChanged" ToolTip="Decimal places of the seconds in the degrees-minutes-seconds lines." />
             <TextBlock Style="{StaticResource Lbl}" Text="X and Y" Margin="12,0,6,0" />
             <TextBox x:Name="txtXyDec" Width="36" TextChanged="OnChanged" ToolTip="Decimal places of the projected X and Y." />
@@ -121,7 +122,9 @@
             <TextBlock Style="{StaticResource Lbl}" Text="Style:" />
             <ComboBox x:Name="cboCallout" Width="130" SelectionChanged="OnChanged"
                       ToolTip="None: bare text. Simple line: a leader line to the point. Background: a box behind the text with a leader. Balloon: a rounded box whose tail points at the point." />
-            <TextBlock Style="{StaticResource Lbl}" Text="Background:" Margin="14,0,6,0" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="8,4,0,0">
+            <TextBlock Style="{StaticResource Lbl}" Text="Background:" />
             <mapctl:ColorPickerControl x:Name="cpBackground" Width="56" Height="22" Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="PickerChanged" />
             <TextBlock Style="{StaticResource Lbl}" Text="Outline:" Margin="14,0,6,0" />
             <mapctl:ColorPickerControl x:Name="cpOutline" Width="56" Height="22" Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="PickerChanged" />
@@ -131,11 +134,17 @@
 
           <TextBlock Style="{StaticResource Header}" Text="Marker at the point" />
           <StackPanel Orientation="Horizontal" Margin="8,0,0,0">
-            <CheckBox x:Name="chkMarker" Content="Draw a marker at the clicked point" Checked="OnChanged" Unchecked="OnChanged" />
-            <TextBlock Style="{StaticResource Lbl}" Text="Color:" />
-            <mapctl:ColorPickerControl x:Name="cpMarker" Width="56" Height="22" Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="PickerChanged" />
-            <TextBlock Style="{StaticResource Lbl}" Text="Size:" Margin="14,0,6,0" />
-            <TextBox x:Name="txtMarkerSize" Width="40" TextChanged="OnChanged" ToolTip="Marker size in points." />
+            <CheckBox x:Name="chkMarker" Content="Draw a marker at the clicked point" Checked="OnChanged" Unchecked="OnChanged"
+                      VerticalAlignment="Center" />
+            <Border Width="40" Height="40" Margin="12,0,6,0" BorderBrush="#60808080" BorderThickness="1"
+                    Background="White" ToolTip="The marker the tool will draw, at its actual size (a marker larger than the box is shrunk to fit).">
+              <Image x:Name="imgMarker" Stretch="Uniform" StretchDirection="DownOnly"
+                     HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <Button Content="Choose marker…" Padding="10,2" VerticalAlignment="Center" Click="OnChooseMarker"
+                    ToolTip="Open ArcGIS Pro's Format Point Symbol editor: pick any marker from your styles (Gallery) or set its shape, color, size, outline and more (Properties)." />
+            <Button Content="Default marker" Padding="10,2" Margin="6,0,0,0" VerticalAlignment="Center" Click="OnDefaultMarker"
+                    ToolTip="Go back to the default marker: a 7-point green circle with a thin gray outline." />
           </StackPanel>
         </StackPanel>
       </ScrollViewer>

@@ -27,7 +27,10 @@ namespace WildlifeTools
     /// <summary>
     /// Hosts Esri's own Format-Symbol editor (<see cref="SymbolEditingControl"/>, the
     /// same control behind the "Format Polygon Symbol" pane) in a modal dialog so the
-    /// user can design the circle's polygon symbol — gallery plus full properties.
+    /// user can design a symbol — gallery plus full properties. Used for the Graphic
+    /// Background tools' polygon symbols and (since 2026-10-10) for the Point
+    /// Coordinates marker, a point symbol: the gallery follows the symbol type passed
+    /// in, and the caller sets Title ("Format Point Symbol").
     ///
     /// SymbolEditingControl is a public type in an Internal namespace (like the element
     /// tool base used by the compass tools): undocumented/unsupported, so revalidate

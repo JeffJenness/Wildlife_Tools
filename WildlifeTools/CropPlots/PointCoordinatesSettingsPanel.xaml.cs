@@ -25,6 +25,11 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
 using ArcGIS.Core.CIM;
+using ArcGIS.Core.Geometry;
+using ArcGIS.Desktop.Framework;
+using ArcGIS.Desktop.Framework.Threading.Tasks;
+using ArcGIS.Desktop.Internal.Mapping;
+using ArcGIS.Desktop.Mapping;
 using ArcGIS.Desktop.Mapping.Controls;
 
 namespace WildlifeTools.CropPlots
@@ -85,15 +90,14 @@ namespace WildlifeTools.CropPlots
             cboNameStyle.SelectedItem = StyleName(s.Names);
             cboCallout.SelectedItem = s.Callout;
             chkMarker.IsChecked = s.Marker;
-            txtMarkerSize.Text = s.MarkerSize.ToString("0.#", CultureInfo.CurrentCulture);
             ApplyColor(cpCoord, s.Coordinates.Color);
             ApplyColor(cpName, s.Names.Color);
             ApplyColor(cpBackground, s.BackgroundColor);
             ApplyColor(cpOutline, s.OutlineColor);
             ApplyColor(cpLeader, s.LeaderColor);
-            ApplyColor(cpMarker, s.MarkerColor);
             _loading = false;
             Preview();
+            UpdateMarkerSwatch();
         }
 
         private string FontOrDefault(string family)
@@ -163,7 +167,6 @@ namespace WildlifeTools.CropPlots
             StyleFrom(cboNameStyle.SelectedItem as string ?? "Italic", _s.Names);
             _s.Callout = cboCallout.SelectedItem as string ?? _s.Callout;
             _s.Marker = chkMarker.IsChecked == true;
-            _s.MarkerSize = Dbl(txtMarkerSize, _s.MarkerSize);
         }
 
         private void OnChanged(object sender, RoutedEventArgs e)
@@ -223,8 +226,7 @@ namespace WildlifeTools.CropPlots
             if (ReferenceEquals(cp, cpName)) return _s.Names.Color;
             if (ReferenceEquals(cp, cpBackground)) return _s.BackgroundColor;
             if (ReferenceEquals(cp, cpOutline)) return _s.OutlineColor;
-            if (ReferenceEquals(cp, cpLeader)) return _s.LeaderColor;
-            return _s.MarkerColor;
+            return _s.LeaderColor;
         }
 
         private void StoreColor(ColorPickerControl cp, string hex)
@@ -234,7 +236,6 @@ namespace WildlifeTools.CropPlots
             else if (ReferenceEquals(cp, cpBackground)) _s.BackgroundColor = hex;
             else if (ReferenceEquals(cp, cpOutline)) _s.OutlineColor = hex;
             else if (ReferenceEquals(cp, cpLeader)) _s.LeaderColor = hex;
-            else if (ReferenceEquals(cp, cpMarker)) _s.MarkerColor = hex;
         }
 
         private static void ApplyColor(ColorPickerControl cp, string hex)
@@ -305,6 +306,80 @@ namespace WildlifeTools.CropPlots
             txtPreview.Background = _s.Callout == PointCoordinatesSettings.CalloutNone
                 ? null : new SolidColorBrush(Color.FromRgb((byte)br, (byte)bg, (byte)bb));
             txtPreview.Padding = _s.Callout == PointCoordinatesSettings.CalloutNone ? new Thickness(0) : new Thickness(5);
+        }
+
+        // =====================================================================
+        // the marker: any ArcGIS Pro point symbol, through Esri's own
+        // Format Point Symbol editor (the dialog the Graphic Background
+        // tools use for their polygon symbols)
+        // =====================================================================
+        private async void OnChooseMarker(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                PointCoordinatesSettings snapshot = _s.Clone();
+                CIMSymbolReference start = await QueuedTask.Run(
+                    () => PointCoordinatesTool.MarkerSymbol(snapshot).MakeSymbolReference());
+                var win = new SymbolEditorWindow(start)
+                {
+                    Owner = Window.GetWindow(this) ?? FrameworkApplication.Current.MainWindow,
+                    Title = "Format Point Symbol",
+                };
+                if (win.ShowDialog() == true && win.Result?.Symbol is CIMPointSymbol)
+                {
+                    _s.MarkerSymbol = win.Result.ToJson();
+                    if (chkMarker.IsChecked != true)
+                    {
+                        chkMarker.IsChecked = true;          // choosing a marker means drawing it
+                    }
+                    UpdateMarkerSwatch();
+                    txtStatus.Text = "Marker chosen (click Save to keep it).";
+                }
+            }
+            catch (Exception ex)
+            {
+                txtStatus.Text = "The symbol editor could not be opened: " + ex.Message;
+            }
+        }
+
+        private void OnDefaultMarker(object sender, RoutedEventArgs e)
+        {
+            var d = new PointCoordinatesSettings();
+            _s.MarkerSymbol = null;
+            _s.MarkerColor = d.MarkerColor;
+            _s.MarkerSize = d.MarkerSize;
+            UpdateMarkerSwatch();
+            txtStatus.Text = "Default marker restored (click Save to keep it).";
+        }
+
+        /// <summary>Draws the current marker into the swatch with Esri's own
+        /// symbol preview renderer (on the MCT), so any marker -- shape,
+        /// picture, multi-layer -- shows as it will on the map, at its ACTUAL
+        /// size: the image is rendered one pixel per device-independent unit
+        /// (a point = 96/72 px), at least the box's size, so a small marker
+        /// shows 1:1 and only a marker bigger than the box is shrunk to fit
+        /// (Stretch Uniform, DownOnly, in the XAML).</summary>
+        private async void UpdateMarkerSwatch()
+        {
+            try
+            {
+                PointCoordinatesSettings snapshot = _s.Clone();
+                const int box = 38;                       // the swatch's inner size
+                ImageSource img = await QueuedTask.Run(() =>
+                {
+                    CIMPointSymbol sym = PointCoordinatesTool.MarkerSymbol(snapshot);
+                    double sizePt = 0;
+                    try { sizePt = sym.GetSize(); } catch { }
+                    int px = Math.Max(box, (int)Math.Ceiling(sizePt * 96.0 / 72.0) + 8);
+                    MapPoint p = MapPointBuilderEx.CreateMapPoint(px / 2.0, px / 2.0);
+                    return MappingHelpers.GetImageSourceFromGeometry(p, sym, px, px);
+                });
+                imgMarker.Source = img;
+            }
+            catch
+            {
+                imgMarker.Source = null;          // leave the swatch blank if preview rendering fails
+            }
         }
 
         private void OnSave(object sender, RoutedEventArgs e)

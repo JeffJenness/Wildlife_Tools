@@ -78,8 +78,14 @@ namespace WildlifeTools.CropPlots
         public string OutlineColor { get; set; } = "#C8C8C8";
         public string LeaderColor { get; set; } = "#808080";
         public bool Marker { get; set; } = true;
+        /// <summary>Color and size of the DEFAULT marker (a circle with a
+        /// gray outline), used while <see cref="MarkerSymbol"/> is empty.</summary>
         public string MarkerColor { get; set; } = "#55FF00";
         public double MarkerSize { get; set; } = 7;
+        /// <summary>The user's own marker: any ArcGIS Pro point symbol, as
+        /// the CIM symbol reference's JSON (from Format Point Symbol); null
+        /// or empty = the default circle.</summary>
+        public string MarkerSymbol { get; set; }
 
         [JsonIgnore]
         public bool AnyLine => ShowGcsName || ShowLatDD || ShowLonDD || ShowLatDMS || ShowLonDMS || ShowX || ShowY || ShowPcsName;
