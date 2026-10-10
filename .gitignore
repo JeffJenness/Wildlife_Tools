@@ -28,3 +28,7 @@ Deploy_Folder/
 *.snk
 *.cer
 *.crt
+
+# Private drafts of enhancement requests to Esri (kept on disk, never published)
+Esri_Enhancement_Request_*.md
+Esri_Reply_*.md
