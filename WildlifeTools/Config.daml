@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.105.54.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.111.56.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>Wildlife and Forestry Tools</Name>
     <Description>Wildlife and forestry analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -94,6 +94,7 @@
           <button refID="WildlifeTools_AttributeSummary" size="large" />
           <button refID="WildlifeTools_SelectRandom" size="large" />
           <button refID="WildlifeTools_UnitConverter" size="large" />
+          <button refID="WildlifeTools_AddRandomNumbers" size="large" />
         </subgroup>
         <!-- WildlifeTools_SubGeometric retired 2026-08-29: the Geometric Tools group now hosts its gallery directly. -->
         <subgroup id="WildlifeTools_SubBreak" size="LargeThenMediumWhenMedium">
@@ -254,6 +255,37 @@
                 keytip="NA">
           <tooltip heading="North Arrows">
             Click the active layout to add a north arrow drawn with the artwork last chosen from the gallery under this button (at first, the Jennessent Compass Rose with the north dot), tied to the layout's map frame (or unassociated if the layout has no map frame yet), then resize it with the selection handles. Available only in a layout view.&#xD;&#xD;Click the arrow to choose another north arrow: one of the add-in's compass designs, or one of your own images registered through Manage at the foot of the gallery.<disabledText />
+          </tooltip>
+        </tool>
+        <tool id="WildlifeTools_PointCoordinates"
+                caption="Point Coordinates"
+                className="CropPlots.PointCoordinatesTool"
+                loadOnClick="true"
+                smallImage="Images\PointCoordinates_16.png"
+                largeImage="Images\PointCoordinates_32.png"
+                keytip="PC">
+          <tooltip heading="Point Coordinates">
+            Click a map, or a map frame on a layout, to add a callout graphic describing that point: longitude and latitude with the geographic coordinate system's name and, when the map is projected, the projected X and Y with the projected system's name -- in the lines and style chosen in Point Coordinates Settings. On a layout the graphic describes the topmost map frame under the click and goes into the layout itself, where it is easy to move and edit; a click outside every map frame adds nothing. A port of the CropCentric Add Coordinates tool (Jenness and Wiebers 2018).
+          </tooltip>
+        </tool>
+        <tool id="WildlifeTools_AxisSketchTool"
+                caption="Draw Axis"
+                className="CropPlots.AxisSketchTool"
+                loadOnClick="true"
+                smallImage="Images\ArrayAlongAxes_16.png"
+                largeImage="Images\ArrayAlongAxes_32.png">
+          <tooltip heading="Draw Axis">
+            Draws a line on the map for the Plot Designer and Create Array along Axes windows (activated from their Draw buttons; not on the ribbon). Hold Ctrl as you finish the line to snap its bearing to the nearest 45 degrees.
+          </tooltip>
+        </tool>
+        <tool id="WildlifeTools_AnchorSketchTool"
+                caption="Click Anchor Point"
+                className="CropPlots.AnchorSketchTool"
+                loadOnClick="true"
+                smallImage="Images\PlotDesigner_16.png"
+                largeImage="Images\PlotDesigner_32.png">
+          <tooltip heading="Click Anchor Point">
+            Clicks the anchor point of the plot block for the Plot Designer window (activated from its button; not on the ribbon).
           </tooltip>
         </tool>
         <!-- "Manage..." at the foot of each gallery, where Esri's North Arrow gallery has
@@ -1094,6 +1126,61 @@ Orders a set of points into a short travel route -- a survey route you can load 
                 keytip="UV">
           <tooltip heading="Unit Converter">
             Converts values between more than 1,200 measurement units in 23 classes (length, area, volume, flow, weight and mass, force, speed, time, energy, pressure, power, temperature, angles and slope, circles, tree diameters and basal area, counts, volumes and masses per area, density, fire intensity and heat, and animal unit months), with a definition and a source for every unit. Convert one number at a time, with fractions such as 5 1/8 accepted and one-to-one factors shown, or convert every value of a field in a table or layer. Save the conversions you use often, and add units and measurement classes of your own, defined against any unit already in the catalog. A modernized version of Jeff Jenness's Unit Converter of 2000. Works at every license level.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_PlotDesigner"
+                caption="Plot Designer"
+                className="CropPlots.PlotDesignerButton"
+                loadOnClick="true"
+                smallImage="Images\PlotDesigner_16.png"
+                largeImage="Images\PlotDesigner_32.png"
+                keytip="PD">
+          <tooltip heading="Plot Designer">
+            Lay out a block of rectangular research plots -- so many plots along a direction and so many across, each of a given length and width -- repeated for every replication with the rate values in a fresh random order each time. Click the anchor point and draw the plot direction on the map (to match a fenceline, say), watch the preview, and create the plots as a feature class with Rep, Plot, Plot_ID and Rate, plus optional center points and centerlines. A port of the CropCentric Plot Designer (Jenness and Wiebers 2018). Works at every license level.
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_FusePlotsAndField"
+                caption="Fuse Plots and Field"
+                className="CropPlots.FusePlotsButton"
+                loadOnClick="true"
+                smallImage="Images\FusePlots_16.png"
+                largeImage="Images\FusePlots_32.png"
+                keytip="FP">
+          <tooltip heading="Fuse Plots and Field">
+            Combine a field polygon layer and a research-plot polygon layer into one prescription map: the field is dissolved by rate (an attribute, a standard rate, or both), every plot is cut out of it, and the plots are added with their own rates and attributes, so no ground is counted twice. A port of the CropCentric Fuse Plot and Boundary Feature Class tool (Jenness and Wiebers 2018). Works at every license level.
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_CreateArrayAlongAxes"
+                caption="Create Array along Axes"
+                className="CropPlots.ArrayAlongAxesButton"
+                loadOnClick="true"
+                smallImage="Images\ArrayAlongAxes_16.png"
+                largeImage="Images\ArrayAlongAxes_32.png"
+                keytip="AA">
+          <tooltip heading="Create Array along Axes">
+            Copy a selected graphic (or a layer's selected features) along an axis drawn on the map, and optionally along a second axis, stepping by the shape's own extent plus a separation so the copies never overlap -- with a live preview, optional clipping to selected polygons, and the result as graphics, a feature class, or both. A port of the CropCentric Create Graphic Array tool (Jenness and Wiebers 2018). Works at every license level.
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_AddRandomNumbers"
+                caption="Add Random Numbers"
+                className="CropPlots.AddRandomNumbersButton"
+                loadOnClick="true"
+                smallImage="Images\AddRandomNumbers_16.png"
+                largeImage="Images\AddRandomNumbers_32.png"
+                keytip="RN">
+          <tooltip heading="Add Random Numbers">
+            Fill a numeric field of the selected records with a constant, a random permutation of 1 to N (every record a different number -- the classic way to assign treatments at random), random integers or decimals within a range, decimals between 0 and 1, or draws from a normal distribution. A missing field is created. A port of the CropCentric Add Random Numbers tool (Jenness and Wiebers 2018). Works at every license level.
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_PointCoordinatesSettings"
+                caption="Point Coordinates Settings"
+                className="CropPlots.PointCoordinatesSettingsButton"
+                loadOnClick="true"
+                smallImage="Images\PointCoordinatesSettings_16.png"
+                largeImage="Images\PointCoordinatesSettings_32.png"
+                keytip="PS">
+          <tooltip heading="Point Coordinates Settings">
+            Choose what the Point Coordinates tool writes into its callout -- latitude and longitude in decimal degrees or degrees-minutes-seconds, the geographic coordinate system's name, the projected X and Y and the projected system's name -- with the font, size, style and color of the coordinate lines and of the names, the callout style (none, simple line, background, balloon) and the marker at the point.
           </tooltip>
         </button>
         <button id="WildlifeTools_SelectRandom"

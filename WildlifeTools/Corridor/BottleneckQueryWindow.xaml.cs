@@ -43,6 +43,7 @@ namespace WildlifeTools.Corridor
                                      string sourceName)
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             if (member != null)
             {
                 txtPrompt.Text = string.Format(

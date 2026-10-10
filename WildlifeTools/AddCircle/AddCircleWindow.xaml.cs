@@ -62,6 +62,7 @@ namespace WildlifeTools
             double mapShadowMax = 100)
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             _symbol = defaultSymbol;
             _prefs = prefs ?? new BackgroundToolPrefs();
             _isLayout = isLayout;

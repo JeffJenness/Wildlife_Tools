@@ -54,6 +54,7 @@ namespace WildlifeTools.Corridor
         internal HistogramAddDataWindow(Layer preselect = null)
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             cboStride.ItemsSource = new[]
             {
                 new StrideChoice { Stride = 1, Label = "Every cell (exact -- default)" },

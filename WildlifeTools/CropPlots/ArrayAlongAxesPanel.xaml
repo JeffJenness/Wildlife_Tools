@@ -1,0 +1,195 @@
+<UserControl x:Class="WildlifeTools.CropPlots.ArrayAlongAxesPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!-- The whole content of the Create Array along Axes window: plain WPF, so
+       it can be drawn and checked outside ArcGIS Pro. Everything that needs
+       Pro (the selected graphic, the map's layers, the sketch tools, the
+       preview overlays, running the geoprocessing tool, the help page) is in
+       CropPlotActions and the sketch tools, reached from clicks. The
+       green/gray lights beside each section show whether it is complete, as
+       the CropCentric dialog did. No colors are set on text: the window's
+       light or dark theme applies. -->
+  <UserControl.Resources>
+    <Style TargetType="ToolTip">
+      <Setter Property="MaxWidth" Value="420" />
+      <Setter Property="ContentTemplate">
+        <Setter.Value>
+          <DataTemplate>
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="400" />
+          </DataTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="Light" TargetType="Ellipse">
+      <Setter Property="Width" Value="12" />
+      <Setter Property="Height" Value="12" />
+      <Setter Property="Margin" Value="0,0,8,0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Fill" Value="#9E9E9E" />
+      <Setter Property="Stroke" Value="#60000000" />
+      <Setter Property="StrokeThickness" Value="0.8" />
+    </Style>
+    <Style x:Key="Header" TargetType="TextBlock">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style x:Key="Lbl" TargetType="TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Margin" Value="0,0,6,0" />
+    </Style>
+    <Style x:Key="Num" TargetType="TextBox">
+      <Setter Property="Width" Value="64" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Margin" Value="0,0,12,0" />
+    </Style>
+  </UserControl.Resources>
+
+  <DockPanel Margin="14">
+    <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8">
+      Copy a selected graphic (or a layer's selected features) along an axis,
+      and optionally along a second axis, stepping by its own extent plus a
+      separation so the copies never overlap. Draw the axes on the map, watch
+      the preview, then create the array as graphics, a feature class, or
+      both: the Create Array along Axes geoprocessing tool does the work, so
+      the run is recorded in History.
+    </TextBlock>
+
+    <!-- buttons -->
+    <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+      <Button DockPanel.Dock="Right" Content="Close" Width="84" Click="OnClose" IsCancel="True" />
+      <Button DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,12,0" Width="20" Height="20"
+              Click="OnHelp" ToolTip="Open the Create Array along Axes help page.">
+        <Button.Template>
+          <ControlTemplate TargetType="Button">
+            <Grid Background="Transparent">
+              <Ellipse Fill="#1F6FB2" />
+              <TextBlock Text="?" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Grid>
+          </ControlTemplate>
+        </Button.Template>
+      </Button>
+      <Button x:Name="btnCreate" Content="Create Array" Padding="14,4" FontWeight="SemiBold" Click="OnCreate" IsEnabled="False"
+              ToolTip="Run the Create Array along Axes tool with these settings. The run is recorded in the geoprocessing History." />
+      <Button x:Name="btnOpenTool" Content="Open as Geoprocessing Tool" Padding="12,4" Margin="8,0,0,0" Click="OnOpenTool"
+              ToolTip="Open the Create Array along Axes tool in the Geoprocessing pane with these settings filled in, for ModelBuilder, batch runs or Python." />
+      <TextBlock x:Name="txtStatus" VerticalAlignment="Center" Margin="14,0,0,0" TextWrapping="Wrap" />
+    </DockPanel>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+      <StackPanel>
+
+        <!-- 1. source -->
+        <DockPanel Margin="0,4,0,2">
+          <Ellipse x:Name="lightSource" Style="{StaticResource Light}" />
+          <TextBlock Style="{StaticResource Header}" Text="What to copy" />
+        </DockPanel>
+        <StackPanel Margin="20,0,0,6">
+          <StackPanel Orientation="Horizontal">
+            <RadioButton x:Name="rbGraphic" GroupName="src" Content="The selected graphic on the map" IsChecked="True" VerticalAlignment="Center"
+                         Checked="OnSourceChanged" ToolTip="One polygon, line or point graphic selected on the active map (draw one with Pro's graphics tools and select it)." />
+            <Button Content="&#x21BB;" Width="26" Margin="8,0,0,0" Click="OnRefreshSource"
+                    ToolTip="Read the selection again after selecting a different graphic or feature." />
+            <TextBlock x:Name="txtSourceNote" Style="{StaticResource Lbl}" Margin="10,0,0,0" Opacity="0.85" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+            <RadioButton x:Name="rbLayer" GroupName="src" Content="The selected features of layer:" VerticalAlignment="Center"
+                         Checked="OnSourceChanged" ToolTip="Every selected feature of a polygon layer is copied as a group." />
+            <ComboBox x:Name="cmbSourceLayer" Width="260" Margin="8,0,0,0" VerticalAlignment="Center" SelectionChanged="OnSourceChanged"
+                      ToolTip="A polygon layer of the active map with a selection." />
+          </StackPanel>
+        </StackPanel>
+
+        <!-- 2. axis 1 -->
+        <DockPanel Margin="0,8,0,2">
+          <Ellipse x:Name="lightAxis1" Style="{StaticResource Light}" />
+          <TextBlock Style="{StaticResource Header}" Text="Axis 1 (required)" />
+        </DockPanel>
+        <StackPanel Orientation="Horizontal" Margin="20,0,0,4">
+          <TextBlock Style="{StaticResource Lbl}" Text="Bearing:" />
+          <TextBox x:Name="txtBearing1" Style="{StaticResource Num}" Text="90" TextChanged="OnAnyChanged"
+                   ToolTip="Direction of the axis, degrees clockwise from north. Copies 'forward' go this way." />
+          <Button Content="Draw on the map" Padding="10,2" Click="OnDrawAxis1"
+                  ToolTip="Draw a line on the map along the axis: its bearing fills the box. Hold Ctrl as you finish to snap to the nearest 45 degrees." />
+          <TextBlock Style="{StaticResource Lbl}" Text="Separation:" Margin="14,0,6,0" />
+          <TextBox x:Name="txtGap1" Style="{StaticResource Num}" Text="0" TextChanged="OnAnyChanged"
+                   ToolTip="Space between neighboring copies along this axis, on top of the shape's own extent (0 = touching)." />
+          <ComboBox x:Name="cmbUnits" Width="120" VerticalAlignment="Center" SelectionChanged="OnAnyChanged"
+                    ToolTip="Units of both separations. Distances are measured along the ground (geodesic)." />
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="20,0,0,6">
+          <TextBlock Style="{StaticResource Lbl}" Text="Copies forward:" />
+          <TextBox x:Name="txtForward" Style="{StaticResource Num}" Text="3" TextChanged="OnAnyChanged"
+                   ToolTip="How many copies in the bearing's direction, not counting the original." />
+          <TextBlock Style="{StaticResource Lbl}" Text="Copies backward:" />
+          <TextBox x:Name="txtBack" Style="{StaticResource Num}" Text="0" TextChanged="OnAnyChanged"
+                   ToolTip="How many copies the opposite way." />
+          <TextBlock x:Name="txtStep1" Style="{StaticResource Lbl}" Opacity="0.85" />
+        </StackPanel>
+
+        <!-- 3. axis 2 -->
+        <DockPanel Margin="0,8,0,2">
+          <Ellipse x:Name="lightAxis2" Style="{StaticResource Light}" />
+          <CheckBox x:Name="chkAxis2" Content="Axis 2 (optional)" FontWeight="SemiBold" VerticalAlignment="Center"
+                    Checked="OnAxis2Toggle" Unchecked="OnAxis2Toggle"
+                    ToolTip="Also copy the whole row of copies along a second axis, to the right and to the left." />
+        </DockPanel>
+        <StackPanel x:Name="pnlAxis2" IsEnabled="False" Opacity="0.6">
+          <StackPanel Orientation="Horizontal" Margin="20,0,0,4">
+            <TextBlock Style="{StaticResource Lbl}" Text="Bearing:" />
+            <TextBox x:Name="txtBearing2" Style="{StaticResource Num}" Text="" TextChanged="OnAnyChanged"
+                     ToolTip="Direction of the second axis. Empty = axis 1 plus 90 degrees. Copies 'to the right' go this way." />
+            <Button Content="Draw on the map" Padding="10,2" Click="OnDrawAxis2"
+                    ToolTip="Draw the second axis on the map. Hold Ctrl as you finish to snap to the nearest 45 degrees from axis 1." />
+            <TextBlock Style="{StaticResource Lbl}" Text="Separation:" Margin="14,0,6,0" />
+            <TextBox x:Name="txtGap2" Style="{StaticResource Num}" Text="0" TextChanged="OnAnyChanged"
+                     ToolTip="Space between neighboring copies along the second axis." />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="20,0,0,6">
+            <TextBlock Style="{StaticResource Lbl}" Text="Copies to the right:" />
+            <TextBox x:Name="txtRight" Style="{StaticResource Num}" Text="0" TextChanged="OnAnyChanged"
+                     ToolTip="How many copies in the second bearing's direction." />
+            <TextBlock Style="{StaticResource Lbl}" Text="Copies to the left:" />
+            <TextBox x:Name="txtLeft" Style="{StaticResource Num}" Text="0" TextChanged="OnAnyChanged"
+                     ToolTip="How many copies the opposite way." />
+            <TextBlock x:Name="txtStep2" Style="{StaticResource Lbl}" Opacity="0.85" />
+          </StackPanel>
+        </StackPanel>
+
+        <!-- 4. clip -->
+        <DockPanel Margin="0,8,0,2">
+          <Ellipse x:Name="lightClip" Style="{StaticResource Light}" />
+          <TextBlock Style="{StaticResource Header}" Text="Clip the copies to selected polygons (optional)" />
+        </DockPanel>
+        <StackPanel Orientation="Horizontal" Margin="20,0,0,6">
+          <ComboBox x:Name="cmbClip" Width="300" VerticalAlignment="Center" SelectionChanged="OnAnyChanged"
+                    ToolTip="A polygon layer with selected features: every copy is cut to them and copies entirely outside are dropped. Only layers with a selection are listed." />
+          <Button Content="&#x21BB;" Width="26" Margin="6,0,0,0" Click="OnRefreshSource"
+                  ToolTip="Read the map's layers and selections again." />
+        </StackPanel>
+
+        <!-- 5. output -->
+        <DockPanel Margin="0,8,0,2">
+          <Ellipse x:Name="lightOutput" Style="{StaticResource Light}" />
+          <TextBlock Style="{StaticResource Header}" Text="Outputs" />
+        </DockPanel>
+        <DockPanel Margin="20,0,0,4">
+          <CheckBox x:Name="chkFc" DockPanel.Dock="Left" Content="Save as a feature class:" VerticalAlignment="Center" IsChecked="True"
+                    Checked="OnAnyChanged" Unchecked="OnAnyChanged" Margin="0,0,8,0"
+                    ToolTip="Write the copies to a feature class or shapefile, with Axis_1_ID, Axis_2_ID, center coordinates, area or length, and empty Treatment and Block fields." />
+          <Button DockPanel.Dock="Right" Content="Browse..." Padding="10,2" Margin="6,0,0,0" Click="OnBrowse"
+                  ToolTip="Choose where to save the copies." />
+          <TextBox x:Name="txtOut" VerticalAlignment="Center" TextChanged="OnAnyChanged" />
+        </DockPanel>
+        <StackPanel Orientation="Horizontal" Margin="20,0,0,6">
+          <CheckBox x:Name="chkGraphics" Content="Add to the map as graphics" VerticalAlignment="Center" IsChecked="True"
+                    Checked="OnAnyChanged" Unchecked="OnAnyChanged"
+                    ToolTip="Add the copies to the map's graphics layer, where they can be moved and edited like the original graphic." />
+          <CheckBox x:Name="chkPreview" Content="Show the preview on the map" VerticalAlignment="Center" IsChecked="True" Margin="18,0,0,0"
+                    Checked="OnPreviewToggle" Unchecked="OnPreviewToggle"
+                    ToolTip="Draws the copies on the map as a temporary overlay that follows every change here. Nothing is added to the map until you create the array." />
+        </StackPanel>
+
+      </StackPanel>
+    </ScrollViewer>
+  </DockPanel>
+</UserControl>

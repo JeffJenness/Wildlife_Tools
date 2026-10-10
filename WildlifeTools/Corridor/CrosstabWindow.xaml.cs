@@ -60,6 +60,7 @@ namespace WildlifeTools.Corridor
         public CrosstabWindow()
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             Loaded += (_, __) =>
             {
                 _loading = false;

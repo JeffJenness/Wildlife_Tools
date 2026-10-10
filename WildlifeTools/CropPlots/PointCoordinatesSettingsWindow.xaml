@@ -1,0 +1,11 @@
+<controls:ProWindow x:Class="WildlifeTools.CropPlots.PointCoordinatesSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        xmlns:local="clr-namespace:WildlifeTools.CropPlots"
+        Title="Point Coordinates Settings"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Width="900" Height="560" MinWidth="760" MinHeight="480"
+        ResizeMode="CanResizeWithGrip">
+  <local:PointCoordinatesSettingsPanel x:Name="panel" />
+</controls:ProWindow>

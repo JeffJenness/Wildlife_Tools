@@ -99,8 +99,12 @@ internal static class Program
               cat.SourcesText(cat.Find("barns")) == "Value: NIST SP 811 (2008), Appendix B. Description: Holloway and Baker (1972), How the barn was born; the original Unit Converter (Jenness 2001)."
               && cat.Find("barns").Definition.Contains("as big as a barn"), cat.SourcesText(cat.Find("barns")));
         // Jeff, 2026-10-08: OED citations and corrections (catalog_text_fixes.py)
-        Check("OED: 235 units cite an OED entry for their description", cat.Units.Count(u => u.DescriptionSources.Any(s => s.StartsWith("oed_"))) == 235);
+        Check("OED: 280 units cite an OED entry for their description", cat.Units.Count(u => u.DescriptionSources.Any(s => s.StartsWith("oed_"))) == 280);
         Check("OED: tun is Old English, not from French thunder", cat.Find("tuns").Definition.Contains("Old English (tunne)") && !cat.Units.Any(u => u.Definition.Contains("thunder")));
+        Check("OED second set: Fahrenheit is Daniel Gabriel; bar coined by Bjerknes; oz from Italian; no 1911 Britannica left",
+              cat.Find("degrees Fahrenheit").Definition.Contains("Daniel Gabriel Fahrenheit (1686-1736)") && cat.Find("bars").Definition.Contains("Vilhelm Bjerknes")
+              && cat.Find("ounces (avdp)").Definition.Contains("15th-century Italian abbreviation of onza") && !cat.Citations.Keys.Any(k => k.StartsWith("eb1911"))
+              && cat.Find("signs").DescriptionSources.Contains("oed_sign") && cat.Find("cords").DescriptionSources.Contains("oed_cord"));
         Check("Fahrenheit 1686-1736; Celsius is Anders; the triple point is 0.01 C",
               cat.Find("degrees Fahrenheit").Definition.Contains("(1686-1736)") && cat.Find("degrees Celsius").Definition.Contains("Anders Celsius")
               && cat.Find("degrees Celsius").Definition.Contains("0.01 degrees Celsius"));

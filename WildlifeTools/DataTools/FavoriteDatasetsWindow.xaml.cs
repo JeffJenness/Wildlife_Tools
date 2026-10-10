@@ -101,6 +101,7 @@ namespace WildlifeTools.DataTools
         public FavoriteDatasetsWindow()
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             var store = FavoritesStore.Load();
             var slots = new[] { grp1, grp2, grp3, grp4 };
             for (int i = 0; i < 4; i++)

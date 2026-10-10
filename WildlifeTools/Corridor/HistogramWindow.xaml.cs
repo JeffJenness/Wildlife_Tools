@@ -64,6 +64,7 @@ namespace WildlifeTools.Corridor
         public HistogramWindow()
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             ArcGIS.Desktop.Framework.DragDrop.DragDrop.SetDropHandler(this, this);
             AllowDrop = true;
             Loaded += (_, __) =>

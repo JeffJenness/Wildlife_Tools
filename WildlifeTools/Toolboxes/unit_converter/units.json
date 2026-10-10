@@ -484,12 +484,12 @@
    "class": "Temperature",
    "factor": 0.5555555555555556,
    "offset": -17.77777777777778,
-   "definition": "The Fahrenheit temperature scale was developed by the German physicist Gabriel Daniel Fahrenheit (1686-1736).  Thirty-two degrees is set at the freezing point of water and 212 degrees is set at the boiling point of water.",
+   "definition": "The Fahrenheit temperature scale was developed by the German physicist Daniel Gabriel Fahrenheit (1686-1736).  Thirty-two degrees is set at the freezing point of water and 212 degrees is set at the boiling point of water.",
    "sources": [
     "jenness_uc"
    ],
    "descriptionSources": [
-    "eb1911_fahrenheit",
+    "oed_fahrenheit",
     "jenness_uc"
    ]
   },
@@ -498,12 +498,12 @@
    "singular": "degree Celsius",
    "class": "Temperature",
    "factor": 1.0,
-   "definition": "The Celsius (or Centigrade) temperature scale was developed by the Swedish astronomer and inventor Anders Celsius (1701-1744).  The Celsius scale is essentially identical to the Centigrade scale, in which zero degrees is set at the freezing point of water and 100 degrees is set at the boiling point of water.  In 1954 the General Conference on Weights and Measures based the scale, through the kelvin, on the triple point of water (the temperature at which water can exist as a solid, a liquid and a gas), set at 273.16 kelvins, or 0.01 degrees Celsius.  Since 2019 the kelvin, and with it the Celsius scale, has been defined by a fixed value of the Boltzmann constant.",
+   "definition": "The Celsius (or Centigrade) temperature scale was developed by the Swedish astronomer and inventor Anders Celsius (1701-1744).  Celsius's own scale ran the other way, with 0 at the boiling point of water and 100 at the freezing point; it was soon turned around.  The Celsius scale is essentially identical to the Centigrade scale, in which zero degrees is set at the freezing point of water and 100 degrees is set at the boiling point of water.  In 1954 the General Conference on Weights and Measures based the scale, through the kelvin, on the triple point of water (the temperature at which water can exist as a solid, a liquid and a gas), set at 273.16 kelvins, or 0.01 degrees Celsius.  Since 2019 the kelvin, and with it the Celsius scale, has been defined by a fixed value of the Boltzmann constant.",
    "sources": [
     "jenness_uc"
    ],
    "descriptionSources": [
-    "eb1911_celsius",
+    "oed_celsius",
     "bipm_si",
     "oed_kelvin",
     "jenness_uc"
@@ -1080,14 +1080,15 @@
    "singular": "ounce (US fluid)",
    "class": "Volume",
    "factor": 0.0295735295625,
-   "definition": "A US fluid ounce is a unit of volume or capacity equal to 1/128 of a US liquid gallon.  A gallon is a unit of volume.  The word comes from the Old Northern French galon, related to the medieval Latin galleta, a measure for wine.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "A US fluid ounce is a unit of volume or capacity equal to 1/128 of a US liquid gallon.  A gallon is a unit of volume.  The word comes from the Old Northern French galon, related to the medieval Latin galleta, a measure for wine.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "nist_hb44",
     "nist_sp811"
    ],
    "descriptionSources": [
-    "oed_gallon",
+    "oed_oz",
     "oed_ounce",
+    "oed_gallon",
     "jenness_uc"
    ]
   },
@@ -1294,11 +1295,12 @@
    "singular": "ounce (Brit fl)",
    "class": "Volume",
    "factor": 0.028413062500000003,
-   "definition": "A British fluid ounce is a unit of volume equal to 1/160 of a British (or Imperial) gallon.  A British gallon (or Imperial gallon) is defined as the space occupied by 10 pounds of distilled water with a density of 0.998859 grams per millilitre.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "A British fluid ounce is a unit of volume equal to 1/160 of a British (or Imperial) gallon.  A British gallon (or Imperial gallon) is defined as the space occupied by 10 pounds of distilled water with a density of 0.998859 grams per millilitre.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "nist_sp811"
    ],
    "descriptionSources": [
+    "oed_oz",
     "oed_ounce",
     "jenness_uc"
    ]
@@ -1709,14 +1711,15 @@
    "singular": "ounce (apoth)",
    "class": "Weight/Mass",
    "factor": 0.0311034768,
-   "definition": "An apothecaries' ounce is a unit of apothecaries' weight equal to 480 grains.  It's equal in weight to the troy ounce.  Apothecaries' measures originated with early European shopkeepers and pharmacists and are based around the \"grain.\"  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "An apothecaries' ounce is a unit of apothecaries' weight equal to 480 grains.  It's equal in weight to the troy ounce.  Apothecaries' measures originated with early European shopkeepers and pharmacists and are based around the \"grain.\"  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "nist_hb44",
     "nist_sp811"
    ],
    "descriptionSources": [
-    "oed_apothecary",
+    "oed_oz",
     "oed_ounce",
+    "oed_apothecary",
     "jenness_uc"
    ]
   },
@@ -1725,12 +1728,13 @@
    "singular": "ounce (troy)",
    "class": "Weight/Mass",
    "factor": 0.0311034768,
-   "definition": "A troy ounce is a unit of weight, equal to the apothecaries' ounce and generally used for weighing precious metals or apothecaries' drugs.  Troy measurements probably descend from Medieval trade fairs held in the French town of Troyes, in the 12th and 13th centuries.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "A troy ounce is a unit of weight, equal to the apothecaries' ounce and generally used for weighing precious metals or apothecaries' drugs.  Troy measurements probably descend from Medieval trade fairs held in the French town of Troyes, in the 12th and 13th centuries.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "nist_hb44",
     "nist_sp811"
    ],
    "descriptionSources": [
+    "oed_oz",
     "oed_ounce",
     "oed_troy",
     "jenness_uc"
@@ -1741,14 +1745,15 @@
    "singular": "ounce (avdp)",
    "class": "Weight/Mass",
    "factor": 0.028349523125,
-   "definition": "An ounce (or avoirdupois ounce) is a unit of weight equal to one one-sixteenth of a pound.  The avoirdupois system of weights probably originated during the Medieval trade fairs held in the former French province of Champagne, in the 12th and 13th centuries, and is still in use today in places that haven't switched to the metric system.  The name comes from the Anglo-Norman and Old French avoir de pois (pois, weight), which in English first meant merchandise sold by weight.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "An ounce (or avoirdupois ounce) is a unit of weight equal to one one-sixteenth of a pound.  The avoirdupois system of weights probably originated during the Medieval trade fairs held in the former French province of Champagne, in the 12th and 13th centuries, and is still in use today in places that haven't switched to the metric system.  The name comes from the Anglo-Norman and Old French avoir de pois (pois, weight), which in English first meant merchandise sold by weight.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "nist_hb44",
     "nist_sp811"
    ],
    "descriptionSources": [
-    "oed_avoirdupois",
+    "oed_oz",
     "oed_ounce",
+    "oed_avoirdupois",
     "jenness_uc"
    ]
   },
@@ -2323,6 +2328,7 @@
     "nist_sp811"
    ],
    "descriptionSources": [
+    "oed_cord",
     "jenness_uc"
    ]
   },
@@ -3625,6 +3631,10 @@
    "factor": 30.0,
    "definition": "A sign is a circular measure reflecting one one-twelfth of a circle.  It's probably derived from the twelve signs of the zodiac.",
    "sources": [
+    "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_sign",
     "jenness_uc"
    ]
   },
@@ -5713,14 +5723,15 @@
    "singular": "ounce",
    "class": "Weight/Mass",
    "factor": 0.028349523125,
-   "definition": "An ounce (or avoirdupois ounce) is a unit of weight equal to one one-sixteenth of a pound.  The avoirdupois system of weights probably originated during the Medieval trade fairs held in the former French province of Champagne, in the 12th and 13th centuries, and is still in use today in places that haven't switched to the metric system.  The name comes from the Anglo-Norman and Old French avoir de pois (pois, weight), which in English first meant merchandise sold by weight.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "An ounce (or avoirdupois ounce) is a unit of weight equal to one one-sixteenth of a pound.  The avoirdupois system of weights probably originated during the Medieval trade fairs held in the former French province of Champagne, in the 12th and 13th centuries, and is still in use today in places that haven't switched to the metric system.  The name comes from the Anglo-Norman and Old French avoir de pois (pois, weight), which in English first meant merchandise sold by weight.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "nist_hb44",
     "nist_sp811"
    ],
    "descriptionSources": [
-    "oed_avoirdupois",
+    "oed_oz",
     "oed_ounce",
+    "oed_avoirdupois",
     "jenness_uc"
    ]
   },
@@ -6289,14 +6300,15 @@
    "singular": "ounce-force",
    "class": "Force",
    "factor": 0.2780138509537813,
-   "definition": "An ounce-force (abbreviated as ozf) is a unit of force equal to 1/16 lbf.  A pound-force (using the avoirdupois pound, abbreviated as lbf) is a unit of force equal to the force a one-pound object exerts due to gravity at the surface of the earth.  The abbreviation (lb) descends from the Roman weight \"Libra.\"  The avoirdupois system of weights probably originated during the Medieval trade fairs held in the former French province of Champagne, in the 12th and 13th centuries, and is still in use today in places that haven't switched to the metric system.  The name comes from the Anglo-Norman and Old French avoir de pois (pois, weight), which in English first meant merchandise sold by weight.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "An ounce-force (abbreviated as ozf) is a unit of force equal to 1/16 lbf.  A pound-force (using the avoirdupois pound, abbreviated as lbf) is a unit of force equal to the force a one-pound object exerts due to gravity at the surface of the earth.  The abbreviation (lb) descends from the Roman weight \"Libra.\"  The avoirdupois system of weights probably originated during the Medieval trade fairs held in the former French province of Champagne, in the 12th and 13th centuries, and is still in use today in places that haven't switched to the metric system.  The name comes from the Anglo-Norman and Old French avoir de pois (pois, weight), which in English first meant merchandise sold by weight.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "nist_sp811",
     "cgpm1901"
    ],
    "descriptionSources": [
-    "oed_avoirdupois",
+    "oed_oz",
     "oed_ounce",
+    "oed_avoirdupois",
     "oed_pound",
     "jenness_uc"
    ]
@@ -6366,6 +6378,7 @@
     "nist_sp811"
    ],
    "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -6379,6 +6392,7 @@
     "nist_sp811"
    ],
    "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -6471,6 +6485,7 @@
     "nist_sp811"
    ],
    "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -6497,6 +6512,7 @@
     "nist_sp811"
    ],
    "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -6510,6 +6526,7 @@
     "nist_sp811"
    ],
    "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -6523,6 +6540,7 @@
     "nist_sp811"
    ],
    "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -6536,6 +6554,7 @@
     "nist_sp811"
    ],
    "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -6549,6 +6568,7 @@
     "nist_sp811"
    ],
    "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -6575,6 +6595,7 @@
     "nist_sp811"
    ],
    "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -6588,6 +6609,7 @@
     "nist_sp811"
    ],
    "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -6641,6 +6663,7 @@
     "nist_sp811"
    ],
    "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -6652,6 +6675,10 @@
    "definition": "A calorie (or gram calorie, or small calorie) is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature.  Because of the problems with different water temperatures, the \"thermochemical calorie\" was defined to be exactly equal to 4.184 joules.",
    "sources": [
     "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
+    "jenness_uc"
    ]
   },
   {
@@ -6661,6 +6688,10 @@
    "factor": 4.184,
    "definition": "A calorie (or gram calorie, or small calorie) is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature.  Because of the problems with different water temperatures, the \"thermochemical calorie\" was defined to be exactly equal to 4.184 joules.",
    "sources": [
+    "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -7172,6 +7203,10 @@
    "definition": "A cord-foot is a unit of volume equal to 16 cubic feet.  It is usually applied to volumes of wood, such as firewood, which are measured by the cord.  A cord measures 4 feet by 4 feet by 8 feet (128 cubic feet), so one cord-foot measures 4 feet by 4 feet by 1 foot.  The term 'cord' is probably derived from an early way to measure it, by stretching a cord of fixed length around it.",
    "sources": [
     "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_cord",
+    "jenness_uc"
    ]
   },
   {
@@ -7189,12 +7224,12 @@
    "singular": "degree Centigrade",
    "class": "Temperature",
    "factor": 1.0,
-   "definition": "The Centigrade (or Celsius) temperature scale was developed by the Swedish astronomer and inventor Anders Celsius (1701-1744).  Zero degrees is set at the freezing point of water and 100 degrees is set at the boiling point of water.  The term 'centigrade' is rarely used these days in favor of 'Celsius', the name of the inventor of the scale.",
+   "definition": "The Centigrade (or Celsius) temperature scale was developed by the Swedish astronomer and inventor Anders Celsius (1701-1744).  Celsius's own scale ran the other way, with 0 at the boiling point of water and 100 at the freezing point; it was soon turned around.  Zero degrees is set at the freezing point of water and 100 degrees is set at the boiling point of water.  The term 'centigrade' is rarely used these days in favor of 'Celsius', the name of the inventor of the scale.",
    "sources": [
     "jenness_uc"
    ],
    "descriptionSources": [
-    "eb1911_celsius",
+    "oed_celsius",
     "jenness_uc"
    ]
   },
@@ -7406,6 +7441,10 @@
    "definition": "A gram calorie per hour is a unit of power defined as the power output produced by energy being applied at the rate of one gram calorie per hour.  A calorie (or gram calorie, or small calorie) is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature.  Because of the problems with different water temperatures, the \"thermochemical calorie\" was defined to be exactly equal to 4.184 joules.",
    "sources": [
     "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
+    "jenness_uc"
    ]
   },
   {
@@ -7415,6 +7454,10 @@
    "factor": 0.06973333333333333,
    "definition": "A gram calorie per minute is a unit of power defined as the power output produced by energy being applied at the rate of one gram calorie per minute.  A calorie (or gram calorie, or small calorie) is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature.  Because of the problems with different water temperatures, the \"thermochemical calorie\" was defined to be exactly equal to 4.184 joules.",
    "sources": [
+    "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -7426,6 +7469,10 @@
    "definition": "A gram calorie per second is a unit of power defined as the power output produced by energy being applied at the rate of one gram calorie per second.  A calorie (or gram calorie, or small calorie) is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature.  Because of the problems with different water temperatures, the \"thermochemical calorie\" was defined to be exactly equal to 4.184 joules.",
    "sources": [
     "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
+    "jenness_uc"
    ]
   },
   {
@@ -7435,6 +7482,10 @@
    "factor": 4.19002,
    "definition": "A mean calorie per hour is a unit of power defined as the power output produced by energy being applied at the rate of one mean calorie per hour.  A calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so this \"mean\" calorie reflects some average of initial water temperatures.",
    "sources": [
+    "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -7446,6 +7497,10 @@
    "definition": "A mean calorie per minute is a unit of power defined as the power output produced by energy being applied at the rate of one mean calorie per minute.  A calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so this \"mean\" calorie reflects some average of initial water temperatures.",
    "sources": [
     "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
+    "jenness_uc"
    ]
   },
   {
@@ -7455,6 +7510,10 @@
    "factor": 0.00116389444444444,
    "definition": "A mean calorie per second is a unit of power defined as the power output produced by energy being applied at the rate of one mean calorie per second.  A calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so this \"mean\" calorie reflects some average of initial water temperatures.",
    "sources": [
+    "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -7515,6 +7574,10 @@
    "definition": "A calorie per hour is a unit of power defined as the power output produced by energy being applied at the rate of one gram calorie per hour.  A calorie (or gram calorie, or small calorie) is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature (such as 15° C).",
    "sources": [
     "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
+    "jenness_uc"
    ]
   },
   {
@@ -7524,6 +7587,10 @@
    "factor": 0.0697633333333333,
    "definition": "A calorie per minute is a unit of power defined as the power output produced by energy being applied at the rate of one gram calorie per minute.  A calorie (or gram calorie, or small calorie) is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature (such as 15° C).",
    "sources": [
+    "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -7535,6 +7602,10 @@
    "definition": "A calorie per second is a unit of power defined as the power output produced by energy being applied at the rate of one gram calorie per second.  A calorie (or gram calorie, or small calorie) is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature (such as 15° C).",
    "sources": [
     "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
+    "jenness_uc"
    ]
   },
   {
@@ -7544,6 +7615,10 @@
    "factor": 4.1819,
    "definition": "A calorie per hour is a unit of power defined as the power output produced by energy being applied at the rate of one mean calorie per hour.  A calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature (such as 20° C).",
    "sources": [
+    "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -7555,6 +7630,10 @@
    "definition": "A calorie per minute is a unit of power defined as the power output produced by energy being applied at the rate of one mean calorie per minute.  A calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature (such as 20° C).",
    "sources": [
     "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
+    "jenness_uc"
    ]
   },
   {
@@ -7564,6 +7643,10 @@
    "factor": 0.00116163888888889,
    "definition": "A calorie per second is a unit of power defined as the power output produced by energy being applied at the rate of one mean calorie per second.  A calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature (such as 20° C).",
    "sources": [
+    "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -7575,6 +7658,10 @@
    "definition": "A gram calorie per hour is a unit of power defined as the power output produced by energy being applied at the rate of one gram calorie per hour.  A calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature.  Because of the problems with different water temperatures, the \"International Steam Table calorie\" is defined to be exactly equal to 4.1868 joules.",
    "sources": [
     "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
+    "jenness_uc"
    ]
   },
   {
@@ -7584,6 +7671,10 @@
    "factor": 0.06978,
    "definition": "A gram calorie per minute is a unit of power defined as the power output produced by energy being applied at the rate of one gram calorie per minute.  A calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature.  Because of the problems with different water temperatures, the \"International Steam Table calorie\" is defined to be exactly equal to 4.1868 joules.",
    "sources": [
+    "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -7595,6 +7686,10 @@
    "definition": "A gram calorie per second is a unit of power defined as the power output produced by energy being applied at the rate of one gram calorie per second.  A calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature.  Because of the problems with different water temperatures, the \"International Steam Table calorie\" is defined to be exactly equal to 4.1868 joules.",
    "sources": [
     "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
+    "jenness_uc"
    ]
   },
   {
@@ -7604,6 +7699,10 @@
    "factor": 4190.02,
    "definition": "A mean kilogram calorie per hour is a unit of power defined as the power output produced by energy being applied at the rate of one mean kilogram calorie per hour.  The kilogram calorie (or large calorie) is a unit of energy used to describe the energy content of foods.  The term kilogram calorie is an obsolete term for the kilocalorie, and the \"kilo\" prefix is often omitted when discussing foods.  A kilocalorie is equal to a thousand calories, and a calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so this \"mean\" kilocalorie reflects some average of initial water temperatures.",
    "sources": [
+    "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -7615,6 +7714,10 @@
    "definition": "A mean kilogram calorie per minute is a unit of power defined as the power output produced by energy being applied at the rate of one mean calorie per minute.  The kilogram calorie (or large calorie) is a unit of energy used to describe the energy content of foods.  The term kilogram calorie is an obsolete term for the kilocalorie, and the \"kilo\" prefix is often omitted when discussing foods.  A kilocalorie is equal to a thousand calories, and a calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so this \"mean\" kilocalorie reflects some average of initial water temperatures.",
    "sources": [
     "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
+    "jenness_uc"
    ]
   },
   {
@@ -7624,6 +7727,10 @@
    "factor": 1.16389444444444,
    "definition": "A mean kilogram calorie per second is a unit of power defined as the power output produced by energy being applied at the rate of one mean calorie per second.  The kilogram calorie (or large calorie) is a unit of energy used to describe the energy content of foods.  The term kilogram calorie is an obsolete term for the kilocalorie, and the \"kilo\" prefix is often omitted when discussing foods.  A kilocalorie is equal to a thousand calories, and a calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so this \"mean\" kilocalorie reflects some average of initial water temperatures.",
    "sources": [
+    "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -7635,6 +7742,10 @@
    "definition": "A kilogram calorie per hour is a unit of power defined as the power output produced by energy being applied at the rate of one kilogram calorie per hour.  The kilogram calorie (or large calorie) is a unit of energy used to describe the energy content of foods.  The term kilogram calorie is an obsolete term for the kilocalorie, and the \"kilo\" prefix is often omitted when discussing foods.  A calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature.  Because of the problems with different water temperatures, the \"thermochemical calorie\" was defined to be exactly equal to 4.184 joules.",
    "sources": [
     "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
+    "jenness_uc"
    ]
   },
   {
@@ -7644,6 +7755,10 @@
    "factor": 69.73333333333333,
    "definition": "A kilogram calorie per minute is a unit of power defined as the power output produced by energy being applied at the rate of one calorie per minute.  The kilogram calorie (or large calorie) is a unit of energy used to describe the energy content of foods.  The term kilogram calorie is an obsolete term for the kilocalorie, and the \"kilo\" prefix is often omitted when discussing foods.  A calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature.  Because of the problems with different water temperatures, the \"thermochemical calorie\" was defined to be exactly equal to 4.184 joules.",
    "sources": [
+    "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -7655,6 +7770,10 @@
    "definition": "A kilogram calorie per second is a unit of power defined as the power output produced by energy being applied at the rate of one calorie per second.  The kilogram calorie (or large calorie) is a unit of energy used to describe the energy content of foods.  The term kilogram calorie is an obsolete term for the kilocalorie, and the \"kilo\" prefix is often omitted when discussing foods.  A calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature.  Because of the problems with different water temperatures, the \"thermochemical calorie\" was defined to be exactly equal to 4.184 joules.",
    "sources": [
     "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
+    "jenness_uc"
    ]
   },
   {
@@ -7664,6 +7783,10 @@
    "factor": 4186.8,
    "definition": "A kilogram calorie per hour is a unit of power defined as the power output produced by energy being applied at the rate of one kilogram calorie per hour.  An International Steam Table kilocalorie is a unit of energy equal to 1,000 calories.  A calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature.  Because of the problems with different water temperatures, the \"International Steam Table calorie\" is defined to be exactly equal to 4.1868 joules.",
    "sources": [
+    "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -7675,6 +7798,10 @@
    "definition": "A kilogram calorie per minute is a unit of power defined as the power output produced by energy being applied at the rate of one calorie per minute.  An International Steam Table kilocalorie is a unit of energy equal to 1,000 calories.  A calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature.  Because of the problems with different water temperatures, the \"International Steam Table calorie\" is defined to be exactly equal to 4.1868 joules.",
    "sources": [
     "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
+    "jenness_uc"
    ]
   },
   {
@@ -7684,6 +7811,10 @@
    "factor": 1.163,
    "definition": "A kilogram calorie per second is a unit of power defined as the power output produced by energy being applied at the rate of one calorie per second.  An International Steam Table kilocalorie is a unit of energy equal to 1,000 calories.  A calorie is defined as approximately the amount of heat required to raise the temperature of one gram of water by 1° Celsius.  This definition is dependent on the initial temperature of the water, however, and so calories are sometimes calculated at some specified temperature.  Because of the problems with different water temperatures, the \"International Steam Table calorie\" is defined to be exactly equal to 4.1868 joules.",
    "sources": [
+    "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_calorie",
     "jenness_uc"
    ]
   },
@@ -9476,11 +9607,12 @@
    "singular": "oz-inch / sec",
    "class": "Power",
    "factor": 0.0070615518142260435,
-   "definition": "An ounce-force inch per second is a unit of power defined as the power output produced by energy being applied at the rate of one ounce-force inch per second.  An ounce-force inch (avoirdupois ounce) is a unit of energy equal to the amount of work expended moving 1 ounce (avoirdupois) through 1 inch of space.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "An ounce-force inch per second is a unit of power defined as the power output produced by energy being applied at the rate of one ounce-force inch per second.  An ounce-force inch (avoirdupois ounce) is a unit of energy equal to the amount of work expended moving 1 ounce (avoirdupois) through 1 inch of space.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "jenness_uc"
    ],
    "descriptionSources": [
+    "oed_oz",
     "oed_ounce",
     "jenness_uc"
    ]
@@ -9490,11 +9622,12 @@
    "singular": "oz-inch / min",
    "class": "Power",
    "factor": 0.00011769253023710072,
-   "definition": "An ounce-force inch per minute is a unit of power defined as the power output produced by energy being applied at the rate of one ounce-force inch per minute.  An ounce-force inch (avoirdupois ounce) is a unit of energy equal to the amount of work expended moving 1 ounce (avoirdupois) through 1 inch of space.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "An ounce-force inch per minute is a unit of power defined as the power output produced by energy being applied at the rate of one ounce-force inch per minute.  An ounce-force inch (avoirdupois ounce) is a unit of energy equal to the amount of work expended moving 1 ounce (avoirdupois) through 1 inch of space.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "jenness_uc"
    ],
    "descriptionSources": [
+    "oed_oz",
     "oed_ounce",
     "jenness_uc"
    ]
@@ -9504,11 +9637,12 @@
    "singular": "oz-inch / hr",
    "class": "Power",
    "factor": 1.9615421706183456e-06,
-   "definition": "An ounce-force inch per hour is a unit of power defined as the power output produced by energy being applied at the rate of one ounce-force inch per hour.  An ounce-force inch (avoirdupois ounce) is a unit of energy equal to the amount of work expended moving 1 ounce (avoirdupois) through 1 inch of space.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "An ounce-force inch per hour is a unit of power defined as the power output produced by energy being applied at the rate of one ounce-force inch per hour.  An ounce-force inch (avoirdupois ounce) is a unit of energy equal to the amount of work expended moving 1 ounce (avoirdupois) through 1 inch of space.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "jenness_uc"
    ],
    "descriptionSources": [
+    "oed_oz",
     "oed_ounce",
     "jenness_uc"
    ]
@@ -11329,13 +11463,14 @@
    "singular": "oz (US-fl) / sec",
    "class": "Flow Rate",
    "factor": 1.7744117737500003,
-   "definition": "A US fluid ounce per second is a unit of flow, or of volume divided by time, equal to some substance (usually a liquid) passing a point at the rate of one US fluid ounce per second.  A US fluid ounce is a unit of volume or capacity equal to 1/128 of a US liquid gallon.  A gallon is a unit of volume.  The word comes from the Old Northern French galon, related to the medieval Latin galleta, a measure for wine.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "A US fluid ounce per second is a unit of flow, or of volume divided by time, equal to some substance (usually a liquid) passing a point at the rate of one US fluid ounce per second.  A US fluid ounce is a unit of volume or capacity equal to 1/128 of a US liquid gallon.  A gallon is a unit of volume.  The word comes from the Old Northern French galon, related to the medieval Latin galleta, a measure for wine.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "jenness_uc"
    ],
    "descriptionSources": [
-    "oed_gallon",
+    "oed_oz",
     "oed_ounce",
+    "oed_gallon",
     "jenness_uc"
    ]
   },
@@ -11344,13 +11479,14 @@
    "singular": "oz (US-fl) / min",
    "class": "Flow Rate",
    "factor": 0.0295735295625,
-   "definition": "A US fluid ounce per minute is a unit of flow, or of volume divided by time, equal to some substance (usually a liquid) passing a point at the rate of one US fluid ounce per minute.  A US fluid ounce is a unit of volume or capacity equal to 1/128 of a US liquid gallon.  A gallon is a unit of volume.  The word comes from the Old Northern French galon, related to the medieval Latin galleta, a measure for wine.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "A US fluid ounce per minute is a unit of flow, or of volume divided by time, equal to some substance (usually a liquid) passing a point at the rate of one US fluid ounce per minute.  A US fluid ounce is a unit of volume or capacity equal to 1/128 of a US liquid gallon.  A gallon is a unit of volume.  The word comes from the Old Northern French galon, related to the medieval Latin galleta, a measure for wine.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "jenness_uc"
    ],
    "descriptionSources": [
-    "oed_gallon",
+    "oed_oz",
     "oed_ounce",
+    "oed_gallon",
     "jenness_uc"
    ]
   },
@@ -11359,13 +11495,14 @@
    "singular": "oz (US-fl) / hr",
    "class": "Flow Rate",
    "factor": 0.0004928921593749987,
-   "definition": "A US fluid ounce per hour is a unit of flow, or of volume divided by time, equal to some substance (usually a liquid) passing a point at the rate of one US fluid ounce per hour.  A US fluid ounce is a unit of volume or capacity equal to 1/128 of a US liquid gallon.  A gallon is a unit of volume.  The word comes from the Old Northern French galon, related to the medieval Latin galleta, a measure for wine.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "A US fluid ounce per hour is a unit of flow, or of volume divided by time, equal to some substance (usually a liquid) passing a point at the rate of one US fluid ounce per hour.  A US fluid ounce is a unit of volume or capacity equal to 1/128 of a US liquid gallon.  A gallon is a unit of volume.  The word comes from the Old Northern French galon, related to the medieval Latin galleta, a measure for wine.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "jenness_uc"
    ],
    "descriptionSources": [
-    "oed_gallon",
+    "oed_oz",
     "oed_ounce",
+    "oed_gallon",
     "jenness_uc"
    ]
   },
@@ -11374,13 +11511,14 @@
    "singular": "oz (US-fl) / day",
    "class": "Flow Rate",
    "factor": 2.0537173307291657e-05,
-   "definition": "A US fluid ounce per day is a unit of flow, or of volume divided by time, equal to some substance (usually a liquid) passing a point at the rate of one US fluid ounce per day.  A US fluid ounce is a unit of volume or capacity equal to 1/128 of a US liquid gallon.  A gallon is a unit of volume.  The word comes from the Old Northern French galon, related to the medieval Latin galleta, a measure for wine.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "A US fluid ounce per day is a unit of flow, or of volume divided by time, equal to some substance (usually a liquid) passing a point at the rate of one US fluid ounce per day.  A US fluid ounce is a unit of volume or capacity equal to 1/128 of a US liquid gallon.  A gallon is a unit of volume.  The word comes from the Old Northern French galon, related to the medieval Latin galleta, a measure for wine.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "jenness_uc"
    ],
    "descriptionSources": [
-    "oed_gallon",
+    "oed_oz",
     "oed_ounce",
+    "oed_gallon",
     "jenness_uc"
    ]
   },
@@ -11389,11 +11527,12 @@
    "singular": "oz (Brit) / sec",
    "class": "Flow Rate",
    "factor": 1.7047837500000003,
-   "definition": "A British ounce per second is a unit of flow, or of volume divided by time, equal to some substance (usually a liquid) passing a point at the rate of one British ounce per second.  A British fluid ounce is a unit of volume equal to 1/160 of a British (or Imperial) gallon.  A British gallon (or Imperial gallon) is defined as the space occupied by 10 pounds of distilled water with a density of 0.998859 grams per millilitre.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "A British ounce per second is a unit of flow, or of volume divided by time, equal to some substance (usually a liquid) passing a point at the rate of one British ounce per second.  A British fluid ounce is a unit of volume equal to 1/160 of a British (or Imperial) gallon.  A British gallon (or Imperial gallon) is defined as the space occupied by 10 pounds of distilled water with a density of 0.998859 grams per millilitre.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "jenness_uc"
    ],
    "descriptionSources": [
+    "oed_oz",
     "oed_ounce",
     "jenness_uc"
    ]
@@ -11403,11 +11542,12 @@
    "singular": "oz (Brit) / min",
    "class": "Flow Rate",
    "factor": 0.028413062500000003,
-   "definition": "A British ounce per minute is a unit of flow, or of volume divided by time, equal to some substance (usually a liquid) passing a point at the rate of one British ounce per minute.  A British fluid ounce is a unit of volume equal to 1/160 of a British (or Imperial) gallon.  A British gallon (or Imperial gallon) is defined as the space occupied by 10 pounds of distilled water with a density of 0.998859 grams per millilitre.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "A British ounce per minute is a unit of flow, or of volume divided by time, equal to some substance (usually a liquid) passing a point at the rate of one British ounce per minute.  A British fluid ounce is a unit of volume equal to 1/160 of a British (or Imperial) gallon.  A British gallon (or Imperial gallon) is defined as the space occupied by 10 pounds of distilled water with a density of 0.998859 grams per millilitre.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "jenness_uc"
    ],
    "descriptionSources": [
+    "oed_oz",
     "oed_ounce",
     "jenness_uc"
    ]
@@ -11417,11 +11557,12 @@
    "singular": "oz (Brit) / hr",
    "class": "Flow Rate",
    "factor": 0.0004735510416666682,
-   "definition": "A British ounce per hour is a unit of flow, or of volume divided by time, equal to some substance (usually a liquid) passing a point at the rate of one British ounce per hour.  A British fluid ounce is a unit of volume equal to 1/160 of a British (or Imperial) gallon.  A British gallon (or Imperial gallon) is defined as the space occupied by 10 pounds of distilled water with a density of 0.998859 grams per millilitre.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "A British ounce per hour is a unit of flow, or of volume divided by time, equal to some substance (usually a liquid) passing a point at the rate of one British ounce per hour.  A British fluid ounce is a unit of volume equal to 1/160 of a British (or Imperial) gallon.  A British gallon (or Imperial gallon) is defined as the space occupied by 10 pounds of distilled water with a density of 0.998859 grams per millilitre.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "jenness_uc"
    ],
    "descriptionSources": [
+    "oed_oz",
     "oed_ounce",
     "jenness_uc"
    ]
@@ -11431,11 +11572,12 @@
    "singular": "oz (Brit) / day",
    "class": "Flow Rate",
    "factor": 1.973129340277779e-05,
-   "definition": "A British ounce per day is a unit of flow, or of volume divided by time, equal to some substance (usually a liquid) passing a point at the rate of one British ounce per day.  A British fluid ounce is a unit of volume equal to 1/160 of a British (or Imperial) gallon.  A British gallon (or Imperial gallon) is defined as the space occupied by 10 pounds of distilled water with a density of 0.998859 grams per millilitre.  The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of a Spanish and Sicilian coin.",
+   "definition": "A British ounce per day is a unit of flow, or of volume divided by time, equal to some substance (usually a liquid) passing a point at the rate of one British ounce per day.  A British fluid ounce is a unit of volume equal to 1/160 of a British (or Imperial) gallon.  A British gallon (or Imperial gallon) is defined as the space occupied by 10 pounds of distilled water with a density of 0.998859 grams per millilitre.  The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the ounce was also the name of Spanish and Sicilian coins.",
    "sources": [
     "jenness_uc"
    ],
    "descriptionSources": [
+    "oed_oz",
     "oed_ounce",
     "jenness_uc"
    ]
@@ -11713,11 +11855,12 @@
    "singular": "bar",
    "class": "Pressure/Stress",
    "factor": 100000.0,
-   "definition": "A bar is a unit of barometric pressure equal to a pressure of 750.1 millimeters of mercury at 0° C. in latitude 45°.  One bar is slightly less than one standard atmosphere.  The term 'bar' is short for 'barometer.'",
+   "definition": "A bar is a unit of barometric pressure equal to a pressure of 750.1 millimeters of mercury at 0° C. in latitude 45°.  One bar is slightly less than one standard atmosphere.  The term 'bar' is short for 'barometer.'  The meteorologist Vilhelm Bjerknes, who coined the name and first used it in 1906, chose it as the shortest name derived from that word.",
    "sources": [
     "nist_sp811"
    ],
    "descriptionSources": [
+    "oed_bar",
     "jenness_uc"
    ]
   },
@@ -12172,11 +12315,12 @@
    "singular": "millibar",
    "class": "Pressure/Stress",
    "factor": 100.0,
-   "definition": "A millibar is a unit of pressure equal to 1,000 dynes per square inch, or 100 pascals, or one one-thousandth of a bar.  A bar is a unit of barometric pressure equal to a pressure of 750.1 millimeters of mercury at 0° C. in latitude 45°.  One bar is slightly less than one standard atmosphere.  The term 'bar' is short for 'barometer.'",
+   "definition": "A millibar is a unit of pressure equal to 1,000 dynes per square inch, or 100 pascals, or one one-thousandth of a bar.  A bar is a unit of barometric pressure equal to a pressure of 750.1 millimeters of mercury at 0° C. in latitude 45°.  One bar is slightly less than one standard atmosphere.  The term 'bar' is short for 'barometer.'  The meteorologist Vilhelm Bjerknes, who coined the name and first used it in 1906, chose it as the shortest name derived from that word.",
    "sources": [
     "nist_sp811"
    ],
    "descriptionSources": [
+    "oed_bar",
     "jenness_uc"
    ]
   },
@@ -12685,8 +12829,12 @@
    "singular": "barye",
    "class": "Pressure/Stress",
    "factor": 0.1,
-   "definition": "A barye is a unit of pressure equal to one one-thousandth of a millibar, or one one-millionth of a bar.  A bar is a unit of barometric pressure equal to a pressure of 750.1 millimeters of mercury at 0° C. in latitude 45°.  One bar is slightly less than one standard atmosphere.  The term 'bar' is short for 'barometer.'",
+   "definition": "A barye is a unit of pressure equal to one one-thousandth of a millibar, or one one-millionth of a bar.  A bar is a unit of barometric pressure equal to a pressure of 750.1 millimeters of mercury at 0° C. in latitude 45°.  One bar is slightly less than one standard atmosphere.  The term 'bar' is short for 'barometer.'  The meteorologist Vilhelm Bjerknes, who coined the name and first used it in 1906, chose it as the shortest name derived from that word.",
    "sources": [
+    "jenness_uc"
+   ],
+   "descriptionSources": [
+    "oed_bar",
     "jenness_uc"
    ]
   },
@@ -12695,11 +12843,12 @@
    "singular": "centibar",
    "class": "Pressure/Stress",
    "factor": 1000.0,
-   "definition": "A centibar is a unit of pressure equal to 1,000 pascals, or one one-hundredth of a bar.  A bar is a unit of barometric pressure equal to a pressure of 750.1 millimeters of mercury at 0° C. in latitude 45°.  One bar is slightly less than one standard atmosphere.  The term 'bar' is short for 'barometer.'  A pascal is a unit of pressure in the metre-kilogram-second (SI) system named after French mathematician and physicist Blaise Pascal (1623-1662), and defined as a pressure of one newton concentrated on one square meter.",
+   "definition": "A centibar is a unit of pressure equal to 1,000 pascals, or one one-hundredth of a bar.  A bar is a unit of barometric pressure equal to a pressure of 750.1 millimeters of mercury at 0° C. in latitude 45°.  One bar is slightly less than one standard atmosphere.  The term 'bar' is short for 'barometer.'  The meteorologist Vilhelm Bjerknes, who coined the name and first used it in 1906, chose it as the shortest name derived from that word.  A pascal is a unit of pressure in the metre-kilogram-second (SI) system named after French mathematician and physicist Blaise Pascal (1623-1662), and defined as a pressure of one newton concentrated on one square meter.",
    "sources": [
     "jenness_uc"
    ],
    "descriptionSources": [
+    "oed_bar",
     "oed_pascal",
     "jenness_uc"
    ]
@@ -12709,11 +12858,12 @@
    "singular": "decibar",
    "class": "Pressure/Stress",
    "factor": 10000.0,
-   "definition": "A decibar is a unit of pressure equal to 10,000 pascals, or one one-tenth of a bar.  A bar is a unit of barometric pressure equal to a pressure of 750.1 millimeters of mercury at 0° C. in latitude 45°.  One bar is slightly less than one standard atmosphere.  The term 'bar' is short for 'barometer.'  A pascal is a unit of pressure in the metre-kilogram-second (SI) system named after French mathematician and physicist Blaise Pascal (1623-1662), and defined as a pressure of one newton concentrated on one square meter.",
+   "definition": "A decibar is a unit of pressure equal to 10,000 pascals, or one one-tenth of a bar.  A bar is a unit of barometric pressure equal to a pressure of 750.1 millimeters of mercury at 0° C. in latitude 45°.  One bar is slightly less than one standard atmosphere.  The term 'bar' is short for 'barometer.'  The meteorologist Vilhelm Bjerknes, who coined the name and first used it in 1906, chose it as the shortest name derived from that word.  A pascal is a unit of pressure in the metre-kilogram-second (SI) system named after French mathematician and physicist Blaise Pascal (1623-1662), and defined as a pressure of one newton concentrated on one square meter.",
    "sources": [
     "jenness_uc"
    ],
    "descriptionSources": [
+    "oed_bar",
     "oed_pascal",
     "jenness_uc"
    ]
@@ -15879,15 +16029,40 @@
    "full": "Oxford English Dictionary. tun, n.¹ Oxford University Press. Online edition, consulted 8 October 2026.",
    "url": "https://www.oed.com/dictionary/tun_n1"
   },
-  "eb1911_fahrenheit": {
-   "short": "Encyclopædia Britannica (1911), Fahrenheit, Gabriel Daniel",
-   "full": "Encyclopædia Britannica. 1911. Fahrenheit, Gabriel Daniel. 11th edition. Cambridge University Press, Cambridge.",
-   "url": "https://en.wikisource.org/wiki/1911_Encyclop%C3%A6dia_Britannica/Fahrenheit,_Gabriel_Daniel"
+  "oed_bar": {
+   "short": "OED, bar, n.⁶",
+   "full": "Oxford English Dictionary. bar, n.⁶ Oxford University Press. Online edition, consulted 8 October 2026.",
+   "url": "https://www.oed.com/dictionary/bar_n6"
   },
-  "eb1911_celsius": {
-   "short": "Encyclopædia Britannica (1911), Celsius, Anders",
-   "full": "Encyclopædia Britannica. 1911. Celsius, Anders. 11th edition. Cambridge University Press, Cambridge.",
-   "url": "https://en.wikisource.org/wiki/1911_Encyclop%C3%A6dia_Britannica/Celsius,_Anders"
+  "oed_calorie": {
+   "short": "OED, calorie, n.",
+   "full": "Oxford English Dictionary. calorie, n. Oxford University Press. Online edition, consulted 8 October 2026.",
+   "url": "https://www.oed.com/dictionary/calorie_n"
+  },
+  "oed_celsius": {
+   "short": "OED, Celsius, n. & adj.",
+   "full": "Oxford English Dictionary. Celsius, n. & adj. Oxford University Press. Online edition, consulted 8 October 2026.",
+   "url": "https://www.oed.com/dictionary/celsius_n"
+  },
+  "oed_cord": {
+   "short": "OED, cord, n.¹",
+   "full": "Oxford English Dictionary. cord, n.¹ Oxford University Press. Online edition, consulted 8 October 2026.",
+   "url": "https://www.oed.com/dictionary/cord_n1"
+  },
+  "oed_fahrenheit": {
+   "short": "OED, Fahrenheit, n. & adj.",
+   "full": "Oxford English Dictionary. Fahrenheit, n. & adj. Oxford University Press. Online edition, consulted 8 October 2026.",
+   "url": "https://www.oed.com/dictionary/fahrenheit_n"
+  },
+  "oed_oz": {
+   "short": "OED, oz, n.¹",
+   "full": "Oxford English Dictionary. oz, n.¹ Oxford University Press. Online edition, consulted 8 October 2026.",
+   "url": "https://www.oed.com/dictionary/oz_n1"
+  },
+  "oed_sign": {
+   "short": "OED, sign, n.",
+   "full": "Oxford English Dictionary. sign, n. Oxford University Press. Online edition, consulted 8 October 2026.",
+   "url": "https://www.oed.com/dictionary/sign_n"
   },
   "agh_ramsden": {
    "short": "Alberta Geomatics Historical Society, Chain, Engineer's",

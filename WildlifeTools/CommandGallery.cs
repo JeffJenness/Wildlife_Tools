@@ -155,6 +155,12 @@ namespace WildlifeTools
                 "WildlifeTools_ConcaveHull",
                 "WildlifeTools_EstShortestPath",
             }),
+            ("Crop Plot Design Tools (CropCentric)", new[]
+            {
+                "WildlifeTools_PlotDesigner",
+                "WildlifeTools_FusePlotsAndField",
+                "WildlifeTools_CreateArrayAlongAxes",
+            }),
         })
         {
         }
@@ -211,6 +217,11 @@ namespace WildlifeTools
                 "WildlifeTools_RemoveSlc",
                 "WildlifeTools_ShadowPolygons",
                 "WildlifeTools_ElementColorHelper",
+            }),
+            ("Show Point Coordinates", new[]
+            {
+                "WildlifeTools_PointCoordinates",
+                "WildlifeTools_PointCoordinatesSettings",
             }),
         })
         {

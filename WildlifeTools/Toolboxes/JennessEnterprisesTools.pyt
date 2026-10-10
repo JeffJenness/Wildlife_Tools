@@ -39,6 +39,88 @@ import arcpy
 # Make the helper modules next to this .pyt importable.
 _HERE = os.path.dirname(__file__)
 _PYT_PATH = os.path.abspath(__file__)   # this .pyt's own path (for the scripting hint)
+
+# Online help page of every tool (relative to _HELP_ROOT); printed in the
+# run messages by _scripting_hint and kept in step with the sidecars.
+_HELP_ROOT = "https://www.jennessent.com/"
+_HELP_PAGES = {
+    "AccuracySampleSize": "ecological-analysis/estimate-sample-size.html",
+    "AdaptiveVoronoiPolygons": "geometric-tools/adaptive-voronoi-polygons.html",
+    "ArcChordRatio": "topographic-analysis/arc-chord-ratio.html",
+    "AspectFocalStatistics": "topographic-analysis/aspect-focal-statistics.html",
+    "AspectTransformation": "topographic-analysis/aspect-transformation.html",
+    "AspectZonalStatisticsAsTable": "topographic-analysis/aspect-zonal-statistics-as-table.html",
+    "BlurredHillshade": "cartography/blurred-hillshade.html",
+    "BottleneckAnalysis": "corridor-designer-tools/bottleneck-analysis.html",
+    "CenterlineAndWidth": "geometric-tools/centerline-and-width.html",
+    "ClassificationAccuracy": "ecological-analysis/classification-accuracy.html",
+    "ClipDataToAnalysisArea": "corridor-designer-tools/clip-data-to-analysis-area.html",
+    "CombineHabitatFactors": "corridor-designer-tools/combine-habitat-factors.html",
+    "CompareAccuracyAnalyses": "ecological-analysis/compare-accuracy-analyses.html",
+    "ConcaveHull": "geometric-tools/concave-hull.html",
+    "ConvertFieldUnits": "data-tools/convert-field-units.html",
+    "AddRandomNumbers": "data-tools/add-random-numbers.html",
+    "CreateArrayAlongAxes": "geometric-tools/create-array-along-axes.html",
+    "FusePlotsAndField": "geometric-tools/fuse-plots-and-field.html",
+    "PlotDesigner": "geometric-tools/plot-designer.html",
+    "CriticalHabitatFeature": "corridor-designer-tools/critical-habitat-feature.html",
+    "CumulativeSurface": "corridor-designer-tools/cumulative-surface.html",
+    "DiversityIndices": "corridor-designer-tools/diversity-indices.html",
+    "EnhancedHillshade": "cartography/enhanced-hillshade.html",
+    "EstimatedShortestPath": "geometric-tools/estimated-shortest-path.html",
+    "ExtractAspectValuesToPoints": "topographic-analysis/extract-aspect-values-to-points.html",
+    "FillCorridorHoles": "corridor-designer-tools/fill-corridor-holes.html",
+    "FindRasterExtremeValues": "topographic-analysis/find-raster-extreme-values.html",
+    "FractalDimension": "topographic-analysis/fractal-dimension.html",
+    "GeneralRasterClassification": "topographic-analysis/general-raster-classification.html",
+    "HabitatPatches": "corridor-designer-tools/create-habitat-patches.html",
+    "HabitatSuitabilityModel": "corridor-designer-tools/create-habitat-suitability-model.html",
+    "IdentifyTerminiPolygons": "corridor-designer-tools/identify-termini-polygons.html",
+    "InvertRaster": "corridor-designer-tools/invert-raster.html",
+    "KernelDensityContours": "home-range/kd-probability-contours.html",
+    "KernelDensityGenerate": "home-range/kernel-density-enhanced.html",
+    "KernelDensityProportion": "home-range/kd-to-proportion-surface.html",
+    "LSRIOnContourPolylines": "topographic-analysis/lsri-on-contours.html",
+    "LSRIOnDEM": "topographic-analysis/lsri-on-dem.html",
+    "LandFacetDensity": "corridor-designer-tools/land-facet-density.html",
+    "LandFacetMahalanobis": "corridor-designer-tools/land-facet-mahalanobis.html",
+    "LandformClassification": "topographic-analysis/landform-classification.html",
+    "LeastCostCorridor": "corridor-designer-tools/least-cost-corridor.html",
+    "LoCoHAdaptive": "home-range/locoh-adaptive.html",
+    "LoCoHFixedSphere": "home-range/locoh-fixed-sphere.html",
+    "LoCoHStandard": "home-range/locoh-standard.html",
+    "LongestLineFetch": "geometric-tools/longest-line-fetch.html",
+    "MDOWHillshade": "cartography/mdow-hillshade.html",
+    "MahalanobisChiSquare": "home-range/mahalanobis-chi-square-transform.html",
+    "MahalanobisCovariance": "home-range/calculate-statistical-matrices.html",
+    "MahalanobisPoints": "home-range/mahalanobis-distance-at-points.html",
+    "MahalanobisRaster": "home-range/mahalanobis-distance-raster.html",
+    "MaximumInscribedGeometry": "geometric-tools/maximum-inscribed-geometry.html",
+    "MultiSunHillshade": "cartography/multi-sun-hillshade.html",
+    "NormalizeExistingHSM": "corridor-designer-tools/normalize-existing-hsm.html",
+    "PatchAnalysis": "corridor-designer-tools/patch-analysis.html",
+    "RadiatingLines": "geometric-tools/radiating-lines-and-points.html",
+    "RandomPointGenerator": "geometric-tools/random-point-generator.html",
+    "RandomSampleArrayGenerator": "geometric-tools/random-sample-array-generator.html",
+    "ReclassifyFeaturesInHSM": "corridor-designer-tools/reclassify-features-in-hsm.html",
+    "RepeatingShapes": "geometric-tools/repeating-shapes.html",
+    "SelectRandomRecords": "data-tools/select-random-records.html",
+    "ShadowPolygons": "cartography/create-shadow-polygons.html",
+    "SimpleHypsometricShading": "cartography/simple-hypsometric-shading.html",
+    "SimpleTPI": "topographic-analysis/topographic-position-index.html",
+    "SlopePositionClassification": "topographic-analysis/slope-position-classification.html",
+    "SlopeZonalStatisticsAsTable": "topographic-analysis/slope-zonal-statistics-as-table.html",
+    "SpatiallyBalancedSample": "geometric-tools/spatially-balanced-sample.html",
+    "SplitLinesIntoSegments": "topographic-analysis/split-lines-into-topography-segments.html",
+    "SurfaceAreaRatio": "topographic-analysis/surface-area-and-ratio.html",
+    "TRI": "topographic-analysis/terrain-ruggedness-index.html",
+    "TopographicWetnessIndex": "topographic-analysis/topographic-wetness-index.html",
+    "TopographyAlongLines": "topographic-analysis/topography-along-lines.html",
+    "UnionCorridors": "corridor-designer-tools/union-corridors.html",
+    "VRM": "topographic-analysis/vector-ruggedness-measure.html",
+    "VoronoiPolygons": "geometric-tools/voronoi-polygons.html",
+    "WeightedSummaryStatistics": "corridor-designer-tools/weighted-summary-statistics.html",
+}
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
@@ -64,6 +146,9 @@ def _scripting_hint(messages, tool_name):
     if messages is None:
         return
     try:
+        page = _HELP_PAGES.get(tool_name)
+        if page:
+            messages.addMessage("View online help files: " + _HELP_ROOT + page)
         messages.addMessage(
             "To run this tool from a script or the Python window, import this "
             "toolbox first (if you used 'Copy Python Command', replace its "
@@ -116,6 +201,7 @@ import concave_hull  # noqa: E402
 import accuracy_assessment  # noqa: E402
 import select_random  # noqa: E402
 import unit_converter  # noqa: E402
+import crop_plots  # noqa: E402
 import weighted_stats  # noqa: E402
 import raster_extremes  # noqa: E402
 import tool_metadata  # noqa: E402
@@ -432,7 +518,9 @@ class Toolbox(object):
                       MaximumInscribedGeometry, ConcaveHull,
                       ClassificationAccuracy,
                       CompareAccuracyAnalyses, AccuracySampleSize,
-                      SelectRandomRecords, ConvertFieldUnits]
+                      SelectRandomRecords, ConvertFieldUnits,
+                      PlotDesigner, CreateArrayAlongAxes,
+                      FusePlotsAndField, AddRandomNumbers]
 
 
 class LoCoHStandard(object):
@@ -16794,3 +16882,643 @@ class ConvertFieldUnits(object):
         except Exception:
             importlib.reload(error_report)
             error_report.report(messages, self.label, parameters)
+
+
+# ===========================================================================
+#  Crop plot design tools (CropCentric port) -- see crop_plots.py
+# ===========================================================================
+_CROP_UNITS = ["Meters", "Feet", "US survey feet", "Yards", "Kilometers",
+               "Miles"]
+
+
+def _crop_units_param(name, label, default="Meters"):
+    p = arcpy.Parameter(displayName=label, name=name, datatype="GPString",
+                        parameterType="Optional", direction="Input")
+    p.filter.type = "ValueList"
+    p.filter.list = list(_CROP_UNITS)
+    p.value = default
+    return p
+
+
+def _crop_error_boundary(tool, parameters, messages, body):
+    """Shared execute wrapper: clean failures without tracebacks, bugs
+    with the full report (see VoronoiPolygons.execute)."""
+    try:
+        _scripting_hint(messages, type(tool).__name__)
+        importlib.reload(crop_plots)
+        body()
+    except arcpy.ExecuteError as e:
+        messages.addErrorMessage(str(e))
+    except Exception:
+        importlib.reload(error_report)
+        error_report.report(messages, tool.label, parameters)
+
+
+class PlotDesigner(object):
+    """Plot Designer -- a replicated block of rectangular research plots
+    with randomized rates. See ``crop_plots.run_plot_designer``."""
+
+    def __init__(self):
+        self.label = "Plot Designer"
+        self.description = (
+            "Lays out a block of rectangular research plots -- so many plots "
+            "end to end along a plot direction and so many side by side "
+            "across it, each of a given length and width -- and repeats the "
+            "block for every replication, assigning the rate values to the "
+            "plots in a fresh random order each time. The block starts at an "
+            "anchor point (the back-left corner of the first plot, facing "
+            "along the direction) that you type or, in the Plot Designer "
+            "window, click on the map; the direction can be drawn on the map "
+            "to match a fenceline. Distances are geodesic-true. Writes the "
+            "plot polygons and, optionally, their center points and long-axis "
+            "centerlines, each carrying Rep, Plot, Plot_ID and Rate. A port "
+            "of the CropCentric Plot Designer (Jenness and Wiebers 2018). "
+            "Works at every license level.")
+        self.category = "Geometric Tools\\Crop Plot Design Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        out_fc = arcpy.Parameter(
+            displayName="Output plot polygons", name="out_fc",
+            datatype="DEFeatureClass", parameterType="Required",
+            direction="Output")
+        long_edge = arcpy.Parameter(
+            displayName="Plot length (along the plot direction)",
+            name="long_edge", datatype="GPDouble", parameterType="Required",
+            direction="Input")
+        long_edge.value = 40.0
+        short_edge = arcpy.Parameter(
+            displayName="Plot width (across the plot direction)",
+            name="short_edge", datatype="GPDouble", parameterType="Required",
+            direction="Input")
+        short_edge.value = 20.0
+        units = _crop_units_param("units", "Units of the plot length, width "
+                                           "and gap")
+        bearing = arcpy.Parameter(
+            displayName="Plot direction (bearing in degrees clockwise from "
+                        "north)",
+            name="bearing", datatype="GPDouble", parameterType="Required",
+            direction="Input")
+        bearing.value = 0.0
+        n_long = arcpy.Parameter(
+            displayName="Plots along the direction (end to end)",
+            name="n_long", datatype="GPLong", parameterType="Required",
+            direction="Input")
+        n_long.value = 2
+        n_short = arcpy.Parameter(
+            displayName="Plots across the direction (side by side)",
+            name="n_short", datatype="GPLong", parameterType="Required",
+            direction="Input")
+        n_short.value = 2
+        rates = arcpy.Parameter(
+            displayName="Rate values, one per plot, separated by commas",
+            name="rates", datatype="GPString", parameterType="Required",
+            direction="Input")
+        rates.value = "0, 50, 100, 150"
+        n_reps = arcpy.Parameter(
+            displayName="Replications", name="n_reps", datatype="GPLong",
+            parameterType="Required", direction="Input")
+        n_reps.value = 4
+        field_layer = arcpy.Parameter(
+            displayName="Field polygon layer (optional; supplies the "
+                        "coordinate system and a default anchor)",
+            name="field_layer", datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Optional", direction="Input")
+        try:
+            field_layer.filter.list = ["Polygon"]
+        except Exception:
+            pass
+        cat = "Anchor point (the back-left corner of the first plot)"
+        anchor_x = arcpy.Parameter(
+            displayName="Anchor X", name="anchor_x", datatype="GPDouble",
+            parameterType="Optional", direction="Input", category=cat)
+        anchor_y = arcpy.Parameter(
+            displayName="Anchor Y", name="anchor_y", datatype="GPDouble",
+            parameterType="Optional", direction="Input", category=cat)
+        anchor_cs = arcpy.Parameter(
+            displayName="Coordinate system of the anchor (default: the "
+                        "field layer's, else the output's)",
+            name="anchor_cs", datatype="GPCoordinateSystem",
+            parameterType="Optional", direction="Input", category=cat)
+        cat2 = "Replication layout"
+        rep_layout = arcpy.Parameter(
+            displayName="Arrange the replications", name="rep_layout",
+            datatype="GPString", parameterType="Optional", direction="Input",
+            category=cat2)
+        rep_layout.filter.type = "ValueList"
+        rep_layout.filter.list = list(crop_plots.REP_LAYOUTS)
+        rep_layout.value = crop_plots.REP_LAYOUTS[0]
+        rep_gap = arcpy.Parameter(
+            displayName="Gap between replications (in the units above)",
+            name="rep_gap", datatype="GPDouble", parameterType="Optional",
+            direction="Input", category=cat2)
+        rep_gap.value = 0.0
+        cat3 = "Optional outputs"
+        out_points = arcpy.Parameter(
+            displayName="Output plot center points", name="out_points",
+            datatype="DEFeatureClass", parameterType="Optional",
+            direction="Output", category=cat3)
+        out_lines = arcpy.Parameter(
+            displayName="Output plot centerlines (along the long edge)",
+            name="out_lines", datatype="DEFeatureClass",
+            parameterType="Optional", direction="Output", category=cat3)
+        seed = arcpy.Parameter(
+            displayName="Random seed (optional; repeats the same rate order)",
+            name="seed", datatype="GPLong", parameterType="Optional",
+            direction="Input", category=cat3)
+        return [out_fc, long_edge, short_edge, units, bearing, n_long,
+                n_short, rates, n_reps, field_layer, anchor_x, anchor_y,
+                anchor_cs, rep_layout, rep_gap, out_points, out_lines, seed]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        fl, outp = P["field_layer"], P["out_fc"]
+        if fl.valueAsText and not fl.hasBeenValidated:
+            if not outp.altered or outp.valueAsText == self._auto_out:
+                try:
+                    src = arcpy.Describe(fl.value or fl.valueAsText).catalogPath
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(src))[0] + "_Plots")
+                    ws = arcpy.env.workspace or os.path.dirname(src)
+                    sug = _unique_name(base, ws)
+                    outp.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        try:
+            n = int(P["n_long"].value or 0) * int(P["n_short"].value or 0)
+            vals = crop_plots.parse_rates(P["rates"].valueAsText)
+            if n > 0 and vals and len(vals) != n:
+                P["rates"].setErrorMessage(
+                    "{} rate value(s) given, but each replication has {} "
+                    "plots ({} along x {} across): give exactly one rate per "
+                    "plot.".format(len(vals), n, P["n_long"].value,
+                                   P["n_short"].value))
+        except arcpy.ExecuteError as e:
+            P["rates"].setErrorMessage(str(e))
+        except Exception:
+            pass
+        for nm in ("long_edge", "short_edge"):
+            if P[nm].value is not None and float(P[nm].value) <= 0:
+                P[nm].setErrorMessage("Must be a positive distance.")
+        for nm in ("n_long", "n_short", "n_reps"):
+            if P[nm].value is not None and int(P[nm].value) < 1:
+                P[nm].setErrorMessage("Must be at least 1.")
+        ax, ay = P["anchor_x"], P["anchor_y"]
+        if (ax.valueAsText or ay.valueAsText) and not (ax.valueAsText and ay.valueAsText):
+            (ay if ax.valueAsText else ax).setErrorMessage(
+                "Give both the anchor X and the anchor Y.")
+        if not (ax.valueAsText or ay.valueAsText) and not P["field_layer"].valueAsText:
+            P["field_layer"].setErrorMessage(
+                "Give a field layer, or an anchor point under 'Anchor point'.")
+        return
+
+    def execute(self, parameters, messages):
+        P = {p.name: p for p in parameters}
+
+        def body():
+            cs = P["anchor_cs"].valueAsText
+            crop_plots.run_plot_designer(
+                P["out_fc"].valueAsText, P["long_edge"].value,
+                P["short_edge"].value, P["units"].valueAsText,
+                P["bearing"].value, P["n_long"].value, P["n_short"].value,
+                P["rates"].valueAsText, P["n_reps"].value,
+                field_layer=P["field_layer"].value or P["field_layer"].valueAsText,
+                anchor_x=P["anchor_x"].value, anchor_y=P["anchor_y"].value,
+                anchor_sr=cs or None,
+                rep_layout=P["rep_layout"].valueAsText,
+                rep_gap=P["rep_gap"].value or 0.0,
+                out_points=P["out_points"].valueAsText or None,
+                out_lines=P["out_lines"].valueAsText or None,
+                seed=P["seed"].value, messages=messages)
+        _crop_error_boundary(self, parameters, messages, body)
+
+
+class CreateArrayAlongAxes(object):
+    """Create Array along Axes -- copies of the input features stepped along
+    one or two axes. See ``crop_plots.run_create_array``."""
+
+    def __init__(self):
+        self.label = "Create Array along Axes"
+        self.description = (
+            "Copies the input features (a layer's selection is honored) along "
+            "an axis -- so many copies forward and so many backward -- and "
+            "optionally along a second axis to the right and left, each step "
+            "being the features' own extent along that axis plus a separation "
+            "distance, so neighboring copies never overlap. The copies can be "
+            "clipped to selected polygons, and written as a feature class "
+            "and/or added to the map as graphics. In the Create Array along "
+            "Axes window the source is a selected graphic and the axes are "
+            "drawn on the map with a live preview. A port of the CropCentric "
+            "Create Graphic Array tool (Jenness and Wiebers 2018). Works at "
+            "every license level.")
+        self.category = "Geometric Tools\\Crop Plot Design Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_features = arcpy.Parameter(
+            displayName="Input features (selection honored) or graphics layer",
+            name="in_features",
+            datatype=["GPFeatureLayer", "DEFeatureClass", "GPGraphicsLayer"],
+            parameterType="Optional", direction="Input")
+        bearing1 = arcpy.Parameter(
+            displayName="Axis 1 bearing (degrees clockwise from north)",
+            name="bearing1", datatype="GPDouble", parameterType="Required",
+            direction="Input")
+        bearing1.value = 90.0
+        gap1 = arcpy.Parameter(
+            displayName="Separation between copies along axis 1",
+            name="gap1", datatype="GPDouble", parameterType="Required",
+            direction="Input")
+        gap1.value = 0.0
+        units1 = _crop_units_param("units1", "Units of the separations")
+        n_forward = arcpy.Parameter(
+            displayName="Copies forward along axis 1 (not counting the "
+                        "original)",
+            name="n_forward", datatype="GPLong", parameterType="Required",
+            direction="Input")
+        n_forward.value = 3
+        n_back = arcpy.Parameter(
+            displayName="Copies backward along axis 1",
+            name="n_back", datatype="GPLong", parameterType="Required",
+            direction="Input")
+        n_back.value = 0
+        out_fc = arcpy.Parameter(
+            displayName="Output feature class (optional when adding graphics)",
+            name="out_fc", datatype="DEFeatureClass",
+            parameterType="Optional", direction="Output")
+        cat = "Axis 2 (optional)"
+        bearing2 = arcpy.Parameter(
+            displayName="Axis 2 bearing (default: axis 1 + 90 degrees)",
+            name="bearing2", datatype="GPDouble", parameterType="Optional",
+            direction="Input", category=cat)
+        gap2 = arcpy.Parameter(
+            displayName="Separation between copies along axis 2",
+            name="gap2", datatype="GPDouble", parameterType="Optional",
+            direction="Input", category=cat)
+        gap2.value = 0.0
+        n_right = arcpy.Parameter(
+            displayName="Copies to the right along axis 2",
+            name="n_right", datatype="GPLong", parameterType="Optional",
+            direction="Input", category=cat)
+        n_right.value = 0
+        n_left = arcpy.Parameter(
+            displayName="Copies to the left along axis 2",
+            name="n_left", datatype="GPLong", parameterType="Optional",
+            direction="Input", category=cat)
+        n_left.value = 0
+        cat2 = "Clip and graphics"
+        clip_features = arcpy.Parameter(
+            displayName="Clip the copies to these polygons (selection "
+                        "honored)",
+            name="clip_features", datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Optional", direction="Input", category=cat2)
+        try:
+            clip_features.filter.list = ["Polygon"]
+        except Exception:
+            pass
+        to_graphics = arcpy.Parameter(
+            displayName="Also add the copies to the map as graphics",
+            name="to_graphics", datatype="GPBoolean",
+            parameterType="Optional", direction="Input", category=cat2)
+        to_graphics.value = False
+        in_geometry = arcpy.Parameter(
+            displayName="Source geometry as Esri JSON (used by the window "
+                        "instead of input features)",
+            name="in_geometry", datatype="GPString",
+            parameterType="Optional", direction="Input", category=cat2)
+        return [in_features, bearing1, gap1, units1, n_forward, n_back,
+                out_fc, bearing2, gap2, n_right, n_left, clip_features,
+                to_graphics, in_geometry]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        inp, outp = P["in_features"], P["out_fc"]
+        if inp.valueAsText and not inp.hasBeenValidated:
+            if not outp.altered or outp.valueAsText == self._auto_out:
+                try:
+                    src = arcpy.Describe(inp.value or inp.valueAsText).catalogPath
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(src))[0] + "_Array")
+                    ws = arcpy.env.workspace or os.path.dirname(src)
+                    sug = _unique_name(base, ws)
+                    outp.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        if not P["in_features"].valueAsText and not P["in_geometry"].valueAsText:
+            P["in_features"].setErrorMessage(
+                "Choose the features to copy (or run from the Create Array "
+                "along Axes window with a selected graphic).")
+        if not P["out_fc"].valueAsText and not P["to_graphics"].value:
+            P["out_fc"].setErrorMessage(
+                "Give an output feature class, or check 'add the copies to "
+                "the map as graphics' (or both).")
+        for nm in ("n_forward", "n_back", "n_right", "n_left"):
+            if P[nm].value is not None and int(P[nm].value) < 0:
+                P[nm].setErrorMessage("Cannot be negative.")
+        if (P["n_forward"].value or 0) + (P["n_back"].value or 0) + \
+                (P["n_right"].value or 0) + (P["n_left"].value or 0) == 0:
+            P["n_forward"].setWarningMessage(
+                "No copies requested: the output will hold only the "
+                "original(s).")
+        return
+
+    def execute(self, parameters, messages):
+        P = {p.name: p for p in parameters}
+
+        def body():
+            crop_plots.run_create_array(
+                P["bearing1"].value, P["gap1"].value or 0.0,
+                P["units1"].valueAsText, P["n_forward"].value or 0,
+                P["n_back"].value or 0,
+                in_features=P["in_features"].value or P["in_features"].valueAsText,
+                in_geometry_json=P["in_geometry"].valueAsText or None,
+                bearing2=P["bearing2"].value, gap2=P["gap2"].value or 0.0,
+                units2=P["units1"].valueAsText,
+                n_right=P["n_right"].value or 0, n_left=P["n_left"].value or 0,
+                clip_features=P["clip_features"].value or P["clip_features"].valueAsText,
+                out_fc=P["out_fc"].valueAsText or None,
+                to_graphics=bool(P["to_graphics"].value), messages=messages)
+        _crop_error_boundary(self, parameters, messages, body)
+
+
+class FusePlotsAndField(object):
+    """Fuse Plots and Field -- one prescription map from a field layer and a
+    research-plot layer. See ``crop_plots.run_fuse``."""
+
+    def __init__(self):
+        self.label = "Fuse Plots and Field"
+        self.description = (
+            "Combines a field (boundary) polygon layer and a research-plot "
+            "polygon layer into one feature class: the field polygons are "
+            "dissolved by rate -- a rate attribute of the field layer, a "
+            "standard rate, or the attribute with the standard rate filling "
+            "its gaps -- every plot is cut out of them, and the plots are "
+            "added with their own rates and attributes, so no ground is "
+            "counted twice. Selections are honored on both layers. The output "
+            "carries Rate, Source (Field or Plot) and Plot_FID plus the plot "
+            "layer's attributes. A port of the CropCentric Fuse Plot and "
+            "Boundary Feature Class tool (Jenness and Wiebers 2018). Works at "
+            "every license level.")
+        self.category = "Geometric Tools\\Crop Plot Design Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        field_layer = arcpy.Parameter(
+            displayName="Field polygon layer", name="field_layer",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        plot_layer = arcpy.Parameter(
+            displayName="Research plot polygon layer", name="plot_layer",
+            datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        for p in (field_layer, plot_layer):
+            try:
+                p.filter.list = ["Polygon"]
+            except Exception:
+                pass
+        plot_rate_field = arcpy.Parameter(
+            displayName="Plot rate field", name="plot_rate_field",
+            datatype="Field", parameterType="Required", direction="Input")
+        plot_rate_field.parameterDependencies = ["plot_layer"]
+        plot_rate_field.filter.list = ["Short", "Long", "BigInteger", "Float",
+                                       "Double"]
+        out_fc = arcpy.Parameter(
+            displayName="Output fused feature class", name="out_fc",
+            datatype="DEFeatureClass", parameterType="Required",
+            direction="Output")
+        field_rate_field = arcpy.Parameter(
+            displayName="Field rate field (optional)", name="field_rate_field",
+            datatype="Field", parameterType="Optional", direction="Input")
+        field_rate_field.parameterDependencies = ["field_layer"]
+        field_rate_field.filter.list = ["Short", "Long", "BigInteger", "Float",
+                                        "Double"]
+        standard_rate = arcpy.Parameter(
+            displayName="Standard rate for field ground (used where no field "
+                        "rate field is given, or the field's rate is empty)",
+            name="standard_rate", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        transfer = arcpy.Parameter(
+            displayName="Copy the plot layer's attribute fields to the output",
+            name="transfer_plot_fields", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        transfer.value = True
+        return [field_layer, plot_layer, plot_rate_field, out_fc,
+                field_rate_field, standard_rate, transfer]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        fl, outp = P["field_layer"], P["out_fc"]
+        if fl.valueAsText and not fl.hasBeenValidated:
+            if not outp.altered or outp.valueAsText == self._auto_out:
+                try:
+                    src = arcpy.Describe(fl.value or fl.valueAsText).catalogPath
+                    base = _legalize(os.path.splitext(
+                        os.path.basename(src))[0] + "_Fused")
+                    ws = arcpy.env.workspace or os.path.dirname(src)
+                    sug = _unique_name(base, ws)
+                    outp.value = sug
+                    self._auto_out = sug
+                except Exception:
+                    pass
+        # a plot layer whose rate field is called Rate: pick it once
+        pl, prf = P["plot_layer"], P["plot_rate_field"]
+        if pl.valueAsText and not pl.hasBeenValidated and not prf.altered:
+            try:
+                for f in arcpy.ListFields(pl.value or pl.valueAsText):
+                    if f.name.lower() == "rate" and f.type in (
+                            "SmallInteger", "Integer", "BigInteger",
+                            "Single", "Double"):
+                        prf.value = f.name
+                        break
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        if not P["field_rate_field"].valueAsText and \
+                P["standard_rate"].value is None:
+            P["standard_rate"].setErrorMessage(
+                "Give a standard rate for the field ground, or a field rate "
+                "field (or both: the standard rate fills empty values).")
+        fl, pl = P["field_layer"], P["plot_layer"]
+        if fl.valueAsText and pl.valueAsText:
+            try:
+                a = arcpy.Describe(fl.value or fl.valueAsText).catalogPath
+                b = arcpy.Describe(pl.value or pl.valueAsText).catalogPath
+                if a.lower() == b.lower():
+                    pl.setErrorMessage("The field layer and the plot layer "
+                                       "are the same dataset.")
+            except Exception:
+                pass
+        return
+
+    def execute(self, parameters, messages):
+        P = {p.name: p for p in parameters}
+
+        def body():
+            crop_plots.run_fuse(
+                P["field_layer"].value or P["field_layer"].valueAsText,
+                P["plot_layer"].value or P["plot_layer"].valueAsText,
+                P["plot_rate_field"].valueAsText, P["out_fc"].valueAsText,
+                field_rate_field=P["field_rate_field"].valueAsText or None,
+                standard_rate=P["standard_rate"].value,
+                transfer_plot_fields=bool(P["transfer_plot_fields"].value),
+                messages=messages)
+        _crop_error_boundary(self, parameters, messages, body)
+
+
+class AddRandomNumbers(object):
+    """Add Random Numbers -- fills a numeric field of the selected records.
+    See ``crop_plots.run_add_random_numbers``."""
+
+    def __init__(self):
+        self.label = "Add Random Numbers"
+        self.description = (
+            "Fills a numeric field of a layer's or table's records -- only "
+            "the selected records when there is a selection, and only the "
+            "records a definition query shows -- with a constant, a random "
+            "permutation of 1 to N (every record a different number: the "
+            "classic way to assign treatments to plots at random), random "
+            "integers within a range, random decimals between 0 and 1 or "
+            "within a range, or draws from a normal distribution with a "
+            "given mean and standard deviation. A missing field is created "
+            "(integer or double precision as the values need). A seed makes "
+            "the result repeatable. A port of the CropCentric Add Random "
+            "Numbers tool (Jenness and Wiebers 2018). Works at every license "
+            "level.")
+        self.category = "Data Tools"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        in_table = arcpy.Parameter(
+            displayName="Input table or layer (selection honored)",
+            name="in_table",
+            datatype=["GPTableView", "GPFeatureLayer", "DETable",
+                      "DEFeatureClass"],
+            parameterType="Required", direction="Input")
+        field = arcpy.Parameter(
+            displayName="Field to fill (an existing numeric field, or a new "
+                        "field name)",
+            name="field", datatype="GPString", parameterType="Required",
+            direction="Input")
+        field.value = "Treatment"
+        mode = arcpy.Parameter(
+            displayName="Values to write", name="mode", datatype="GPString",
+            parameterType="Required", direction="Input")
+        mode.filter.type = "ValueList"
+        mode.filter.list = list(crop_plots.MODES)
+        mode.value = crop_plots.MODES[1]
+        constant = arcpy.Parameter(
+            displayName="Constant value", name="constant", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        low = arcpy.Parameter(
+            displayName="Lowest value of the range", name="low",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        high = arcpy.Parameter(
+            displayName="Highest value of the range", name="high",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        mean = arcpy.Parameter(
+            displayName="Mean of the normal distribution", name="mean",
+            datatype="GPDouble", parameterType="Optional", direction="Input")
+        sd = arcpy.Parameter(
+            displayName="Standard deviation of the normal distribution",
+            name="sd", datatype="GPDouble", parameterType="Optional",
+            direction="Input")
+        seed = arcpy.Parameter(
+            displayName="Random seed (optional; repeats the same numbers)",
+            name="seed", datatype="GPLong", parameterType="Optional",
+            direction="Input")
+        out_table = arcpy.Parameter(
+            displayName="Updated table", name="out_table",
+            datatype="GPTableView", parameterType="Derived",
+            direction="Output")
+        out_table.parameterDependencies = [in_table.name]
+        return [in_table, field, mode, constant, low, high, mean, sd, seed,
+                out_table]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        m = crop_plots.canon_mode(P["mode"].valueAsText)
+        P["constant"].enabled = m == crop_plots.MODE_CONSTANT
+        rng = m in (crop_plots.MODE_INT_RANGE, crop_plots.MODE_DEC_RANGE)
+        P["low"].enabled = rng
+        P["high"].enabled = rng
+        P["mean"].enabled = m == crop_plots.MODE_NORMAL
+        P["sd"].enabled = m == crop_plots.MODE_NORMAL
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        m = crop_plots.canon_mode(P["mode"].valueAsText)
+        if m == crop_plots.MODE_CONSTANT and P["constant"].value is None:
+            P["constant"].setErrorMessage("Give the constant value.")
+        if m in (crop_plots.MODE_INT_RANGE, crop_plots.MODE_DEC_RANGE):
+            for nm in ("low", "high"):
+                if P[nm].value is None:
+                    P[nm].setErrorMessage("Give the range.")
+        if m == crop_plots.MODE_NORMAL:
+            if P["mean"].value is None:
+                P["mean"].setErrorMessage("Give the mean.")
+            if P["sd"].value is None:
+                P["sd"].setErrorMessage("Give the standard deviation.")
+            elif float(P["sd"].value) < 0:
+                P["sd"].setErrorMessage("Cannot be negative.")
+        t, f = P["in_table"], P["field"]
+        if t.valueAsText and f.valueAsText:
+            try:
+                kind, _n = crop_plots._field_kind(t.value or t.valueAsText,
+                                                  f.valueAsText)
+                if kind == "other":
+                    f.setErrorMessage("'{}' is not a numeric field.".format(
+                        f.valueAsText))
+                elif kind == "int" and m in crop_plots.DECIMAL_MODES:
+                    f.setErrorMessage(
+                        "'{}' is an integer field; this mode writes decimals. "
+                        "Choose a double-precision field or a new name."
+                        .format(f.valueAsText))
+                elif kind is None:
+                    f.setWarningMessage(
+                        "'{}' does not exist and will be created.".format(
+                            f.valueAsText))
+            except Exception:
+                pass
+        return
+
+    def execute(self, parameters, messages):
+        P = {p.name: p for p in parameters}
+
+        def body():
+            table = P["in_table"].value or P["in_table"].valueAsText
+            crop_plots.run_add_random_numbers(
+                table, P["field"].valueAsText, P["mode"].valueAsText,
+                constant=P["constant"].value, low=P["low"].value,
+                high=P["high"].value, mean=P["mean"].value, sd=P["sd"].value,
+                seed=P["seed"].value, messages=messages)
+            P["out_table"].value = P["in_table"].valueAsText
+        _crop_error_boundary(self, parameters, messages, body)

@@ -79,6 +79,14 @@ OED_ENTRIES = [
     ("ton", "ton, n.¹", "https://www.oed.com/dictionary/ton_n1"),
     ("troy", "troy, n.²", "https://www.oed.com/dictionary/troy_n2"),
     ("tun", "tun, n.¹", "https://www.oed.com/dictionary/tun_n1"),
+    # the second set Jeff saved (Reference_Docs/Temp3, 8 October 2026)
+    ("bar", "bar, n.⁶", "https://www.oed.com/dictionary/bar_n6"),
+    ("calorie", "calorie, n.", "https://www.oed.com/dictionary/calorie_n"),
+    ("celsius", "Celsius, n. & adj.", "https://www.oed.com/dictionary/celsius_n"),
+    ("cord", "cord, n.¹", "https://www.oed.com/dictionary/cord_n1"),
+    ("fahrenheit", "Fahrenheit, n. & adj.", "https://www.oed.com/dictionary/fahrenheit_n"),
+    ("oz", "oz, n.¹", "https://www.oed.com/dictionary/oz_n1"),
+    ("sign", "sign, n.", "https://www.oed.com/dictionary/sign_n"),
 ]
 
 CITATIONS = {}
@@ -89,18 +97,9 @@ for _k, _head, _url in OED_ENTRIES:
         "url": _url,
     }
 CITATIONS.update({
-    # read on Wikisource, 8 October 2026
-    "eb1911_fahrenheit": {
-        "short": "Encyclopædia Britannica (1911), Fahrenheit, Gabriel Daniel",
-        "full": ("Encyclopædia Britannica. 1911. Fahrenheit, Gabriel Daniel. 11th edition. Cambridge "
-                 "University Press, Cambridge."),
-        "url": "https://en.wikisource.org/wiki/1911_Encyclop%C3%A6dia_Britannica/Fahrenheit,_Gabriel_Daniel",
-    },
-    "eb1911_celsius": {
-        "short": "Encyclopædia Britannica (1911), Celsius, Anders",
-        "full": "Encyclopædia Britannica. 1911. Celsius, Anders. 11th edition. Cambridge University Press, Cambridge.",
-        "url": "https://en.wikisource.org/wiki/1911_Encyclop%C3%A6dia_Britannica/Celsius,_Anders",
-    },
+    # (Fahrenheit and Celsius first rested on the 1911 Encyclopaedia
+    # Britannica; the OED entries Jeff saved later replace it, and give
+    # Fahrenheit as Daniel Gabriel, where the 1911 article has Gabriel Daniel)
     "agh_ramsden": {
         "short": "Alberta Geomatics Historical Society, Chain, Engineer's",
         "full": ("Alberta Geomatics Historical Society. Chain, Engineer's. Web page: the engineer's chain, also "
@@ -140,8 +139,17 @@ SENTENCE_FIXES = [
     (r"distance equivalent to\s+paces\.", "distance equivalent to 1,000 paces.", ["oed_mile"]),
     (r"An anomalistic century is a unit of time defined as 1,000 anomalistic years\.",
      "An anomalistic millennium is a unit of time defined as 1,000 anomalistic years.", []),
-    (r"\(1638-1736\)", "(1686-1736)", ["eb1911_fahrenheit"]),
-    (r"Anders Celsius \(1701-1744\)", "Anders Celsius (1701-1744)", ["eb1911_celsius"]),
+    (r"Gabriel Daniel Fahrenheit \(1638-1736\)", "Daniel Gabriel Fahrenheit (1686-1736)", ["oed_fahrenheit"]),
+    (r"(Anders Celsius \(1701-1744\)\.)",
+     r"\1  Celsius's own scale ran the other way, with 0 at the boiling point of water and 100 at the freezing "
+     r"point; it was soon turned around.", ["oed_celsius"]),
+    (r"(The term 'bar' is short for 'barometer\.')",
+     r"\1  The meteorologist Vilhelm Bjerknes, who coined the name and first used it in 1906, chose it as the "
+     r"shortest name derived from that word.", ["oed_bar"]),
+    (r"The abbreviation of 'ounce' is 'oz', which derives from the Italian word 'onza', referring to the name of "
+     r"a Spanish and Sicilian coin\.",
+     "The abbreviation of 'ounce' is 'oz', from oz, the 15th-century Italian abbreviation of onza, ounce; the "
+     "ounce was also the name of Spanish and Sicilian coins.", ["oed_oz", "oed_ounce"]),
     (r"The current working definition of the Celsius scale, however, was set by the International Committee on "
      r"Weights and Measures in 1954, and based the scale on the triple point of water \(the temperature at which "
      r"water can exist in a solid, liquid and gaseous state\)\.\s+This triple point of water is equal to 0 "
@@ -149,7 +157,7 @@ SENTENCE_FIXES = [
      "In 1954 the General Conference on Weights and Measures based the scale, through the kelvin, on the triple "
      "point of water (the temperature at which water can exist as a solid, a liquid and a gas), set at 273.16 "
      "kelvins, or 0.01 degrees Celsius.  Since 2019 the kelvin, and with it the Celsius scale, has been defined "
-     "by a fixed value of the Boltzmann constant.", ["bipm_si", "oed_kelvin"]),
+     "by a fixed value of the Boltzmann constant.", ["bipm_si", "oed_celsius", "oed_kelvin"]),
     (r"The Kelvin temperature scale was developed by the British mathematician and physicist 1st Baron William "
      r"Thomas Kelvin \(1824-1907\)\.",
      "The Kelvin temperature scale was developed by the Scottish physicist William Thomson, Baron Kelvin "
@@ -237,6 +245,12 @@ OED_SUPPORT = [
     (r"1706 reference in the Oxford English Dictionary \(under 'pole'\)", ["oed_pole"]),
     (r"A wine gallon is a British term", ["oed_gallon"]),
     (r"A corn gallon is a British term", ["oed_gallon"]),
+    # the second set (Temp3)
+    (r"The term 'centigrade' is rarely used these days in favor of 'Celsius'", ["oed_celsius"]),
+    (r"The term 'cord' is probably derived from an early way to measure", ["oed_cord"]),
+    (r"amount of heat required to raise the temperature of one gram of water", ["oed_calorie"]),
+    (r"kilogram calorie \(or large calorie\)", ["oed_calorie"]),
+    (r"probably derived from the twelve signs of the zodiac", ["oed_sign"]),
 ]
 
 

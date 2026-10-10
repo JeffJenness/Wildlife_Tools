@@ -64,6 +64,7 @@ namespace WildlifeTools
         public LocohParameterWindow()
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             Loaded += (_, __) =>
             {
                 OnRefreshLayers(null, null);

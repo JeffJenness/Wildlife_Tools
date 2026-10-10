@@ -21,7 +21,7 @@
 """The CorridorDesigner habitat-suitability-model (HSM) building chain.
 
 Modernized ports of the five HSM tools from the original CorridorDesigner
-Python toolbox (Dan Majka, dan@corridordesign.org, 2006-2007 -- the primary
+Python toolbox (Dan Majka, dmajka@TNC.ORG, 2006-2007 -- the primary
 author of the original tools; these ArcGIS Pro versions are by Jeff Jenness
 and Dan Majka):
 

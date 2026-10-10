@@ -51,6 +51,7 @@ namespace WildlifeTools.PolarPlots
                                   string plainText)
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             _plainText = plainText ?? "";
             _stats = st;
             _headers = headerLines;

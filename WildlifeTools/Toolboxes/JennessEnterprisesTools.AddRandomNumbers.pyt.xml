@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<metadata xml:lang="en"><Esri><CreaDate>20261009</CreaDate><CreaTime>00000000</CreaTime><ArcGISFormat>1.0</ArcGISFormat><SyncOnce>TRUE</SyncOnce></Esri>
+	<tool name="AddRandomNumbers" displayname="Add Random Numbers" toolboxalias="jenness">
+		<arcToolboxHelpPath>c:\program files\arcgis\pro\Resources\Help\gp</arcToolboxHelpPath>
+		<summary><para>View online help files: <a href="https://www.jennessent.com/data-tools/add-random-numbers.html" target="_blank">https://www.jennessent.com/data-tools/add-random-numbers.html</a> <br/><br/>Fills a numeric field of a layer's or table's records -- only the <b>selected</b> records when there is a selection, and only the records a definition query shows -- with a <b>constant</b>, a <b>random permutation of 1 to N</b> (every record a different number: the classic way to assign treatments to plots at random), <b>random integers</b> within a range, <b>random decimals</b> between 0 and 1 or within a range, or draws from a <b>normal distribution</b> with a given mean and standard deviation. A missing field is created (integer or double precision as the values need). A seed makes the result repeatable. A port of the CropCentric Add Random Numbers tool (Jenness and Wiebers 2018). Works at every license level.</para></summary>
+		<usage><b>Which records.</b> A map layer or table view writes only the records it shows: its selection, if any, and its definition query are honored. A dataset path writes every record. N, for the permutation, is the number of records written.
+
+<b>The values:</b>
+  •  <b>Constant value</b> -- the same number in every record.
+  •  <b>Random permutation of 1 to N</b> -- the numbers 1..N dealt out in random order, each used once (treatment numbers, random plot order, random visit order).
+  •  <b>Random integers within a range</b> -- each record an independent whole number from lowest to highest, inclusive (repeats allowed).
+  •  <b>Random decimals between 0 and 1</b> -- uniform on [0, 1).
+  •  <b>Random decimals within a range</b> -- uniform between lowest and highest.
+  •  <b>Random decimals from a normal distribution</b> -- Gaussian draws with the given mean and standard deviation.
+
+<b>The field.</b> An existing numeric field is written in place; integer fields take only the integer modes (and a whole-number constant). A name that does not exist yet is created as a LONG field for integer values or a DOUBLE field for decimals (shortened to ten characters on a shapefile or dBASE table).
+
+<b>Repeatability.</b> Give a seed to get the same numbers again; leave it empty for a fresh draw each run.</usage>
+		<parameters>
+			<param name="in_table" displayname="Input table or layer (selection honored)" type="Required" direction="Input" datatype="Table View" expression="in_table"><dialogReference><para>The layer, table view, feature class or table whose records are written. A layer's selection and definition query are honored.</para></dialogReference></param>
+			<param name="field" displayname="Field to fill (an existing numeric field, or a new field name)" type="Required" direction="Input" datatype="String" expression="field"><dialogReference><para>The field to write. An existing numeric field is filled in place; a new name is created (integer or double precision to suit the values).</para></dialogReference></param>
+			<param name="mode" displayname="Values to write" type="Required" direction="Input" datatype="String" expression="mode"><dialogReference><para>Constant value; Random permutation of 1 to N (each record unique); Random integers within a range; Random decimals between 0 and 1; Random decimals within a range; or Random decimals from a normal distribution (mean, standard deviation).</para></dialogReference></param>
+			<param name="constant" displayname="Constant value" type="Optional" direction="Input" datatype="Double" expression="constant"><dialogReference><para>The value for the Constant value mode.</para></dialogReference></param>
+			<param name="low" displayname="Lowest value of the range" type="Optional" direction="Input" datatype="Double" expression="low"><dialogReference><para>For the range modes.</para></dialogReference></param>
+			<param name="high" displayname="Highest value of the range" type="Optional" direction="Input" datatype="Double" expression="high"><dialogReference><para>For the range modes (inclusive for integers).</para></dialogReference></param>
+			<param name="mean" displayname="Mean of the normal distribution" type="Optional" direction="Input" datatype="Double" expression="mean"><dialogReference><para>For the normal-distribution mode.</para></dialogReference></param>
+			<param name="sd" displayname="Standard deviation of the normal distribution" type="Optional" direction="Input" datatype="Double" expression="sd"><dialogReference><para>For the normal-distribution mode; cannot be negative.</para></dialogReference></param>
+			<param name="seed" displayname="Random seed (optional; repeats the same numbers)" type="Optional" direction="Input" datatype="Long" expression="seed"><dialogReference><para>Any whole number. The same seed with the same records gives the same numbers again.</para></dialogReference></param>
+			<param name="out_table" displayname="Updated table" type="Derived" direction="Output" datatype="Table View" expression="out_table"><dialogReference><para>The input, after writing (for ModelBuilder chaining).</para></dialogReference></param>
+		</parameters>
+		<scriptExamples><scriptExample><title>Add Random Numbers example (stand-alone script)</title><para>Deal the treatment numbers 1..N to the plots of replication 2 in random order.</para><code>import arcpy
+arcpy.ImportToolbox(r"C:\path\to\JennessEnterprisesTools.pyt")  # your install path
+arcpy.management.MakeFeatureLayer(r"D:\data\trial.gdb\Plots_2026", "plots")
+arcpy.management.SelectLayerByAttribute("plots", "NEW_SELECTION", "Rep = 2")
+arcpy.jenness.AddRandomNumbers(
+    in_table="plots", field="Treatment",
+    mode="Random permutation of 1 to N (each record unique)", seed=42)</code></scriptExample></scriptExamples>
+	</tool>
+	<dataIdInfo><searchKeys><keyword>random numbers</keyword><keyword>random permutation</keyword><keyword>treatment</keyword><keyword>randomize</keyword><keyword>normal distribution</keyword><keyword>uniform</keyword><keyword>field calculator</keyword><keyword>CropCentric</keyword><keyword>experimental design</keyword></searchKeys><idCredit>Jeff Jenness and Matt Wiebers, Jenness Enterprises (http://www.jennessent.com). A port of the CropCentric ArcGIS tools (Jenness and Wiebers 2018).</idCredit></dataIdInfo>
+</metadata>

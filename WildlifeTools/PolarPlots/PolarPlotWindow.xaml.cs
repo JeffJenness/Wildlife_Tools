@@ -81,6 +81,7 @@ namespace WildlifeTools.PolarPlots
         public PolarPlotWindow()
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             cboPlotType.ItemsSource = AllPlotTypes;
             cboPlotType.SelectedIndex = 1;
 

@@ -110,6 +110,7 @@ namespace WildlifeTools.Corridor
         public BottleneckWindow()
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             DataContext = this;      // lets the framework's drag-drop
                                      // behavior find IDropTarget below
             // IsDropTarget alone only MARKS an element; the handler must

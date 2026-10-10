@@ -1,0 +1,208 @@
+<UserControl x:Class="WildlifeTools.CropPlots.PlotDesignerPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!-- The whole content of the Plot Designer window: plain WPF, so it can be
+       drawn and checked outside ArcGIS Pro. Everything that needs Pro (the
+       map's layers, the sketch tools, the preview overlays, running the
+       geoprocessing tool, the help page) is in CropPlotActions and the sketch
+       tools, reached from clicks. The green/gray lights beside each section
+       show whether that section is complete, as the CropCentric dialog did.
+       No colors are set on text: the window's light or dark theme applies. -->
+  <UserControl.Resources>
+    <Style TargetType="ToolTip">
+      <Setter Property="MaxWidth" Value="420" />
+      <Setter Property="ContentTemplate">
+        <Setter.Value>
+          <DataTemplate>
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="400" />
+          </DataTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="Light" TargetType="Ellipse">
+      <Setter Property="Width" Value="12" />
+      <Setter Property="Height" Value="12" />
+      <Setter Property="Margin" Value="0,0,8,0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Fill" Value="#9E9E9E" />
+      <Setter Property="Stroke" Value="#60000000" />
+      <Setter Property="StrokeThickness" Value="0.8" />
+    </Style>
+    <Style x:Key="Header" TargetType="TextBlock">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style x:Key="Lbl" TargetType="TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Margin" Value="0,0,6,0" />
+    </Style>
+    <Style x:Key="Num" TargetType="TextBox">
+      <Setter Property="Width" Value="64" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Margin" Value="0,0,12,0" />
+    </Style>
+  </UserControl.Resources>
+
+  <DockPanel Margin="14">
+    <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8">
+      Lay out a block of rectangular research plots and repeat it for every
+      replication, with the rate values put in a fresh random order each time.
+      Click the anchor point and draw the plot direction on the map, watch the
+      preview, then create the plots: the Plot Designer geoprocessing tool does
+      the work, so the run is recorded in History and can be repeated there.
+    </TextBlock>
+
+    <!-- buttons -->
+    <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+      <Button DockPanel.Dock="Right" Content="Close" Width="84" Click="OnClose" IsCancel="True" />
+      <Button DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,12,0" Width="20" Height="20"
+              Click="OnHelp" ToolTip="Open the Plot Designer help page.">
+        <Button.Template>
+          <ControlTemplate TargetType="Button">
+            <Grid Background="Transparent">
+              <Ellipse Fill="#1F6FB2" />
+              <TextBlock Text="?" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Grid>
+          </ControlTemplate>
+        </Button.Template>
+      </Button>
+      <Button x:Name="btnCreate" Content="Create Plots" Padding="14,4" FontWeight="SemiBold" Click="OnCreate" IsEnabled="False"
+              ToolTip="Run the Plot Designer tool with these settings. The run is recorded in the geoprocessing History, so it can be repeated or copied as Python." />
+      <Button x:Name="btnOpenTool" Content="Open as Geoprocessing Tool" Padding="12,4" Margin="8,0,0,0" Click="OnOpenTool"
+              ToolTip="Open the Plot Designer tool in the Geoprocessing pane with these settings filled in, for ModelBuilder, batch runs or Python." />
+      <TextBlock x:Name="txtStatus" VerticalAlignment="Center" Margin="14,0,0,0" TextWrapping="Wrap" />
+    </DockPanel>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+      <StackPanel>
+
+        <!-- 1. field -->
+        <DockPanel Margin="0,4,0,2">
+          <Ellipse x:Name="lightField" Style="{StaticResource Light}" />
+          <TextBlock Style="{StaticResource Header}" Text="Field layer (optional: gives the coordinate system and a default anchor)" />
+        </DockPanel>
+        <DockPanel Margin="20,0,0,6">
+          <Button DockPanel.Dock="Right" Content="&#x21BB;" Width="26" Margin="4,0,0,0" Click="OnRefreshLayers"
+                  ToolTip="Read the map's polygon layers again." />
+          <ComboBox x:Name="cmbField" VerticalAlignment="Center" SelectionChanged="OnFieldChanged"
+                    ToolTip="A polygon layer of the active map: the field or fields the plots go in. With no anchor point, the plots start at the lower-left corner of its extent (its selection's extent when features are selected). The list follows the map: layers added or removed appear here on their own." />
+        </DockPanel>
+        <TextBlock x:Name="txtFieldNote" Margin="20,0,0,6" Opacity="0.8" TextWrapping="Wrap" />
+
+        <!-- 2. plot size -->
+        <DockPanel Margin="0,8,0,2">
+          <Ellipse x:Name="lightSize" Style="{StaticResource Light}" />
+          <TextBlock Style="{StaticResource Header}" Text="Plot size" />
+        </DockPanel>
+        <StackPanel Orientation="Horizontal" Margin="20,0,0,6">
+          <TextBlock Style="{StaticResource Lbl}" Text="Length (along the direction):" />
+          <TextBox x:Name="txtLong" Style="{StaticResource Num}" Text="40" TextChanged="OnAnyChanged"
+                   ToolTip="The long edge of each plot, along the plot direction." />
+          <TextBlock Style="{StaticResource Lbl}" Text="Width (across):" />
+          <TextBox x:Name="txtShort" Style="{StaticResource Num}" Text="20" TextChanged="OnAnyChanged"
+                   ToolTip="The short edge of each plot, across the plot direction." />
+          <ComboBox x:Name="cmbUnits" Width="120" VerticalAlignment="Center" SelectionChanged="OnAnyChanged"
+                    ToolTip="Units of the length, width and gap. Distances are measured along the ground (geodesic), whatever the map's projection." />
+        </StackPanel>
+
+        <!-- 3. direction -->
+        <DockPanel Margin="0,8,0,2">
+          <Ellipse x:Name="lightDirection" Style="{StaticResource Light}" />
+          <TextBlock Style="{StaticResource Header}" Text="Plot direction" />
+        </DockPanel>
+        <StackPanel Orientation="Horizontal" Margin="20,0,0,6">
+          <TextBlock Style="{StaticResource Lbl}" Text="Bearing:" />
+          <TextBox x:Name="txtBearing" Style="{StaticResource Num}" Text="0" TextChanged="OnAnyChanged"
+                   ToolTip="The direction of the plots' long edges, in degrees clockwise from north (0 = north, 90 = east)." />
+          <Button x:Name="btnDrawAxis" Content="Draw on the map" Padding="10,2" Click="OnDrawAxis"
+                  ToolTip="Draw a line on the map in the plot direction, along a fenceline say: its bearing fills this box. Hold Ctrl as you finish to snap to the nearest 45 degrees." />
+          <TextBlock x:Name="txtAxisNote" Style="{StaticResource Lbl}" Margin="10,0,0,0" Opacity="0.8" />
+        </StackPanel>
+
+        <!-- 4. anchor -->
+        <DockPanel Margin="0,8,0,2">
+          <Ellipse x:Name="lightAnchor" Style="{StaticResource Light}" />
+          <TextBlock Style="{StaticResource Header}" Text="Anchor point (the back-left corner of the first plot, facing along the direction)" />
+        </DockPanel>
+        <StackPanel Orientation="Horizontal" Margin="20,0,0,6">
+          <TextBlock Style="{StaticResource Lbl}" Text="X:" />
+          <TextBox x:Name="txtAnchorX" Width="110" VerticalAlignment="Center" Margin="0,0,10,0" TextChanged="OnAnyChanged"
+                   ToolTip="The anchor's X in the map's coordinate system." />
+          <TextBlock Style="{StaticResource Lbl}" Text="Y:" />
+          <TextBox x:Name="txtAnchorY" Width="110" VerticalAlignment="Center" Margin="0,0,10,0" TextChanged="OnAnyChanged"
+                   ToolTip="The anchor's Y in the map's coordinate system." />
+          <Button x:Name="btnClickAnchor" Content="Click on the map" Padding="10,2" Click="OnClickAnchor"
+                  ToolTip="Click the map where the first plot's back-left corner goes." />
+          <Button x:Name="btnFieldCorner" Content="Use the field's corner" Padding="10,2" Margin="8,0,0,0" Click="OnFieldCorner"
+                  ToolTip="Use the lower-left corner of the field layer's extent (its selection's extent when features are selected)." />
+        </StackPanel>
+
+        <!-- 5. arrangement and rates -->
+        <DockPanel Margin="0,8,0,2">
+          <Ellipse x:Name="lightArrangement" Style="{StaticResource Light}" />
+          <TextBlock Style="{StaticResource Header}" Text="Arrangement, rates and replications" />
+        </DockPanel>
+        <StackPanel Orientation="Horizontal" Margin="20,0,0,4">
+          <TextBlock Style="{StaticResource Lbl}" Text="Plots along the direction:" />
+          <TextBox x:Name="txtNLong" Style="{StaticResource Num}" Text="2" TextChanged="OnCountChanged"
+                   ToolTip="How many plots end to end along the plot direction." />
+          <TextBlock Style="{StaticResource Lbl}" Text="Plots across:" />
+          <TextBox x:Name="txtNShort" Style="{StaticResource Num}" Text="2" TextChanged="OnCountChanged"
+                   ToolTip="How many plots side by side across the plot direction." />
+          <TextBlock Style="{StaticResource Lbl}" Text="Plots per replication:" />
+          <TextBlock x:Name="txtPerRep" Style="{StaticResource Lbl}" FontWeight="SemiBold" Text="4" />
+          <TextBlock Style="{StaticResource Lbl}" Text="Replications:" Margin="14,0,6,0" />
+          <TextBox x:Name="txtNReps" Style="{StaticResource Num}" Text="4" TextChanged="OnAnyChanged"
+                   ToolTip="How many times the block is repeated. Each replication gets the rate values in a fresh random order." />
+        </StackPanel>
+        <DockPanel Margin="20,0,0,6">
+          <TextBlock DockPanel.Dock="Left" Style="{StaticResource Lbl}" Text="Rate values (one per plot, separated by commas):" />
+          <TextBox x:Name="txtRates" VerticalAlignment="Center" TextChanged="OnAnyChanged"
+                   ToolTip="The treatment values, one per plot of a replication, separated by commas. The box is refilled with zeros when the plot counts change." />
+        </DockPanel>
+
+        <!-- 6. replication layout -->
+        <DockPanel Margin="0,8,0,2">
+          <Ellipse x:Name="lightLayout" Style="{StaticResource Light}" />
+          <TextBlock Style="{StaticResource Header}" Text="Replication layout" />
+        </DockPanel>
+        <StackPanel Orientation="Horizontal" Margin="20,0,0,6">
+          <ComboBox x:Name="cmbLayout" Width="270" VerticalAlignment="Center" SelectionChanged="OnAnyChanged" SelectedIndex="0"
+                    ToolTip="Where each replication goes relative to the one before it.">
+            <ComboBoxItem Content="Side by side (across the plot direction)" />
+            <ComboBoxItem Content="End to end (along the plot direction)" />
+          </ComboBox>
+          <TextBlock Style="{StaticResource Lbl}" Text="Gap between replications:" Margin="14,0,6,0" />
+          <TextBox x:Name="txtGap" Style="{StaticResource Num}" Text="0" TextChanged="OnAnyChanged"
+                   ToolTip="Space between replications, in the units above (0 = touching)." />
+        </StackPanel>
+
+        <!-- 7. outputs -->
+        <DockPanel Margin="0,8,0,2">
+          <Ellipse x:Name="lightOutput" Style="{StaticResource Light}" />
+          <TextBlock Style="{StaticResource Header}" Text="Outputs" />
+        </DockPanel>
+        <DockPanel Margin="20,0,0,4">
+          <TextBlock DockPanel.Dock="Left" Style="{StaticResource Lbl}" Text="Plot polygons:" />
+          <Button DockPanel.Dock="Right" Content="Browse..." Padding="10,2" Margin="6,0,0,0" Click="OnBrowse"
+                  ToolTip="Choose where to save the plot polygons (a geodatabase feature class or a shapefile)." />
+          <TextBox x:Name="txtOut" VerticalAlignment="Center" TextChanged="OnAnyChanged"
+                   ToolTip="The output feature class or shapefile of plot polygons." />
+        </DockPanel>
+        <StackPanel Orientation="Horizontal" Margin="20,0,0,6">
+          <CheckBox x:Name="chkPoints" Content="Also write the plot center points" VerticalAlignment="Center" Checked="OnAnyChanged" Unchecked="OnAnyChanged"
+                    ToolTip="A point feature class of plot centers (named after the polygons, with _Points)." />
+          <CheckBox x:Name="chkLines" Content="Also write the plot centerlines" VerticalAlignment="Center" Margin="16,0,0,0" Checked="OnAnyChanged" Unchecked="OnAnyChanged"
+                    ToolTip="A line feature class of each plot's long-axis centerline (named after the polygons, with _Lines)." />
+          <TextBlock Style="{StaticResource Lbl}" Text="Random seed:" Margin="16,0,6,0" />
+          <TextBox x:Name="txtSeed" Style="{StaticResource Num}" Text="" TextChanged="OnAnyChanged"
+                   ToolTip="Optional. The same seed repeats the same random order of rates." />
+          <CheckBox x:Name="chkPreview" Content="Show the preview on the map" VerticalAlignment="Center" IsChecked="True" Margin="10,0,0,0"
+                    Checked="OnPreviewToggle" Unchecked="OnPreviewToggle"
+                    ToolTip="Draws the plots on the map as a temporary overlay that follows every change here. Nothing is added to the map until you create the plots." />
+        </StackPanel>
+
+      </StackPanel>
+    </ScrollViewer>
+  </DockPanel>
+</UserControl>

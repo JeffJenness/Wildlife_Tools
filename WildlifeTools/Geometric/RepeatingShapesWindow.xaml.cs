@@ -112,6 +112,7 @@ namespace WildlifeTools.Geometric
         public RepeatingShapesWindow()
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             BuildTiles();
             cboAreaUnits.ItemsSource = RsMath.AreaUnits;
             cboAreaUnits.SelectedItem = "Hectares";

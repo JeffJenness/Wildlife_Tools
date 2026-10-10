@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<metadata xml:lang="en"><Esri><CreaDate>20261009</CreaDate><CreaTime>00000000</CreaTime><ArcGISFormat>1.0</ArcGISFormat><SyncOnce>TRUE</SyncOnce></Esri>
+	<tool name="FusePlotsAndField" displayname="Fuse Plots and Field" toolboxalias="jenness">
+		<arcToolboxHelpPath>c:\program files\arcgis\pro\Resources\Help\gp</arcToolboxHelpPath>
+		<summary><para>View online help files: <a href="https://www.jennessent.com/geometric-tools/fuse-plots-and-field.html" target="_blank">https://www.jennessent.com/geometric-tools/fuse-plots-and-field.html</a> <br/><br/>Combines a field (boundary) polygon layer and a research-plot polygon layer into one feature class: the field polygons are dissolved by rate -- a rate attribute of the field layer, a <b>standard rate</b>, or the attribute with the standard rate filling its gaps -- every plot is <i>cut out</i> of them, and the plots are added with their own rates and attributes, so no ground is counted twice. Selections are honored on both layers. The output carries <b>Rate</b>, <b>Source</b> (Field or Plot) and <b>Plot_FID</b> plus the plot layer's attributes. A port of the CropCentric Fuse Plot and Boundary Feature Class tool (Jenness and Wiebers 2018). Works at every license level.</para></summary>
+		<usage><b>What it makes.</b> A prescription map: one polygon feature class in which every piece of ground carries exactly one rate. The field polygons (a map layer's selection honored) are grouped by rate and each group dissolved into one feature; then every plot is subtracted from them (geometry differences, no Advanced license needed), and the plots themselves are appended with their own rate. Field remainders that vanish entirely are dropped.
+
+<b>Rates.</b> The plot rate comes from the <b>plot rate field</b> (a plot with an empty value gets the standard rate, or 0 if there is none, with a warning). Field ground gets the <b>field rate field</b> where it has a value and the <b>standard rate</b> otherwise; give one of them or both.
+
+<b>Attributes.</b> Rate (double), Source ('Field' or 'Plot') and Plot_FID (the plot's ObjectID; -1 for field ground), then the plot layer's own attribute fields (blank on field ground) unless the copy is switched off; names are shortened for shapefiles.
+
+<b>Coordinate systems.</b> The output uses the field layer's coordinate system (or the Output Coordinate System environment); plots in another system are projected into it with the datum transformation the environment chooses. Curved (true-arc) polygons are densified first.</usage>
+		<parameters>
+			<param name="field_layer" displayname="Field polygon layer" type="Required" direction="Input" datatype="Feature Layer" expression="field_layer"><dialogReference><para>The field or boundary polygons. A map layer's selection is honored.</para></dialogReference></param>
+			<param name="plot_layer" displayname="Research plot polygon layer" type="Required" direction="Input" datatype="Feature Layer" expression="plot_layer"><dialogReference><para>The research plots, from the Plot Designer or any polygon layer. A selection is honored.</para></dialogReference></param>
+			<param name="plot_rate_field" displayname="Plot rate field" type="Required" direction="Input" datatype="Field" expression="plot_rate_field"><dialogReference><para>The numeric field of the plot layer holding each plot's rate (Rate for Plot Designer outputs).</para></dialogReference></param>
+			<param name="out_fc" displayname="Output fused feature class" type="Required" direction="Output" datatype="Feature Class" expression="out_fc"><dialogReference><para>The fused polygons: dissolved field ground by rate, with the plots cut out and added. A geodatabase feature class or a shapefile.</para></dialogReference></param>
+			<param name="field_rate_field" displayname="Field rate field (optional)" type="Optional" direction="Input" datatype="Field" expression="field_rate_field"><dialogReference><para>A numeric field of the field layer holding the rate of field ground. Where it is empty the standard rate is used.</para></dialogReference></param>
+			<param name="standard_rate" displayname="Standard rate for field ground (used where no field rate field is given, or the field's rate is empty)" type="Optional" direction="Input" datatype="Double" expression="standard_rate"><dialogReference><para>One rate for all field ground without a rate of its own. Required when no field rate field is given.</para></dialogReference></param>
+			<param name="transfer_plot_fields" displayname="Copy the plot layer's attribute fields to the output" type="Optional" direction="Input" datatype="Boolean" expression="transfer_plot_fields"><dialogReference><para><b>Checked</b> (default): the plot layer's attribute fields are added to the output and filled for the plots (blank for field ground).</para></dialogReference></param>
+		</parameters>
+		<scriptExamples><scriptExample><title>Fuse Plots and Field example (stand-alone script)</title><para>The field's own rate attribute, with 120 as the standard rate for field polygons that lack one.</para><code>import arcpy
+arcpy.ImportToolbox(r"C:\path\to\JennessEnterprisesTools.pyt")  # your install path
+arcpy.jenness.FusePlotsAndField(
+    field_layer=r"D:\data\trial.gdb\Fields",
+    plot_layer=r"D:\data\trial.gdb\Plots_2026",
+    plot_rate_field="Rate",
+    out_fc=r"D:\data\trial.gdb\Prescription_2026",
+    field_rate_field="FieldRate", standard_rate=120, transfer_plot_fields=True)</code></scriptExample></scriptExamples>
+	</tool>
+	<dataIdInfo><searchKeys><keyword>fuse</keyword><keyword>prescription map</keyword><keyword>rate</keyword><keyword>research plots</keyword><keyword>field</keyword><keyword>dissolve</keyword><keyword>CropCentric</keyword><keyword>precision agriculture</keyword><keyword>variable rate</keyword></searchKeys><idCredit>Jeff Jenness and Matt Wiebers, Jenness Enterprises (http://www.jennessent.com). A port of the CropCentric ArcGIS tools (Jenness and Wiebers 2018).</idCredit></dataIdInfo>
+</metadata>

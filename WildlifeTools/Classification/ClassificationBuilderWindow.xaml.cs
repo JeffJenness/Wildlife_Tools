@@ -50,6 +50,7 @@ namespace WildlifeTools.Classification
         public ClassificationBuilderWindow()
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             FamilyBox.ItemsSource = ClassificationStore.Families;
             SystemList.ItemsSource = _systems;
             ClassGrid.ItemsSource = _classes;

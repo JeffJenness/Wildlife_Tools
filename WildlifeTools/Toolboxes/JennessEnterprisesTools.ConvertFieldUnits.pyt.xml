@@ -2,7 +2,8 @@
 <metadata xml:lang="en"><Esri><CreaDate>20261007</CreaDate><CreaTime>00000000</CreaTime><ArcGISFormat>1.0</ArcGISFormat><SyncOnce>TRUE</SyncOnce></Esri>
 	<tool name="ConvertFieldUnits" displayname="Convert Field Units" toolboxalias="jenness">
 		<arcToolboxHelpPath>c:\program files\arcgis\pro\Resources\Help\gp</arcToolboxHelpPath>
-		<summary>Converts every value of a numeric field from one measurement unit to another, into a new field or in place, using the Unit Converter's catalog of more than 1,200 units in 23 measurement classes, plus any units of your own.</summary>
+		<summary><para>View online help files: <a href="https://www.jennessent.com/data-tools/convert-field-units.html" target="_blank">https://www.jennessent.com/data-tools/convert-field-units.html</a>
+				<br/><br/>Converts every value of a numeric field from one measurement unit to another, into a new field or in place, using the Unit Converter's catalog of more than 1,200 units in 23 measurement classes, plus any units of your own.</para></summary>
 		<usage>Converts every value of a numeric field from one measurement unit to another: inches to millimeters, acres to hectares, degrees Fahrenheit to degrees Celsius, percent slope to degrees, tree diameters to basal area. The units come from the same catalog as the <b>Unit Converter</b> window on the ribbon: more than 1,200 units in 23 measurement classes, each with a definition and a source, plus any units and measurement classes you have added in its <b>My Units</b> tab.
 
 <b>Which records.</b> A layer or table view converts only the records it shows: when it has a <i>selection</i>, only the selected records are converted, and its <i>definition query</i> is honored. A table or feature class given by its path converts every record.

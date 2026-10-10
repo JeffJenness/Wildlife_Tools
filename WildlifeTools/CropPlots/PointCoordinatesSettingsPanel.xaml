@@ -1,0 +1,152 @@
+<UserControl x:Class="WildlifeTools.CropPlots.PointCoordinatesSettingsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mapctl="clr-namespace:ArcGIS.Desktop.Mapping.Controls;assembly=ArcGIS.Desktop.Mapping">
+  <!-- The content of the Point Coordinates Settings window: which lines the
+       Point Coordinates tool writes into its callout, how the coordinate
+       lines and the coordinate-system names look, the callout style and the
+       marker. Saved per user; the Point Coordinates tool reads the saved
+       settings at every click. -->
+  <UserControl.Resources>
+    <Style TargetType="ToolTip">
+      <Setter Property="MaxWidth" Value="420" />
+      <Setter Property="ContentTemplate">
+        <Setter.Value>
+          <DataTemplate>
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="400" />
+          </DataTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="Header" TargetType="TextBlock">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Margin" Value="0,10,0,4" />
+    </Style>
+    <Style x:Key="Lbl" TargetType="TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Margin" Value="0,0,6,0" />
+    </Style>
+    <Style TargetType="CheckBox">
+      <Setter Property="Margin" Value="0,2,16,2" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+  </UserControl.Resources>
+
+  <DockPanel Margin="14">
+    <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,4">
+      Choose what the Point Coordinates tool writes into its callout when you
+      click a map or a map frame, and how the callout looks. The projected X
+      and Y and the projected system's name appear only when the map is
+      projected.
+    </TextBlock>
+
+    <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+      <Button DockPanel.Dock="Right" Content="Close" Width="84" Click="OnClose" IsCancel="True" />
+      <Button DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,12,0" Width="20" Height="20"
+              Click="OnHelp" ToolTip="Open the Point Coordinates help page.">
+        <Button.Template>
+          <ControlTemplate TargetType="Button">
+            <Grid Background="Transparent">
+              <Ellipse Fill="#1F6FB2" />
+              <TextBlock Text="?" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Grid>
+          </ControlTemplate>
+        </Button.Template>
+      </Button>
+      <Button Content="Save" Padding="14,4" FontWeight="SemiBold" Click="OnSave"
+              ToolTip="Save these settings. The Point Coordinates tool uses them from its next click on." />
+      <Button Content="Reset to Defaults" Padding="12,4" Margin="8,0,0,0" Click="OnReset"
+              ToolTip="Put every setting back to the defaults (not saved until you click Save)." />
+      <TextBlock x:Name="txtStatus" VerticalAlignment="Center" Margin="14,0,0,0" TextWrapping="Wrap" />
+    </DockPanel>
+
+    <Grid>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+
+      <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <TextBlock Style="{StaticResource Header}" Text="Lines to show" />
+          <WrapPanel Margin="8,0,0,0">
+            <CheckBox x:Name="chkLatDD" Content="Latitude (decimal degrees)" Checked="OnChanged" Unchecked="OnChanged" />
+            <CheckBox x:Name="chkLonDD" Content="Longitude (decimal degrees)" Checked="OnChanged" Unchecked="OnChanged" />
+            <CheckBox x:Name="chkLatDMS" Content="Latitude (degrees, minutes, seconds)" Checked="OnChanged" Unchecked="OnChanged" />
+            <CheckBox x:Name="chkLonDMS" Content="Longitude (degrees, minutes, seconds)" Checked="OnChanged" Unchecked="OnChanged" />
+            <CheckBox x:Name="chkGcs" Content="Geographic coordinate system name" Checked="OnChanged" Unchecked="OnChanged" />
+            <CheckBox x:Name="chkX" Content="X coordinate (projected maps)" Checked="OnChanged" Unchecked="OnChanged" />
+            <CheckBox x:Name="chkY" Content="Y coordinate (projected maps)" Checked="OnChanged" Unchecked="OnChanged" />
+            <CheckBox x:Name="chkPcs" Content="Projected coordinate system name" Checked="OnChanged" Unchecked="OnChanged" />
+            <CheckBox x:Name="chkLabels" Content="Label the lines (Lat, Lon, X, Y)" Checked="OnChanged" Unchecked="OnChanged" />
+          </WrapPanel>
+          <StackPanel Orientation="Horizontal" Margin="8,4,0,0">
+            <TextBlock Style="{StaticResource Lbl}" Text="Decimal places: degrees" />
+            <TextBox x:Name="txtDdDec" Width="36" TextChanged="OnChanged" ToolTip="Decimal places of the decimal-degree lines." />
+            <TextBlock Style="{StaticResource Lbl}" Text="seconds" Margin="12,0,6,0" />
+            <TextBox x:Name="txtDmsDec" Width="36" TextChanged="OnChanged" ToolTip="Decimal places of the seconds in the degrees-minutes-seconds lines." />
+            <TextBlock Style="{StaticResource Lbl}" Text="X and Y" Margin="12,0,6,0" />
+            <TextBox x:Name="txtXyDec" Width="36" TextChanged="OnChanged" ToolTip="Decimal places of the projected X and Y." />
+          </StackPanel>
+
+          <TextBlock Style="{StaticResource Header}" Text="Text" />
+          <Grid Margin="8,0,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="48" />
+              <ColumnDefinition Width="90" /><ColumnDefinition Width="56" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBlock Grid.Row="0" Grid.Column="1" Text="Font" Opacity="0.75" Margin="0,0,0,2" />
+            <TextBlock Grid.Row="0" Grid.Column="2" Text="Size" Opacity="0.75" Margin="4,0,0,2" />
+            <TextBlock Grid.Row="0" Grid.Column="3" Text="Style" Opacity="0.75" Margin="4,0,0,2" />
+            <TextBlock Grid.Row="0" Grid.Column="4" Text="Color" Opacity="0.75" Margin="4,0,0,2" />
+            <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource Lbl}" Text="Coordinate lines:" />
+            <ComboBox x:Name="cboCoordFont" Grid.Row="1" Grid.Column="1" SelectionChanged="OnChanged" ToolTip="Font family of the coordinate lines." />
+            <TextBox x:Name="txtCoordSize" Grid.Row="1" Grid.Column="2" Margin="4,0,0,0" TextChanged="OnChanged" ToolTip="Size in points." />
+            <ComboBox x:Name="cboCoordStyle" Grid.Row="1" Grid.Column="3" Margin="4,0,0,0" SelectionChanged="OnChanged" />
+            <mapctl:ColorPickerControl x:Name="cpCoord" Grid.Row="1" Grid.Column="4" Height="22" Margin="4,0,0,0"
+                Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="PickerChanged" />
+            <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource Lbl}" Text="Coordinate system names:" Margin="0,4,6,0" />
+            <ComboBox x:Name="cboNameFont" Grid.Row="2" Grid.Column="1" Margin="0,4,0,0" SelectionChanged="OnChanged" ToolTip="Font family of the coordinate-system name lines." />
+            <TextBox x:Name="txtNameSize" Grid.Row="2" Grid.Column="2" Margin="4,4,0,0" TextChanged="OnChanged" ToolTip="Size in points (smaller than the coordinates, as a rule)." />
+            <ComboBox x:Name="cboNameStyle" Grid.Row="2" Grid.Column="3" Margin="4,4,0,0" SelectionChanged="OnChanged" />
+            <mapctl:ColorPickerControl x:Name="cpName" Grid.Row="2" Grid.Column="4" Height="22" Margin="4,4,0,0"
+                Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="PickerChanged" />
+          </Grid>
+
+          <TextBlock Style="{StaticResource Header}" Text="Callout" />
+          <StackPanel Orientation="Horizontal" Margin="8,0,0,0">
+            <TextBlock Style="{StaticResource Lbl}" Text="Style:" />
+            <ComboBox x:Name="cboCallout" Width="130" SelectionChanged="OnChanged"
+                      ToolTip="None: bare text. Simple line: a leader line to the point. Background: a box behind the text with a leader. Balloon: a rounded box whose tail points at the point." />
+            <TextBlock Style="{StaticResource Lbl}" Text="Background:" Margin="14,0,6,0" />
+            <mapctl:ColorPickerControl x:Name="cpBackground" Width="56" Height="22" Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="PickerChanged" />
+            <TextBlock Style="{StaticResource Lbl}" Text="Outline:" Margin="14,0,6,0" />
+            <mapctl:ColorPickerControl x:Name="cpOutline" Width="56" Height="22" Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="PickerChanged" />
+            <TextBlock Style="{StaticResource Lbl}" Text="Leader:" Margin="14,0,6,0" />
+            <mapctl:ColorPickerControl x:Name="cpLeader" Width="56" Height="22" Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="PickerChanged" />
+          </StackPanel>
+
+          <TextBlock Style="{StaticResource Header}" Text="Marker at the point" />
+          <StackPanel Orientation="Horizontal" Margin="8,0,0,0">
+            <CheckBox x:Name="chkMarker" Content="Draw a marker at the clicked point" Checked="OnChanged" Unchecked="OnChanged" />
+            <TextBlock Style="{StaticResource Lbl}" Text="Color:" />
+            <mapctl:ColorPickerControl x:Name="cpMarker" Width="56" Height="22" Loaded="PickerLoaded" IsNoColorVisible="False" SelectedColorChanged="PickerChanged" />
+            <TextBlock Style="{StaticResource Lbl}" Text="Size:" Margin="14,0,6,0" />
+            <TextBox x:Name="txtMarkerSize" Width="40" TextChanged="OnChanged" ToolTip="Marker size in points." />
+          </StackPanel>
+        </StackPanel>
+      </ScrollViewer>
+
+      <!-- preview -->
+      <Border Grid.Column="1" Margin="14,10,0,0" Padding="10" BorderBrush="#60808080" BorderThickness="1" VerticalAlignment="Top" MinWidth="220">
+        <StackPanel>
+          <TextBlock Text="Preview (a sample point)" Opacity="0.75" Margin="0,0,0,6" />
+          <TextBlock x:Name="txtPreview" TextWrapping="NoWrap" />
+        </StackPanel>
+      </Border>
+    </Grid>
+  </DockPanel>
+</UserControl>

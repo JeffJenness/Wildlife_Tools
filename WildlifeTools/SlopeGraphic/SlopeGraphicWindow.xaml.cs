@@ -74,6 +74,7 @@ namespace WildlifeTools.SlopeGraphic
         public SlopeGraphicWindow()
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             var fonts = Fonts.SystemFontFamilies
                 .Select(f => f.Source).OrderBy(n => n).ToList();
             string dflt = fonts.Contains("Segoe UI") ? "Segoe UI" : fonts.FirstOrDefault();

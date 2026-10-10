@@ -174,6 +174,7 @@ namespace WildlifeTools.Sudoku
         public SudokuWindow()
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
 
             foreach (var (name, _) in Skins)
                 SkinBox.Items.Add(name);

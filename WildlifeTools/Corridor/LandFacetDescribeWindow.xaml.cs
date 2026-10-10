@@ -71,6 +71,7 @@ namespace WildlifeTools.Corridor
         public LandFacetDescribeWindow()
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             Loaded += (_, __) =>
             {
                 PopulateLayers();

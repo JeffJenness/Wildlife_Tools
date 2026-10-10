@@ -44,6 +44,7 @@ namespace WildlifeTools.DataTools
                                               string format)
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             _result = r;
             _format = format;
             _plain = AttributeSummary.BuildPlainReport(r, format);

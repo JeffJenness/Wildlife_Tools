@@ -37,6 +37,7 @@ namespace WildlifeTools.CustomGraphics
         public ManageGraphicsWindow()
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             panel.CloseRequested += (_, _) => Close();
         }
 

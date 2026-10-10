@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Draws the content of the Plot Designer, Create Array along Axes and
+       Point Coordinates Settings windows (the add-in's panels) to PNGs
+       without ArcGIS Pro, from the BUILT add-in DLL, to check their layout.
+       Build the add-in first (Release), then run from the repo root:
+       dotnet run -c Release - -project claude_tests/CropPlotsRender <outDir> -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>disable</Nullable>
+    <RootNamespace>CropPlotsRender</RootNamespace>
+  </PropertyGroup>
+</Project>

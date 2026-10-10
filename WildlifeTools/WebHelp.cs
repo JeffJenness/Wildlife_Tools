@@ -31,7 +31,7 @@ namespace WildlifeTools
         // Root of the online help site. Leave empty until the site is
         // hosted; the Help buttons then explain where the pages will
         // live instead of opening a dead link.
-        internal const string BaseUrl = "";
+        internal const string BaseUrl = "https://www.jennessent.com";
 
         internal static void Open(string relativePage)
         {

@@ -67,6 +67,7 @@ namespace WildlifeTools
             double mapShadowMax = 100)
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             _symbol = defaultSymbol;
             _isLayout = isLayout;
             _metersPerPageUnit = metersPerPageUnit > 0 ? metersPerPageUnit : 0.0254;

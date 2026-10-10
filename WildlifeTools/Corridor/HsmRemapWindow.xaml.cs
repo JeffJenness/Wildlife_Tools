@@ -132,6 +132,7 @@ namespace WildlifeTools.Corridor
         public HsmRemapWindow()
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             grdRemap.ItemsSource = _rows;
             _rows.CollectionChanged += (s, e) => Dirty();
             LoadMapLayers();

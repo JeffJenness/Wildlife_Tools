@@ -125,8 +125,24 @@ for p in sorted(glob.glob(os.path.join(
         if el is None:
             problems.append((name, "missing <%s>" % tag))
             continue
-        allowed = ("b", "i", "para") if tag == "summary" \
+        # 2026-10-09: a summary is ONE <para> that starts with the
+        # "View online help files" link and a <br/><br/> (the GP-pane
+        # hover keeps only the summary's first child node), and Pro's
+        # own round-trip re-indents the text after the link
+        allowed = ("b", "i", "para", "a", "br") if tag == "summary" \
             else ("b", "i")
+        if tag == "summary":
+            first = el[0] if len(el) else None
+            if (len(el) != 1 or first.tag != "para"
+                    or not (first.text or "").lstrip().startswith(
+                        "View online help files:")
+                    or first.find("br") is None):
+                problems.append((name, "summary must be ONE <para> "
+                                       "starting with the help link "
+                                       "and a <br/><br/>"))
+            for c in el.iter():
+                if c.tag in ("a", "br"):
+                    c.tail = (c.tail or "").lstrip()
         bad = sorted({c.tag for c in el.iter()
                       if c is not el and c.tag not in allowed})
         if bad:

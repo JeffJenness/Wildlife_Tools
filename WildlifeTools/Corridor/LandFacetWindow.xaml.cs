@@ -219,6 +219,7 @@ namespace WildlifeTools.Corridor
         public LandFacetWindow()
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             ShowStep(1);                 // paint the step chips for the initial state
             Loaded += (_, __) =>
             {

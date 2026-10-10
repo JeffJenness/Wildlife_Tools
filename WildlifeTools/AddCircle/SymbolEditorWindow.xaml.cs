@@ -44,6 +44,7 @@ namespace WildlifeTools
         public SymbolEditorWindow(CIMSymbolReference symbol)
         {
             InitializeComponent();
+            global::WildlifeTools.Corridor.JennessIcon.Apply(this);
 
             _editor = new SymbolEditingControl
             {
