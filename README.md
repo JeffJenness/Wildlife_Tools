@@ -21,10 +21,12 @@ below.
 
 - ArcGIS Pro 3.7 or newer. Every tool runs at the Basic license level with no
   extension licenses required.
-- Download the current `.esriAddinX` package from the
-  [Jenness Enterprises website](https://www.jennessent.com) and double-click
-  it. ArcGIS Pro installs it, and the **Wildlife and Forestry** tab appears on the
-  ribbon.
+- Close ArcGIS Pro, download `WildlifeTools.esriAddinX` from the
+  [latest release](https://github.com/JeffJenness/Wildlife_Tools/releases/latest)
+  (or from the [Overview and Download page](https://www.jennessent.com/tool-reference.html)
+  of the Jenness Enterprises website), and double-click it. ArcGIS Pro installs
+  it, and the **Wildlife and Forestry** tab appears on the ribbon the next time
+  Pro starts. The package is digitally signed by Jenness Enterprises.
 - The geoprocessing tools live in one Python toolbox, *Jenness Enterprises
   Tools*, which the ribbon buttons open. The toolbox can also be used directly
   from ModelBuilder or Python (`arcpy.ImportToolbox`); each tool's help page
@@ -107,6 +109,9 @@ interactive window of their own; the rest are geoprocessing tools.
   classification system.
 - **Classification System Builder** *(window)* – create, edit and share the
   reusable classification systems those tools apply.
+- **TPI Neighborhood Sampler** *(window)* – tries TPI neighborhood sizes and
+  classification thresholds on a snapshot of the current map before the full
+  run, to find the settings that classify a known landform the way you want.
 
 **Aspect Tools** (all computed with circular statistics)
 
@@ -222,6 +227,17 @@ inside ArcGIS Pro.
 - **Estimated Shortest Path through Points** – orders points into a short
   survey route.
 
+**Crop Plot Design Tools (CropCentric)** (with Matt Wiebers)
+
+- **Plot Designer** *(window and geoprocessing tool)* – lays out a block of
+  rectangular research plots from an anchor point and a drawn direction,
+  repeated as replicates with the treatment rates shuffled in each.
+- **Fuse Plots and Field** – cuts the research plots out of the field
+  polygons, so every piece of ground carries exactly one treatment rate.
+- **Create Array along Axes** *(window and geoprocessing tool)* – copies a
+  graphic or selected features along one or two axes drawn on the map, with a
+  live preview.
+
 ### Data Tools
 
 - **Load Favorite Datasets** *(window)* – keep often-used datasets in named
@@ -230,6 +246,14 @@ inside ArcGIS Pro.
   classes in attribute fields, with geometry summaries.
 - **Select Random Records** – random or systematic selection of features or
   rows.
+- **Unit Converter** *(window)* – converts values between more than 1,200
+  measurement units in 23 classes, including forestry, fire and grazing units.
+- **Convert Field Units** – converts every value of a numeric field from one
+  unit to another, into a new field or in place (also reached from the Unit
+  Converter's Convert a Field tab).
+- **Add Random Numbers** – fills a numeric field with a constant, a random
+  permutation (optionally repeated within each replicate), random integers or
+  decimals, or normal random values.
 
 ### Terrain Graphs
 
@@ -270,15 +294,23 @@ them.
   own images (a logo, a seal, a north arrow) in those galleries and sets each
   one's focal point.
 
+**Show Point Coordinates**
+
+- **Point Coordinates** – click a map, or a map frame on a layout, for a
+  callout giving the point's latitude and longitude and, on a projected map,
+  its X and Y, each with its coordinate system's name.
+- **Point Coordinates Settings** *(window)* – chooses the callout's lines,
+  decimal places, fonts, callout style and marker (any ArcGIS Pro point
+  symbol).
+
 ### Take a Break
 
 - **Thought for the Day** – a random quotation.
 - **Sudoku** and **Sliding Puzzle** *(windows)* – the sliding puzzle is cut
   from a snapshot of your own map.
 - **ArcMap Easter Egg** – a small tribute to a classic.
-- **Lois Engelman Scholarship** – the Donate to the Lois Engelman Memorial
-  Scholarship Fund tool: what the scholarship is, and where to give (see
-  below).
+- **Lois Engelman Scholarship** *(window)* – what the Lois Engelman Memorial
+  Scholarship Fund is, and where to give (see below).
 
 ## Help and tutorials
 
@@ -291,11 +323,15 @@ implements.
 ## Support the Lois Engelman Memorial Scholarship Fund
 
 The author's wife, best friend and partner of 36 years, Lois Engelman, died in
-July 2026. The **Donate to the Lois Engelman Memorial Scholarship Fund** tool
-on the ribbon opens a page about the fund, which supports forestry students
-who want to focus on spatial ecology and wildlife. Any funds Jenness
-Enterprises receives in connection with this add-in go to that scholarship.
-Please keep that tool in place if you redistribute or modify the add-in.
+July 2026. The scholarship was created by Jeff Jenness in her honor and
+memory, and is hosted at Northern Arizona University in Flagstaff, Arizona.
+As did Lois, it supports wildlife and forestry students who want to focus on
+spatial ecology. The **Lois Engelman Scholarship** button in the Take a Break
+group explains the fund and links to its
+[page](https://www.jennessent.com/lois-engelman-memorial-scholarship.html).
+Any funds Jenness Enterprises receives in connection with this add-in go to
+that scholarship. Please keep that button in place if you redistribute or
+modify the add-in.
 
 ## License
 
