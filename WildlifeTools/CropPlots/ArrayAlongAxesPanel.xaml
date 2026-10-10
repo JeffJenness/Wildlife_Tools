@@ -48,7 +48,7 @@
     <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8">
       Copy a selected graphic (or a layer's selected features) along an axis,
       and optionally along a second axis, stepping by its own extent plus a
-      separation so the copies never overlap. Draw the axes on the map, watch
+      separation so the copies in a row never overlap. Draw the axes on the map, watch
       the preview, then create the array as graphics, a feature class, or
       both: the Create Array along Axes geoprocessing tool does the work, so
       the run is recorded in History.
@@ -93,9 +93,9 @@
           </StackPanel>
           <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
             <RadioButton x:Name="rbLayer" GroupName="src" Content="The selected features of layer:" VerticalAlignment="Center"
-                         Checked="OnSourceChanged" ToolTip="Every selected feature of a polygon layer is copied as a group." />
+                         Checked="OnSourceChanged" ToolTip="Every selected feature of a point, line or polygon layer is copied as a group." />
             <ComboBox x:Name="cmbSourceLayer" Width="260" Margin="8,0,0,0" VerticalAlignment="Center" SelectionChanged="OnSourceChanged"
-                      ToolTip="A polygon layer of the active map with a selection." />
+                      ToolTip="A point, line or polygon layer of the active map with a selection (the shape kind is shown after the name)." />
           </StackPanel>
         </StackPanel>
 
@@ -139,7 +139,11 @@
             <TextBox x:Name="txtBearing2" Style="{StaticResource Num}" Text="" TextChanged="OnAnyChanged"
                      ToolTip="Direction of the second axis. Empty = axis 1 plus 90 degrees. Copies 'to the right' go this way." />
             <Button Content="Draw on the map" Padding="10,2" Click="OnDrawAxis2"
-                    ToolTip="Draw the second axis on the map. Hold Ctrl as you finish to snap to the nearest 45 degrees from axis 1." />
+                    ToolTip="Draw the second axis on the map. Hold Ctrl while drawing to snap to the nearest 45 degrees from axis 1 (a red line shows where it will land)." />
+            <Button Content="Perpendicular left" Padding="8,2" Margin="6,0,0,0" Click="OnPerpLeft"
+                    ToolTip="Set the second axis at 90 degrees to the left of axis 1 (axis 1 bearing minus 90)." />
+            <Button Content="Perpendicular right" Padding="8,2" Margin="4,0,0,0" Click="OnPerpRight"
+                    ToolTip="Set the second axis at 90 degrees to the right of axis 1 (axis 1 bearing plus 90)." />
             <TextBlock Style="{StaticResource Lbl}" Text="Separation:" Margin="14,0,6,0" />
             <TextBox x:Name="txtGap2" Style="{StaticResource Num}" Text="0" TextChanged="OnAnyChanged"
                      ToolTip="Space between neighboring copies along the second axis." />

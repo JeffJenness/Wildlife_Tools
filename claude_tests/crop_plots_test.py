@@ -159,6 +159,8 @@ fused = os.path.join(gdb, "fused")
 fpath, nf, npl = cp.run_fuse(field, plots, "Rate", fused, field_rate_field="FieldRate", standard_rate=55,
                              transfer_plot_fields=True)
 check(npl == 12, "fuse added 12 plots")
+n_field_in = int(arcpy.management.GetCount(field)[0])
+check(nf == n_field_in, "one output feature per field polygon (%d in, %d out)" % (n_field_in, nf))
 tot_field = sum(g.area for (g,) in arcpy.da.SearchCursor(field, ["SHAPE@"]))
 tot_fused = sum(g.area for (g,) in arcpy.da.SearchCursor(fpath, ["SHAPE@"]))
 check(abs(tot_field - tot_fused) < 1.0, "fused area equals field area (field %.1f, fused %.1f): no double counting" % (tot_field, tot_fused))
@@ -166,6 +168,10 @@ rates = sorted({r for (r,) in arcpy.da.SearchCursor(fpath, ["Rate"], "Source = '
 check(rates == [55.0, 100.0], "field rates: 100 from the attribute, 55 standard for the null (got %s)" % rates)
 fnames = [f.name for f in arcpy.ListFields(fpath)]
 check("Plot_ID" in fnames and "Rep" in fnames, "plot attributes transferred (%s)" % ",".join(fnames))
+field_oids = {o for (o,) in arcpy.da.SearchCursor(field, ["OID@"])}
+ffids = {v for (v,) in arcpy.da.SearchCursor(fpath, ["Field_FID"], "Source = 'Field'")}
+pfids = {v for (v,) in arcpy.da.SearchCursor(fpath, ["Field_FID"], "Source = 'Plot'")}
+check(ffids == field_oids and pfids == {-1}, "Field_FID = the field polygon's ObjectID on field ground, -1 on plots (%s / %s)" % (sorted(ffids), sorted(pfids)))
 # plots must not overlap field ground
 with arcpy.da.SearchCursor(fpath, ["SHAPE@", "Source"]) as cur:
     fg = [g for g, s in cur if s == "Field"]
@@ -174,8 +180,9 @@ ov = sum(1 for f in fg for p in pg if not f.disjoint(p) and f.intersect(p, 4).ar
 check(ov == 0, "no plot overlaps field ground (%d)" % ov)
 # shapefile fuse
 fshp = os.path.join(scratch, "fused.shp")
-cp.run_fuse(field, plots, "Rate", fshp, standard_rate=1)
+_p, nf_same, _n = cp.run_fuse(field, plots, "Rate", fshp, standard_rate=1)
 check(arcpy.Exists(fshp), "fuse to shapefile")
+check(nf_same == n_field_in, "field polygons sharing one rate stay separate, not dissolved (%d)" % nf_same)
 
 # --- ADD RANDOM NUMBERS ---------------------------------------------------------
 arcpy.management.MakeFeatureLayer(plots, "plots_lyr")
@@ -187,6 +194,27 @@ check(vals == [1, 2, 3, 4], "permutation 1..4 (got %s)" % vals)
 others = {v for (v,) in arcpy.da.SearchCursor(plots, ["Treatment"], "Rep <> 2")}
 check(others == {None}, "unselected rows untouched")
 arcpy.management.SelectLayerByAttribute("plots_lyr", "CLEAR_SELECTION")
+# repeated for replicates: one permutation of 1..n per Rep value
+w, fname = cp.run_add_random_numbers("plots_lyr", "Treatment", "Random permutation of 1 to N (repeated for replicates)", case_field="Rep", seed=4)
+check(w == 12, "repeated permutation wrote all 12 rows")
+by_rep = {}
+for rep, v in arcpy.da.SearchCursor(plots, ["Rep", "Treatment"]):
+    by_rep.setdefault(rep, []).append(v)
+check(len(by_rep) == 3 and all(sorted(v) == [1, 2, 3, 4] for v in by_rep.values()),
+      "each replicate dealt 1..4 (got %s)" % {k: sorted(v) for k, v in by_rep.items()})
+check(cp.canon_mode("Random permutation of 1 to N (repeated for replicates)") == cp.MODE_PERMUTATION_REPS
+      and cp.canon_mode("Random permutation of 1 to N (each record unique)") == cp.MODE_PERMUTATION,
+      "the two permutation modes canonize apart")
+try:
+    cp.run_add_random_numbers("plots_lyr", "Treatment", "Random permutation of 1 to N (repeated for replicates)")
+    check(False, "repeated permutation without a case field must fail")
+except arcpy.ExecuteError as e:
+    check("case field" in str(e), "missing case field refused")
+try:
+    cp.run_add_random_numbers("plots_lyr", "Treatment", "Random permutation of 1 to N (repeated for replicates)", case_field="NoSuchField")
+    check(False, "unknown case field must fail")
+except arcpy.ExecuteError as e:
+    check("not in the input" in str(e), "unknown case field refused")
 w, fname = cp.run_add_random_numbers("plots_lyr", "Norm", "normal", mean=10, sd=2, seed=1)
 vals = [v for (v,) in arcpy.da.SearchCursor(plots, ["Norm"])]
 check(w == 12 and 5 < sum(vals) / 12 < 15, "normal values written to a new double field (mean %.2f)" % (sum(vals) / 12))

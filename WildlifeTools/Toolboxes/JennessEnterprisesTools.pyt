@@ -17113,7 +17113,8 @@ class CreateArrayAlongAxes(object):
             "an axis -- so many copies forward and so many backward -- and "
             "optionally along a second axis to the right and left, each step "
             "being the features' own extent along that axis plus a separation "
-            "distance, so neighboring copies never overlap. The copies can be "
+            "distance, so the copies in a row never overlap (rows along a second "
+            "axis can, when the angle between the axes is narrow). The copies can be "
             "clipped to selected polygons, and written as a feature class "
             "and/or added to the map as graphics. In the Create Array along "
             "Axes window the source is a selected graphic and the axes are "
@@ -17267,14 +17268,17 @@ class FusePlotsAndField(object):
         self.label = "Fuse Plots and Field"
         self.description = (
             "Combines a field (boundary) polygon layer and a research-plot "
-            "polygon layer into one feature class: the field polygons are "
-            "dissolved by rate -- a rate attribute of the field layer, a "
-            "standard rate, or the attribute with the standard rate filling "
-            "its gaps -- every plot is cut out of them, and the plots are "
-            "added with their own rates and attributes, so no ground is "
-            "counted twice. Selections are honored on both layers. The output "
-            "carries Rate, Source (Field or Plot) and Plot_FID plus the plot "
-            "layer's attributes. A port of the CropCentric Fuse Plot and "
+            "polygon layer into one feature class in which every piece of "
+            "ground carries exactly one treatment rate. The research plot "
+            "polygons themselves are cut out of the original field polygon, "
+            "so there are no overlapping features. The plots carry their own "
+            "treatment rate from their feature class, and the surrounding "
+            "field either has a standard treatment rate applied or takes it "
+            "from an existing field of the field feature class; plots made "
+            "with the Plot Designer tool have their rates ready in its Rate "
+            "field. Selections are honored on both layers. The output "
+            "carries Rate, Source (Field or Plot), Plot_FID and Field_FID plus "
+            "the plot layer's attributes. A port of the CropCentric Fuse Plot and "
             "Boundary Feature Class tool (Jenness and Wiebers 2018). Works at "
             "every license level.")
         self.category = "Geometric Tools\\Crop Plot Design Tools"
@@ -17401,7 +17405,10 @@ class AddRandomNumbers(object):
             "the selected records when there is a selection, and only the "
             "records a definition query shows -- with a constant, a random "
             "permutation of 1 to N (every record a different number: the "
-            "classic way to assign treatments to plots at random), random "
+            "classic way to assign treatments to plots at random), the same "
+            "permutation repeated for each replicate (a case field groups "
+            "the records and every group gets its own 1 to n -- made for a "
+            "Plot Designer output), random "
             "integers within a range, random decimals between 0 and 1 or "
             "within a range, or draws from a normal distribution with a "
             "given mean and standard deviation. A missing field is created "
@@ -17420,10 +17427,12 @@ class AddRandomNumbers(object):
                       "DEFeatureClass"],
             parameterType="Required", direction="Input")
         field = arcpy.Parameter(
-            displayName="Field to fill (an existing numeric field, or a new "
+            displayName="Field to fill (pick a numeric field, or type a new "
                         "field name)",
             name="field", datatype="GPString", parameterType="Required",
             direction="Input")
+        field.filter.type = "ValueList"
+        field.filter.list = ["Treatment"]
         field.value = "Treatment"
         mode = arcpy.Parameter(
             displayName="Values to write", name="mode", datatype="GPString",
@@ -17431,6 +17440,12 @@ class AddRandomNumbers(object):
         mode.filter.type = "ValueList"
         mode.filter.list = list(crop_plots.MODES)
         mode.value = crop_plots.MODES[1]
+        case_field = arcpy.Parameter(
+            displayName="Case field (replicate; each group gets its own "
+                        "permutation)",
+            name="case_field", datatype="Field", parameterType="Optional",
+            direction="Input")
+        case_field.parameterDependencies = [in_table.name]
         constant = arcpy.Parameter(
             displayName="Constant value", name="constant", datatype="GPDouble",
             parameterType="Optional", direction="Input")
@@ -17456,8 +17471,8 @@ class AddRandomNumbers(object):
             datatype="GPTableView", parameterType="Derived",
             direction="Output")
         out_table.parameterDependencies = [in_table.name]
-        return [in_table, field, mode, constant, low, high, mean, sd, seed,
-                out_table]
+        return [in_table, field, mode, case_field, constant, low, high, mean,
+                sd, seed, out_table]
 
     def isLicensed(self):
         return True
@@ -17465,6 +17480,36 @@ class AddRandomNumbers(object):
     def updateParameters(self, parameters):
         P = {p.name: p for p in parameters}
         m = crop_plots.canon_mode(P["mode"].valueAsText)
+        reps = m == crop_plots.MODE_PERMUTATION_REPS
+        cf, t = P["case_field"], P["in_table"]
+        # the field list: the input's writable numeric fields, plus whatever
+        # the user typed (a new field name), so the value-list check passes
+        f = P["field"]
+        names = []
+        if t.valueAsText:
+            try:
+                names = crop_plots.numeric_field_names(t.value or t.valueAsText)
+            except Exception:
+                names = []
+        typed = (f.valueAsText or "").strip()
+        if typed and typed not in names:
+            names.append(typed)
+        if not typed and "Treatment" not in names:
+            names.append("Treatment")
+        if list(f.filter.list) != names:
+            f.filter.list = names
+        cf.enabled = reps
+        # suggest the Rep field of a Plot Designer output when the mode or
+        # the input just changed (hasBeenValidated: suggest-once pattern)
+        if reps and not cf.valueAsText and t.valueAsText and (
+                not P["mode"].hasBeenValidated or not t.hasBeenValidated):
+            try:
+                names = {f.name.lower(): f.name
+                         for f in arcpy.ListFields(t.value or t.valueAsText)}
+                if "rep" in names:
+                    cf.value = names["rep"]
+            except Exception:
+                pass
         P["constant"].enabled = m == crop_plots.MODE_CONSTANT
         rng = m in (crop_plots.MODE_INT_RANGE, crop_plots.MODE_DEC_RANGE)
         P["low"].enabled = rng
@@ -17478,6 +17523,11 @@ class AddRandomNumbers(object):
         m = crop_plots.canon_mode(P["mode"].valueAsText)
         if m == crop_plots.MODE_CONSTANT and P["constant"].value is None:
             P["constant"].setErrorMessage("Give the constant value.")
+        if (m == crop_plots.MODE_PERMUTATION_REPS
+                and not P["case_field"].valueAsText):
+            P["case_field"].setErrorMessage(
+                "Choose the case field that identifies the replicates (for "
+                "example the Rep field of a Plot Designer output).")
         if m in (crop_plots.MODE_INT_RANGE, crop_plots.MODE_DEC_RANGE):
             for nm in ("low", "high"):
                 if P[nm].value is None:
@@ -17502,6 +17552,15 @@ class AddRandomNumbers(object):
                         "'{}' is an integer field; this mode writes decimals. "
                         "Choose a double-precision field or a new name."
                         .format(f.valueAsText))
+                elif (kind == "int" and m == crop_plots.MODE_CONSTANT
+                      and P["constant"].value is not None
+                      and float(P["constant"].value)
+                      != int(float(P["constant"].value))):
+                    f.setErrorMessage(
+                        "'{}' is an integer field; the constant {} has a "
+                        "decimal part. Use a whole number, a double-precision "
+                        "field or a new name.".format(
+                            f.valueAsText, P["constant"].valueAsText))
                 elif kind is None:
                     f.setWarningMessage(
                         "'{}' does not exist and will be created.".format(
@@ -17519,6 +17578,7 @@ class AddRandomNumbers(object):
                 table, P["field"].valueAsText, P["mode"].valueAsText,
                 constant=P["constant"].value, low=P["low"].value,
                 high=P["high"].value, mean=P["mean"].value, sd=P["sd"].value,
-                seed=P["seed"].value, messages=messages)
+                seed=P["seed"].value, case_field=P["case_field"].valueAsText,
+                messages=messages)
             P["out_table"].value = P["in_table"].valueAsText
         _crop_error_boundary(self, parameters, messages, body)

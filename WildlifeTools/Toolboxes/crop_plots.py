@@ -36,10 +36,10 @@ and the bearing.
 
 FUSE PLOTS AND FIELD (``run_fuse``): combines a field (boundary)
 polygon layer and a research-plot polygon layer into one feature class.
-The field polygons are dissolved by rate (a field attribute or one
-standard rate), every plot is cut out of them, and the plots are added
-with their own rates and attributes -- a single prescription map with no
-double-counted ground.
+Each field polygon keeps its own rate (a field attribute or one standard
+rate) and stays a separate feature (nothing is dissolved), every plot is
+cut out of it, and the plots are added with their own rates and
+attributes -- a single prescription map with no double-counted ground.
 
 CREATE ARRAY ALONG AXES (``run_create_array``): copies the input
 features (a selected graphic in the window version) along one or two
@@ -853,21 +853,22 @@ def run_fuse(field_layer, plot_layer, plot_rate_field, out_fc,
             "Give a field rate attribute, a standard rate, or both.")
     std = float(standard_rate) if standard_rate not in (None, "") else None
 
-    # 1. field polygons grouped by rate --------------------------------------
-    groups = {}
-    order = []
+    # 1. field polygons, each kept as its own feature with its rate ----------
+    #    (no dissolve -- Jeff's ruling, 2026-10-10: one output polygon per
+    #    input field polygon, whatever the rates)
+    pieces = []
     n_field = 0
-    cols = ["SHAPE@"] + ([field_rate_field] if use_field_rate else [])
+    cols = ["OID@", "SHAPE@"] + ([field_rate_field] if use_field_rate else [])
     with arcpy.da.SearchCursor(field_layer, cols) as cur:
         for row in cur:
-            g = row[0]
+            g = row[1]
             if g is None or g.area == 0:
                 continue
             n_field += 1
             rate = None
-            if use_field_rate and row[1] is not None:
+            if use_field_rate and row[2] is not None:
                 try:
-                    rate = float(row[1])
+                    rate = float(row[2])
                 except (TypeError, ValueError):
                     rate = None
             if rate is None:
@@ -878,28 +879,19 @@ def run_fuse(field_layer, plot_layer, plot_rate_field, out_fc,
                 rate = std
             g = _flatten_curves(g, max(g.extent.width, g.extent.height) / 400.0)
             g = _ct.project_geometry(g, out_sr)
-            key = round(rate, 10)
-            if key not in groups:
-                groups[key] = []
-                order.append(key)
-            groups[key].append(g)
+            pieces.append([round(rate, 10), g, int(row[0])])
     if n_field == 0:
         raise arcpy.ExecuteError("The field layer has no polygons to fuse "
                                  "(check its selection).")
-    _say(messages, "{:,} field polygon(s) in {} rate group(s).".format(
-        n_field, len(groups)))
-    dissolved = []
-    for key in order:
-        u = groups[key][0]
-        for g in groups[key][1:]:
-            u = u.union(g)
-        dissolved.append([key, u])
+    _say(messages, "{:,} field polygon(s), each kept as its own feature "
+         "({} distinct rate value(s)).".format(
+             n_field, len({p[0] for p in pieces})))
 
     # 2. plots -----------------------------------------------------------------
-    exclude = [plot_rate_field, "Rate", "Source", "Plot_FID"]
+    exclude = [plot_rate_field, "Rate", "Source", "Plot_FID", "Field_FID"]
     xfer = _transfer_fields(pd, exclude) if transfer_plot_fields else []
     shp = _is_shp(_create_target_name(out_fc))
-    used = {"rate", "source", "plot_fid"}
+    used = {"rate", "source", "plot_fid", "field_fid"}
     xfer_rows = []
     for src_name, row in xfer:
         name = row[0]
@@ -948,7 +940,7 @@ def run_fuse(field_layer, plot_layer, plot_rate_field, out_fc,
     for i, (_fid, _rate, pg, _attrs) in enumerate(plots):
         if (i + 1) % 50 == 0:
             _mh.phase_step(i + 1, len(plots))
-        for entry in dissolved:
+        for entry in pieces:
             fg = entry[1]
             if fg is None or fg.disjoint(pg):
                 continue
@@ -958,46 +950,51 @@ def run_fuse(field_layer, plot_layer, plot_rate_field, out_fc,
     # 4. write -------------------------------------------------------------------
     fields = [["Rate", "DOUBLE", "Rate", "", "", ""],
               ["Source", "TEXT", "Source (Field or Plot)", "8", "", ""],
-              ["Plot_FID", "LONG", "Plot ObjectID (-1 = field)", "", "", ""]]
+              ["Plot_FID", "LONG", "Plot ObjectID (-1 = field)", "", "", ""],
+              ["Field_FID", "LONG", "Field polygon ObjectID (-1 = plot)",
+               "", "", ""]]
     fields += [r for _s, r in xfer_rows]
     names = [r[0] for r in fields]
     types = [r[1] for r in fields]
     path = _create_fc(out_fc, "POLYGON", out_sr, fields)
     n_written_field = 0
     with arcpy.da.InsertCursor(path, ["SHAPE@"] + names) as ins:
-        for key, fg in dissolved:
+        for key, fg, foid in pieces:
             if fg is None or fg.area == 0:
                 continue
-            row = [float(key), "Field", -1] + [None] * len(xfer_rows)
+            row = [float(key), "Field", -1, foid] + [None] * len(xfer_rows)
             if shp:
                 row = _mh.shp_safe_attrs(row, types)
             ins.insertRow([fg] + row)
             n_written_field += 1
         for fid, rate, pg, attrs in plots:
-            row = [rate, "Plot", fid] + attrs
+            row = [rate, "Plot", fid, -1] + attrs
             if shp:
                 row = _mh.shp_safe_attrs(row, types)
             ins.insertRow([pg] + row)
     _mh.end_phases()
-    _say(messages, "Fused: {:,} field polygon(s) (one per rate, plots cut "
-                   "out) + {:,} plot(s).".format(n_written_field, n_plots))
-    summary = ("Created by Fuse Plots and Field: field layer {f} ({fr}) "
-               "dissolved by rate with {n} plot(s) from {p} (rate field {pr}) "
-               "cut out and added.".format(
+    _say(messages, "Fused: {:,} field polygon(s) (plots cut out) + {:,} "
+                   "plot(s).".format(n_written_field, n_plots))
+    summary = ("Created by Fuse Plots and Field: field layer {f} ({fr}), "
+               "each polygon kept as its own feature, with {n} plot(s) from "
+               "{p} (rate field {pr}) cut out and added.".format(
                    f=str(field_layer),
                    fr=("rate field " + str(field_rate_field)) if use_field_rate
                    else "standard rate {:g}".format(std),
                    n=n_plots, p=str(plot_layer), pr=str(plot_rate_field)))
     _stamp(path, os.path.basename(path), summary,
-           "Field polygons dissolved by rate with the research plots cut out "
-           "of them and added with their own rates: one prescription map "
-           "(Fuse Plots and Field).", "crop plots, prescription, rate, fuse")
+           "Field polygons, each kept whole with its rate, with the research "
+           "plots cut out of them and added with their own rates: one "
+           "prescription map (Fuse Plots and Field).",
+           "crop plots, prescription, rate, fuse")
     docs = [{"name": "Rate", "description": "The rate: the field's rate for "
              "field ground, the plot's rate for plot ground."},
-            {"name": "Source", "description": "'Field' for dissolved field "
-             "ground, 'Plot' for a research plot."},
+            {"name": "Source", "description": "'Field' for field ground, "
+             "'Plot' for a research plot."},
             {"name": "Plot_FID", "description": "ObjectID of the plot in the "
-             "plot layer; -1 for field ground."}]
+             "plot layer; -1 for field ground."},
+            {"name": "Field_FID", "description": "ObjectID of the field "
+             "polygon in the field layer; -1 for a plot."}]
     docs += [{"name": r[0], "description": "Copied from the plot layer's "
               "field '{}' (blank for field ground).".format(s)}
              for s, r in xfer_rows]
@@ -1018,6 +1015,7 @@ def _create_target_name(out_fc):
 # ---------------------------------------------------------------------------
 MODE_CONSTANT = "CONSTANT"
 MODE_PERMUTATION = "PERMUTATION"
+MODE_PERMUTATION_REPS = "PERMUTATION_REPS"
 MODE_INT_RANGE = "INT_RANGE"
 MODE_DEC_01 = "DEC_01"
 MODE_DEC_RANGE = "DEC_RANGE"
@@ -1025,15 +1023,56 @@ MODE_NORMAL = "NORMAL"
 MODES = [
     "Constant value",
     "Random permutation of 1 to N (each record unique)",
+    "Random permutation of 1 to N (repeated for replicates)",
     "Random integers within a range",
     "Random decimals between 0 and 1",
     "Random decimals within a range",
     "Random decimals from a normal distribution (mean, standard deviation)",
 ]
-_MODE_KEYS = [MODE_CONSTANT, MODE_PERMUTATION, MODE_INT_RANGE, MODE_DEC_01,
-              MODE_DEC_RANGE, MODE_NORMAL]
-INTEGER_MODES = (MODE_PERMUTATION, MODE_INT_RANGE)
+_MODE_KEYS = [MODE_CONSTANT, MODE_PERMUTATION, MODE_PERMUTATION_REPS,
+              MODE_INT_RANGE, MODE_DEC_01, MODE_DEC_RANGE, MODE_NORMAL]
+INTEGER_MODES = (MODE_PERMUTATION, MODE_PERMUTATION_REPS, MODE_INT_RANGE)
 DECIMAL_MODES = (MODE_DEC_01, MODE_DEC_RANGE, MODE_NORMAL)
+
+# How each mode's numbers are made (Python's random module, verified against
+# its source in Pro's Python 3.13): named for the run messages and the
+# field metadata, so a user can report the exact algorithm.
+_MT = ("the Mersenne Twister uniform generator of Python's random module "
+       "(Matsumoto and Nishimura 1998)")
+_SHUFFLE = ("Fisher-Yates shuffle in Durstenfeld's form (Durstenfeld 1964; "
+            "Knuth 1997, Algorithm P), each index drawn by rejection "
+            "sampling from " + _MT + ", so every ordering is equally likely")
+METHOD_NOTES = {
+    MODE_CONSTANT: "no random draw.",
+    MODE_PERMUTATION: _SHUFFLE + ".",
+    MODE_PERMUTATION_REPS: _SHUFFLE + ", one shuffle per group.",
+    MODE_INT_RANGE: "whole numbers drawn by rejection sampling from " + _MT
+                    + ", every value in the range equally likely.",
+    MODE_DEC_01: "53-bit uniform values from " + _MT + ".",
+    MODE_DEC_RANGE: "lowest + (highest - lowest) x a 53-bit uniform value "
+                    "from " + _MT + ".",
+    MODE_NORMAL: "Box-Muller transform in its original trigonometric form "
+                 "(Box and Muller 1958) on uniform values from " + _MT + ": "
+                 "z = cos(2 pi U1) sqrt(-2 ln(1 - U2)), with its sine "
+                 "partner used for the next record, then mean + z x SD.",
+}
+
+
+def _document_field(in_table, field, label, method, seed):
+    """Field-level metadata on the dataset: what was written and how.
+    Never raises (metadata is a courtesy, not the result)."""
+    try:
+        path = arcpy.Describe(in_table).catalogPath
+    except Exception:                                            # noqa: BLE001
+        path = str(in_table)
+    import datetime
+    text = ("Filled by the Add Random Numbers tool (Wildlife and Forestry "
+            "Tools, Jenness Enterprises) on {}: {}{}. Method: {}".format(
+                datetime.date.today().isoformat(), label,
+                " (seed {})".format(seed) if seed not in (None, "")
+                else " (no seed)", method))
+    tool_metadata.set_entity_and_fields(
+        path, fields=[{"name": field, "description": text}])
 
 
 def canon_mode(s):
@@ -1043,6 +1082,8 @@ def canon_mode(s):
     if not t or t.startswith("constant"):
         return MODE_CONSTANT
     if "permutation" in t:
+        if "repeat" in t or "replicate" in t or "case" in t:
+            return MODE_PERMUTATION_REPS
         return MODE_PERMUTATION
     if "integer" in t:
         return MODE_INT_RANGE
@@ -1053,6 +1094,18 @@ def canon_mode(s):
     if "decimal" in t:
         return MODE_DEC_RANGE
     return None
+
+
+def numeric_field_names(in_table):
+    """The writable numeric fields of a table or layer, in table order:
+    what the dialog's field list offers (ObjectID, geometry and read-only
+    fields such as Shape_Length are left out)."""
+    names = []
+    for f in arcpy.ListFields(in_table):
+        if f.type in ("SmallInteger", "Integer", "BigInteger", "Single",
+                      "Double") and getattr(f, "editable", True):
+            names.append(f.name)
+    return names
 
 
 def _field_kind(in_table, name):
@@ -1067,11 +1120,45 @@ def _field_kind(in_table, name):
     return None, name
 
 
+def _case_permutations(in_table, case_field, rng, messages=None):
+    """For the repeated-permutation mode: one random permutation of 1..n
+    per distinct value of ``case_field`` (n = that group's record count).
+    Returns (values in cursor order, number of groups, group sizes)."""
+    case_field = str(case_field or "").strip()
+    if not case_field:
+        raise arcpy.ExecuteError(
+            "Choose the case field that identifies the replicates (for "
+            "example the Rep field of a Plot Designer output).")
+    real = None
+    for f in arcpy.ListFields(in_table):
+        if f.name.lower() == case_field.lower():
+            real = f.name
+            break
+    if real is None:
+        raise arcpy.ExecuteError("The case field '{}' is not in the input."
+                                 .format(case_field))
+    keys = [k for (k,) in arcpy.da.SearchCursor(in_table, [real])]
+    groups = {}
+    for i, k in enumerate(keys):
+        groups.setdefault(k, []).append(i)
+    values = [None] * len(keys)
+    for k, idx in groups.items():
+        for i, v in zip(idx, rng.sample(range(1, len(idx) + 1), len(idx))):
+            values[i] = v
+    if None in groups:
+        _warn(messages, "{:,} record(s) have no value in '{}'; they were "
+              "treated as one group of their own.".format(len(groups[None]),
+                                                           real))
+    sizes = sorted((len(idx) for idx in groups.values()), reverse=True)
+    return values, len(groups), sizes, real
+
+
 def run_add_random_numbers(in_table, field_name, mode, constant=None, low=None,
                            high=None, mean=None, sd=None, seed=None,
-                           messages=None):
+                           case_field=None, messages=None):
     """Fill ``field_name`` of the selected records. Returns (n_written,
-    field_name)."""
+    field_name). ``case_field`` groups the records for the
+    repeated-permutation mode (one permutation of 1..n per group)."""
     mode = canon_mode(mode)
     if mode is None:
         raise arcpy.ExecuteError("Unknown value mode.")
@@ -1110,8 +1197,12 @@ def run_add_random_numbers(in_table, field_name, mode, constant=None, low=None,
             .format(real_name))
     elif kind == "int" and not want_int:
         raise arcpy.ExecuteError(
-            "'{}' is an integer field, but this mode writes decimals. Choose "
-            "a double-precision field or a new field name.".format(real_name))
+            ("'{}' is an integer field, but the constant {} has a decimal "
+             "part. Use a whole number, a double-precision field or a new "
+             "field name.".format(real_name, constant))
+            if mode == MODE_CONSTANT else
+            ("'{}' is an integer field, but this mode writes decimals. Choose "
+             "a double-precision field or a new field name.".format(real_name)))
 
     # the values ---------------------------------------------------------------
     if mode == MODE_CONSTANT:
@@ -1119,6 +1210,11 @@ def run_add_random_numbers(in_table, field_name, mode, constant=None, low=None,
         gen = (lambda: int(c)) if (kind == "int") else (lambda: c)
     elif mode == MODE_PERMUTATION:
         pool = rng.sample(range(1, n + 1), n)
+        it = iter(pool)
+        gen = lambda: next(it)                                    # noqa: E731
+    elif mode == MODE_PERMUTATION_REPS:
+        pool, n_groups, sizes, case_real = _case_permutations(
+            in_table, case_field, rng, messages)
         it = iter(pool)
         gen = lambda: next(it)                                    # noqa: E731
     elif mode == MODE_INT_RANGE:
@@ -1145,8 +1241,19 @@ def run_add_random_numbers(in_table, field_name, mode, constant=None, low=None,
             row[0] = gen()
             cur.updateRow(row)
             written += 1
+    if mode == MODE_PERMUTATION_REPS:
+        if len(set(sizes)) == 1:
+            size_text = "{:,} record(s) each".format(sizes[0])
+        else:
+            size_text = "of {} record(s)".format(
+                ", ".join("{:,}".format(s) for s in sizes))
+        _say(messages, "'{}' has {:,} group(s), {}; each group got its own "
+             "random permutation of 1 to its size.".format(
+                 case_real, n_groups, size_text))
     label = {MODE_CONSTANT: "the constant {}".format(constant),
              MODE_PERMUTATION: "a random permutation of 1 to {:,}".format(n),
+             MODE_PERMUTATION_REPS: "a random permutation of 1 to n within "
+                                    "each group",
              MODE_INT_RANGE: "random integers from {} to {}".format(low, high),
              MODE_DEC_01: "random decimals between 0 and 1",
              MODE_DEC_RANGE: "random decimals from {} to {}".format(low, high),
@@ -1155,4 +1262,6 @@ def run_add_random_numbers(in_table, field_name, mode, constant=None, low=None,
     _say(messages, "Wrote {} into '{}' of {:,} record(s){}.".format(
         label, real_name, written,
         " (seed {})".format(seed) if seed not in (None, "") else ""))
+    _say(messages, "Method: " + METHOD_NOTES[mode])
+    _document_field(in_table, real_name, label, METHOD_NOTES[mode], seed)
     return written, real_name

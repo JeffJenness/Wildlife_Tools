@@ -69,10 +69,19 @@ r, m = run(arcpy.jenness.FusePlotsAndField, field, os.path.join(gdb, "tb_plots")
 check(r.status == 4, "FusePlotsAndField ran")
 
 r, m = run(arcpy.jenness.AddRandomNumbers, os.path.join(gdb, "tb_plots"), "Treatment",
-           "Random permutation of 1 to N (each record unique)", None, None, None, None, None, 5)
+           "Random permutation of 1 to N (each record unique)", None, None, None, None, None, None, 5)
 check(r.status == 4, "AddRandomNumbers ran")
 vals = sorted(v for (v,) in arcpy.da.SearchCursor(os.path.join(gdb, "tb_plots"), ["Treatment"]))
 check(vals == list(range(1, 13)), "permutation 1..12 (got %s)" % vals)
+
+r, m = run(arcpy.jenness.AddRandomNumbers, os.path.join(gdb, "tb_plots"), "Treatment",
+           "Random permutation of 1 to N (repeated for replicates)", "Rep", None, None, None, None, None, 6)
+check(r.status == 4 and "group(s)" in m, "AddRandomNumbers repeated-permutation ran")
+by_rep = {}
+for rep, v in arcpy.da.SearchCursor(os.path.join(gdb, "tb_plots"), ["Rep", "Treatment"]):
+    by_rep.setdefault(rep, []).append(v)
+check(len(by_rep) == 2 and all(sorted(v) == list(range(1, len(v) + 1)) for v in by_rep.values()),
+      "each replicate dealt 1..n via the toolbox (got %s)" % {k: sorted(v) for k, v in by_rep.items()})
 
 # a clean failure must come back as an error message, not a traceback
 try:

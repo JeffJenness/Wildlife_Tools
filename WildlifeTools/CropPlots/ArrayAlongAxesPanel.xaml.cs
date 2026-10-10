@@ -52,7 +52,8 @@ namespace WildlifeTools.CropPlots
 
         public event EventHandler CloseRequested;
 
-        private List<CropPlotActions.LayerChoice> _layers = new List<CropPlotActions.LayerChoice>();
+        private List<CropPlotActions.LayerChoice> _layers = new List<CropPlotActions.LayerChoice>();      // polygons (clip)
+        private List<CropPlotActions.LayerChoice> _srcLayers = new List<CropPlotActions.LayerChoice>();   // any shape (source)
         private CropPlotActions.SourceInfo _graphic;
         private List<Geometry> _sources = new List<Geometry>();
         private SpatialReference _mapSr;
@@ -190,22 +191,31 @@ namespace WildlifeTools.CropPlots
             txtSourceNote.Text = _graphic?.Describe ?? "";
             string keepSrc = (cmbSourceLayer.SelectedItem as CropPlotActions.LayerChoice)?.Name;
             string keepClip = (cmbClip.SelectedItem as CropPlotActions.LayerChoice)?.Name;
+            // the source may be a point, line or polygon layer; the clip
+            // layer must be polygons
+            _srcLayers = await CropPlotActions.ListLayersAsync(false);
             _layers = await CropPlotActions.ListPolygonLayersAsync();
             bool was = _loading;
             _loading = true;
             cmbSourceLayer.Items.Clear();
             cmbClip.Items.Clear();
             cmbClip.Items.Add("(none)");
-            foreach (var l in _layers)
+            foreach (var l in _srcLayers)
             {
                 if (l.SelectedCount > 0)
                 {
                     cmbSourceLayer.Items.Add(l);
+                }
+            }
+            foreach (var l in _layers)
+            {
+                if (l.SelectedCount > 0)
+                {
                     cmbClip.Items.Add(l);
                 }
             }
             cmbSourceLayer.SelectedIndex = Math.Max(0, cmbSourceLayer.Items.IndexOf(
-                _layers.FirstOrDefault(l => l.Name == keepSrc && l.SelectedCount > 0)));
+                _srcLayers.FirstOrDefault(l => l.Name == keepSrc && l.SelectedCount > 0)));
             cmbClip.SelectedIndex = Math.Max(0, cmbClip.Items.IndexOf(
                 _layers.FirstOrDefault(l => l.Name == keepClip && l.SelectedCount > 0)));
             if (!was)
@@ -301,7 +311,7 @@ namespace WildlifeTools.CropPlots
                 txtStatus.Text = "Open a map first.";
                 return;
             }
-            txtStatus.Text = "Draw " + what + " on the map (hold Ctrl at the end to snap to 45 degrees"
+            txtStatus.Text = "Draw " + what + " on the map (hold Ctrl while drawing to snap to 45 degrees"
                              + (reference != 0.0 ? " from axis 1" : "") + ").";
             AxisSketchTool.Begin((a, b, ctrl) =>
             {
@@ -329,7 +339,28 @@ namespace WildlifeTools.CropPlots
                     Validate();
                     QueuePreview();
                 }));
-            });
+            }, reference);
+        }
+
+        private void OnPerpLeft(object sender, RoutedEventArgs e) => SetPerpendicular(-90.0, "left");
+
+        private void OnPerpRight(object sender, RoutedEventArgs e) => SetPerpendicular(90.0, "right");
+
+        /// <summary>Axis 2 at 90 degrees to axis 1: left = counterclockwise
+        /// (axis 1 minus 90), right = clockwise (axis 1 plus 90).</summary>
+        private void SetPerpendicular(double delta, string side)
+        {
+            if (!Num(txtBearing1, out double b1))
+            {
+                txtStatus.Text = "Give axis 1 a bearing first.";
+                return;
+            }
+            double b = ((b1 + delta) % 360.0 + 360.0) % 360.0;
+            txtBearing2.Text = b.ToString("0.0#", CultureInfo.CurrentCulture);
+            txtStatus.Text = "Axis 2 set perpendicular to axis 1, to the " + side + " ("
+                             + txtBearing2.Text + " degrees).";
+            Validate();
+            QueuePreview();
         }
 
         private void OnAxis2Toggle(object sender, RoutedEventArgs e)
@@ -413,7 +444,7 @@ namespace WildlifeTools.CropPlots
                     ? "select exactly one polygon, line or point graphic on the map (the window notices the "
                       + "selection by itself; the refresh button re-reads it). "
                       + (_graphic?.Describe ?? "")
-                    : "choose a polygon layer that has selected features; only layers with a selection are listed.");
+                    : "choose a point, line or polygon layer that has selected features; only layers with a selection are listed.");
             string w1 = Axis1Why();
             Count(txtForward, out int fwd);
             Count(txtBack, out int back);

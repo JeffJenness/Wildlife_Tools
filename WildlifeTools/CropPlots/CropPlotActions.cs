@@ -49,7 +49,10 @@ namespace WildlifeTools.CropPlots
             public FeatureLayer Layer { get; set; }
             public long SelectedCount { get; set; }
             public bool IsSelectedInContents { get; set; }
-            public override string ToString() => Name;
+            /// <summary>"point", "line" or "polygon" when the list mixes
+            /// shapes (shown after the name); null in polygon-only lists.</summary>
+            public string Shape { get; set; }
+            public override string ToString() => string.IsNullOrEmpty(Shape) ? Name : Name + " (" + Shape + ")";
         }
 
         /// <summary>The source of an array: one selected graphic (its
@@ -83,7 +86,12 @@ namespace WildlifeTools.CropPlots
         // =====================================================================
         // the map
         // =====================================================================
-        public static Task<List<LayerChoice>> ListPolygonLayersAsync()
+        public static Task<List<LayerChoice>> ListPolygonLayersAsync() => ListLayersAsync(true);
+
+        /// <summary>The active map's feature layers: polygons only, or
+        /// (<paramref name="polygonsOnly"/> false) points, lines and
+        /// polygons alike, each tagged with its shape kind.</summary>
+        public static Task<List<LayerChoice>> ListLayersAsync(bool polygonsOnly)
         {
             return QueuedTask.Run(() =>
             {
@@ -100,7 +108,16 @@ namespace WildlifeTools.CropPlots
                 {
                     try
                     {
-                        if (fl.ShapeType != esriGeometryType.esriGeometryPolygon)
+                        string shape;
+                        switch (fl.ShapeType)
+                        {
+                            case esriGeometryType.esriGeometryPolygon: shape = "polygon"; break;
+                            case esriGeometryType.esriGeometryPolyline: shape = "line"; break;
+                            case esriGeometryType.esriGeometryPoint:
+                            case esriGeometryType.esriGeometryMultipoint: shape = "point"; break;
+                            default: continue;                       // annotation, dimension, ...
+                        }
+                        if (polygonsOnly && shape != "polygon")
                         {
                             continue;
                         }
@@ -112,6 +129,7 @@ namespace WildlifeTools.CropPlots
                             Layer = fl,
                             SelectedCount = sel,
                             IsSelectedInContents = selected != null && selected.Contains(fl),
+                            Shape = polygonsOnly ? null : shape,
                         });
                     }
                     catch

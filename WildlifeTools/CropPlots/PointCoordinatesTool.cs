@@ -39,9 +39,12 @@ namespace WildlifeTools.CropPlots
     /// name -- in the lines, fonts and callout style chosen in Point
     /// Coordinates Settings. On a map the graphic goes to the map's
     /// graphics layer; on a layout it describes the TOPMOST map frame under
-    /// the click and the graphic goes into the layout itself, where it is
-    /// easy to move and edit. A click on a layout outside every map frame
-    /// adds nothing. A port of the CropCentric Add Coordinates tool.
+    /// the click and the graphic goes into THAT MAP's graphics layer too
+    /// (Jeff's ruling, 2026-10-10: not onto the page, so that when the
+    /// frame's extent changes the callout moves with the point it
+    /// describes and its coordinates stay true). A click on a layout
+    /// outside every map frame adds nothing. A port of the CropCentric Add
+    /// Coordinates tool.
     ///
     /// Built on Esri's own element tool base (the class behind Insert &gt;
     /// Text), so one click works on maps, layouts and layouts without a map
@@ -181,12 +184,30 @@ namespace WildlifeTools.CropPlots
             {
                 return;
             }
+            // the graphic belongs to the frame's MAP, not the page: it then
+            // travels with the point when the frame is panned or zoomed
+            Map map = frame.Map;
+            GraphicsLayer gl = map.TargetGraphicsLayer
+                               ?? map.GetLayersAsFlattenedList().OfType<GraphicsLayer>().FirstOrDefault()
+                               ?? LayerFactory.Instance.CreateLayer<GraphicsLayer>(new GraphicsLayerCreationParams(), map);
+            map.TargetGraphicsLayer = gl;
+            // the text sits up and to the right by a small page distance;
+            // convert that page position into the map so the offset looks
+            // the same on the page as it does for a click in a map view
             double pageW = 8.5;
             try { pageW = layout.GetPage().Width; } catch { }
             double off = pageW * 0.03;
-            MapPoint textAt = MapPointBuilderEx.CreateMapPoint(pagePoint.X + off, pagePoint.Y + off * 0.6,
+            MapPoint textAtPage = MapPointBuilderEx.CreateMapPoint(pagePoint.X + off, pagePoint.Y + off * 0.6,
                 pagePoint.SpatialReference);
-            AddElements(layout, pagePoint, textAt, text, s);
+            MapPoint textAt = frame.PageToMap(textAtPage);
+            if (textAt == null || textAt.SpatialReference == null)
+            {
+                Envelope fe = null;
+                try { fe = frame.Map.GetDefaultExtent(); } catch { }
+                double moff = fe != null ? Math.Max(fe.Width, fe.Height) * 0.04 : 0;
+                textAt = MapPointBuilderEx.CreateMapPoint(mapPoint.X + moff, mapPoint.Y + moff * 0.6, sr);
+            }
+            AddElements(gl, mapPoint, textAt, text, s);
         }
 
         // =====================================================================

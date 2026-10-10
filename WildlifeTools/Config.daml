@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.111.56.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.111.57.1" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>Wildlife and Forestry Tools</Name>
     <Description>Wildlife and forestry analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -265,7 +265,7 @@
                 largeImage="Images\PointCoordinates_32.png"
                 keytip="PC">
           <tooltip heading="Point Coordinates">
-            Click a map, or a map frame on a layout, to add a callout graphic describing that point: longitude and latitude with the geographic coordinate system's name and, when the map is projected, the projected X and Y with the projected system's name -- in the lines and style chosen in Point Coordinates Settings. On a layout the graphic describes the topmost map frame under the click and goes into the layout itself, where it is easy to move and edit; a click outside every map frame adds nothing. A port of the CropCentric Add Coordinates tool (Jenness and Wiebers 2018).
+            Click a map, or a map frame on a layout, to add a callout graphic describing that point: longitude and latitude with the geographic coordinate system's name and, when the map is projected, the projected X and Y with the projected system's name -- in the lines and style chosen in Point Coordinates Settings. On a layout the graphic describes the topmost map frame under the click and goes into that frame's map, so it moves with the point when the frame is panned or zoomed; a click outside every map frame adds nothing. A port of the CropCentric Add Coordinates tool (Jenness and Wiebers 2018).
           </tooltip>
         </tool>
         <tool id="WildlifeTools_AxisSketchTool"
@@ -275,7 +275,7 @@
                 smallImage="Images\ArrayAlongAxes_16.png"
                 largeImage="Images\ArrayAlongAxes_32.png">
           <tooltip heading="Draw Axis">
-            Draws a line on the map for the Plot Designer and Create Array along Axes windows (activated from their Draw buttons; not on the ribbon). Hold Ctrl as you finish the line to snap its bearing to the nearest 45 degrees.
+            Draws a line on the map for the Plot Designer and Create Array along Axes windows (activated from their Draw buttons; not on the ribbon). Hold Ctrl while drawing to snap the line to the nearest 45 degrees: a red line shows where it will land, and the finished line is delivered snapped.
           </tooltip>
         </tool>
         <tool id="WildlifeTools_AnchorSketchTool"
@@ -1147,7 +1147,7 @@ Orders a set of points into a short travel route -- a survey route you can load 
                 largeImage="Images\FusePlots_32.png"
                 keytip="FP">
           <tooltip heading="Fuse Plots and Field">
-            Combine a field polygon layer and a research-plot polygon layer into one prescription map: the field is dissolved by rate (an attribute, a standard rate, or both), every plot is cut out of it, and the plots are added with their own rates and attributes, so no ground is counted twice. A port of the CropCentric Fuse Plot and Boundary Feature Class tool (Jenness and Wiebers 2018). Works at every license level.
+            Combine a field polygon layer and a research-plot polygon layer into one prescription map: each field polygon keeps its rate (an attribute, a standard rate, or both), every plot is cut out of it, and the plots are added with their own rates and attributes, so no ground is counted twice. A port of the CropCentric Fuse Plot and Boundary Feature Class tool (Jenness and Wiebers 2018). Works at every license level.
           </tooltip>
         </button>
         <button id="WildlifeTools_CreateArrayAlongAxes"
@@ -1158,7 +1158,7 @@ Orders a set of points into a short travel route -- a survey route you can load 
                 largeImage="Images\ArrayAlongAxes_32.png"
                 keytip="AA">
           <tooltip heading="Create Array along Axes">
-            Copy a selected graphic (or a layer's selected features) along an axis drawn on the map, and optionally along a second axis, stepping by the shape's own extent plus a separation so the copies never overlap -- with a live preview, optional clipping to selected polygons, and the result as graphics, a feature class, or both. A port of the CropCentric Create Graphic Array tool (Jenness and Wiebers 2018). Works at every license level.
+            Copy a selected graphic (or a layer's selected features) along an axis drawn on the map, and optionally along a second axis, stepping by the shape's own extent plus a separation so the copies in a row never overlap (rows along a second axis can, when the angle between the axes is narrow) -- with a live preview, optional clipping to selected polygons, and the result as graphics, a feature class, or both. A port of the CropCentric Create Graphic Array tool (Jenness and Wiebers 2018). Works at every license level.
           </tooltip>
         </button>
         <button id="WildlifeTools_AddRandomNumbers"
@@ -1169,7 +1169,7 @@ Orders a set of points into a short travel route -- a survey route you can load 
                 largeImage="Images\AddRandomNumbers_32.png"
                 keytip="RN">
           <tooltip heading="Add Random Numbers">
-            Fill a numeric field of the selected records with a constant, a random permutation of 1 to N (every record a different number -- the classic way to assign treatments at random), random integers or decimals within a range, decimals between 0 and 1, or draws from a normal distribution. A missing field is created. A port of the CropCentric Add Random Numbers tool (Jenness and Wiebers 2018). Works at every license level.
+            Fill a numeric field of the selected records with a constant, a random permutation of 1 to N (every record a different number -- the classic way to assign treatments at random), the same permutation repeated for each replicate of a Plot Designer block, random integers or decimals within a range, decimals between 0 and 1, or draws from a normal distribution. A missing field is created. A port of the CropCentric Add Random Numbers tool (Jenness and Wiebers 2018). Works at every license level.
           </tooltip>
         </button>
         <button id="WildlifeTools_PointCoordinatesSettings"
