@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Extract Slope Values to Points (light theme)</title>
+  <!-- The slope wedge of the Slope Zonal Statistics icon (upper left) with a
+       point marker and a leader: extracting the slope's value at a point. -->
+  <path d="M 3 21 L 3 4 M 3 21 L 17 21" fill="none" stroke="#1A1A1A" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M 3 21 L 18 7" stroke="#8D6E63" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M 3 21 L 14 21 A 11 11 0 0 0 11.04 13.5 Z" fill="#8D6E63" opacity="0.5"/>
+  <!-- leader + point marker -->
+  <line x1="20" y1="20" x2="25" y2="25" stroke="#2B2B2B" stroke-width="2"/>
+  <circle cx="25.5" cy="25.5" r="4.2" fill="#E64A45" stroke="#2B2B2B" stroke-width="1.8"/>
+</svg>

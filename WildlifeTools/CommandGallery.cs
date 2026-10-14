@@ -305,6 +305,7 @@ namespace WildlifeTools
             {
                 "WildlifeTools_TopographicWetnessIndex",
                 "WildlifeTools_SlopeZonalStatistics",
+                "WildlifeTools_ExtractSlopeValuesToPoints",
                 "WildlifeTools_FindRasterExtremes",
             }),
             ("TPI Tools", new[]

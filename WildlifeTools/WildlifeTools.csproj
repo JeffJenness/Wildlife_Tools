@@ -185,6 +185,10 @@
     <Content Include="Images\SlopeZonal_32.png" />
     <Content Include="DarkImages\SlopeZonal_16.png" />
     <Content Include="DarkImages\SlopeZonal_32.png" />
+    <Content Include="Images\SlopePoint_16.png" />
+    <Content Include="Images\SlopePoint_32.png" />
+    <Content Include="DarkImages\SlopePoint_16.png" />
+    <Content Include="DarkImages\SlopePoint_32.png" />
     <Content Include="Images\FavoriteData_16.png" />
     <Content Include="Images\FavoriteData_32.png" />
     <Content Include="DarkImages\FavoriteData_16.png" />

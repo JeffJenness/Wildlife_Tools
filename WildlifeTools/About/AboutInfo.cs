@@ -78,9 +78,11 @@ namespace WildlifeTools.About
             + "a large collection of analytical, cartographic and data-management "
             + "tools for wildlife research, landscape analysis and general GIS "
             + "work, ported and modernized from over three decades of Jenness "
-            + "Enterprises extensions for ArcView 3.x and ArcMap, and expanded "
-            + "with the methods that today's journals expect. Every tool runs at "
-            + "every ArcGIS Pro license level, with no extension licenses required.";
+            + "Enterprises extensions for ArcView 3.x and ArcMap, and updated to "
+            + "include newer variations and advancements in the methods published "
+            + "in the literature. All methods are cited and sourced. Every tool "
+            + "runs at every ArcGIS Pro license level, with no extension licenses "
+            + "required.";
 
         public const string Para2Lead = "Free does not mean lightweight or of little value!";
         public const string Para2Body =
@@ -96,13 +98,13 @@ namespace WildlifeTools.About
 
         public const string Para3Lead = "Why give it away?";
         public const string Para3Body =
-            "Because of Lois. My wife, best friend and partner, Lois Engelman, "
+            "Because of Lois Engelman, my wife, best friend and partner. Lois "
             + "and I ran Jenness Enterprises together from 2000 until she died in "
             + "July 2026, and the Lois Engelman Memorial Scholarship Fund at "
             + "Northern Arizona University was created in her name to support the "
             + "next generation of forestry, wildlife and ecology students. The "
-            + "add-in is free so that it reaches as many people as it can, and I "
-            + "hope it will raise money for that fund: my belief is that people "
+            + "add-in is free so that it reaches as many people as it can, and my "
+            + "goal is to raise money for that fund: my belief is that people "
             + "who try these tools will see their value, and will consider a "
             + "donation toward something that will help develop the next "
             + "generation of foresters, wildlife biologists, ecologists and land "

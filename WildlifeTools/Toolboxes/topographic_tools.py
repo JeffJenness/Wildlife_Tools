@@ -2870,12 +2870,34 @@ def _slope_zone_row(z, unit, ignore_nodata):
     return out
 
 
-def _detect_slope_units(in_raster):
-    """'percent', 'degrees', or None from the raster's geoprocessing lineage:
-    Esri's Slope / Surface Parameters record DEGREE or PERCENT_RISE. The last
-    slope-related process wins. Best effort; never raises."""
-    import arcpy
+def _slope_units_from_history(text):
+    """'percent', 'degrees', or None from geoprocessing-history XML: the
+    last Slope / Surface Parameters process wins. A run from the
+    Geoprocessing pane records the parameter's DISPLAY label ("Percent
+    rise", "Degree"); a run from Python records the keyword (PERCENT_RISE,
+    DEGREE). Both are matched -- a pane-made raster was missed until
+    2026-10-14. A raster NAME containing the word is not enough: only the
+    two-word label or the keyword counts for percent, and only the whole
+    word for degrees."""
     import re as _re
+    found = None
+    for m in _re.finditer(r"<Process\b.*?</Process>", text or "",
+                          _re.S | _re.I):
+        seg = m.group(0)
+        low = seg.lower()
+        if "slope" not in low and "surfaceparameters" not in low:
+            continue
+        if _re.search(r"percent[\s_]+rise", low):
+            found = "percent"
+        elif _re.search(r"\bdegree\b", low):
+            found = "degrees"
+    return found
+
+
+def _detect_slope_units(in_raster):
+    """'percent', 'degrees', or None from the raster's geoprocessing lineage
+    (see _slope_units_from_history). Best effort; never raises."""
+    import arcpy
     try:
         # A LAYER name must resolve to the dataset path first, and this
         # arcpy has no Metadata.lineage attribute -- the geoprocessing
@@ -2888,18 +2910,7 @@ def _detect_slope_units(in_raster):
         text = (md.xml or "") + " " + (getattr(md, "lineage", "") or "")
     except Exception:
         return None
-    found = None
-    for m in _re.finditer(r"<Process\b.*?</Process>", text,
-                          _re.S | _re.I):
-        seg = m.group(0)
-        low = seg.lower()
-        if "slope" not in low and "surfaceparameters" not in low:
-            continue
-        if "percent_rise" in low:
-            found = "percent"
-        elif _re.search(r"\bDEGREE\b", seg, _re.I):
-            found = "degrees"
-    return found
+    return _slope_units_from_history(text)
 
 
 def _at_zone_extent(in_zone_data, sr):
@@ -3296,3 +3307,221 @@ def _write_slope_zonal_table(out_table, in_zone_data, zone_field,
     except Exception:
         pass
     return out_table
+
+
+# ---------------------------------------------------------------------------
+#  Extract Slope Values to Points
+# ---------------------------------------------------------------------------
+def _slope_from_deg_array(d, unit):
+    """Array conversion of degree values back to the source unit (sign
+    kept); the array twin of ``_slope_from_deg``."""
+    d = np.asarray(d, np.float64)
+    if unit == "percent":
+        return np.tan(np.radians(np.clip(d, -89.999, 89.999))) * 100.0
+    if unit == "ratio":
+        return np.tan(np.radians(np.clip(d, -89.999, 89.999)))
+    if unit == "gradians":
+        return d / 0.9
+    return d
+
+
+def _slope_unit_limit(unit):
+    """The largest magnitude a slope value can have in ``unit`` (None when
+    the unit is unbounded: percent and rise:run)."""
+    return {"degrees": 90.0, "gradians": 100.0}.get(unit)
+
+
+def slope_unit_mismatch(in_raster, slope_units):
+    """(detected, chosen) when the raster's geoprocessing history records a
+    slope unit other than the one chosen, else None. The history only ever
+    says degrees or percent (what Esri's Slope and Surface Parameters
+    write), so a rise:run or gradian choice on such a raster counts as a
+    mismatch too. Best effort; never raises."""
+    try:
+        detected = _detect_slope_units(in_raster)
+    except Exception:
+        detected = None
+    chosen = _slope_unit_key(slope_units)
+    if detected and detected != chosen:
+        return detected, chosen
+    return None
+
+
+def unit_mismatch_text(detected, slope_units):
+    """The warning shown in the dialog and written to the run report when
+    the chosen unit disagrees with the raster's geoprocessing history."""
+    return ("The raster's geoprocessing history records its values as {}, "
+            "but the unit chosen is '{}'. The values are read as {}, as "
+            "chosen; make sure that is what you want.".format(
+                "percent slope" if detected == "percent" else "degrees",
+                slope_units, _slope_unit_word(_slope_unit_key(slope_units))))
+
+
+def run_extract_slope_points(in_points, in_raster, out_points,
+                             interpolate=False, field_name="Slope",
+                             slope_units=SLOPE_UNITS_Z[0], messages=None,
+                             in_place=False):
+    """Extract the slope at each point of ``in_points`` from a slope raster
+    into a new field -- of a copied point feature class, or, with
+    ``in_place``, of the input feature class itself -- like Esri's Extract
+    Values to Points, with no Spatial Analyst, and with the interpolation
+    done on the slope ANGLES.
+
+    ``interpolate`` False: the value of the cell each point falls in, exactly
+    as stored, in the raster's own unit. True: a bilinear interpolation of
+    the four surrounding cell centers computed on the slope angles -- each
+    neighbor is converted to degrees first (arctangent for percent and
+    rise:run, a rescaling for gradians), the weighted mean is taken, and the
+    result is converted back to the raster's unit. Averaging raw percent
+    values would bias the result steep, because percent slope is the
+    tangent of the angle, a convex function (the Slope Zonal Statistics
+    rule). NoData neighbors, and neighbors outside the valid range for the
+    unit (beyond +/-90 degrees or +/-100 gon), are left out and the weights
+    renormalized. NoData / outside-the-raster points get NULL in a
+    geodatabase or -9999 in a shapefile.
+
+    ``slope_units`` is one of ``SLOPE_UNITS_Z``; when the raster's
+    geoprocessing history records a different unit the run warns and goes
+    on with the unit chosen. In place, the layer's selection and definition
+    query decide which points get a value; the other rows stay NULL.
+
+    Returns the actual field name created (sanitized/uniquified)."""
+    import arcpy
+    import aspect_tools as _at      # lazy: aspect_tools imports this module
+    unit = _slope_unit_key(slope_units)
+    uw = _slope_unit_word(unit)
+    lim = _slope_unit_limit(unit)
+
+    _mh.begin_phases([
+        ("Adding the field to the input features..." if in_place
+         else "Copying the point features...", 2),
+        ("Reading the slope raster...", 1),
+        ("Sampling slope at the points...", 4),
+        ("Writing values and field metadata...", 2),
+    ])
+    target, path, fld, null_ok = _at._point_target(
+        in_points, out_points, field_name, "Slope", in_place, messages)
+
+    _mh.phase_advance("Reading the slope raster...")
+    w = _at._points_in_raster_window(target, in_raster, messages, "slope")
+    arr, valid, n_pts = w["arr"], w["valid"], w["n_pts"]
+    xs, ys = w["xs"], w["ys"]
+    x0w, y0w, csx, csy = w["x0w"], w["y0w"], w["csx"], w["csy"]
+
+    # The unit in the raster's history against the unit chosen.
+    mismatch = slope_unit_mismatch(in_raster, slope_units)
+    mismatch_note = None
+    if mismatch:
+        mismatch_note = unit_mismatch_text(mismatch[0], slope_units)
+        _warn(messages, mismatch_note)
+
+    # Cells outside the valid range for the unit (a percent raster read as
+    # degrees shows up here).
+    oor = np.zeros(arr.shape, bool)
+    if lim is not None and arr.size:
+        oor = valid & (np.abs(arr) > lim)
+    n_oor = int(np.count_nonzero(oor))
+    if n_oor:
+        _warn(messages,
+              "{:,} cell(s) in the sampled area hold values outside the "
+              "valid range for {} (beyond +/-{:g}) -- this may not be a "
+              "slope raster in that unit. {}".format(
+                  n_oor, uw, lim,
+                  "Such cells are left out of the interpolation."
+                  if interpolate else
+                  "Points on such cells receive the stored value anyway."))
+
+    _mh.phase_advance("Sampling slope at the points...")
+    vals = np.full(n_pts, np.nan)               # NaN = NoData/outside
+    Hw, Ww = arr.shape
+    if n_pts and Hw and Ww:
+        colf = (xs - x0w) / csx                 # fractional cols in the window
+        rowf = (y0w - ys) / csy
+        if not interpolate:
+            ci = np.floor(colf).astype(np.int64)
+            ri = np.floor(rowf).astype(np.int64)
+            inside = (ci >= 0) & (ci < Ww) & (ri >= 0) & (ri < Hw)
+            cis = np.clip(ci, 0, Ww - 1)
+            ris = np.clip(ri, 0, Hw - 1)
+            ok = inside & valid[ris, cis]
+            vals[ok] = arr[ris[ok], cis[ok]].astype(np.float64)
+        else:
+            # Bilinear on the ANGLES of the 4 surrounding cell centers;
+            # NoData and out-of-range neighbors excluded, weights
+            # renormalized over the rest.
+            usable = valid & ~oor
+            deg = _slope_to_deg(np.where(usable, arr, 0.0).astype(np.float64),
+                                unit)
+            fx = colf - 0.5
+            fy = rowf - 0.5
+            c0 = np.floor(fx).astype(np.int64)
+            r0 = np.floor(fy).astype(np.int64)
+            tx = (fx - c0).astype(np.float64)
+            ty = (fy - r0).astype(np.float64)
+            dsum = np.zeros(n_pts)
+            wsum = np.zeros(n_pts)
+            for dr, dc, wt in ((0, 0, (1 - tx) * (1 - ty)),
+                               (0, 1, tx * (1 - ty)),
+                               (1, 0, (1 - tx) * ty),
+                               (1, 1, tx * ty)):
+                cc = c0 + dc
+                rr = r0 + dr
+                inside = ((cc >= 0) & (cc < Ww) & (rr >= 0) & (rr < Hw)
+                          & (wt > 0))
+                ccs = np.clip(cc, 0, Ww - 1)
+                rrs = np.clip(rr, 0, Hw - 1)
+                ok = inside & usable[rrs, ccs]
+                dsum += np.where(ok, wt * deg[rrs, ccs], 0.0)
+                wsum += np.where(ok, wt, 0.0)
+            has = wsum > 1e-12
+            mean_deg = np.where(has, dsum / np.where(has, wsum, 1.0), np.nan)
+            vals = np.where(has, _slope_from_deg_array(mean_deg, unit),
+                            np.nan)
+
+    _mh.phase_advance("Writing values and field metadata...")
+    n_nodata, _unused = _at._write_point_values(target, fld, w["oids"], vals,
+                                                null_ok)
+
+    _say(messages, "Sampled {:,} point(s): {:,} with a value, {:,} on NoData "
+                   "or outside the raster ({}).".format(
+                       n_pts, n_pts - n_nodata, n_nodata,
+                       "NULL" if null_ok else "-9999"))
+    if interpolate:
+        _say(messages, "Values are in {}: each point's value is a bilinear "
+                       "interpolation of the four surrounding cell centers "
+                       "computed on the slope ANGLES and converted back to "
+                       "{}.".format(uw, uw))
+    else:
+        _say(messages, "Values are the stored values of the cells the points "
+                       "fall in, in {}.".format(uw))
+    if in_place:
+        beyond = _at._rows_beyond(target, path, n_pts)
+        if beyond:
+            _say(messages, "The field was added to the whole feature class; "
+                           "{:,} feature(s) outside the layer's selection or "
+                           "definition query were left NULL.".format(beyond))
+
+    # Field-level metadata.
+    try:
+        import tool_metadata
+        method = ("Bilinear interpolation of the four surrounding cell "
+                  "centers computed on the slope angles (each cell converted "
+                  "to degrees, averaged, converted back; NoData and "
+                  "out-of-range neighbors excluded)" if interpolate
+                  else "Value of the raster cell containing the point")
+        tool_metadata.set_entity_and_fields(
+            arcpy.Describe(path).catalogPath,
+            fields=[{"name": fld, "description":
+                     "Slope at the point, in {} (the unit of the source "
+                     "raster, '{}'); {} = NoData or outside the raster. "
+                     "Method: {}. Source raster: {}.{}".format(
+                         uw, slope_units, "NULL" if null_ok else "-9999",
+                         method, str(in_raster),
+                         " Warning at run time: " + mismatch_note
+                         if mismatch_note else "")}],
+            messages=messages)
+    except Exception:
+        pass
+    _mh.end_phases()
+    _say(messages, "Extract Slope Values to Points complete: {}".format(path))
+    return fld

@@ -97,6 +97,9 @@ interactive window of their own; the rest are geoprocessing tools.
   Index, from priority-flood flow routing.
 - **Slope Zonal Statistics as Table** – slope statistics per zone, computed
   correctly in angle space.
+- **Extract Slope Values to Points** – the slope at each point, interpolated
+  on the angles so percent slopes are never averaged raw; written to a copy
+  of the points or to the input itself.
 - **Find Raster Extreme Values** – regional peaks and lows of any raster
   surface, with prominence and depth.
 
@@ -116,7 +119,8 @@ interactive window of their own; the rest are geoprocessing tools.
 **Aspect Tools** (all computed with circular statistics)
 
 - **Aspect Focal Statistics** – neighborhood statistics for an aspect raster.
-- **Extract Aspect Values to Points** – the aspect at each point.
+- **Extract Aspect Values to Points** – the aspect at each point, written to
+  a copy of the points or to the input itself.
 - **Aspect Transformation** – one or more transformations of an aspect raster
   at once.
 - **Aspect Zonal Statistics as Table** – circular statistics per zone.

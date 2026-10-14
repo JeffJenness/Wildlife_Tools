@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.112.60.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.113.61.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>Wildlife and Forestry Tools</Name>
     <Description>Analytical, cartographic and data-management tools for wildlife research, landscape analysis and general GIS work, by Jenness Enterprises: home ranges, topographic analysis, corridor design, geometry, random samples, hillshades and more, at every ArcGIS Pro license level. Free software under the GNU GPL; it supports the Lois Engelman Memorial Scholarship Fund. Help: www.jennessent.com</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -569,6 +569,17 @@
             Opens the Slope Zonal Statistics as Table tool from the Jenness Enterprises toolbox: summarizes a slope raster per zone into a table (count, mean, median, standard deviation, min, max, range, 5th/95th percentiles, and the 95% confidence interval of the mean). Very similar to Esriâ€™s Zonal Statistics as Table, but built for slope -- the mean, SD and CI are computed on the slope ANGLES, because percent slope is the tangent of the angle and averaging raw percent values biases steepness statistics high -- and it requires no Spatial Analyst or Image Analyst extension. Slope units (degrees, percent, rise:run, gradians) default automatically from the rasterâ€™s geoprocessing history; results are reported in the source unit. Negative slopes can be treated as positive (absolute steepness) or keep their sign so downhill balances uphill. Zones come from an integer raster or point / polyline / polygon features; overlapping features in different zones are each analyzed in full. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
+        <button id="WildlifeTools_ExtractSlopeValuesToPoints"
+                caption="Extract Slope Values to Points"
+                className="ExtractSlopeValuesToPointsButton"
+                loadOnClick="true"
+                smallImage="Images\SlopePoint_16.png"
+                largeImage="Images\SlopePoint_32.png"
+                keytip="SV">
+          <tooltip heading="Extract Slope Values to Points">
+            Opens the Extract Slope Values to Points tool from the Jenness Enterprises toolbox: adds a field holding the slope at each point, extracted from a slope raster, to a copy of the input points or to the input feature class itself. Nearly identical to Esri's Extract Values to Points, except that the optional interpolation is computed on the slope ANGLES -- percent slope is the tangent of the angle, so averaging raw percent values biases the result steep -- and converted back to the raster's unit; the field can be added to the existing point features under a name you choose; and no extension license is required. Slope units (degrees, percent, rise:run, gradians) default automatically from the raster's geoprocessing history, and a unit chosen against that history draws a warning. Also available in the Topographic Analysis Tools toolset and in ModelBuilder.<disabledText />
+          </tooltip>
+        </button>
         <button id="WildlifeTools_ExtractAspectValuesToPoints"
                 caption="Extract Aspect Values to Points"
                 className="ExtractAspectValuesToPointsButton"
@@ -577,7 +588,7 @@
                 largeImage="Images\AspectPoint_32.png"
                 keytip="AP">
           <tooltip heading="Extract Aspect Values to Points">
-            Opens the Extract Aspect Values to Points tool from the Jenness Enterprises toolbox: copies the input points and adds a field holding the aspect at each point, extracted from an aspect raster -- like Esri's Extract Values to Points, but built for aspect. The optional interpolation is a bilinear WEIGHTED MEAN DIRECTION (circular), never a linear average, so directions near north interpolate correctly (359 and 1 give ~0, not 180). Flat cells (aspect -1) are excluded from interpolation; all-flat neighbors give -1. D-infinity flow-direction rasters are supported via a convention toggle. No Spatial Analyst required. Also available in the Aspect Tools toolset and in ModelBuilder.<disabledText />
+            Opens the Extract Aspect Values to Points tool from the Jenness Enterprises toolbox: adds a field holding the aspect at each point, extracted from an aspect raster, to a copy of the input points or to the input feature class itself -- like Esri's Extract Values to Points, but built for aspect. The optional interpolation is a bilinear WEIGHTED MEAN DIRECTION (circular), never a linear average, so directions near north interpolate correctly (359 and 1 give ~0, not 180). Flat cells (aspect -1) are excluded from interpolation; all-flat neighbors give -1. D-infinity flow-direction rasters are supported via a convention toggle. No Spatial Analyst required. Also available in the Aspect Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_AspectFocalStatistics"
@@ -1354,7 +1365,7 @@ Orders a set of points into a short travel route -- a survey route you can load 
                  smallImage="Images\TRI_32.png"
                  keytip="TA">
           <tooltip heading="Topographic Analysis Tools">
-            Terrain analysis at every license level: topographic roughness and ruggedness (surface area and ratio, VRM, ACR, TRI, fractal dimension, LSRI, and roughness along lines), the topographic wetness index, slope zonal statistics, raster extreme values, the TPI landform family with the Classification System Builder, and aspect statistics computed correctly in circular space. Expand the gallery to see all 21 tools grouped by family.<disabledText />
+            Terrain analysis at every license level: topographic roughness and ruggedness (surface area and ratio, VRM, ACR, TRI, fractal dimension, LSRI, and roughness along lines), the topographic wetness index, slope zonal statistics and slope values at points, raster extreme values, the TPI landform family with the Classification System Builder, and aspect statistics computed correctly in circular space. Expand the gallery to see all 23 tools grouped by family.<disabledText />
           </tooltip>
         </gallery>
         <gallery id="WildlifeTools_CorridorDesignerGallery"

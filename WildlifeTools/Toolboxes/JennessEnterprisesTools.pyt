@@ -69,6 +69,7 @@ _HELP_PAGES = {
     "EnhancedHillshade": "cartography/enhanced-hillshade.html",
     "EstimatedShortestPath": "geometric-tools/estimated-shortest-path.html",
     "ExtractAspectValuesToPoints": "topographic-analysis/extract-aspect-values-to-points.html",
+    "ExtractSlopeValuesToPoints": "topographic-analysis/extract-slope-values-to-points.html",
     "FillCorridorHoles": "corridor-designer-tools/fill-corridor-holes.html",
     "FindRasterExtremeValues": "topographic-analysis/find-raster-extreme-values.html",
     "FractalDimension": "topographic-analysis/fractal-dimension.html",
@@ -449,6 +450,33 @@ def _writeback_resolved_raster(P, name):
             pass
 
 
+def _first_validation_cycle(parameters):
+    """True on the first validation pass of a run -- a script, a model, or a
+    dialog opened with its values already filled in -- when every parameter
+    is still unvalidated. On any later pass in the dialog only the parameter
+    the user just changed is unvalidated. A value met on the first pass was
+    given deliberately and must be kept; one met on a later pass may be a
+    stale suggestion for the previous raster and is refreshed. (Verified
+    2026-10-14 with a probe toolbox: a script run validates twice, first with
+    hasBeenValidated False on every parameter, then True on every one; the
+    old unconditional suggestions were overwriting a unit or convention
+    passed from a script whenever the raster carried no history.)"""
+    return all(not p.hasBeenValidated for p in parameters)
+
+
+def _given_on_first_pass(parameters, *params):
+    """True on the first validation pass of a run (see
+    _first_validation_cycle) when one of ``params`` already holds a value
+    that was set deliberately -- its ``altered`` flag is on, as it is for
+    every value a script passes (even the default), a model stores, or a
+    dialog opened with values filled in carries. A detection-driven
+    suggestion must not replace such a value. It may still fill a value
+    nobody has touched, so a dialog whose very first act is picking the
+    raster gets its suggestion either way."""
+    return (_first_validation_cycle(parameters)
+            and any(p.altered for p in params))
+
+
 def _resolve_raster_path(param):
     """A usable catalog path for a raster input parameter. A GPRasterLayer bound
     to a map layer can report its value as a 'CIMPATH=...' string (or a bare
@@ -491,6 +519,7 @@ class Toolbox(object):
                       MultiSunHillshade, SimpleHypsometricShading,
                       BlurredHillshade, SurfaceAreaRatio, VRM,
                       ArcChordRatio, TRI, SlopeZonalStatisticsAsTable,
+                      ExtractSlopeValuesToPoints,
                       TopographyAlongLines,
                       SplitLinesIntoSegments,
                       FractalDimension, TopographicWetnessIndex,
@@ -5875,8 +5904,11 @@ class AspectFocalStatistics(object):
                 except Exception:
                     pass
             # Suggest the Mathematical convention once, only on the cycle where
-            # the input just changed, if it looks like a D-infinity raster.
-            if not inr.hasBeenValidated:
+            # the input just changed, if it looks like a D-infinity raster --
+            # never on the first pass of a script, model or preset run, whose
+            # convention was given deliberately.
+            if (not inr.hasBeenValidated
+                    and not _given_on_first_pass(parameters, P["input_convention"])):
                 try:
                     kind, _why = aspect_tools._detect_source_kind(inr.valueAsText)
                 except Exception:
@@ -6103,7 +6135,8 @@ class AspectTransformation(object):
         keys = set(self._selected_keys(P["transformations"]))
         P["target_bearing"].enabled = bool(keys & aspect_tools._BEARING_KEYS)
         # Suggest the Mathematical convention once for a DINF raster.
-        if inr.valueAsText and not inr.hasBeenValidated:
+        if (inr.valueAsText and not inr.hasBeenValidated
+                and not _given_on_first_pass(parameters, P["input_convention"])):
             try:
                 kind, _why = aspect_tools._detect_source_kind(inr.valueAsText)
             except Exception:
@@ -6242,29 +6275,94 @@ class AspectTransformation(object):
                 pass
 
 
+def _extract_points_update(tool, P, suffix):
+    """Dialog logic shared by Extract Aspect / Slope Values to Points: the
+    write-to choice enables the output feature class (suggesting a name from
+    the input) or disables and EMPTIES it. A disabled output parameter that
+    still holds a value is pre-deleted by the geoprocessing framework when
+    the tool runs, so it must never keep one."""
+    inp, outp = P["in_points"], P["out_points"]
+    new_fc = not aspect_tools.write_to_input(P["write_to"].valueAsText)
+    outp.enabled = new_fc
+    if not new_fc:
+        if outp.valueAsText:
+            outp.value = None
+        return
+    if inp.valueAsText and (not outp.valueAsText or not outp.altered
+                            or outp.valueAsText == tool._auto_out):
+        try:
+            base = _legalize(os.path.splitext(os.path.basename(
+                inp.valueAsText))[0] + suffix)
+            ws = arcpy.env.workspace or os.path.dirname(
+                arcpy.Describe(inp.valueAsText).catalogPath)
+            sug = _unique_name(base, ws)
+            outp.value = sug
+            tool._auto_out = sug
+        except Exception:
+            pass
+
+
+def _extract_points_messages(P, default_field):
+    """Dialog checks shared by the two tools: a point input; in place, an
+    input without a join and a field name not already taken; otherwise an
+    output name."""
+    inp, outp, fn = P["in_points"], P["out_points"], P["field_name"]
+    in_place = aspect_tools.write_to_input(P["write_to"].valueAsText)
+    if inp.valueAsText:
+        try:
+            if arcpy.Describe(inp.valueAsText).shapeType != "Point":
+                inp.setErrorMessage(
+                    "The input must be a point feature class (multipoint "
+                    "is not supported).")
+        except Exception:
+            pass
+        if in_place:
+            try:
+                names = [f.name for f in arcpy.ListFields(inp.valueAsText)]
+            except Exception:
+                names = []
+            if any("." in n for n in names):
+                inp.setErrorMessage(
+                    "The input layer has a join, so a field cannot be added "
+                    "to it. Remove the join, or write the values to a new "
+                    "feature class instead.")
+            want = (fn.valueAsText or default_field).strip() or default_field
+            if want.lower() in {n.lower() for n in names}:
+                fn.setWarningMessage(
+                    "The input already has a field named '{}'. The values "
+                    "will go into a new field named '{}_2' (or the next "
+                    "free number); choose another name to avoid "
+                    "that.".format(want, want))
+    if not in_place and not outp.valueAsText:
+        outp.setErrorMessage(
+            "Give the output feature class, or choose to add the field to "
+            "the input feature class instead.")
+
+
 class ExtractAspectValuesToPoints(object):
     """Extract Aspect Values to Points -- the circular analog of Esri's Extract
-    Values to Points: copies the input points and adds a field holding the
-    aspect at each point, either the containing cell's value or a bilinear
-    WEIGHTED MEAN DIRECTION (circular interpolation). No Spatial Analyst. See
+    Values to Points: adds a field holding the aspect at each point, either
+    the containing cell's value or a bilinear WEIGHTED MEAN DIRECTION
+    (circular interpolation), to a copy of the input points or to the input
+    feature class itself. No Spatial Analyst. See
     ``aspect_tools.run_extract_aspect_points``."""
 
     def __init__(self):
         self.label = "Extract Aspect Values to Points"
         self.description = (
-            "Copies the input point features and adds a field holding the "
-            "aspect value at each point, extracted from an aspect raster -- "
-            "like Esri's Extract Values to Points, but built for aspect: the "
-            "optional interpolation is a bilinear weighted mean direction "
-            "(circular), never a linear average (which would put ~180 between "
-            "359 and 1). Flat cells (aspect -1) carry no direction and are "
-            "excluded from interpolation; an all-flat set of neighbors gives "
-            "-1. D-infinity flow-direction rasters are supported via a "
+            "Adds a field holding the aspect value at each point, extracted "
+            "from an aspect raster, to a copy of the input point features or "
+            "to the input feature class itself -- like Esri's Extract Values "
+            "to Points, but built for aspect: the optional interpolation is a "
+            "bilinear weighted mean direction (circular), never a linear "
+            "average (which would put ~180 between 359 and 1). Flat cells "
+            "(aspect -1) carry no direction and are excluded from "
+            "interpolation; an all-flat set of neighbors gives -1. "
+            "D-infinity flow-direction rasters are supported via a "
             "convention toggle. No Spatial Analyst required.")
         self.category = "Aspect Tools"
         self.canRunInBackground = False
         self._auto_out = None
-        self._auto_conv = None
 
     def getParameterInfo(self):
         in_points = arcpy.Parameter(
@@ -6275,9 +6373,15 @@ class ExtractAspectValuesToPoints(object):
             displayName="Input aspect raster (single band)", name="in_raster",
             datatype=["GPRasterLayer", "DERasterDataset"],
             parameterType="Required", direction="Input")
+        write_to = arcpy.Parameter(
+            displayName="Where to write the values", name="write_to",
+            datatype="GPString", parameterType="Required", direction="Input")
+        write_to.filter.type = "ValueList"
+        write_to.filter.list = aspect_tools.WRITE_TO_OPTIONS
+        write_to.value = aspect_tools.WRITE_TO_OPTIONS[0]
         out_points = arcpy.Parameter(
             displayName="Output point features", name="out_points",
-            datatype="DEFeatureClass", parameterType="Required",
+            datatype="DEFeatureClass", parameterType="Optional",
             direction="Output")
         interpolate = arcpy.Parameter(
             displayName="Interpolate values at the point locations "
@@ -6294,8 +6398,15 @@ class ExtractAspectValuesToPoints(object):
         input_convention.filter.type = "ValueList"
         input_convention.filter.list = aspect_tools.INPUT_CONVENTIONS
         input_convention.value = aspect_tools.INPUT_CONVENTIONS[0]
-        params = [in_points, in_raster, out_points, interpolate, field_name,
-                  input_convention]
+        # The input, with its new field, for ModelBuilder when the values
+        # are written into the input feature class (empty otherwise).
+        updated_points = arcpy.Parameter(
+            displayName="Updated input point features", name="updated_points",
+            datatype="GPFeatureLayer", parameterType="Derived",
+            direction="Output")
+        updated_points.parameterDependencies = [in_points.name]
+        params = [in_points, in_raster, write_to, out_points, interpolate,
+                  field_name, input_convention, updated_points]
         saved = _load_tool_defaults("ExtractAspectValuesToPoints")
         for p in (interpolate, field_name):
             if p.name in saved:
@@ -6310,20 +6421,10 @@ class ExtractAspectValuesToPoints(object):
 
     def updateParameters(self, parameters):
         P = {p.name: p for p in parameters}
-        inp, inr, outp = P["in_points"], P["in_raster"], P["out_points"]
-        if inp.valueAsText:
-            if not outp.altered or outp.valueAsText == self._auto_out:
-                try:
-                    base = _legalize(os.path.splitext(os.path.basename(
-                        inp.valueAsText))[0] + "_Aspect")
-                    ws = arcpy.env.workspace or os.path.dirname(
-                        arcpy.Describe(inp.valueAsText).catalogPath)
-                    sug = _unique_name(base, ws)
-                    outp.value = sug
-                    self._auto_out = sug
-                except Exception:
-                    pass
-        if inr.valueAsText and not inr.hasBeenValidated:
+        _extract_points_update(self, P, "_Aspect")
+        inr = P["in_raster"]
+        if (inr.valueAsText and not inr.hasBeenValidated
+                and not _given_on_first_pass(parameters, P["input_convention"])):
             # Suggest the Mathematical convention when the raster looks like
             # a D-infinity flow-direction raster. Unconditional on each
             # raster change; module reloaded because validation runs Pro's
@@ -6342,15 +6443,8 @@ class ExtractAspectValuesToPoints(object):
 
     def updateMessages(self, parameters):
         P = {p.name: p for p in parameters}
-        inp, inr = P["in_points"], P["in_raster"]
-        if inp.valueAsText:
-            try:
-                if arcpy.Describe(inp.valueAsText).shapeType != "Point":
-                    inp.setErrorMessage(
-                        "The input must be a point feature class (multipoint "
-                        "is not supported).")
-            except Exception:
-                pass
+        _extract_points_messages(P, "Aspect")
+        inr = P["in_raster"]
         if inr.valueAsText:
             # D8 flow-direction rasters (codes 1-128) are not aspect: warn on
             # every cycle (Pro clears messages each validation); the lineage
@@ -6380,15 +6474,19 @@ class ExtractAspectValuesToPoints(object):
             P = {p.name: p for p in parameters}
             in_raster = _resolve_raster_path(P["in_raster"]) or \
                 P["in_raster"].valueAsText
+            in_place = aspect_tools.write_to_input(P["write_to"].valueAsText)
             aspect_tools.run_extract_aspect_points(
                 in_points=P["in_points"].valueAsText,
                 in_raster=in_raster,
-                out_points=P["out_points"].valueAsText,
+                out_points=None if in_place else P["out_points"].valueAsText,
                 interpolate=bool(P["interpolate"].value),
                 field_name=P["field_name"].valueAsText or "Aspect",
                 input_convention=(P["input_convention"].valueAsText
                                   or aspect_tools.INPUT_CONVENTIONS[0]),
-                messages=messages)
+                messages=messages,
+                in_place=in_place)
+            if in_place:
+                P["updated_points"].value = P["in_points"].valueAsText
             _save_tool_defaults("ExtractAspectValuesToPoints", {
                 "interpolate": bool(P["interpolate"].value),
                 "field_name": P["field_name"].valueAsText,
@@ -6547,7 +6645,8 @@ class AspectZonalStatisticsAsTable(object):
                                   zf.valueAsText not in names):
                         zf.value = names[0]
         inr = P["in_raster"]
-        if inr.valueAsText and not inr.hasBeenValidated:
+        if (inr.valueAsText and not inr.hasBeenValidated
+                and not _given_on_first_pass(parameters, P["input_convention"])):
             # Default the convention from the raster's geoprocessing history
             # (Compass unless the lineage says D-infinity Flow Direction).
             # Unconditional on each raster change; module reloaded because
@@ -6783,7 +6882,8 @@ class SlopeZonalStatisticsAsTable(object):
                                   zf.valueAsText not in names):
                         zf.value = names[0]
         inr = P["in_raster"]
-        if inr.valueAsText and not inr.hasBeenValidated:
+        if (inr.valueAsText and not inr.hasBeenValidated
+                and not _given_on_first_pass(parameters, P["slope_units"])):
             # Default the unit from the raster's geoprocessing history
             # (Esri's Slope / Surface Parameters record DEGREE or
             # PERCENT_RISE); Degrees when nothing can be determined -- a
@@ -6868,6 +6968,193 @@ class SlopeZonalStatisticsAsTable(object):
                 "ignore_nodata": P["ignore_nodata"].value is not False,
                 "statistics_type": P["statistics_type"].valueAsText,
                 "use_absolute": P["use_absolute"].value is not False,
+            })
+        except arcpy.ExecuteError as e:
+            # Clean, expected failure (bad input, a validation check that
+            # correctly caught something -- not a code bug). e's message
+            # is exactly the text the raising code wrote. Re-post it and
+            # return, rather than re-raise: letting the exception escape
+            # execute() is what makes arcgisscripting wrap it in a raw
+            # Python "Traceback (most recent call last):" dump, which
+            # alarms the user and implies a bug that isn't there (Jeff,
+            # 2026-09-10). Posting an ERROR-severity message and
+            # returning cleanly still fails the tool correctly.
+            messages.addErrorMessage(str(e))
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+            # error_report.report already posted a full, readable
+            # traceback (traceback.format_exc()). Don't also raise here
+            # -- that would escape execute() and get a SECOND, raw
+            # traceback appended by arcgisscripting, redundant with the
+            # one above and pointing at this line instead of the real
+            # failure.
+
+
+class ExtractSlopeValuesToPoints(object):
+    """Extract Slope Values to Points -- Esri's Extract Values to Points for
+    slope rasters: adds a field holding the slope at each point, either the
+    containing cell's value or a bilinear interpolation computed on the
+    slope ANGLES (so percent slopes are never averaged raw), to a copy of
+    the input points or to the input feature class itself. No Spatial
+    Analyst. See ``topographic_tools.run_extract_slope_points``."""
+
+    def __init__(self):
+        self.label = "Extract Slope Values to Points"
+        self.description = (
+            "Adds a field holding the slope at each point, extracted from a "
+            "slope raster, to a copy of the input point features or to the "
+            "input feature class itself. Nearly identical to Esri's Extract "
+            "Values to Points, except that the optional interpolation is "
+            "computed on the slope angles -- percent slope is the tangent of "
+            "the angle, so averaging raw percent values biases the result "
+            "steep -- and converted back to the raster's unit, the field can "
+            "be added to the existing point features under a name you "
+            "choose, and no extension license is required. Slope units "
+            "(degrees, percent, rise:run ratio, or gradians) default "
+            "automatically from the raster's geoprocessing history; a unit "
+            "chosen against that history draws a warning and is used as "
+            "chosen.")
+        self.category = "Topographic Analysis Tools"
+        self.canRunInBackground = False
+        self._auto_out = None
+
+    def getParameterInfo(self):
+        in_points = arcpy.Parameter(
+            displayName="Input point features", name="in_points",
+            datatype="GPFeatureLayer", parameterType="Required", direction="Input")
+        in_points.filter.list = ["Point"]
+        in_raster = arcpy.Parameter(
+            displayName="Input slope raster (single band)", name="in_raster",
+            datatype=["GPRasterLayer", "DERasterDataset"],
+            parameterType="Required", direction="Input")
+        write_to = arcpy.Parameter(
+            displayName="Where to write the values", name="write_to",
+            datatype="GPString", parameterType="Required", direction="Input")
+        write_to.filter.type = "ValueList"
+        write_to.filter.list = aspect_tools.WRITE_TO_OPTIONS
+        write_to.value = aspect_tools.WRITE_TO_OPTIONS[0]
+        out_points = arcpy.Parameter(
+            displayName="Output point features", name="out_points",
+            datatype="DEFeatureClass", parameterType="Optional",
+            direction="Output")
+        interpolate = arcpy.Parameter(
+            displayName="Interpolate values at the point locations "
+                        "(bilinear, on the slope angles)", name="interpolate",
+            datatype="GPBoolean", parameterType="Optional", direction="Input")
+        interpolate.value = False
+        field_name = arcpy.Parameter(
+            displayName="Output field name", name="field_name",
+            datatype="GPString", parameterType="Optional", direction="Input")
+        field_name.value = "Slope"
+        slope_units = arcpy.Parameter(
+            displayName="Slope units of the input raster", name="slope_units",
+            datatype="GPString", parameterType="Required", direction="Input")
+        slope_units.filter.type = "ValueList"
+        slope_units.filter.list = topographic_tools.SLOPE_UNITS_Z
+        slope_units.value = topographic_tools.SLOPE_UNITS_Z[0]
+        # The input, with its new field, for ModelBuilder when the values
+        # are written into the input feature class (empty otherwise).
+        updated_points = arcpy.Parameter(
+            displayName="Updated input point features", name="updated_points",
+            datatype="GPFeatureLayer", parameterType="Derived",
+            direction="Output")
+        updated_points.parameterDependencies = [in_points.name]
+        params = [in_points, in_raster, write_to, out_points, interpolate,
+                  field_name, slope_units, updated_points]
+        saved = _load_tool_defaults("ExtractSlopeValuesToPoints")
+        for p in (interpolate, field_name):
+            if p.name in saved:
+                try:
+                    p.value = saved[p.name]
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        _extract_points_update(self, P, "_Slope")
+        inr = P["in_raster"]
+        if (inr.valueAsText and not inr.hasBeenValidated
+                and not _given_on_first_pass(parameters, P["slope_units"])):
+            # Default the unit from the raster's geoprocessing history
+            # (Esri's Slope / Surface Parameters record DEGREE or
+            # PERCENT_RISE); Degrees when nothing can be determined -- a
+            # new raster is a new situation. Set UNCONDITIONALLY on each
+            # raster change: instance state does not persist across
+            # validation cycles, so an altered-guard can never work here.
+            # The module is reloaded because VALIDATION (unlike execute)
+            # otherwise runs whatever copy Pro cached when the session
+            # started.
+            try:
+                importlib.reload(topographic_tools)
+                detected = topographic_tools._detect_slope_units(
+                    inr.valueAsText)
+            except Exception:
+                detected = None
+            P["slope_units"].value = (
+                topographic_tools.SLOPE_UNITS_Z[1]
+                if detected == "percent"
+                else topographic_tools.SLOPE_UNITS_Z[0])
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        _extract_points_messages(P, "Slope")
+        inr, su = P["in_raster"], P["slope_units"]
+        if inr.valueAsText:
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage("The slope raster must be single band.")
+            except Exception:
+                pass
+            # A unit chosen against the raster's geoprocessing history
+            # draws a warning on every cycle (Pro clears messages each
+            # validation) and the tool still runs with the choice; the
+            # history read is cached by path because it is not free.
+            key = inr.valueAsText
+            if getattr(self, "_unit_key", None) != key:
+                try:
+                    self._unit_found = topographic_tools._detect_slope_units(
+                        key)
+                except Exception:
+                    self._unit_found = None
+                self._unit_key = key
+            found = getattr(self, "_unit_found", None)
+            if (found and su.valueAsText
+                    and topographic_tools._slope_unit_key(su.valueAsText)
+                    != found):
+                su.setWarningMessage(topographic_tools.unit_mismatch_text(
+                    found, su.valueAsText))
+        return
+
+    def execute(self, parameters, messages):
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(topographic_tools)
+            importlib.reload(aspect_tools)
+            P = {p.name: p for p in parameters}
+            in_raster = _resolve_raster_path(P["in_raster"]) or \
+                P["in_raster"].valueAsText
+            in_place = aspect_tools.write_to_input(P["write_to"].valueAsText)
+            topographic_tools.run_extract_slope_points(
+                in_points=P["in_points"].valueAsText,
+                in_raster=in_raster,
+                out_points=None if in_place else P["out_points"].valueAsText,
+                interpolate=bool(P["interpolate"].value),
+                field_name=P["field_name"].valueAsText or "Slope",
+                slope_units=(P["slope_units"].valueAsText
+                             or topographic_tools.SLOPE_UNITS_Z[0]),
+                messages=messages,
+                in_place=in_place)
+            if in_place:
+                P["updated_points"].value = P["in_points"].valueAsText
+            _save_tool_defaults("ExtractSlopeValuesToPoints", {
+                "interpolate": bool(P["interpolate"].value),
+                "field_name": P["field_name"].valueAsText,
             })
         except arcpy.ExecuteError as e:
             # Clean, expected failure (bad input, a validation check that
@@ -9690,7 +9977,10 @@ class IdentifyTerminiPolygons(object):
         multi = bool(inr.valueAsText) and self._band_count(inr) > 1
         P["facets"].enabled = multi
 
-        if inr.valueAsText and not inr.hasBeenValidated:
+        # Not on the first pass of a script, model or preset run: its
+        # facets and threshold rule were given deliberately.
+        if (inr.valueAsText and not inr.hasBeenValidated
+                and not _given_on_first_pass(parameters, P["threshold_mode"], P["threshold_value"], P["facets"])):
             try:
                 path = _resolve_raster_path(inr) or inr.valueAsText
                 rec, _bn = invert_raster.source_density_record(path)
@@ -12313,7 +12603,10 @@ class ClipDataToAnalysisArea(object):
         # Fill (or refresh) the suggestions when the target CS just
         # changed, or when the parameter is still empty -- a hand-edited
         # list survives dataset additions.
-        if suggestions and (not cs_p.hasBeenValidated
+        # (not on the first pass of a script, model or preset run, whose
+        # list was given deliberately; an empty list is still filled)
+        if suggestions and ((not cs_p.hasBeenValidated
+                             and not _given_on_first_pass(parameters, tr_p))
                             or not tr_p.valueAsText):
             try:
                 tr_p.values = suggestions

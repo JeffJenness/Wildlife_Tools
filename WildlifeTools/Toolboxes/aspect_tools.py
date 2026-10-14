@@ -962,89 +962,122 @@ def run_aspect_focal(in_raster, out_raster, statistic,
 # ---------------------------------------------------------------------------
 #  Extract Aspect Values to Points
 # ---------------------------------------------------------------------------
-def run_extract_aspect_points(in_points, in_raster, out_points,
-                              interpolate=False, field_name="Aspect",
-                              input_convention=INPUT_CONVENTIONS[0],
-                              messages=None):
-    """Extract the aspect value at each point of ``in_points`` from an aspect
-    raster into a new field of a copied point feature class -- the circular
-    analog of Esri's Extract Values to Points, with no Spatial Analyst.
+# ---------------------------------------------------------------------------
+#  Extract ... Values to Points: the point-sampling machinery shared by the
+#  aspect tool below and Extract Slope Values to Points (topographic_tools)
+# ---------------------------------------------------------------------------
+WRITE_TO_NEW = "A new point feature class (a copy of the input)"
+WRITE_TO_INPUT = "A new field in the input feature class"
+WRITE_TO_OPTIONS = [WRITE_TO_NEW, WRITE_TO_INPUT]
 
-    ``interpolate`` False: the value of the cell each point falls in, exactly as
-    stored (including -1 for flat). True: a BILINEAR-WEIGHTED MEAN DIRECTION
-    from the four surrounding cell centers -- each neighbor's unit vector
-    (sin, cos) weighted by the ordinary bilinear weights and the resultant
-    converted back to a direction. A linear bilinear average would be wrong for
-    a circular value (359 and 1 must interpolate to ~0, not 180). Flat (-1)
-    neighbors carry no direction and are excluded (weights renormalized over
-    the directional neighbors); if every contributing neighbor is flat the
-    result is -1; NoData neighbors are likewise excluded.
 
-    Points are read in the RASTER's coordinate system (the raster is never
-    projected); the raster is read only over the points' extent. Values are
-    written as compass degrees; with the Mathematical input convention (a
-    D-infinity flow-direction raster) they are converted to compass. NoData /
-    outside-the-raster points get NULL in a geodatabase or -9999 in a
-    shapefile.
+def write_to_input(write_to):
+    """True when the ``write_to`` choice asks for the field to be added to
+    the input feature class itself (the label, or a plain 'input' /
+    'existing' / 'in_place' word from a script)."""
+    s = str(write_to or "").strip().lower()
+    return (s.startswith("a new field") or s in ("input", "existing",
+                                                 "in_place", "in place",
+                                                 "true"))
 
-    Returns the actual field name created (sanitized/uniquified)."""
+
+def _point_target(in_points, out_points, field_name, default_field,
+                  in_place, messages):
+    """Where the values go and the field that holds them.
+
+    ``in_place`` False: ``in_points`` is copied to ``out_points`` (an active
+    selection is honored and every attribute carried) and the field is added
+    to the copy. True: the field is added to the INPUT feature class itself
+    and ``out_points`` is ignored; the input must be a feature class or a
+    layer on one without a join (a joined layer cannot take a new field).
+
+    Returns (target, path, fld, null_ok): the dataset to read and write
+    through (the layer itself in place, so its selection and definition
+    query apply), its catalog path, the field actually created (sanitized
+    and uniquified against the existing schema), and whether the field can
+    hold NULL (a geodatabase) or needs -9999 (a shapefile)."""
     import arcpy
-    is_math = str(input_convention).lower().startswith("math")
-
     d = arcpy.Describe(in_points)
     if d.shapeType != "Point":
         raise arcpy.ExecuteError(
             "The input must be a POINT feature class (multipoint and other "
             "shapes are not supported); got {}.".format(d.shapeType))
-
-    _mh.begin_phases([
-        ("Copying the point features...", 2),
-        ("Reading the aspect raster...", 1),
-        ("Sampling aspect at the points...", 4),
-        ("Writing values and field metadata...", 2),
-    ])
-
-    # Copy the input (selection honored; all attributes carried).
-    out_ws, out_name = os.path.split(str(out_points))
-    arcpy.management.CopyFeatures(in_points, out_points)
+    want = str(field_name or "").strip() or default_field
+    if in_place:
+        try:
+            path = d.catalogPath
+        except Exception:
+            path = str(in_points)
+        names = [f.name for f in arcpy.ListFields(in_points)]
+        if any("." in n for n in names):
+            raise arcpy.ExecuteError(
+                "The input layer has a join, so a field cannot be added to "
+                "it. Remove the join, or write the values to a new feature "
+                "class instead.")
+        target = in_points
+    else:
+        if not out_points:
+            raise arcpy.ExecuteError(
+                "An output feature class is required when the values go to "
+                "a new feature class.")
+        arcpy.management.CopyFeatures(in_points, out_points)
+        target = path = str(out_points)
     # Boundary-aware: the old bare substring test wrongly counted a FOLDER
     # merely named like "x.gdb_backup" as a geodatabase (nullable fields).
-    null_ok = _mh.in_gdb_container(out_points)
+    null_ok = _mh.in_gdb_container(path)
+    ws = os.path.dirname(str(path))
+    shp = (_mh.is_shapefile_target(str(path))
+           or str(path).lower().endswith(".dbf"))
 
-    # Add the value field (sanitized + uniquified against the copied schema).
-    taken = {f.name.lower() for f in arcpy.ListFields(out_points)}
-    try:
-        fld = arcpy.ValidateFieldName(field_name or "Aspect", out_ws)
-    except Exception:
-        fld = field_name or "Aspect"
+    def legal(name):
+        try:
+            name = arcpy.ValidateFieldName(name, ws)
+        except Exception:
+            pass
+        return name[:10] if shp else name
+
+    taken = {f.name.lower() for f in arcpy.ListFields(path)}
+    fld = legal(want)
     base, n = fld, 2
     while fld.lower() in taken:
-        try:
-            fld = arcpy.ValidateFieldName("{}_{}".format(base, n), out_ws)
-        except Exception:
-            fld = "{}_{}".format(base, n)
+        suffix = "_{}".format(n)
+        stem = base[:10 - len(suffix)] if shp else base
+        fld = legal(stem + suffix)
         n += 1
-    arcpy.management.AddField(out_points, fld, "DOUBLE",
-                              field_alias=field_name or "Aspect")
-    if fld != (field_name or "Aspect"):
+    arcpy.management.AddField(path, fld, "DOUBLE", field_alias=want)
+    if fld != want:
         _warn(messages, "The value field was created as '{}' (the requested "
-                        "name was invalid or already taken).".format(fld))
+                        "name '{}' was not valid for this workspace or was "
+                        "already taken).".format(fld, want))
+    if in_place:
+        _say(messages, "Added the field '{}' to the input feature class "
+                       "{}.".format(fld, path))
+    return target, path, fld, null_ok
 
-    _mh.phase_advance("Reading the aspect raster...")
-    rsr = arcpy.Describe(in_raster).spatialReference
 
-    # Gather every point in the RASTER's coordinate system. A cursor's
-    # spatial_reference= reprojects WITHOUT a datum transformation (NAD27
-    # points on a NAD83 raster would land 100-200 m off), so when the datums
-    # differ the geometry is read natively and projected here with the
-    # transformation clip_tools chooses; same datum takes the fast cursor path.
+def _points_in_raster_window(target, in_raster, messages, what):
+    """The target's points in the RASTER's coordinate system, and the window
+    of the raster that covers them.
+
+    A cursor's spatial_reference= reprojects WITHOUT a datum transformation
+    (NAD27 points on a NAD83 raster would land 100-200 m off), so when the
+    datums differ the geometry is read natively and projected here with the
+    transformation clip_tools chooses; the same datum takes the fast cursor
+    path. Only the window of cells around the points (+2 cells) is read, so
+    the large-raster check applies to that window, not the whole raster.
+    ``what`` names the raster in messages ("aspect", "slope").
+
+    Returns a dict: oids, xs, ys, n_pts, arr (float32 window), valid (usable
+    cells: finite, not NoData, not masked), x0w, y0w, csx, csy, nodata."""
+    import arcpy
     import clip_tools as _ct
-    psr = arcpy.Describe(out_points).spatialReference
+    rsr = arcpy.Describe(in_raster).spatialReference
+    psr = arcpy.Describe(target).spatialReference
     same = (True if psr is None or psr.name in ("Unknown", "")
             else _ct._same_datum(psr, rsr))
     oids, xs, ys = [], [], []
     if same:
-        with arcpy.da.SearchCursor(out_points, ["OID@", "SHAPE@XY"],
+        with arcpy.da.SearchCursor(target, ["OID@", "SHAPE@XY"],
                                    spatial_reference=rsr) as cur:
             for oid, xy in cur:
                 if xy is None:
@@ -1054,17 +1087,17 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
                 ys.append(xy[1])
     else:
         try:
-            ext = arcpy.Describe(out_points).extent
+            ext = arcpy.Describe(target).extent
         except Exception:
             ext = None
         tfm = _ct.transformation_name(psr, rsr, ext)
-        _warn(messages, "The points ({}) and the aspect raster ({}) are on "
+        _warn(messages, "The points ({}) and the {} raster ({}) are on "
                         "different datums. The points were projected onto "
                         "the raster with the transformation {}.".format(
-                            psr.GCS.name, rsr.GCS.name,
+                            psr.GCS.name, what, rsr.GCS.name,
                             tfm or "(none available: coordinates were "
                                    "re-projected without a datum shift)"))
-        with arcpy.da.SearchCursor(out_points, ["OID@", "SHAPE@"]) as cur:
+        with arcpy.da.SearchCursor(target, ["OID@", "SHAPE@"]) as cur:
             for oid, g in cur:
                 if g is None:
                     continue
@@ -1079,13 +1112,11 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
                 ys.append(pt.Y)
     n_pts = len(oids)
     if n_pts == 0:
-        _warn(messages, "The input contains no point features.")
+        _warn(messages, "The input contains no point features (if the layer "
+                        "has a selection, nothing is selected).")
     xs = np.asarray(xs, np.float64)
     ys = np.asarray(ys, np.float64)
 
-    # Windowed raster read over the points' extent (+2-cell margin).
-    # Only the points' window is read, so the large-raster check applies to
-    # that window rather than to the whole raster.
     src, in_copy = _hs._open_source(in_raster, arcpy.env.scratchFolder,
                                     messages, check_size=False)
     try:
@@ -1113,8 +1144,8 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
         else:
             arr = np.zeros((0, 0), np.float32)
             if n_pts:
-                _warn(messages, "None of the points fall within the aspect "
-                                "raster's extent.")
+                _warn(messages, "None of the points fall within the {} "
+                                "raster's extent.".format(what))
         x0w = gt[0] + c0w * csx                 # window origin
         y0w = gt[3] - r0w * csy
         wmask = (_mh.mask_band_valid(band, np.ones(arr.shape, bool),
@@ -1127,14 +1158,105 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
                 arcpy.management.Delete(in_copy)
             except Exception:
                 pass
-
-    aw = np.isfinite(arr)
+    valid = np.isfinite(arr)
     if nodata is not None:
-        aw &= (arr != nodata)
+        valid &= (arr != nodata)
     if wmask is not None:
-        aw &= wmask
+        valid &= wmask
+    return {"oids": oids, "xs": xs, "ys": ys, "n_pts": n_pts, "arr": arr,
+            "valid": valid, "x0w": x0w, "y0w": y0w, "csx": csx, "csy": csy,
+            "nodata": nodata}
+
+
+def _write_point_values(target, fld, oids, vals, null_ok, flat_value=None):
+    """Writes ``vals`` (NaN = no value) into ``fld`` of ``target``, matched
+    by OID; a row with no entry (a point with no geometry) gets no value.
+    Returns (n_nodata, n_flat): rows given NULL (or -9999 in a shapefile),
+    and rows equal to ``flat_value`` (None: not counted)."""
+    import arcpy
+    val_of = {oid: (None if not np.isfinite(v) else float(v))
+              for oid, v in zip(oids, vals)}
+    null_val = None if null_ok else -9999.0
+    n_nodata = n_flat = 0
+    with arcpy.da.UpdateCursor(target, ["OID@", fld]) as cur:
+        for row in cur:
+            v = val_of.get(row[0])
+            if v is None:
+                row[1] = null_val
+                n_nodata += 1
+            else:
+                row[1] = v
+                if flat_value is not None and v == flat_value:
+                    n_flat += 1
+            cur.updateRow(row)
+    return n_nodata, n_flat
+
+
+def _rows_beyond(target, path, n_pts):
+    """How many rows of the feature class at ``path`` the run did not reach
+    (hidden by the layer's selection or definition query), or 0."""
+    import arcpy
+    try:
+        if str(target) == str(path):
+            return 0
+        total = int(arcpy.management.GetCount(path)[0])
+        return max(total - n_pts, 0)
+    except Exception:
+        return 0
+
+
+# ---------------------------------------------------------------------------
+#  Extract Aspect Values to Points
+# ---------------------------------------------------------------------------
+def run_extract_aspect_points(in_points, in_raster, out_points,
+                              interpolate=False, field_name="Aspect",
+                              input_convention=INPUT_CONVENTIONS[0],
+                              messages=None, in_place=False):
+    """Extract the aspect value at each point of ``in_points`` from an aspect
+    raster into a new field -- of a copied point feature class, or, with
+    ``in_place``, of the input feature class itself -- the circular analog
+    of Esri's Extract Values to Points, with no Spatial Analyst.
+
+    ``interpolate`` False: the value of the cell each point falls in, exactly as
+    stored (including -1 for flat). True: a BILINEAR-WEIGHTED MEAN DIRECTION
+    from the four surrounding cell centers -- each neighbor's unit vector
+    (sin, cos) weighted by the ordinary bilinear weights and the resultant
+    converted back to a direction. A linear bilinear average would be wrong for
+    a circular value (359 and 1 must interpolate to ~0, not 180). Flat (-1)
+    neighbors carry no direction and are excluded (weights renormalized over
+    the directional neighbors); if every contributing neighbor is flat the
+    result is -1; NoData neighbors are likewise excluded.
+
+    Points are read in the RASTER's coordinate system (the raster is never
+    projected); the raster is read only over the points' extent. Values are
+    written as compass degrees; with the Mathematical input convention (a
+    D-infinity flow-direction raster) they are converted to compass. NoData /
+    outside-the-raster points get NULL in a geodatabase or -9999 in a
+    shapefile. In place, the layer's selection and definition query decide
+    which points get a value; the other rows of the feature class stay NULL.
+
+    Returns the actual field name created (sanitized/uniquified)."""
+    import arcpy
+    is_math = str(input_convention).lower().startswith("math")
+
+    _mh.begin_phases([
+        ("Adding the field to the input features..." if in_place
+         else "Copying the point features...", 2),
+        ("Reading the aspect raster...", 1),
+        ("Sampling aspect at the points...", 4),
+        ("Writing values and field metadata...", 2),
+    ])
+    target, path, fld, null_ok = _point_target(
+        in_points, out_points, field_name, "Aspect", in_place, messages)
+
+    _mh.phase_advance("Reading the aspect raster...")
+    w = _points_in_raster_window(target, in_raster, messages, "aspect")
+    arr, aw, n_pts = w["arr"], w["valid"], w["n_pts"]
+    xs, ys = w["xs"], w["ys"]
+    x0w, y0w, csx, csy = w["x0w"], w["y0w"], w["csx"], w["csy"]
+
     kind, why = _detect_source_kind(in_raster, arr if arr.size else None,
-                                    nodata)
+                                    w["nodata"])
     if kind == "d8":
         _warn(messages, "This looks like a D8 flow-direction raster ({}) -- "
                         "flow codes 1-128, not degrees; not valid aspect "
@@ -1182,23 +1304,23 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
             Csum = np.zeros(n_pts)
             wdir = np.zeros(n_pts)
             wvalid = np.zeros(n_pts)
-            for dr, dc, w in ((0, 0, (1 - tx) * (1 - ty)),
-                              (0, 1, tx * (1 - ty)),
-                              (1, 0, (1 - tx) * ty),
-                              (1, 1, tx * ty)):
+            for dr, dc, wt in ((0, 0, (1 - tx) * (1 - ty)),
+                               (0, 1, tx * (1 - ty)),
+                               (1, 0, (1 - tx) * ty),
+                               (1, 1, tx * ty)):
                 cc = c0 + dc
                 rr = r0 + dr
                 inside = (cc >= 0) & (cc < Ww) & (rr >= 0) & (rr < Hw)
                 ccs = np.clip(cc, 0, Ww - 1)
                 rrs = np.clip(rr, 0, Hw - 1)
                 v = arr[rrs, ccs].astype(np.float64)
-                valid = inside & aw[rrs, ccs] & (w > 0)
+                valid = inside & aw[rrs, ccs] & (wt > 0)
                 dirok = valid & (v >= 0.0)
                 rad_v = np.radians(v)
-                Ssum += np.where(dirok, w * np.sin(rad_v), 0.0)
-                Csum += np.where(dirok, w * np.cos(rad_v), 0.0)
-                wdir += np.where(dirok, w, 0.0)
-                wvalid += np.where(valid, w, 0.0)
+                Ssum += np.where(dirok, wt * np.sin(rad_v), 0.0)
+                Csum += np.where(dirok, wt * np.cos(rad_v), 0.0)
+                wdir += np.where(dirok, wt, 0.0)
+                wvalid += np.where(valid, wt, 0.0)
             # No direction when the neighbors' arrows cancel exactly (a
             # resultant of zero length has no bearing) -- the same rule
             # the zonal tool's point zones use; such points get -1.
@@ -1215,21 +1337,8 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
         vals[conv & (vals >= 360.0)] = 0.0
 
     _mh.phase_advance("Writing values and field metadata...")
-    val_of = {oid: (None if not np.isfinite(v) else float(v))
-              for oid, v in zip(oids, vals)}
-    null_val = None if null_ok else -9999.0
-    n_nodata = n_flat = 0
-    with arcpy.da.UpdateCursor(out_points, ["OID@", fld]) as cur:
-        for row in cur:
-            v = val_of.get(row[0])
-            if v is None:
-                row[1] = null_val
-                n_nodata += 1
-            else:
-                row[1] = v
-                if v == -1.0:
-                    n_flat += 1
-            cur.updateRow(row)
+    n_nodata, n_flat = _write_point_values(target, fld, w["oids"], vals,
+                                           null_ok, flat_value=-1.0)
 
     _say(messages, "Sampled {:,} point(s): {:,} with a direction, {:,} flat "
                    "or with no defined direction (-1), {:,} on NoData or "
@@ -1240,6 +1349,12 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
                    "clockwise); -1 = flat.".format(
                        "bilinear weighted-mean-direction" if interpolate
                        else "cell-value"))
+    if in_place:
+        beyond = _rows_beyond(target, path, n_pts)
+        if beyond:
+            _say(messages, "The field was added to the whole feature class; "
+                           "{:,} feature(s) outside the layer's selection or "
+                           "definition query were left NULL.".format(beyond))
 
     # Field-level metadata.
     try:
@@ -1251,7 +1366,7 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
         conv_note = (" Input was read in the mathematical (D-infinity) "
                      "convention and converted to compass." if is_math else "")
         tool_metadata.set_entity_and_fields(
-            arcpy.Describe(out_points).catalogPath,
+            arcpy.Describe(path).catalogPath,
             fields=[{"name": fld, "description":
                      "Aspect at the point, in compass degrees (0-360, 0 = "
                      "north, clockwise); -1 = flat (no aspect); {} = NoData "
@@ -1263,7 +1378,7 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
         pass
     _mh.end_phases()
     _say(messages, "Extract Aspect Values to Points complete: {}".format(
-        out_points))
+        path))
     return fld
 
 
