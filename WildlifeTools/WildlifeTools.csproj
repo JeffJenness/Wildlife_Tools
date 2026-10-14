@@ -14,6 +14,12 @@
     <Content Include="Config.daml" />
     <Content Include="Images\JennessLogo32.png" />
     <Content Include="DarkImages\JennessLogo32.png" />
+    <Content Include="Images\JennessLogo16.png" />
+    <Content Include="DarkImages\JennessLogo16.png" />
+    <Content Include="Images\About_16.png" />
+    <Content Include="Images\About_32.png" />
+    <Content Include="DarkImages\About_16.png" />
+    <Content Include="DarkImages\About_32.png" />
     <Content Include="Images\AddInDesktop16.png" />
     <Content Include="Images\AddInDesktop32.png" />
     <Content Include="DarkImages\AddInDesktop16.png" />
@@ -403,6 +409,8 @@
          Lois and Jeff, embedded so the card loads them by pack URI
          wherever the add-in is installed. -->
     <Resource Include="Scholarship\*.jpg" />
+    <!-- About card: the Jenness Enterprises logo (the web site's header image). -->
+    <Resource Include="About\*.png" />
     <!-- Pictures of the four built-in compass designs (made by
          DevScripts\make_compass_previews.ps1), embedded for the thumbnails in
          the Add Graphics and North Arrows galleries and the preview in the
@@ -625,5 +633,23 @@
   <Target Name="VerifyAddinToolboxes" AfterTargets="Build"
           Condition="Exists('$(TargetDir)$(AssemblyName).esriAddinX')">
     <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\build\verify_addin_toolboxes.ps1&quot; -ArchivePath &quot;$(TargetDir)$(AssemblyName).esriAddinX&quot; -SourceToolboxes &quot;$(MSBuildProjectDirectory)\Toolboxes&quot;" />
+  </Target>
+  <!-- The assembly carries the add-in's version (AddInInfo/@version in
+       Config.daml, the one place it is typed), so the About card can read
+       it wherever the add-in is deployed, with or without a Config.daml
+       beside the DLL. Runs before the SDK writes the assembly attributes. -->
+  <Target Name="VersionFromDaml" BeforeTargets="GetAssemblyVersion;GenerateAssemblyInfo;CoreCompile">
+    <XmlPeek XmlInputPath="$(MSBuildProjectDirectory)\Config.daml"
+             Query="/r:ArcGIS/r:AddInInfo/@version"
+             Namespaces="&lt;Namespace Prefix='r' Uri='http://schemas.esri.com/DADF/Registry' /&gt;">
+      <Output TaskParameter="Result" PropertyName="AddInDamlVersion" />
+    </XmlPeek>
+    <PropertyGroup Condition="'$(AddInDamlVersion)' != ''">
+      <Version>$(AddInDamlVersion)</Version>
+      <AssemblyVersion>$(AddInDamlVersion)</AssemblyVersion>
+      <FileVersion>$(AddInDamlVersion)</FileVersion>
+      <InformationalVersion>$(AddInDamlVersion)</InformationalVersion>
+    </PropertyGroup>
+    <Message Importance="high" Text="Add-in version from Config.daml: $(AddInDamlVersion)" />
   </Target>
 </Project>

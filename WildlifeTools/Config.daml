@@ -5,9 +5,9 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.111.58.2" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.112.60.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>Wildlife and Forestry Tools</Name>
-    <Description>Wildlife and forestry analysis tools for ArcGIS Pro, ported from the legacy ArcMap VB6 tools.</Description>
+    <Description>Analytical, cartographic and data-management tools for wildlife research, landscape analysis and general GIS work, by Jenness Enterprises: home ranges, topographic analysis, corridor design, geometry, random samples, hillshades and more, at every ArcGIS Pro license level. Free software under the GNU GPL; it supports the Lois Engelman Memorial Scholarship Fund. Help: www.jennessent.com</Description>
     <Image>Images\JennessLogo32.png</Image>
     <Author>Jeff Jenness</Author>
     <Company>Jenness Enterprises</Company>
@@ -103,6 +103,7 @@
           <button refID="WildlifeTools_SlidingPuzzle" size="large" />
           <button refID="WildlifeTools_EasterEgg" size="large" />
           <button refID="WildlifeTools_Scholarship" size="large" />
+          <button refID="WildlifeTools_About" size="large" />
         </subgroup>
       </subgroups>
 
@@ -290,13 +291,14 @@
         </tool>
         <!-- "Manage..." at the foot of each gallery, where Esri's North Arrow gallery has
              "More...". Two buttons, one class: the window opens on the tab of the gallery
-             it was called from. Esri's own "More..." icon, for the same look. -->
+             it was called from. The Jenness logo as its icon (Jeff, 2026-10-13: no Esri
+             images anywhere in the add-in; these two were the only ones). -->
         <button id="WildlifeTools_ManageGraphics"
                 caption="Manage..."
                 className="CustomGraphics.ManageGraphicsButton"
                 loadOnClick="true"
-                smallImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/GenericProperties16.png"
-                largeImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/GenericProperties32.png"
+                smallImage="Images\JennessLogo16.png"
+                largeImage="Images\JennessLogo32.png"
                 keytip="M">
           <tooltip heading="Manage Custom Graphics and North Arrows">
             Register your own images (a logo, an agency seal, a favorite north arrow) so each gets a thumbnail in the Add Graphics or North Arrows gallery, ready to place with one click. Opens a window with a Graphics tab and a North Arrows tab: add image files (PNG, JPEG, BMP, GIF, TIFF, SVG or EMF), name them, remove them, and set each image's focal point (the spot the Circle Background tool can center its circle on) by clicking its picture. Registered images are kept with your user profile, so they are there in every project.<disabledText />
@@ -306,8 +308,8 @@
                 caption="Manage..."
                 className="CustomGraphics.ManageGraphicsButton"
                 loadOnClick="true"
-                smallImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/GenericProperties16.png"
-                largeImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/GenericProperties32.png"
+                smallImage="Images\JennessLogo16.png"
+                largeImage="Images\JennessLogo32.png"
                 keytip="M">
           <tooltip heading="Manage Custom Graphics and North Arrows">
             Register your own images (a logo, an agency seal, a favorite north arrow) so each gets a thumbnail in the Add Graphics or North Arrows gallery, ready to place with one click. Opens a window with a Graphics tab and a North Arrows tab: add image files (PNG, JPEG, BMP, GIF, TIFF, SVG or EMF), name them, remove them, and set each image's focal point (the spot the Circle Background tool can center its circle on) by clicking its picture. Registered images are kept with your user profile, so they are there in every project.<disabledText />
@@ -1294,6 +1296,18 @@ Orders a set of points into a short travel route -- a survey route you can load 
                 keytip="LS">
           <tooltip heading="Donate to the Lois Engelman Memorial Scholarship Fund">
             This software is dedicated to the memory of Lois Engelman (wife, best friend and partner of the author for 36 years). If these tools are helpful and valuable to you, please consider donating to the Lois Engelman Memorial Scholarship Fund, which helps educate and train the next generation of land managers and ecologists: https://www.jennessent.com/Lois/&#xD;&#xD;Click for a short description of the scholarship, with links to the scholarship page and to Northern Arizona University's giving page.<disabledText />
+          </tooltip>
+        </button>
+        <!-- Tool #112: the About card. -->
+        <button id="WildlifeTools_About"
+                caption="About the Add-in"
+                className="About.AboutButton"
+                loadOnClick="true"
+                smallImage="Images\About_16.png"
+                largeImage="Images\About_32.png"
+                keytip="AB">
+          <tooltip heading="About Wildlife and Forestry Tools">
+            Opens a card about the add-in: what it is and what it is worth, the version you have installed and whether a newer one is available on GitHub, a citation you can copy, the license and where the source code lives, and the Lois Engelman Memorial Scholarship Fund it supports, with buttons to the Tool Reference web site, the scholarship page and Northern Arizona University's giving page. The card can be dragged anywhere and does not block ArcGIS Pro.<disabledText />
           </tooltip>
         </button>
       </controls>

@@ -311,6 +311,10 @@ them.
 - **ArcMap Easter Egg** – a small tribute to a classic.
 - **Lois Engelman Scholarship** *(window)* – what the Lois Engelman Memorial
   Scholarship Fund is, and where to give (see below).
+- **About the Add-in** *(window)* – what the add-in is and what it is worth,
+  the installed version and whether a newer release exists on GitHub, a
+  citation to copy, the license and the source, and links to the Tool
+  Reference and the scholarship page.
 
 ## Help and tutorials
 

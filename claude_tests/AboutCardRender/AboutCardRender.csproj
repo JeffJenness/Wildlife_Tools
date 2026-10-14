@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Draws the About card to PNG files without ArcGIS Pro, from the BUILT
+       add-in DLL, so its layout can be looked at after a change: once as it
+       opens (checking for a newer version), once with a newer release found,
+       once with the installed version current. Build the add-in first
+       (Release), then run this project from the repo root; see Program.cs. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>disable</Nullable>
+    <RootNamespace>AboutCardRender</RootNamespace>
+  </PropertyGroup>
+</Project>

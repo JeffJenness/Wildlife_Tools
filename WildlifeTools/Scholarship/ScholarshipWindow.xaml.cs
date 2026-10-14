@@ -120,41 +120,15 @@ namespace WildlifeTools.Scholarship
 
         // ---- the links ------------------------------------------------------
         private void OnAbout(object sender, RoutedEventArgs e) =>
-            WebHelp.Open(ScholarshipInfo.PageRelative);
+            ScholarshipLinks.OpenPage();
 
-        private void OnDonate(object sender, RoutedEventArgs e)
-        {
-            if (string.IsNullOrWhiteSpace(ScholarshipInfo.NauDonateUrl))
-            {
-                ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
-                    "Northern Arizona University's giving page for the "
-                    + ScholarshipInfo.FundName + " is being set up. This "
-                    + "button will open it as soon as it is ready."
-                    + Environment.NewLine + Environment.NewLine
-                    + "Until then, the scholarship page has the latest: "
-                    + "click About the scholarship.",
-                    ScholarshipInfo.FundName);
-                return;
-            }
-            OpenUrl(ScholarshipInfo.NauDonateUrl);
-        }
+        private void OnDonate(object sender, RoutedEventArgs e) =>
+            ScholarshipLinks.Donate();
 
         private void OnNavigate(object sender, RequestNavigateEventArgs e)
         {
-            OpenUrl(e.Uri.AbsoluteUri);
+            ScholarshipLinks.OpenUrl(e.Uri.AbsoluteUri);
             e.Handled = true;
-        }
-
-        private static void OpenUrl(string url)
-        {
-            try
-            {
-                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-            }
-            catch (Exception)
-            {
-                // A missing or blocked browser should not crash the card.
-            }
         }
 
         // ---- the card itself -------------------------------------------------
