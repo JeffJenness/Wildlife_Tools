@@ -339,7 +339,8 @@ def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
          "inner": inner_radius, "outer": outer_radius,
          "start": start_angle, "end": end_angle}
     groups, note = _at._neighborhood_groups(
-        neighborhood, P, gt, height_px, sr, nbr_units, kernel_arr, messages)
+        neighborhood, P, gt, height_px, sr, nbr_units, kernel_arr, messages,
+        width=width_px, proj=proj)
     weighted = (neighborhood == "Weight")
     thr = np.float32(1e-6 if weighted else 0.5)
     _say(messages, "Neighborhood: {}.".format(note))

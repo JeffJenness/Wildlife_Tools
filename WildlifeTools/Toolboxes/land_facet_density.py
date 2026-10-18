@@ -302,7 +302,8 @@ def run_density(in_raster, out_raster, facet_values=None,
          "inner": inner_radius, "outer": outer_radius,
          "start": start_angle, "end": end_angle}
     groups, note = _at._neighborhood_groups(
-        neighborhood, P, gt, height_px, sr, nbr_units, kernel_arr, messages)
+        neighborhood, P, gt, height_px, sr, nbr_units, kernel_arr, messages,
+        width=width_px, proj=proj)
     single = (len(groups) == 1)
     _say(messages, "Neighborhood: {}.".format(note))
 

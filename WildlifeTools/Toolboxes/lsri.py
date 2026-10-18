@@ -376,13 +376,15 @@ def _cell_size_meters(lon0, lat0, cellw_deg, cellh_deg, semi_major, semi_minor):
     return cellw_m, cellh_m
 
 
-def _to_ecef_xy(p0s, p1s, semi_major, semi_minor):
-    """Convert (lon, lat) degree segment endpoints to 3-D ECEF meters on
-    the reference spheroid (height 0), so the dimension-agnostic
-    ``_RadiusLengthEngine`` can measure true ground distance instead of a
-    meaningless raw degree-space Euclidean distance."""
-    e0 = np.column_stack(_hs._ecef(p0s[:, 0], p0s[:, 1], semi_major, semi_minor))
-    e1 = np.column_stack(_hs._ecef(p1s[:, 0], p1s[:, 1], semi_major, semi_minor))
+def _to_ecef_xy(p0s, p1s, to_ecef):
+    """Convert segment endpoints (x, y in the data's own coordinates) to 3-D
+    ECEF meters on the reference spheroid (height 0) with ``to_ecef(x, y)``
+    -- lon/lat straight to ECEF for geographic data, unprojected first for
+    projected data (hillshade.GroundGeometry) -- so the dimension-agnostic
+    ``_RadiusLengthEngine`` measures true ground distance instead of a
+    distorted map-plane distance."""
+    e0 = np.column_stack(to_ecef(p0s[:, 0], p0s[:, 1]))
+    e1 = np.column_stack(to_ecef(p1s[:, 0], p1s[:, 1]))
     return e0, e1
 
 
@@ -501,16 +503,15 @@ def _check_output_size(width, height):
 
 
 def _write_lsri_raster(gdal, engine, mult, valid_mask, gt, proj_wkt,
-                       width, height, scratch, messages,
-                       geographic=False, semi_major=None, semi_minor=None):
+                       width, height, scratch, messages, to_ecef=None):
     """Runs the radius-length engine over the whole grid (in row strips,
     like the toolbox's other moving-window tools) and writes a scratch
     GeoTIFF with self-computed stats, masking cells the caller says are
-    invalid (e.g. NoData in the source DEM). When ``geographic``, each
-    strip's (lon, lat) cell centers are converted to 3-D ECEF meters
-    before querying the engine, matching the ECEF segments it was built
-    from (see ``_to_ecef_xy``); the output raster's own grid/geotransform
-    stays in the source's native (degree) coordinates either way."""
+    invalid (e.g. NoData in the source DEM). When ``to_ecef`` is given,
+    each strip's cell centers are converted to 3-D ECEF meters before
+    querying the engine, matching the ECEF segments it was built from (see
+    ``_to_ecef_xy``); the output raster's own grid/geotransform stays in
+    the source's native coordinates either way."""
     out_path = arcpy.CreateUniqueName("lsri.tif", scratch)
     drv = gdal.GetDriverByName("GTiff")
     ds = drv.Create(out_path, width, height, 1, gdal.GDT_Float32,
@@ -545,8 +546,8 @@ def _write_lsri_raster(gdal, engine, mult, valid_mask, gt, proj_wkt,
             flat_valid = valid_mask[yoff:yoff + rows, :].ravel()
             cx = cx[flat_valid]
             cy = cy[flat_valid]
-        if geographic:
-            ex, ey, ez = _hs._ecef(cx, cy, semi_major, semi_minor)
+        if to_ecef is not None:
+            ex, ey, ez = to_ecef(cx, cy)
             centers = np.column_stack([ex, ey, ez])
         else:
             centers = np.column_stack([cx, cy])
@@ -733,22 +734,28 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
     proj_wkt = src.GetProjection()
     in_nodata = band.GetNoDataValue()
 
+    to_ecef = None
     if geographic:
         mid_row = height // 2
         lon0 = gt[0] + 0.5 * gt[1]
         lat0 = gt[3] + (mid_row + 0.5) * gt[5]
         cellw_m, cellh_m = _cell_size_meters(
             lon0, lat0, gt[1], abs(gt[5]), semi_major, semi_minor)
+        to_ecef = lambda x, y: _hs._ecef(x, y, semi_major, semi_minor)
     else:
-        cellw_m = abs(gt[1]) * mpu
-        cellh_m = abs(gt[5]) * mpu
+        # a projected DEM is unprojected (hillshade.GroundGeometry) so that
+        # contour lengths and the search radius are true ground meters
+        # whatever the projection's scale distortion; the map plane is used
+        # only when the coordinate system cannot be unprojected
+        ground = _hs.ground_geometry(gt, width, height, sr, proj_wkt, messages)
+        cellw_m, cellh_m = ground.cell_size_at(height // 2)
+        to_ecef = ground._to_ecef if ground.mode == "geodesic" else None
     if radius_units == "Cells":
         radius_m = radius * ((cellw_m + cellh_m) / 2.0)
     else:
         radius_m = radius * _RADIUS_METERS[radius_units]
-    # ECEF space is already in meters (geographic); a projected raster's
-    # engine works directly in its own native map units.
-    radius_map = radius_m if geographic else (radius_m / mpu)
+    # ECEF space is in meters; the planar fallback works in map units.
+    radius_map = radius_m if to_ecef is not None else (radius_m / mpu)
 
     arr = band.ReadAsArray(0, 0, width, height).astype(np.float64)
     valid = np.isfinite(arr)
@@ -799,12 +806,12 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
     ogr_ds = None
 
     _mh.phase_advance("Preparing contour segments...")
-    if geographic:
-        e0, e1 = _to_ecef_xy(p0s, p1s, semi_major, semi_minor)
+    if to_ecef is not None:
+        e0, e1 = _to_ecef_xy(p0s, p1s, to_ecef)
         engine = _RadiusLengthEngine(e0, e1, radius_map)
     else:
         engine = _RadiusLengthEngine(p0s, p1s, radius_map)
-    mult = _LENGTH_MULT[length_units] * (1.0 if geographic else mpu)
+    mult = _LENGTH_MULT[length_units] * (1.0 if to_ecef is not None else mpu)
 
     # Decouple the OUTPUT query grid from the DEM's native resolution.
     # Contours above were already traced at full native resolution (so
@@ -841,7 +848,7 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
     out_path, out_stats = _write_lsri_raster(
         gdal, engine, mult, out_valid, out_gt, proj_wkt, out_width, out_height,
         scratch, messages,
-        geographic=geographic, semi_major=semi_major, semi_minor=semi_minor)
+        to_ecef=to_ecef)
 
     _mh.phase_advance("Saving output raster...")
     out_lyrx = _deliver_lsri(
@@ -960,6 +967,35 @@ def run_lsri_on_contours(in_polylines, out_raster, cell_size, radius,
     desc = arcpy.Describe(in_polylines)
     sr = desc.spatialReference
     geographic, mpu, semi_major, semi_minor = _crs_info(sr)
+    # Every length and radius is measured in true ground meters on the
+    # spheroid: lon/lat straight to ECEF for geographic data, projected data
+    # unprojected first (hillshade.GroundGeometry); the map plane is used
+    # only when the coordinate system cannot be unprojected.
+    to_ecef = None
+    if geographic:
+        to_ecef = lambda x, y: _hs._ecef(x, y, semi_major, semi_minor)
+    else:
+        try:
+            to_ecef = _hs._projected_ground(sr.exportToString())
+            _hs._msg(messages, "Projected contours ({}): contour lengths and "
+                               "the search radius are measured on the spheroid "
+                               "(unprojected), so the projection's scale "
+                               "distortion does not affect the result.".format(
+                                   to_ecef.name))
+        except Exception as e:
+            to_ecef = None
+            _hs._msg(messages, "The contours' coordinate system could not be "
+                               "unprojected ({}); lengths and the radius are "
+                               "measured in the projection's own plane.".format(e))
+
+    def _ground_cell_m(xc, yc):
+        """(east-west, north-south) ground meters of one output cell at
+        (xc, yc), via ``to_ecef`` chords."""
+        p0 = np.array(to_ecef(np.array([xc]), np.array([yc]))).ravel()
+        px = np.array(to_ecef(np.array([xc + cell_size]), np.array([yc]))).ravel()
+        py = np.array(to_ecef(np.array([xc]), np.array([yc - cell_size]))).ravel()
+        return (float(np.sqrt(np.sum((px - p0) ** 2))),
+                float(np.sqrt(np.sum((py - p0) ** 2))))
 
     _mh.begin_phases([
         ("Reading contour polylines...", 1),
@@ -988,11 +1024,16 @@ def run_lsri_on_contours(in_polylines, out_raster, cell_size, radius,
     if radius_units == "Cells":
         if geographic:
             radius_map = radius * ((cellw_m + cellh_m) / 2.0)
+        elif to_ecef is not None:
+            ext0 = desc.extent
+            cw_m, ch_m = _ground_cell_m((ext0.XMin + ext0.XMax) / 2.0,
+                                        (ext0.YMin + ext0.YMax) / 2.0)
+            radius_map = radius * ((cw_m + ch_m) / 2.0)
         else:
             radius_map = radius * cell_size
     else:
         radius_m = radius * _RADIUS_METERS[radius_units]
-        radius_map = radius_m if geographic else (radius_m / mpu)
+        radius_map = radius_m if to_ecef is not None else (radius_m / mpu)
 
     env_ext = arcpy.env.extent
     if env_ext and env_ext.XMin is not None:
@@ -1010,7 +1051,10 @@ def run_lsri_on_contours(in_polylines, out_raster, cell_size, radius,
             buf_lon = radius_map * cell_size / max(cellw_m, 1e-9)
             buf_lat = radius_map * cell_size / max(cellh_m, 1e-9)
         else:
-            buf_lon = buf_lat = radius_map
+            # radius_map is in ground meters when unprojected; a map-unit
+            # margin is all that is needed here
+            buf_lon = buf_lat = (radius_map / mpu if to_ecef is not None
+                                 else radius_map)
         xmin, ymin = ext.XMin - buf_lon, ext.YMin - buf_lat
         xmax, ymax = ext.XMax + buf_lon, ext.YMax + buf_lat
 
@@ -1027,18 +1071,18 @@ def run_lsri_on_contours(in_polylines, out_raster, cell_size, radius,
         proj_wkt = None
 
     _mh.phase_advance("Preparing contour segments...")
-    if geographic:
-        e0, e1 = _to_ecef_xy(p0s, p1s, semi_major, semi_minor)
+    if to_ecef is not None:
+        e0, e1 = _to_ecef_xy(p0s, p1s, to_ecef)
         engine = _RadiusLengthEngine(e0, e1, radius_map)
     else:
         engine = _RadiusLengthEngine(p0s, p1s, radius_map)
-    mult = _LENGTH_MULT[length_units] * (1.0 if geographic else mpu)
+    mult = _LENGTH_MULT[length_units] * (1.0 if to_ecef is not None else mpu)
 
     _mh.phase_advance("Calculating total contour length within radius...")
     scratch = arcpy.env.scratchFolder
     out_path, out_stats = _write_lsri_raster(
         gdal, engine, mult, None, gt, proj_wkt, width, height, scratch, messages,
-        geographic=geographic, semi_major=semi_major, semi_minor=semi_minor)
+        to_ecef=to_ecef)
 
     _mh.phase_advance("Saving output raster...")
     out_lyrx = _deliver_lsri(

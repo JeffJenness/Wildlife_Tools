@@ -95,58 +95,10 @@ def _tri_area_3d(p, q, r):
     return 0.5 * np.sqrt(cx * cx + cy * cy + cz * cz)
 
 
-def _surface_row_geometry(gt, height, sr):
-    """Per-row geometry for the 8-triangle method: dict of arrays (length
-    ``height``) of SQUARED half-distances -- vA2/hA2/dA2/h2/dB2/hB2/vB2 --
-    plus ``pix_m2`` (true planimetric cell area, m^2).
-
-    Projected rasters use constant planar values; geographic rasters compute
-    spheroidal ECEF chords between points offset half a cell from the
-    column-0 cell center (the legacy table exactly), with the cell area as
-    the sum of the eight 3-D corner triangles.
-    """
-    geographic = (sr.type == "Geographic")
-    if not geographic:
-        mpu = float(sr.metersPerUnit or 1.0)
-        cw = gt[1] * mpu
-        ch = abs(gt[5]) * mpu
-        const = np.full(height, 1.0)
-        hx2 = (cw / 2.0) ** 2
-        hy2 = (ch / 2.0) ** 2
-        d2 = hx2 + hy2
-        return {"vA2": const * hy2, "hA2": const * hx2, "dA2": const * d2,
-                "h2": const * hx2, "dB2": const * d2, "hB2": const * hx2,
-                "vB2": const * hy2, "pix_m2": const * (cw * ch)}, False
-
-    a = float(sr.semiMajorAxis or 6378137.0)
-    b = float(sr.semiMinorAxis or 6356752.31424518)
-    halfx = gt[1] / 2.0
-    halfy = abs(gt[5]) / 2.0
-    x0 = gt[0] + 0.5 * gt[1]
-    rows = np.arange(height, dtype=np.float64)
-    y0 = gt[3] + (rows + 0.5) * gt[5]
-
-    above = _hs._ecef(x0, y0 + halfy, a, b)
-    below = _hs._ecef(x0, y0 - halfy, a, b)
-    left = _hs._ecef(x0 - halfx, y0, a, b)
-    right = _hs._ecef(x0 + halfx, y0, a, b)
-    nw = _hs._ecef(x0 - halfx, y0 + halfy, a, b)
-    ne = _hs._ecef(x0 + halfx, y0 + halfy, a, b)
-    sw = _hs._ecef(x0 - halfx, y0 - halfy, a, b)
-    se = _hs._ecef(x0 + halfx, y0 - halfy, a, b)
-    focal = tuple((nw[i] + ne[i] + sw[i] + se[i]) / 4.0 for i in range(3))
-
-    def d2(p, q):
-        return ((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2)
-
-    pix = (_tri_area_3d(focal, above, ne) + _tri_area_3d(focal, ne, right) +
-           _tri_area_3d(focal, right, se) + _tri_area_3d(focal, se, below) +
-           _tri_area_3d(focal, below, sw) + _tri_area_3d(focal, sw, left) +
-           _tri_area_3d(focal, left, nw) + _tri_area_3d(focal, nw, above))
-    return {"vA2": d2(focal, above), "hA2": d2(above, ne),
-            "dA2": d2(focal, ne), "h2": d2(focal, right),
-            "dB2": d2(focal, se), "hB2": d2(below, se),
-            "vB2": d2(focal, below), "pix_m2": pix}, True
+# The 8-triangle surface-area table (squared half-cell distances + true cell
+# area) now comes from hillshade.GroundGeometry.half_rows / half_row, which
+# builds it for ANY coordinate system (geographic per row, projected on a
+# lattice of unprojected cell centers).
 
 
 def _heron(l1, l2, l3):
@@ -357,19 +309,13 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
     in_nodata = band.GetNoDataValue()
     sr = arcpy.Describe(work_raster).spatialReference
 
-    geom, geographic = _surface_row_geometry(gt, height, sr)
+    geom = _hs.ground_geometry(gt, width, height, sr, proj, messages)
+    geographic = geom.geographic
     if geographic:
         elev_mpu = 1.0                  # legacy: geographic DEMs are meters
-        _hs._msg(messages, "Geographic DEM: half-cell distances and true "
-                           "cell areas computed per row on the spheroid "
-                           "(a = {:.1f} m, b = {:.1f} m).".format(
-                               float(sr.semiMajorAxis),
-                               float(sr.semiMinorAxis)))
     else:
         elev_mpu = _hs._ELEV_METERS.get(elev_units, 1.0)
-        _hs._msg(messages, "Projected DEM: cell area {:.4f} sq m; elevation "
-                           "units = {}.".format(
-                               float(geom["pix_m2"][0]), elev_units))
+        _hs._msg(messages, "Elevation units = {}.".format(elev_units))
     _hs._msg(messages, "Surface area method: 8-triangle ({}). Corner "
                        "interpolation: {}.".format(_CITATION, corner_method))
 
@@ -404,14 +350,11 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
 
         out_arrs = {k: np.full((rows, width), NODATA_OUT, dtype=np.float32)
                     for k in outputs}
-        rr_all = slice(yoff, yoff + rows)
         if "flat" in outputs:
             # Flat area is valid for EVERY cell (legacy behavior).
-            flat_vals = (geom["pix_m2"][rr_all] * mult_flat)[:, None]
-            out_arrs["flat"][:] = np.repeat(
-                flat_vals, width, axis=1).astype(np.float32)
-            outputs["flat"]["stats"].add(
-                np.repeat(geom["pix_m2"][rr_all] * mult_flat, width))
+            flat_vals = geom.half_rows(yoff, yoff + rows)["pix_m2"] * mult_flat
+            out_arrs["flat"][:] = flat_vals.astype(np.float32)
+            outputs["flat"]["stats"].add(np.asarray(flat_vals).ravel())
 
         r0 = yoff if yoff > 0 else 1
         r1 = (yoff + rows) if (yoff + rows) < height else height - 1
@@ -425,10 +368,9 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
             W_, C_, E_ = pad[sl, :-2], pad[sl, 1:-1], pad[sl, 2:]
             SW, S_, SE = pad[dn, :-2], pad[dn, 1:-1], pad[dn, 2:]
 
-            rr = slice(r0, r1)
-            g = {k: geom[k][rr][:, None] for k in
-                 ("vA2", "hA2", "dA2", "h2", "dB2", "hB2", "vB2")}
-            pixm2 = geom["pix_m2"][rr][:, None]
+            # per-cell 8-triangle table, interior columns (as the slices)
+            g = {k: v[:, 1:-1] for k, v in geom.half_rows(r0, r1).items()}
+            pixm2 = g["pix_m2"]
 
             area = _eight_triangle_area(NW, N_, NE, W_, C_, E_, SW, S_, SE,
                                         g, four_cell)
@@ -467,10 +409,7 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
             pass
 
     # Finalize and deliver each requested output.
-    geo_note = ("Cell distances and areas were computed per row on the "
-                "spheroid (geodesic method) because the DEM is in a "
-                "geographic coordinate system." if geographic else
-                "Planar cell dimensions were used (projected DEM).")
+    geo_note = _hs.ground_note_for_metadata(geom)
     corner_note = "Corner interpolation: {}.".format(corner_method)
     deliveries = {
         "area": (out_area, "surface area, 3D area, topography, terrain, "
@@ -580,29 +519,23 @@ _DETREND_CITATION = (
     "(https://doi.org/10.1007/s10980-023-01646-6).")
 
 
-def _radius_row_cells(gt, height, sr, radius, radius_units):
+def _radius_row_cells(gt, height, sr, radius, radius_units, width=None,
+                      proj=None):
     """(rx_rows, ry, note): circular-neighborhood radius expressed in CELLS,
-    per row -- constant for Cells units or a projected raster, geodesic per row
-    for a geographic DEM with a linear-unit radius (the same sizing VRM uses).
-    ``note`` is a short human-readable description of the radius."""
+    per row -- constant for Cells units, otherwise sized per row from the
+    true ground cell size on the spheroid (GroundGeometry; a projected
+    raster is unprojected, so Web Mercator and the like get the right number
+    of cells). ``note`` is a short human-readable description of the
+    radius."""
     if radius_units == "Cells":
         return (np.full(height, float(radius)), float(radius),
                 "{:g} cells".format(radius))
     radius_m = radius * _RADIUS_METERS[radius_units]
-    if sr.type == "Geographic":
-        a = float(sr.semiMajorAxis or 6378137.0)
-        b = float(sr.semiMinorAxis or 6356752.31424518)
-        g = _hs._geographic_row_distances(gt, height, a, b)
-        rx_rows = radius_m / np.maximum(g["h"], 1e-9)
-        ry = radius_m / max(float(np.mean(g["vA"])), 1e-9)
-        note = "{:g} {} = {:,.1f} m (geodesic per row)".format(
-            radius, radius_units.lower(), radius_m)
-    else:
-        mpu = float(sr.metersPerUnit or 1.0)
-        rx_rows = np.full(height, radius_m / (abs(gt[1]) * mpu))
-        ry = radius_m / (abs(gt[5]) * mpu)
-        note = "{:g} {} = {:,.1f} m".format(
-            radius, radius_units.lower(), radius_m)
+    g = _hs.ground_geometry(gt, width or 1, height, sr, proj).row
+    rx_rows = radius_m / np.maximum(g["h"], 1e-9)
+    ry = radius_m / max(float(np.mean(g["vA"])), 1e-9)
+    note = "{:g} {} = {:,.1f} m (sized per row on the spheroid)".format(
+        radius, radius_units.lower(), radius_m)
     return rx_rows, ry, note
 
 
@@ -636,7 +569,7 @@ def _detrended_dem(in_raster, radius, radius_units, messages):
             valid &= (z != in_nodata)
         valid = _mh.mask_band_valid(band, valid)
         rx_rows, ry, note = _radius_row_cells(
-            gt, height, sr, radius, radius_units)
+            gt, height, sr, radius, radius_units, width, proj)
         smoothed = _hs._blur_grid(z, valid, rx_rows, ry, "Average")
         resid = np.where(valid & np.isfinite(smoothed),
                          z - smoothed, NODATA_OUT).astype(np.float32)
@@ -661,62 +594,52 @@ def _detrended_dem(in_raster, radius, radius_units, messages):
     return out_path, note
 
 
-def _row_gradient_geometry(gt, height, sr, elev_mpu):
-    """Per-row Horn-gradient geometry (NOT half/squared, unlike the surface-
-    area table): a dict of arrays (length ``height``) with keys hA/h/hB
-    (horizontal spans of the row above/at/below) and vA/vB (vertical spans up/
-    down), all in meters -- exactly the table Enhanced Hillshade uses.
-    Returns (geom, geographic, zscale)."""
-    geographic = (sr.type == "Geographic")
-    zscale = float(elev_mpu)
-    if geographic:
-        a = float(sr.semiMajorAxis or 6378137.0)
-        b = float(sr.semiMinorAxis or 6356752.31424518)
-        geom = _hs._geographic_row_distances(gt, height, a, b)
-    else:
-        mpu = float(sr.metersPerUnit or 1.0)
-        cw = gt[1] * mpu
-        ch = abs(gt[5]) * mpu
-        const = np.full(height, 1.0)
-        geom = {"hA": const * cw, "h": const * cw, "hB": const * cw,
-                "vA": const * ch, "vB": const * ch}
-    return geom, geographic, zscale
+def _row_gradient_geometry(gt, width, height, sr, proj, elev_mpu,
+                           messages=None):
+    """``(ground, geographic, zscale)``: the raster's ``GroundGeometry``
+    (true ground spans for every cell, any coordinate system -- see
+    hillshade.GroundGeometry; its note is posted to ``messages``), whether
+    it is geographic, and the elevation scale to meters."""
+    ground = _hs.ground_geometry(gt, width, height, sr, proj, messages)
+    return ground, ground.geographic, float(elev_mpu)
 
 
-def _unit_normals(z, valid, geom):
+def _unit_normals(z, valid, ground):
     """Unit normal vectors (nx, ny, nz) for the WHOLE grid ``z`` (meters,
     already z-scaled), via the Horn gradient: n = (-dz/dx, -dz/dy, 1) /
     ||...||. This is the same vector Sappington's slope/aspect trig
     decomposition produces (a global rotation of coordinate convention
     changes no vector's length, and VRM depends only on the length of the
     SUM of these vectors) -- but reuses the toolbox's tested, geodesic-correct
-    per-row gradient. Returns (nx, ny, nz, ok) full-grid arrays; ``ok`` is
-    False wherever the cell's own 3x3 window touches invalid/out-of-bounds
-    data (NaN elsewhere in nx/ny/nz)."""
+    per-cell ground spans (``ground`` is a hillshade.GroundGeometry; the
+    grid is processed in row strips). Returns (nx, ny, nz, ok) full-grid
+    arrays; ``ok`` is False wherever the cell's own 3x3 window touches
+    invalid/out-of-bounds data (NaN elsewhere in nx/ny/nz)."""
     H, W = z.shape
     zp = np.full((H + 2, W + 2), np.nan)
     zp[1:-1, 1:-1] = z
     vp = np.zeros((H + 2, W + 2), dtype=bool)
     vp[1:-1, 1:-1] = valid
 
-    NW, N_, NE = zp[:-2, :-2], zp[:-2, 1:-1], zp[:-2, 2:]
-    W_, C_, E_ = zp[1:-1, :-2], zp[1:-1, 1:-1], zp[1:-1, 2:]
-    SW, S_, SE = zp[2:, :-2], zp[2:, 1:-1], zp[2:, 2:]
-
-    hA = geom["hA"][:, None]
-    h = geom["h"][:, None]
-    hB = geom["hB"][:, None]
-    vA = geom["vA"][:, None]
-    vB = geom["vB"][:, None]
-
-    with np.errstate(invalid="ignore"):
-        dzdx = ((NE + 2.0 * E_ + SE) - (NW + 2.0 * W_ + SW)) / \
-               (2.0 * hA + 4.0 * h + 2.0 * hB)
-        dzdy = ((SW + 2.0 * S_ + SE) - (NW + 2.0 * N_ + NE)) / (4.0 * vA + 4.0 * vB)
-        norm = np.sqrt(dzdx * dzdx + dzdy * dzdy + 1.0)
-        nx = -dzdx / norm
-        ny = -dzdy / norm
-        nz = 1.0 / norm
+    nx = np.full((H, W), np.nan)
+    ny = np.full((H, W), np.nan)
+    nz = np.full((H, W), np.nan)
+    for r0 in range(0, H, _hs.GEOM_STRIP):
+        r1 = min(H, r0 + _hs.GEOM_STRIP)
+        g = ground.rows(r0, r1)
+        up, sl, dn = slice(r0, r1), slice(r0 + 1, r1 + 1), slice(r0 + 2, r1 + 2)
+        NW, N_, NE = zp[up, :-2], zp[up, 1:-1], zp[up, 2:]
+        W_, E_ = zp[sl, :-2], zp[sl, 2:]
+        SW, S_, SE = zp[dn, :-2], zp[dn, 1:-1], zp[dn, 2:]
+        with np.errstate(invalid="ignore"):
+            dzdx = ((NE + 2.0 * E_ + SE) - (NW + 2.0 * W_ + SW)) / \
+                   (2.0 * g["hA"] + 4.0 * g["h"] + 2.0 * g["hB"])
+            dzdy = ((SW + 2.0 * S_ + SE) - (NW + 2.0 * N_ + NE)) / \
+                   (4.0 * g["vA"] + 4.0 * g["vB"])
+            norm = np.sqrt(dzdx * dzdx + dzdy * dzdy + 1.0)
+            nx[r0:r1] = -dzdx / norm
+            ny[r0:r1] = -dzdy / norm
+            nz[r0:r1] = 1.0 / norm
 
     ok = (vp[:-2, :-2] & vp[:-2, 1:-1] & vp[:-2, 2:] &
           vp[1:-1, :-2] & vp[1:-1, 1:-1] & vp[1:-1, 2:] &
@@ -822,15 +745,10 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
     sr = arcpy.Describe(work_raster).spatialReference
 
     elev_mpu = 1.0 if sr.type == "Geographic" else _hs._ELEV_METERS.get(elev_units, 1.0)
-    geom, geographic, zscale = _row_gradient_geometry(gt, height, sr, elev_mpu)
-    if geographic:
-        _hs._msg(messages, "Geographic DEM: gradients computed per row on the "
-                           "spheroid.")
-    else:
-        _hs._msg(messages, "Projected DEM: cell = {:.3f} x {:.3f} m; "
-                           "elevation units = {}.".format(
-                               float(geom["h"][0]), float(geom["vA"][0]),
-                               elev_units))
+    geom, geographic, zscale = _row_gradient_geometry(gt, width, height, sr,
+                                                      proj, elev_mpu, messages)
+    if not geographic:
+        _hs._msg(messages, "Elevation units = {}.".format(elev_units))
 
     if radius_units == "Cells":
         rx_rows = np.full(height, radius)
@@ -838,22 +756,14 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
         _hs._msg(messages, "VRM radius: {:g} cells.".format(radius))
     else:
         radius_m = radius * _RADIUS_METERS[radius_units]
-        if geographic:
-            rx_rows = radius_m / np.maximum(geom["h"], 1e-9)
-            ry = radius_m / max(float(np.mean(geom["vA"])), 1e-9)
-            _hs._msg(messages, "VRM radius: {:g} {} = {:,.1f} m, sized per row "
-                               "on the spheroid ({:.1f}-{:.1f} cells across, "
-                               "{:.1f} cells down).".format(
-                                   radius, radius_units.lower(), radius_m,
-                                   float(rx_rows.min()), float(rx_rows.max()),
-                                   ry))
-        else:
-            rx_rows = np.full(height, radius_m / geom["h"][0])
-            ry = radius_m / geom["vA"][0]
-            _hs._msg(messages, "VRM radius: {:g} {} = {:,.1f} m = {:.1f} x "
-                               "{:.1f} cells.".format(
-                                   radius, radius_units.lower(), radius_m,
-                                   float(rx_rows[0]), ry))
+        rx_rows = radius_m / np.maximum(geom.row["h"], 1e-9)
+        ry = radius_m / max(float(np.mean(geom.row["vA"])), 1e-9)
+        _hs._msg(messages, "VRM radius: {:g} {} = {:,.1f} m, sized per row "
+                           "on the spheroid ({:.1f}-{:.1f} cells across, "
+                           "{:.1f} cells down).".format(
+                               radius, radius_units.lower(), radius_m,
+                               float(rx_rows.min()), float(rx_rows.max()),
+                               ry))
 
     z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
     valid = np.isfinite(z)
@@ -1035,15 +945,10 @@ def run_acr(in_raster, out_raster, elev_units="Meters", corner_method=None,
     geographic = (sr.type == "Geographic")
     elev_mpu = 1.0 if geographic else _hs._ELEV_METERS.get(elev_units, 1.0)
 
-    sgeom, _sg = _surface_row_geometry(gt, height, sr)   # half-dist^2 + pix_m2
-    ggeom, _gg, zscale = _row_gradient_geometry(gt, height, sr, elev_mpu)
-    if geographic:
-        _hs._msg(messages, "Geographic DEM: surface area and best-fit-plane "
-                           "slope computed per row on the spheroid.")
-    else:
-        _hs._msg(messages, "Projected DEM: cell area {:.4f} sq m; elevation "
-                           "units = {}.".format(
-                               float(sgeom["pix_m2"][0]), elev_units))
+    ground, _gg, zscale = _row_gradient_geometry(gt, width, height, sr, proj,
+                                                 elev_mpu, messages)
+    if not geographic:
+        _hs._msg(messages, "Elevation units = {}.".format(elev_units))
 
     z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
     valid = np.isfinite(z)
@@ -1073,16 +978,15 @@ def run_acr(in_raster, out_raster, elev_units="Meters", corner_method=None,
     NW, N_, NE = zp[:-2, :-2], zp[:-2, 1:-1], zp[:-2, 2:]
     W_, C_, E_ = zp[1:-1, :-2], zp[1:-1, 1:-1], zp[1:-1, 2:]
     SW, S_, SE = zp[2:, :-2], zp[2:, 1:-1], zp[2:, 2:]
-    g = {k: sgeom[k][:, None] for k in
-         ("vA2", "hA2", "dA2", "h2", "dB2", "hB2", "vB2")}
+    g = ground.half_rows(0, height)              # per-cell 8-triangle table
     with np.errstate(invalid="ignore"):
         area = _eight_triangle_area(NW, N_, NE, W_, C_, E_, SW, S_, SE,
                                     g, four_cell)
-        ratio = area / sgeom["pix_m2"][:, None]
+        ratio = area / g["pix_m2"]
 
     # cos(best-fit-plane slope) = nz, the vertical component of the Horn unit
     # normal (VRM's machinery). ACR = surface ratio x cos(slope).
-    _nx, _ny, nz, ok = _unit_normals(zwork, valid, ggeom)
+    _nx, _ny, nz, ok = _unit_normals(zwork, valid, ground)
     del _nx, _ny
 
     with np.errstate(invalid="ignore"):
@@ -1205,24 +1109,8 @@ _TRI_CITATION = {0: _TRI_RILEY_CIT, 1: _TRI_WILSON_CIT,
                  2: _TRI_SLOPE_CIT, 3: _TRI_STD_CIT}
 
 
-def _tri_row_cell_dims(gt, height, sr):
-    """(cw_row, ch_row): per-row horizontal and vertical cell dimensions in
-    meters (arrays length ``height``), for the Slope method's neighbor
-    distances. Constant on projected rasters; per-row on the spheroid for a
-    geographic DEM (the neighbor distance a diagonal cell away then correctly
-    grows toward the poles). The vertical span (degrees of latitude) is very
-    nearly constant, so the focal row's value is used for the small vertical
-    offsets of a local window -- the same per-row approximation the other
-    tools use for geographic neighborhoods."""
-    if sr.type == "Geographic":
-        a = float(sr.semiMajorAxis or 6378137.0)
-        b = float(sr.semiMinorAxis or 6356752.31424518)
-        g = _hs._geographic_row_distances(gt, height, a, b)
-        return g["h"], g["vA"]
-    mpu = float(sr.metersPerUnit or 1.0)
-    cw = np.full(height, abs(gt[1]) * mpu)
-    ch = np.full(height, abs(gt[5]) * mpu)
-    return cw, ch
+# TRI's neighbor distances come from GroundGeometry.rows (per cell, any
+# coordinate system).
 
 
 _TRI_MAX_R = 500          # bounding cell radius cap (a ~1000-cell-wide window)
@@ -1274,9 +1162,15 @@ def run_tri(in_raster, out_raster, method=None, radius=1.5,
     geographic = (sr.type == "Geographic")
 
     elev_mpu = 1.0 if geographic else _hs._ELEV_METERS.get(elev_units, 1.0)
-    # Per-row cell dimensions in meters -- for the circular ground-distance
-    # neighborhood and for the Slope method's neighbor distances.
-    cw_row, ch_row = _tri_row_cell_dims(gt, height, sr)
+    # Per-cell ground dimensions in meters (any coordinate system) -- for the
+    # circular ground-distance neighborhood and the Slope method's neighbor
+    # distances.
+    ground = _hs.ground_geometry(gt, width, height, sr, proj, messages)
+    _g2 = ground.rows(0, height)
+    cw2 = np.asarray(_g2["h"], dtype=np.float64)
+    ch2 = np.asarray((_g2["vA"] + _g2["vB"]) / 2.0, dtype=np.float64)
+    del _g2
+    cw2sq, ch2sq = cw2 * cw2, ch2 * ch2
 
     # Neighborhood geometry. "Cells" -> a fixed cell-space circle (same
     # everywhere, di^2 + dj^2 <= radius^2). A linear unit -> a true ground
@@ -1288,7 +1182,7 @@ def run_tri(in_raster, out_raster, method=None, radius=1.5,
         big_r = int(math.ceil(radius))
     else:
         radius_m = radius * _RADIUS_METERS[radius_units]
-        min_cell = max(min(float(cw_row.min()), float(ch_row.min())), 1e-9)
+        min_cell = max(min(float(cw2.min()), float(ch2.min())), 1e-9)
         big_r = int(math.ceil(radius_m / min_cell))
     big_r = max(big_r, 1)
     if big_r > _TRI_MAX_R:
@@ -1308,7 +1202,8 @@ def run_tri(in_raster, out_raster, method=None, radius=1.5,
                            "{:g} {} = {:,.1f} m ({}up to {} cells across). "
                            "{}".format(
                                method, radius, radius_units.lower(), radius_m,
-                               "geodesic per row, " if geographic else "",
+                               "" if ground.mode == "planar" else
+                               "true ground distances, ",
                                2 * big_r + 1,
                                "Elevation assumed meters (geographic DEM)."
                                if geographic else
@@ -1350,20 +1245,19 @@ def run_tri(in_raster, out_raster, method=None, radius=1.5,
             for dj in range(-R, R + 1):
                 if not is_std and di == 0 and dj == 0:
                     continue
-                d_row = (np.sqrt((dj * cw_row) ** 2 + (di * ch_row) ** 2)
-                         if need_d else None)      # meters, per row
+                d2 = ((dj * dj) * cw2sq + (di * di) * ch2sq
+                      if need_d else None)         # squared meters, per cell
                 if cells_mode:
                     if di * di + dj * dj > radius * radius:
                         continue
-                    row_mask = None                # every row in the circle
+                    cell_mask = None               # every cell in the circle
                 else:
-                    row_in = d_row <= radius_m
-                    if not row_in.any():
+                    cell_mask = d2 <= radius_m * radius_m
+                    if not cell_mask.any():
                         continue
-                    row_mask = row_in[:, None]
                 nz = zp[R + di:R + di + height, R + dj:R + dj + width]
                 nv = vp[R + di:R + di + height, R + dj:R + dj + width]
-                member = nv if row_mask is None else (nv & row_mask)
+                member = nv if cell_mask is None else (nv & cell_mask)
                 if is_std:
                     s1 += np.where(member, nz, 0.0)
                     s2 += np.where(member, nz * nz, 0.0)
@@ -1374,7 +1268,7 @@ def run_tri(in_raster, out_raster, method=None, radius=1.5,
                     if is_wilson:
                         acc += np.abs(dz)
                     elif is_slope:
-                        acc += np.where(pair, (dz / d_row[:, None]) ** 2, 0.0)
+                        acc += np.where(pair, dz * dz / d2, 0.0)
                     else:                          # Riley
                         acc += dz * dz
                     ncnt += pair
@@ -1930,10 +1824,9 @@ def run_fractal_dimension(in_raster, out_raster, method=None, window_size=25,
 # accumulation match Esri D8 to ~99.9% (the rest is flat tie-breaking); for
 # exact Esri parity a user can feed in their own flow-accumulation raster.
 # Slope comes from the original DEM (filling is only to keep flow from getting
-# stuck), planar on projected DEMs or geodesic if the user asks (and always
-# geodesic -- spheroidal per row -- on geographic DEMs).
-
-SLOPE_METHODS = ["Planar", "Geodesic"]
+# stuck), from true ground distances on the spheroid in ANY coordinate system
+# (hillshade.GroundGeometry: per row on geographic DEMs, per cell from a
+# lattice of unprojected cell centers on projected ones).
 
 # Flow routing on the filled surface. D8 sends each cell's water to its single
 # steepest lower neighbor; D-Infinity (Tarboton 1997) to the two neighbors
@@ -1987,74 +1880,36 @@ _TWI_CIT_D8 = (
 _TWI_CITATION = _TWI_CIT_TWI
 
 
-def _twi_geodesic_projected_geom(gt, width, height, proj):
-    """Per-row TRUE-GROUND cell distances for a PROJECTED raster whose slope
-    the user wants computed geodesically: unproject the cell centers of a
-    representative (raster-center) column to lon/lat with GDAL's osr, then use
-    the same spheroidal-ECEF distances as the geographic path.  Returns the
-    hA/h/hB/vA/vB dict (meters).  Corrects the projection's scale distortion,
-    which is the only meaningful planar-vs-geodesic difference at 3x3 scale."""
-    from osgeo import osr
-    ps = osr.SpatialReference()
-    ps.ImportFromWkt(proj)
-    gs = ps.CloneGeogCS()
-    for s in (ps, gs):
-        try:
-            s.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-        except Exception:
-            pass
-    # spheroid from the DEM's own datum (arcpy reports 0 for a projected SR)
-    a = float(gs.GetSemiMajor()) or 6378137.0
-    b = float(gs.GetSemiMinor()) or 6356752.31424518
-    ct = osr.CoordinateTransformation(ps, gs)
-    cellw = gt[1]
-    cellh = abs(gt[5])
-    xc = gt[0] + (0.5 * width) * gt[1]          # raster-center column
-    rows = np.arange(height, dtype=np.float64)
-    y0 = gt[3] + (rows + 0.5) * gt[5]
-    xcol = np.full(height, xc)
-
-    def ecef(xs, ys):
-        pts = ct.TransformPoints(list(zip(xs.tolist(), ys.tolist())))
-        lon = np.fromiter((p[0] for p in pts), np.float64, len(pts))
-        lat = np.fromiter((p[1] for p in pts), np.float64, len(pts))
-        return _hs._ecef(lon, lat, a, b)
-
-    above = ecef(xcol, y0 + cellh)
-    below = ecef(xcol, y0 - cellh)
-    right = ecef(xcol + cellw, y0)
-    nw = ecef(xcol - cellw, y0 + cellh)
-    ne = ecef(xcol + cellw, y0 + cellh)
-    sw = ecef(xcol - cellw, y0 - cellh)
-    se = ecef(xcol + cellw, y0 - cellh)
-    focal = tuple((nw[i] + ne[i] + sw[i] + se[i]) / 4.0 for i in range(3))
-    return {"vA": _hs._dist3(focal, above), "hA": _hs._dist3(above, ne),
-            "h": _hs._dist3(focal, right), "vB": _hs._dist3(focal, below),
-            "hB": _hs._dist3(below, se)}
+# (The former single-column projected-DEM helper is superseded by
+# hillshade.GroundGeometry, which handles every projection per cell.)
 
 
-def _twi_tanbeta(z, valid, geom):
-    """tan(beta) = Horn gradient magnitude of ``z`` (meters, z-scaled) over the
-    per-row geometry ``geom`` (meters).  NoData neighbors fall back to the
+def _twi_tanbeta(z, valid, ground):
+    """tan(beta) = Horn gradient magnitude of ``z`` (meters, z-scaled) over
+    the per-cell ground spans of ``ground`` (a hillshade.GroundGeometry; the
+    grid is processed in row strips). NoData neighbors fall back to the
     focal value so the gradient is defined for every valid cell."""
     H, W = z.shape
     zp = np.full((H + 2, W + 2), np.nan)
     zp[1:-1, 1:-1] = np.where(valid, z, np.nan)
-    NW, N_, NE = zp[:-2, :-2], zp[:-2, 1:-1], zp[:-2, 2:]
-    W_, C_, E_ = zp[1:-1, :-2], zp[1:-1, 1:-1], zp[1:-1, 2:]
-    SW, S_, SE = zp[2:, :-2], zp[2:, 1:-1], zp[2:, 2:]
     ctr = np.where(valid, z, np.nan)
-    parts = [NW, N_, NE, W_, E_, SW, S_, SE]
-    parts = [np.where(np.isnan(p), ctr, p) for p in parts]
-    NW, N_, NE, W_, E_, SW, S_, SE = parts
-    hA = geom["hA"][:, None]; h = geom["h"][:, None]; hB = geom["hB"][:, None]
-    vA = geom["vA"][:, None]; vB = geom["vB"][:, None]
-    with np.errstate(invalid="ignore"):
-        dzdx = ((NE + 2.0 * E_ + SE) - (NW + 2.0 * W_ + SW)) / \
-               (2.0 * hA + 4.0 * h + 2.0 * hB)
-        dzdy = ((SW + 2.0 * S_ + SE) - (NW + 2.0 * N_ + NE)) / \
-               (4.0 * vA + 4.0 * vB)
-        tanb = np.hypot(dzdx, dzdy)
+    tanb = np.full((H, W), np.nan)
+    for r0 in range(0, H, _hs.GEOM_STRIP):
+        r1 = min(H, r0 + _hs.GEOM_STRIP)
+        g = ground.rows(r0, r1)
+        up, sl, dn = slice(r0, r1), slice(r0 + 1, r1 + 1), slice(r0 + 2, r1 + 2)
+        c = ctr[r0:r1]
+        parts = [zp[up, :-2], zp[up, 1:-1], zp[up, 2:],
+                 zp[sl, :-2], zp[sl, 2:],
+                 zp[dn, :-2], zp[dn, 1:-1], zp[dn, 2:]]
+        parts = [np.where(np.isnan(p), c, p) for p in parts]
+        NW, N_, NE, W_, E_, SW, S_, SE = parts
+        with np.errstate(invalid="ignore"):
+            dzdx = ((NE + 2.0 * E_ + SE) - (NW + 2.0 * W_ + SW)) / \
+                   (2.0 * g["hA"] + 4.0 * g["h"] + 2.0 * g["hB"])
+            dzdy = ((SW + 2.0 * S_ + SE) - (NW + 2.0 * N_ + NE)) / \
+                   (4.0 * g["vA"] + 4.0 * g["vB"])
+            tanb[r0:r1] = np.hypot(dzdx, dzdy)
     tanb[~valid] = np.nan
     return tanb
 
@@ -2449,7 +2304,7 @@ def _twi_read_aligned(path, width, height, scratch, messages, what):
     return arr, nod
 
 
-def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
+def run_twi(in_raster, out_raster, elev_units="Meters",
             slope_epsilon=0.001, in_filled_dem=None, in_flow_accumulation=None,
             out_filled_dem=None, out_flow_accumulation=None, messages=None,
             flow_method="D8"):
@@ -2500,17 +2355,14 @@ def run_twi(in_raster, out_raster, elev_units="Meters", slope_method="Planar",
     geographic = (sr.type == "Geographic")
 
     elev_mpu = _hs._ELEV_METERS.get(elev_units, 1.0)
-    base_geom, _geo, zscale = _row_gradient_geometry(gt, height, sr, elev_mpu)
-    # slope geometry: geodesic on geographic always; on projected, honor choice
-    if geographic:
-        slope_geom = base_geom
-        slope_used = "Geodesic (spheroidal, per row)"
-    elif str(slope_method) == "Geodesic":
-        slope_geom = _twi_geodesic_projected_geom(gt, width, height, proj)
-        slope_used = "Geodesic (true ground distances)"
-    else:
-        slope_geom = base_geom
-        slope_used = "Planar"
+    ground, _geo, zscale = _row_gradient_geometry(gt, width, height, sr, proj,
+                                                  elev_mpu, messages)
+    slope_geom = ground                  # true ground spans, per cell
+    base_geom = ground.row               # per-row table for flow routing / SCA
+    slope_used = {"geographic": "Geodesic (spheroidal, per row)",
+                  "geodesic": "Geodesic (true ground distances, lattice)",
+                  }.get(ground.mode, "Planar (coordinate system could not be "
+                                     "unprojected)")
     # planimetric ground cell size (m) per row for the specific catchment area
     sca_cell = np.sqrt(base_geom["h"] * base_geom["vA"])
 
@@ -3360,12 +3212,18 @@ def unit_mismatch_text(detected, slope_units):
 def run_extract_slope_points(in_points, in_raster, out_points,
                              interpolate=False, field_name="Slope",
                              slope_units=SLOPE_UNITS_Z[0], messages=None,
-                             in_place=False):
+                             in_place=False, from_dem=False,
+                             dem_method=None, window_size=3,
+                             elev_units="Meters"):
     """Extract the slope at each point of ``in_points`` from a slope raster
-    into a new field -- of a copied point feature class, or, with
-    ``in_place``, of the input feature class itself -- like Esri's Extract
-    Values to Points, with no Spatial Analyst, and with the interpolation
-    done on the slope ANGLES.
+    -- or, with ``from_dem``, derive it from a DEM (see
+    ``aspect_tools.derive_from_dem``: Horn's 3 x 3 method, the one Esri's
+    Slope tool uses, or a least-squares quadratic over ``window_size``
+    cells, with the DEM's elevations in ``elev_units``; ``slope_units`` is
+    then the OUTPUT unit) -- into a new field -- of a copied point feature
+    class, or, with ``in_place``, of the input feature class itself -- like
+    Esri's Extract Values to Points, with no Spatial Analyst, and with the
+    interpolation done on the slope ANGLES.
 
     ``interpolate`` False: the value of the cell each point falls in, exactly
     as stored, in the raster's own unit. True: a bilinear interpolation of
@@ -3391,34 +3249,54 @@ def run_extract_slope_points(in_points, in_raster, out_points,
     unit = _slope_unit_key(slope_units)
     uw = _slope_unit_word(unit)
     lim = _slope_unit_limit(unit)
+    from_dem = bool(from_dem)
+    dem_method = dem_method or _at.DEM_METHODS[0]
+    n_win = 3 if _at.dem_method_key(dem_method) == "horn" else int(window_size or 3)
 
     _mh.begin_phases([
         ("Adding the field to the input features..." if in_place
          else "Copying the point features...", 2),
-        ("Reading the slope raster...", 1),
-        ("Sampling slope at the points...", 4),
+        ("Reading the DEM..." if from_dem else "Reading the slope raster...", 1),
+        ("Computing slope from the DEM at the points..." if from_dem
+         else "Sampling slope at the points...", 4),
         ("Writing values and field metadata...", 2),
     ])
     target, path, fld, null_ok = _at._point_target(
         in_points, out_points, field_name, "Slope", in_place, messages)
 
-    _mh.phase_advance("Reading the slope raster...")
-    w = _at._points_in_raster_window(target, in_raster, messages, "slope")
+    _mh.phase_advance("Reading the DEM..." if from_dem
+                      else "Reading the slope raster...")
+    w = _at._points_in_raster_window(target, in_raster, messages,
+                                     "DEM" if from_dem else "slope",
+                                     margin=(n_win // 2 + 2) if from_dem else 2)
     arr, valid, n_pts = w["arr"], w["valid"], w["n_pts"]
     xs, ys = w["xs"], w["ys"]
     x0w, y0w, csx, csy = w["x0w"], w["y0w"], w["csx"], w["csy"]
 
-    # The unit in the raster's history against the unit chosen.
-    mismatch = slope_unit_mismatch(in_raster, slope_units)
+    dem_info = None
     mismatch_note = None
-    if mismatch:
-        mismatch_note = unit_mismatch_text(mismatch[0], slope_units)
-        _warn(messages, mismatch_note)
+    if from_dem:
+        # slope in degrees at the cells the sampling step needs, then into
+        # the chosen output unit (the interpolation below goes back to
+        # degrees, so this round trip is exact)
+        deg_arr, valid, dem_info = _at.derive_from_dem(
+            w, "slope", dem_method, n_win, elev_units, interpolate, messages)
+        arr = np.where(valid, _slope_from_deg_array(
+            np.where(valid, deg_arr, 0.0), unit), np.nan).astype(np.float32)
+        _say(messages, "Slope computed from the DEM with {} (elevation units "
+                       "{}), in {}.".format(dem_info["method_text"],
+                                            elev_units, uw))
+    else:
+        # The unit in the raster's history against the unit chosen.
+        mismatch = slope_unit_mismatch(in_raster, slope_units)
+        if mismatch:
+            mismatch_note = unit_mismatch_text(mismatch[0], slope_units)
+            _warn(messages, mismatch_note)
 
     # Cells outside the valid range for the unit (a percent raster read as
-    # degrees shows up here).
+    # degrees shows up here; never for values derived from a DEM).
     oor = np.zeros(arr.shape, bool)
-    if lim is not None and arr.size:
+    if lim is not None and arr.size and not from_dem:
         oor = valid & (np.abs(arr) > lim)
     n_oor = int(np.count_nonzero(oor))
     if n_oor:
@@ -3431,7 +3309,8 @@ def run_extract_slope_points(in_points, in_raster, out_points,
                   if interpolate else
                   "Points on such cells receive the stored value anyway."))
 
-    _mh.phase_advance("Sampling slope at the points...")
+    _mh.phase_advance("Computing slope from the DEM at the points..."
+                      if from_dem else "Sampling slope at the points...")
     vals = np.full(n_pts, np.nan)               # NaN = NoData/outside
     Hw, Ww = arr.shape
     if n_pts and Hw and Ww:
@@ -3491,6 +3370,9 @@ def run_extract_slope_points(in_points, in_raster, out_points,
                        "interpolation of the four surrounding cell centers "
                        "computed on the slope ANGLES and converted back to "
                        "{}.".format(uw, uw))
+    elif from_dem:
+        _say(messages, "Values are the slopes of the cells the points fall "
+                       "in, in {}.".format(uw))
     else:
         _say(messages, "Values are the stored values of the cells the points "
                        "fall in, in {}.".format(uw))
@@ -3509,16 +3391,25 @@ def run_extract_slope_points(in_points, in_raster, out_points,
                   "to degrees, averaged, converted back; NoData and "
                   "out-of-range neighbors excluded)" if interpolate
                   else "Value of the raster cell containing the point")
+        if dem_info is not None:
+            source_note = (
+                "Source DEM: {}. Slope was derived from the DEM by {} over "
+                "true ground distances ({}); elevation units {}.".format(
+                    str(in_raster), dem_info["method_text"],
+                    _hs.ground_note_for_metadata(dem_info), elev_units))
+            unit_note = "Slope at the point, in {} ('{}')".format(uw, slope_units)
+        else:
+            source_note = "Source raster: {}.{}".format(
+                str(in_raster), " Warning at run time: " + mismatch_note
+                if mismatch_note else "")
+            unit_note = ("Slope at the point, in {} (the unit of the source "
+                         "raster, '{}')".format(uw, slope_units))
         tool_metadata.set_entity_and_fields(
             arcpy.Describe(path).catalogPath,
             fields=[{"name": fld, "description":
-                     "Slope at the point, in {} (the unit of the source "
-                     "raster, '{}'); {} = NoData or outside the raster. "
-                     "Method: {}. Source raster: {}.{}".format(
-                         uw, slope_units, "NULL" if null_ok else "-9999",
-                         method, str(in_raster),
-                         " Warning at run time: " + mismatch_note
-                         if mismatch_note else "")}],
+                     "{}; {} = NoData or outside the raster. Method: {}. {}"
+                     .format(unit_note, "NULL" if null_ok else "-9999",
+                             method, source_note)}],
             messages=messages)
     except Exception:
         pass

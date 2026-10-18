@@ -2850,7 +2850,7 @@ class MDOWHillshade(object):
     """Multi-Directional Oblique-Weighted (MDOW) hillshade -- four blended
     sun directions bring out terrain features that a single light source
     washes out (Mark 1992, USGS Open-File Report 92-422). Geodesic-correct
-    on geographic DEMs like Enhanced Hillshade.
+    in any coordinate system like Enhanced Hillshade.
     """
 
     def __init__(self):
@@ -3067,7 +3067,7 @@ def _multisun_balanced_weights(n):
 class MultiSunHillshade(object):
     """Weighted blend of standard hillshades from multiple sun positions --
     the classic Swiss multiple-light-source relief-shading strategy.
-    Geodesic-correct on geographic DEMs like the other hillshade tools.
+    Geodesic-correct in any coordinate system like the other hillshade tools.
     """
 
     def __init__(self):
@@ -3401,7 +3401,7 @@ class BlurredHillshade(object):
     """Blurred (smoothed) hillshade -- the softening component of the Swiss
     method: either the DEM is blurred before shading (default; generalizes
     the terrain) or the finished hillshade image is blurred after shading.
-    Geodesic-correct on geographic DEMs like the other hillshade tools.
+    Geodesic-correct in any coordinate system like the other hillshade tools.
     """
 
     def __init__(self):
@@ -4919,6 +4919,13 @@ class TopographyAlongLines(object):
                                        "re-projected without a datum shift)"))
                 window = lst.lines_window_in_dem_crs(in_lines, dem_sr)
                 dem = lst.load_dem(dem_path, window=window)
+                _gg = dem.get("ground")
+                if _gg is not None:
+                    # how the DEM's ground distances were measured
+                    if _gg.info.get("note"):
+                        messages.addMessage(_gg.info["note"])
+                    if _gg.info.get("warning"):
+                        messages.addWarningMessage(_gg.info["warning"])
                 messages.addMessage(
                     "DEM read over the lines' extent ({:,} x {:,} cells); "
                     "sampling interval {:.3f} m (min cell size); sample points "
@@ -5546,6 +5553,13 @@ class SplitLinesIntoSegments(object):
                     reach_m = lst.longest_vertex_step_m(in_lines) * 1.02 + 2.0 * dem_sr.metersPerUnit                         if dem_sr.type == "Projected" else lst.longest_vertex_step_m(in_lines) * 1.02 + 60.0
                     window = lst.pad_window(window, reach_m, dem_sr)
                 dem = lst.load_dem(dem_path, window=window)
+                _gg = dem.get("ground")
+                if _gg is not None:
+                    # how the DEM's ground distances were measured
+                    if _gg.info.get("note"):
+                        messages.addMessage(_gg.info["note"])
+                    if _gg.info.get("warning"):
+                        messages.addWarningMessage(_gg.info["warning"])
                 messages.addMessage(
                     "DEM read over the lines' extent ({:,} x {:,} cells); "
                     "sampling interval {:.3f} m.".format(
@@ -6302,6 +6316,63 @@ def _extract_points_update(tool, P, suffix):
             pass
 
 
+_SURFACE_DEM = "Elevation (DEM)"
+
+
+def _surface_is_dem(P):
+    """True when the point tool's 'What the raster holds' choice is a DEM."""
+    return "elevation" in str(P["surface_type"].valueAsText or "").lower()
+
+
+def _extract_points_dem_update(tool, P, raster_only=None):
+    """Dialog logic shared by Extract Aspect / Slope Values to Points for the
+    DEM option: the method, window size and elevation-unit rows apply only
+    to a DEM (the window size only to the quadratic method); a raster-only
+    row (the aspect convention) applies only to a finished raster; the
+    elevation units default from the DEM's vertical coordinate system when
+    it has one (and are then locked, as in the hillshade tools)."""
+    dem = _surface_is_dem(P)
+    P["slope_method"].enabled = dem
+    P["window_size"].enabled = dem and aspect_tools.dem_method_key(
+        P["slope_method"].valueAsText) == "quadratic"
+    P["elev_units"].enabled = dem
+    if raster_only:
+        P[raster_only].enabled = not dem
+    inr, units = P["in_raster"], P["elev_units"]
+    if dem and inr.valueAsText:
+        detected, locked = EnhancedHillshade._detect_units(tool, inr.valueAsText)
+        if locked:
+            if not units.altered or units.valueAsText == getattr(
+                    tool, "_auto_units", None):
+                units.value = detected
+                tool._auto_units = detected
+            units.enabled = False
+
+
+def _extract_points_dem_params(category=None):
+    """The three DEM-option parameters shared by the two point tools."""
+    slope_method = arcpy.Parameter(
+        displayName="Method (from a DEM)", name="slope_method",
+        datatype="GPString", parameterType="Optional", direction="Input")
+    slope_method.filter.type = "ValueList"
+    slope_method.filter.list = aspect_tools.DEM_METHODS
+    slope_method.value = aspect_tools.DEM_METHODS[0]
+    window_size = arcpy.Parameter(
+        displayName="Window size in cells (quadratic method)",
+        name="window_size", datatype="GPLong", parameterType="Optional",
+        direction="Input")
+    window_size.filter.type = "ValueList"
+    window_size.filter.list = aspect_tools.WINDOW_SIZES
+    window_size.value = aspect_tools.WINDOW_SIZES[0]
+    elev_units = arcpy.Parameter(
+        displayName="Elevation units (from a DEM)", name="elev_units",
+        datatype="GPString", parameterType="Optional", direction="Input")
+    elev_units.filter.type = "ValueList"
+    elev_units.filter.list = hillshade.ELEV_UNITS
+    elev_units.value = hillshade.ELEV_UNITS[0]
+    return slope_method, window_size, elev_units
+
+
 def _extract_points_messages(P, default_field):
     """Dialog checks shared by the two tools: a point input; in place, an
     input without a join and a field name not already taken; otherwise an
@@ -6359,7 +6430,11 @@ class ExtractAspectValuesToPoints(object):
             "(aspect -1) carry no direction and are excluded from "
             "interpolation; an all-flat set of neighbors gives -1. "
             "D-infinity flow-direction rasters are supported via a "
-            "convention toggle. No Spatial Analyst required.")
+            "convention toggle. The raster can also be a DEM: the aspect is "
+            "then derived at each point by Horn's 3 x 3 method (the method "
+            "of Esri's Aspect tool) or a least-squares quadratic over a "
+            "chosen window, over true ground distances in any coordinate "
+            "system. No Spatial Analyst required.")
         self.category = "Aspect Tools"
         self.canRunInBackground = False
         self._auto_out = None
@@ -6370,9 +6445,15 @@ class ExtractAspectValuesToPoints(object):
             datatype="GPFeatureLayer", parameterType="Required", direction="Input")
         in_points.filter.list = ["Point"]
         in_raster = arcpy.Parameter(
-            displayName="Input aspect raster (single band)", name="in_raster",
-            datatype=["GPRasterLayer", "DERasterDataset"],
+            displayName="Input aspect raster or DEM (single band)",
+            name="in_raster", datatype=["GPRasterLayer", "DERasterDataset"],
             parameterType="Required", direction="Input")
+        surface_type = arcpy.Parameter(
+            displayName="What the raster holds", name="surface_type",
+            datatype="GPString", parameterType="Required", direction="Input")
+        surface_type.filter.type = "ValueList"
+        surface_type.filter.list = ["Aspect values", _SURFACE_DEM]
+        surface_type.value = "Aspect values"
         write_to = arcpy.Parameter(
             displayName="Where to write the values", name="write_to",
             datatype="GPString", parameterType="Required", direction="Input")
@@ -6405,10 +6486,12 @@ class ExtractAspectValuesToPoints(object):
             datatype="GPFeatureLayer", parameterType="Derived",
             direction="Output")
         updated_points.parameterDependencies = [in_points.name]
-        params = [in_points, in_raster, write_to, out_points, interpolate,
-                  field_name, input_convention, updated_points]
+        slope_method, window_size, elev_units = _extract_points_dem_params()
+        params = [in_points, in_raster, surface_type, write_to, out_points,
+                  interpolate, field_name, input_convention, slope_method,
+                  window_size, elev_units, updated_points]
         saved = _load_tool_defaults("ExtractAspectValuesToPoints")
-        for p in (interpolate, field_name):
+        for p in (interpolate, field_name, slope_method, window_size):
             if p.name in saved:
                 try:
                     p.value = saved[p.name]
@@ -6422,8 +6505,10 @@ class ExtractAspectValuesToPoints(object):
     def updateParameters(self, parameters):
         P = {p.name: p for p in parameters}
         _extract_points_update(self, P, "_Aspect")
+        _extract_points_dem_update(self, P, raster_only="input_convention")
         inr = P["in_raster"]
         if (inr.valueAsText and not inr.hasBeenValidated
+                and not _surface_is_dem(P)
                 and not _given_on_first_pass(parameters, P["input_convention"])):
             # Suggest the Mathematical convention when the raster looks like
             # a D-infinity flow-direction raster. Unconditional on each
@@ -6445,7 +6530,13 @@ class ExtractAspectValuesToPoints(object):
         P = {p.name: p for p in parameters}
         _extract_points_messages(P, "Aspect")
         inr = P["in_raster"]
-        if inr.valueAsText:
+        if inr.valueAsText and _surface_is_dem(P):
+            try:
+                if arcpy.Describe(inr.valueAsText).bandCount != 1:
+                    inr.setErrorMessage("The DEM must be single band.")
+            except Exception:
+                pass
+        elif inr.valueAsText:
             # D8 flow-direction rasters (codes 1-128) are not aspect: warn on
             # every cycle (Pro clears messages each validation); the lineage
             # read is cached by path because it is not free.
@@ -6484,12 +6575,19 @@ class ExtractAspectValuesToPoints(object):
                 input_convention=(P["input_convention"].valueAsText
                                   or aspect_tools.INPUT_CONVENTIONS[0]),
                 messages=messages,
-                in_place=in_place)
+                in_place=in_place,
+                from_dem=_surface_is_dem(P),
+                dem_method=(P["slope_method"].valueAsText
+                            or aspect_tools.DEM_METHODS[0]),
+                window_size=int(P["window_size"].value or 3),
+                elev_units=P["elev_units"].valueAsText or "Meters")
             if in_place:
                 P["updated_points"].value = P["in_points"].valueAsText
             _save_tool_defaults("ExtractAspectValuesToPoints", {
                 "interpolate": bool(P["interpolate"].value),
                 "field_name": P["field_name"].valueAsText,
+                "slope_method": P["slope_method"].valueAsText,
+                "window_size": int(P["window_size"].value or 3),
             })
         except arcpy.ExecuteError as e:
             # Clean, expected failure (bad input, a validation check that
@@ -7014,7 +7112,11 @@ class ExtractSlopeValuesToPoints(object):
             "(degrees, percent, rise:run ratio, or gradians) default "
             "automatically from the raster's geoprocessing history; a unit "
             "chosen against that history draws a warning and is used as "
-            "chosen.")
+            "chosen. The raster can also be a DEM: the slope is then derived "
+            "at each point by Horn's 3 x 3 method (the method of Esri's "
+            "Slope tool) or a least-squares quadratic over a chosen window, "
+            "over true ground distances in any coordinate system, in the "
+            "unit chosen.")
         self.category = "Topographic Analysis Tools"
         self.canRunInBackground = False
         self._auto_out = None
@@ -7025,9 +7127,15 @@ class ExtractSlopeValuesToPoints(object):
             datatype="GPFeatureLayer", parameterType="Required", direction="Input")
         in_points.filter.list = ["Point"]
         in_raster = arcpy.Parameter(
-            displayName="Input slope raster (single band)", name="in_raster",
-            datatype=["GPRasterLayer", "DERasterDataset"],
+            displayName="Input slope raster or DEM (single band)",
+            name="in_raster", datatype=["GPRasterLayer", "DERasterDataset"],
             parameterType="Required", direction="Input")
+        surface_type = arcpy.Parameter(
+            displayName="What the raster holds", name="surface_type",
+            datatype="GPString", parameterType="Required", direction="Input")
+        surface_type.filter.type = "ValueList"
+        surface_type.filter.list = ["Slope values", _SURFACE_DEM]
+        surface_type.value = "Slope values"
         write_to = arcpy.Parameter(
             displayName="Where to write the values", name="write_to",
             datatype="GPString", parameterType="Required", direction="Input")
@@ -7048,7 +7156,8 @@ class ExtractSlopeValuesToPoints(object):
             datatype="GPString", parameterType="Optional", direction="Input")
         field_name.value = "Slope"
         slope_units = arcpy.Parameter(
-            displayName="Slope units of the input raster", name="slope_units",
+            displayName="Slope units (of the raster, or of the values "
+                        "computed from a DEM)", name="slope_units",
             datatype="GPString", parameterType="Required", direction="Input")
         slope_units.filter.type = "ValueList"
         slope_units.filter.list = topographic_tools.SLOPE_UNITS_Z
@@ -7060,10 +7169,12 @@ class ExtractSlopeValuesToPoints(object):
             datatype="GPFeatureLayer", parameterType="Derived",
             direction="Output")
         updated_points.parameterDependencies = [in_points.name]
-        params = [in_points, in_raster, write_to, out_points, interpolate,
-                  field_name, slope_units, updated_points]
+        slope_method, window_size, elev_units = _extract_points_dem_params()
+        params = [in_points, in_raster, surface_type, write_to, out_points,
+                  interpolate, field_name, slope_units, slope_method,
+                  window_size, elev_units, updated_points]
         saved = _load_tool_defaults("ExtractSlopeValuesToPoints")
-        for p in (interpolate, field_name):
+        for p in (interpolate, field_name, slope_method, window_size):
             if p.name in saved:
                 try:
                     p.value = saved[p.name]
@@ -7077,8 +7188,10 @@ class ExtractSlopeValuesToPoints(object):
     def updateParameters(self, parameters):
         P = {p.name: p for p in parameters}
         _extract_points_update(self, P, "_Slope")
+        _extract_points_dem_update(self, P)
         inr = P["in_raster"]
         if (inr.valueAsText and not inr.hasBeenValidated
+                and not _surface_is_dem(P)
                 and not _given_on_first_pass(parameters, P["slope_units"])):
             # Default the unit from the raster's geoprocessing history
             # (Esri's Slope / Surface Parameters record DEGREE or
@@ -7108,9 +7221,10 @@ class ExtractSlopeValuesToPoints(object):
         if inr.valueAsText:
             try:
                 if arcpy.Describe(inr.valueAsText).bandCount != 1:
-                    inr.setErrorMessage("The slope raster must be single band.")
+                    inr.setErrorMessage("The raster must be single band.")
             except Exception:
                 pass
+        if inr.valueAsText and not _surface_is_dem(P):
             # A unit chosen against the raster's geoprocessing history
             # draws a warning on every cycle (Pro clears messages each
             # validation) and the tool still runs with the choice; the
@@ -7149,12 +7263,19 @@ class ExtractSlopeValuesToPoints(object):
                 slope_units=(P["slope_units"].valueAsText
                              or topographic_tools.SLOPE_UNITS_Z[0]),
                 messages=messages,
-                in_place=in_place)
+                in_place=in_place,
+                from_dem=_surface_is_dem(P),
+                dem_method=(P["slope_method"].valueAsText
+                            or aspect_tools.DEM_METHODS[0]),
+                window_size=int(P["window_size"].value or 3),
+                elev_units=P["elev_units"].valueAsText or "Meters")
             if in_place:
                 P["updated_points"].value = P["in_points"].valueAsText
             _save_tool_defaults("ExtractSlopeValuesToPoints", {
                 "interpolate": bool(P["interpolate"].value),
                 "field_name": P["field_name"].valueAsText,
+                "slope_method": P["slope_method"].valueAsText,
+                "window_size": int(P["window_size"].value or 3),
             })
         except arcpy.ExecuteError as e:
             # Clean, expected failure (bad input, a validation check that
@@ -7398,12 +7519,6 @@ class TopographicWetnessIndex(object):
         out_raster = arcpy.Parameter(
             displayName="Output TWI raster", name="out_raster",
             datatype="DERasterDataset", parameterType="Required", direction="Output")
-        slope_method = arcpy.Parameter(
-            displayName="Slope method (projected DEMs)", name="slope_method",
-            datatype="GPString", parameterType="Optional", direction="Input")
-        slope_method.filter.type = "ValueList"
-        slope_method.filter.list = topographic_tools.SLOPE_METHODS
-        slope_method.value = topographic_tools.SLOPE_METHODS[0]   # Planar
         elev_units = arcpy.Parameter(
             displayName="Elevation units", name="elev_units",
             datatype="GPString", parameterType="Optional", direction="Input")
@@ -7443,11 +7558,11 @@ class TopographicWetnessIndex(object):
             name="out_flow_accumulation", datatype="DERasterDataset",
             parameterType="Optional", direction="Output",
             category="Save computed intermediate rasters (optional)")
-        params = [in_raster, out_raster, slope_method, elev_units,
+        params = [in_raster, out_raster, elev_units,
                   slope_epsilon, flow_method, in_filled_dem,
                   in_flow_accumulation, out_filled_dem, out_flow_accumulation]
         saved = _load_tool_defaults("TopographicWetnessIndex")
-        for p in (slope_method, elev_units, slope_epsilon, flow_method):
+        for p in (elev_units, slope_epsilon, flow_method):
             if p.name in saved:
                 try:
                     p.value = saved[p.name]
@@ -7463,7 +7578,6 @@ class TopographicWetnessIndex(object):
     def updateParameters(self, parameters):
         P = {p.name: p for p in parameters}
         inr, outr, units = P["in_raster"], P["out_raster"], P["elev_units"]
-        smeth = P["slope_method"]
         if inr.valueAsText:
             detected, locked = self._detect_units(inr.valueAsText)
             if locked:
@@ -7473,14 +7587,6 @@ class TopographicWetnessIndex(object):
                 units.enabled = False
             else:
                 units.enabled = True
-            # slope method only applies to projected DEMs (geographic is always
-            # geodesic -- spheroidal per row)
-            try:
-                geo = arcpy.Describe(inr.valueAsText).spatialReference.type \
-                    == "Geographic"
-            except Exception:
-                geo = False
-            smeth.enabled = not geo
             if not outr.altered or outr.valueAsText == self._auto_out:
                 try:
                     base = _legalize(os.path.splitext(
@@ -7565,8 +7671,6 @@ class TopographicWetnessIndex(object):
                 in_raster=in_raster_path,
                 out_raster=P["out_raster"].valueAsText,
                 elev_units=P["elev_units"].valueAsText or "Meters",
-                slope_method=(P["slope_method"].valueAsText
-                              or topographic_tools.SLOPE_METHODS[0]),
                 slope_epsilon=P["slope_epsilon"].value,
                 in_filled_dem=_resolve_raster_path(P["in_filled_dem"]),
                 in_flow_accumulation=_resolve_raster_path(
@@ -7589,7 +7693,6 @@ class TopographicWetnessIndex(object):
                     messages.addWarningMessage(
                         "Could not set output symbology: {}".format(e))
             _save_tool_defaults("TopographicWetnessIndex", {
-                "slope_method": P["slope_method"].valueAsText,
                 "elev_units": P["elev_units"].valueAsText,
                 "slope_epsilon": P["slope_epsilon"].value,
                 "flow_method": P["flow_method"].valueAsText,
@@ -8065,7 +8168,6 @@ def _build_tpi_source(P, onfly, dem, prefix, raster_name, declare_name, save_nam
 def _build_slope_source(P, onfly, dem, raster_name, declare_name, save_name):
     if onfly:
         spec = {"kind": "slope", "dem": dem,
-                "method": P["slope_method"].valueAsText or "Planar",
                 "elev_units": P["elev_units"].valueAsText or "Meters",
                 "slope_units": P["slope_units"].valueAsText or "Degrees"}
         if save_name and P[save_name].valueAsText:
@@ -8086,7 +8188,7 @@ class SlopePositionClassification(object):
     _ONFLY_CAT = "Calculate on-the-fly (from DEM)"
     _EXIST_CAT = "Use existing rasters"
     _ONFLY = ("in_raster", "nb_shape", "nb_outer", "nb_inner", "nb_units",
-              "tpi_type", "elev_units", "slope_method", "slope_units",
+              "tpi_type", "elev_units", "slope_units",
               "save_tpi", "save_slope")
     _EXIST = ("in_tpi", "in_slope", "declare_tpi_type", "declare_slope_units")
 
@@ -8128,13 +8230,6 @@ class SlopePositionClassification(object):
             parameterType="Optional", direction="Input", category=oc)
         elev_units.filter.type = "ValueList"
         elev_units.filter.list = hillshade.ELEV_UNITS
-        slope_method = arcpy.Parameter(
-            displayName="Slope method (projected DEMs)", name="slope_method",
-            datatype="GPString", parameterType="Optional", direction="Input",
-            category=oc)
-        slope_method.filter.type = "ValueList"
-        slope_method.filter.list = topographic_tools.SLOPE_METHODS
-        slope_method.value = topographic_tools.SLOPE_METHODS[0]
         slope_units = _slope_units_param("slope_units", "Slope output units", oc)
         slope_units.value = classification_store.SLOPE_UNITS[0]
         save_tpi = _save_output_param(
@@ -8157,7 +8252,7 @@ class SlopePositionClassification(object):
             "declare_slope_units", "Declare slope units (optional, for warnings)",
             ec, optional=True)
         return ([source, in_raster] + nb +
-                [tpi_type, elev_units, slope_method, slope_units, save_tpi,
+                [tpi_type, elev_units, slope_units, save_tpi,
                  save_slope, in_tpi, in_slope, declare_tpi, declare_slope,
                  system, out_raster])
 
@@ -8186,12 +8281,6 @@ class SlopePositionClassification(object):
                 units.enabled = False
             else:
                 units.enabled = True
-            try:
-                geo = arcpy.Describe(P["in_raster"].valueAsText
-                                     ).spatialReference.type == "Geographic"
-            except Exception:
-                geo = False
-            P["slope_method"].enabled = not geo
         outr = P["out_raster"]
         if primary and (not outr.altered or outr.valueAsText == self._auto_out):
             try:
@@ -8270,7 +8359,6 @@ class SlopePositionClassification(object):
             lyrx = tpi_tools.run_classification(
                 "slope_position", ref, P["out_raster"].valueAsText, system,
                 sources, elev_units=P["elev_units"].valueAsText or "Meters",
-                slope_method=P["slope_method"].valueAsText or "Planar",
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
             if lyrx:
@@ -8313,7 +8401,7 @@ class LandformClassification(object):
     _EXIST_CAT = "Use existing rasters"
     _ONFLY = ("in_raster", "sm_shape", "sm_outer", "sm_inner", "sm_units",
               "tpi_type_small", "lg_shape", "lg_outer", "lg_inner", "lg_units",
-              "tpi_type_large", "elev_units", "slope_method", "slope_units",
+              "tpi_type_large", "elev_units", "slope_units",
               "save_tpi_small", "save_tpi_large", "save_slope")
     _EXIST = ("in_tpi_small", "in_tpi_large", "in_slope",
               "declare_tpi_type_small", "declare_tpi_type_large",
@@ -8363,13 +8451,6 @@ class LandformClassification(object):
             parameterType="Optional", direction="Input", category=oc)
         elev_units.filter.type = "ValueList"
         elev_units.filter.list = hillshade.ELEV_UNITS
-        slope_method = arcpy.Parameter(
-            displayName="Slope method (projected DEMs)", name="slope_method",
-            datatype="GPString", parameterType="Optional", direction="Input",
-            category=oc)
-        slope_method.filter.type = "ValueList"
-        slope_method.filter.list = topographic_tools.SLOPE_METHODS
-        slope_method.value = topographic_tools.SLOPE_METHODS[0]
         slope_units = _slope_units_param("slope_units", "Slope output units", oc)
         slope_units.value = classification_store.SLOPE_UNITS[0]
         save_ts = _save_output_param(
@@ -8405,7 +8486,7 @@ class LandformClassification(object):
         # each neighborhood followed by its own TPI-type dropdown (on-the-fly),
         # and each raster followed by its own declare dropdown (existing)
         return ([source, in_raster] + sm + [tpi_type_s] + lg + [tpi_type_l] +
-                [elev_units, slope_method, slope_units, save_ts,
+                [elev_units, slope_units, save_ts,
                  save_tl, save_slope, in_tpi_s, declare_tpi_s, in_tpi_l,
                  declare_tpi_l, in_slope, declare_slope, system, out_raster])
 
@@ -8441,12 +8522,6 @@ class LandformClassification(object):
                 units.enabled = False
             else:
                 units.enabled = True
-            try:
-                geo = arcpy.Describe(P["in_raster"].valueAsText
-                                     ).spatialReference.type == "Geographic"
-            except Exception:
-                geo = False
-            P["slope_method"].enabled = not geo
         outr = P["out_raster"]
         if primary and (not outr.altered or outr.valueAsText == self._auto_out):
             try:
@@ -8567,7 +8642,6 @@ class LandformClassification(object):
             lyrx = tpi_tools.run_classification(
                 "landform", ref, P["out_raster"].valueAsText, system, sources,
                 elev_units=P["elev_units"].valueAsText or "Meters",
-                slope_method=P["slope_method"].valueAsText or "Planar",
                 messages=messages)
             _writeback_resolved_raster(P, "out_raster")
             if lyrx:

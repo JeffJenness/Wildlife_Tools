@@ -1170,38 +1170,29 @@ def run_critical_feature(in_hsm, in_critical, bands, out_raster,
         # to meters first.
         cellw, cellh = abs(gt[1]), abs(gt[5])
         sr_type = getattr(sr, "type", "") if sr is not None else ""
-        if sr_type == "Geographic":
-            a_ax = float(getattr(sr, "semiMajorAxis", 0) or 6378137.0)
-            b_ax = float(getattr(sr, "semiMinorAxis", 0)
-                         or 6356752.31424518)
-            d = _hs._geographic_row_distances(gt, h, a_ax, b_ax)
+        if sr_type in ("Geographic", "Projected"):
+            # true ground cell size on the spheroid in either case (a
+            # projected raster is unprojected -- hillshade.GroundGeometry)
+            ground = _hs.ground_geometry(gt, w, h, sr, proj, messages,
+                                         what="HSM")
             mid = h // 2
-            cellw_m = float(d["h"][mid])
-            cellh_m = float((d["vA"][mid] + d["vB"][mid]) / 2.0)
+            cellw_m, cellh_m = ground.cell_size_at(mid)
             _say(messages,
-                 "Geographic HSM: distances are measured in meters using "
-                 "the spheroidal cell size at the raster's middle row "
-                 "({:.2f} x {:.2f} m).".format(cellw_m, cellh_m))
-            w_all = np.asarray(d["h"], dtype=np.float64)
+                 "Distances are measured in meters using the ground cell "
+                 "size at the raster's middle row ({:.2f} x {:.2f} m).".format(
+                     cellw_m, cellh_m))
+            w_all = np.asarray(ground.row["h"], dtype=np.float64)
             spread = (float(w_all.max() - w_all.min()) / cellw_m
                       if cellw_m > 0 else 0.0)
             if spread > 0.05:
                 _warn(messages,
-                      "East-west cell size varies {:.0f}% between the "
+                      "East-west ground cell size varies {:.0f}% between the "
                       "raster's north and south edges, but distances use "
                       "the middle row's size everywhere -- band edges near "
                       "the top and bottom are off by up to about half "
-                      "that. For a raster spanning this much latitude, "
-                      "consider projected data.".format(spread * 100.0))
-        elif sr_type == "Projected":
-            mpu = float(getattr(sr, "metersPerUnit", 1.0) or 1.0)
-            cellw_m, cellh_m = cellw * mpu, cellh * mpu
-            if abs(mpu - 1.0) > 1e-9:
-                _say(messages,
-                     "Distance bands are in meters; the raster's linear "
-                     "unit is {} ({:g} m), converted "
-                     "automatically.".format(
-                         getattr(sr, "linearUnitName", "unknown"), mpu))
+                      "that. For a raster spanning this much, consider a "
+                      "projection with little scale distortion over the "
+                      "area.".format(spread * 100.0))
         else:
             cellw_m, cellh_m = cellw, cellh
             _warn(messages,
@@ -1616,7 +1607,7 @@ def run_patch_map(in_hsm, out_fc, radius, radius_units, threshold,
         _mh.phase_advance()
 
         rx_rows, ry, note = _tt._radius_row_cells(
-            gt, h, rast_sr, radius, radius_units)
+            gt, h, rast_sr, radius, radius_units, w, proj)
         _say(messages,
              "Averaging the HSM over a circular window of {} (mean of the "
              "data cells, the original tool's Focal Statistics MEAN with "
@@ -1645,11 +1636,12 @@ def run_patch_map(in_hsm, out_fc, radius, radius_units, threshold,
         del suitable
         labels = labels.astype(np.int32, copy=False)
 
-        geom, _geo = _tt._surface_row_geometry(gt, h, rast_sr)
-        row_area = np.asarray(geom["pix_m2"], dtype=np.float64)
+        ground = _hs.ground_geometry(gt, w, h, rast_sr, proj, messages,
+                                     what="HSM")
+        cell_area = np.asarray(ground.half_rows(0, h)["pix_m2"],
+                               dtype=np.float64)        # true area per cell
         areas_m2 = np.bincount(
-            labels.ravel(),
-            weights=np.broadcast_to(row_area[:, None], (h, w)).ravel(),
+            labels.ravel(), weights=cell_area.ravel(),
             minlength=n_patches + 1)
         area_ha = areas_m2 / 10000.0
         cls = np.ones(n_patches + 1, dtype=np.int32)

@@ -243,10 +243,12 @@ def slope_units_warning(system, slope_units):
 # ---------------------------------------------------------------------------
 #  Neighborhood radii and (annular) focal statistics
 # ---------------------------------------------------------------------------
-def _cell_radii(gt, height, sr, outer, inner, units):
+def _cell_radii(gt, height, sr, outer, inner, units, width=None, proj=None):
     """Return (rx_out_rows, ry_out, rx_in_rows, ry_in): the outer/inner radii
-    in CELLS, per row. Constant on a projected raster or in Cells units; varying
-    per row (geodesic) on a geographic raster given a linear-unit radius."""
+    in CELLS, per row. Constant in Cells units; otherwise sized per row from
+    the true ground cell size on the spheroid (GroundGeometry -- a projected
+    raster is unprojected, so Web Mercator and the like get the right number
+    of cells)."""
     outer = float(outer)
     inner = max(float(inner), 0.0)
     if units == "Cells":
@@ -254,16 +256,9 @@ def _cell_radii(gt, height, sr, outer, inner, units):
                 np.full(height, inner), inner)
     rm = _tt._RADIUS_METERS[units]
     out_m, in_m = outer * rm, inner * rm
-    if sr.type == "Geographic":
-        a = float(sr.semiMajorAxis or 6378137.0)
-        b = float(sr.semiMinorAxis or 6356752.31424518)
-        geom = _hs._geographic_row_distances(gt, height, a, b)
-        cw = np.maximum(geom["h"], 1e-9)
-        ch = max(float(np.mean(geom["vA"])), 1e-9)
-    else:
-        mpu = float(sr.metersPerUnit or 1.0)
-        cw = np.full(height, gt[1] * mpu)
-        ch = abs(gt[5]) * mpu
+    geom = _hs.ground_geometry(gt, width or 1, height, sr, proj).row
+    cw = np.maximum(geom["h"], 1e-9)
+    ch = max(float(np.mean(geom["vA"])), 1e-9)
     return (out_m / cw, out_m / ch, in_m / cw, in_m / ch)
 
 
@@ -530,20 +525,14 @@ def _standardize_whole(grid):
     return out
 
 
-def slope_grid(z_raw, valid, gt, sr, proj, elev_units, method, units="Degrees"):
-    """Slope via the Horn gradient, in DEGREES (default) or PERCENT rise. Planar
-    on projected DEMs unless 'Geodesic' is chosen; always geodesic (spheroidal,
-    per row) on geographic DEMs. Elevation scaled to the horizontal ground unit
-    first."""
-    geographic = (sr.type == "Geographic")
+def slope_grid(z_raw, valid, gt, sr, proj, elev_units, units="Degrees"):
+    """Slope via the Horn gradient, in DEGREES (default) or PERCENT rise,
+    over true ground distances on the spheroid in any coordinate system
+    (hillshade.GroundGeometry). Elevation scaled to meters first."""
     elev_mpu = _hs._ELEV_METERS.get(elev_units, 1.0)
-    base_geom, _g, zs = _tt._row_gradient_geometry(gt, z_raw.shape[0], sr, elev_mpu)
-    if geographic or method != "Geodesic":
-        geom = base_geom
-    else:
-        geom = _tt._twi_geodesic_projected_geom(gt, z_raw.shape[1],
-                                                z_raw.shape[0], proj)
-    tanb = _tt._twi_tanbeta(np.where(valid, z_raw * zs, np.nan), valid, geom)
+    ground, _g, zs = _tt._row_gradient_geometry(gt, z_raw.shape[1], z_raw.shape[0],
+                                                sr, proj, elev_mpu)
+    tanb = _tt._twi_tanbeta(np.where(valid, z_raw * zs, np.nan), valid, ground)
     if str(units).lower().startswith("percent"):
         return tanb * 100.0
     return np.degrees(np.arctan(tanb))
@@ -774,14 +763,13 @@ def _save_intermediate(gdal, grid, valid, path, gt, proj, width, height,
 
 
 def run_classification(family, in_raster, out_raster, system, sources,
-                       elev_units="Meters", slope_method="Planar",
-                       messages=None):
+                       elev_units="Meters", messages=None):
     """Core apply routine (USE-AS-IS model). ``system`` is a validated system.
     ``sources`` maps each declared role to a spec:
       tpi on-the-fly:  {'kind':'tpi','dem':path,'shape','outer','inner',
                         'units'(nbhd radius units),'tpi_type','save':path|None}
       tpi supplied:    {'kind':'tpi','raster':path,'declared_type':str|None}
-      slope on-the-fly:{'kind':'slope','dem':path,'method','elev_units',
+      slope on-the-fly:{'kind':'slope','dem':path,'elev_units',
                         'slope_units','save':path|None}
       slope supplied:  {'kind':'slope','raster':path,'declared_units':str|None}
       external:        {'kind':'external','raster':path}
@@ -802,6 +790,12 @@ def run_classification(family, in_raster, out_raster, system, sources,
     nod0 = band.GetNoDataValue()
     vmask0 = _mh.band_validity_mask(band)   # capture while src is open
     sr = arcpy.Describe(in_raster).spatialReference
+    if any(s.get("dem") and not s.get("raster")
+           and (s.get("kind") == "slope" or s.get("units", "Cells") != "Cells")
+           for s in sources.values()):
+        # ground distances are used (a slope from the DEM, or a neighborhood
+        # in linear units): post the ground-geometry note once per run
+        _hs.ground_geometry(gt, width, height, sr, proj, messages)
     band = None
     src = None
     if in_copy:
@@ -906,7 +900,7 @@ def run_classification(family, in_raster, out_raster, system, sources,
                 rxo, ryo, rxi, ryi = _cell_radii(
                     gt, height, sr, spec["outer"],
                     spec.get("inner", 0.0) if spec.get("shape") == "Annulus" else 0.0,
-                    spec.get("units", "Cells"))
+                    spec.get("units", "Cells"), width, proj)
                 grid = tpi_representation(np.where(v, z, 0.0), v, rxo, ryo, rxi,
                                           ryi, tpi_type, messages)
                 resolved[role] = grid
@@ -942,8 +936,7 @@ def run_classification(family, in_raster, out_raster, system, sources,
                 z, v = _read(spec["dem"])
                 valid_all &= v
                 grid = slope_grid(z, v, gt, sr, proj,
-                                  spec.get("elev_units", elev_units),
-                                  spec.get("method", slope_method), su)
+                                  spec.get("elev_units", elev_units), su)
                 resolved[role] = grid
                 w = slope_units_warning(system, su)
                 if spec.get("save"):
@@ -1104,6 +1097,10 @@ def run_tpi(in_raster, out_raw=None, out_dev=None, out_pctl=None,
     proj = src.GetProjection()
     in_nodata = band.GetNoDataValue()
     sr = arcpy.Describe(in_raster).spatialReference
+    if units != "Cells":
+        # a neighborhood in linear units is sized from true ground
+        # distances: post the ground-geometry note once per run
+        _hs.ground_geometry(gt, width, height, sr, proj, messages)
     z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
     valid = np.isfinite(z)
     if in_nodata is not None:
@@ -1120,7 +1117,8 @@ def run_tpi(in_raster, out_raw=None, out_dev=None, out_pctl=None,
 
     _mh.phase_advance("Computing TPI...")
     rxo, ryo, rxi, ryi = _cell_radii(
-        gt, height, sr, outer, inner if shape == "Annulus" else 0.0, units)
+        gt, height, sr, outer, inner if shape == "Annulus" else 0.0, units,
+        width, proj)
     grids = {}
     if need_focal:
         fs = focal_stats(np.where(valid, z, 0.0), valid, rxo, ryo, rxi, ryi,

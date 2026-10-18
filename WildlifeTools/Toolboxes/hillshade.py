@@ -384,28 +384,36 @@ def _dist3(p, q):
     return np.sqrt((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2)
 
 
-def _geographic_row_distances(gt, height, a, b):
-    """Per-row meter distances for a geographic raster: dict of arrays
-    (length ``height``) with keys hA, h, hB (horizontal spans of the row
-    above / at / below each row) and vA, vB (vertical spans up / down).
+def _tri_area_3d(p, q, r):
+    """Areas of 3-D triangles given three (x, y, z) triples of arrays."""
+    ux, uy, uz = q[0] - p[0], q[1] - p[1], q[2] - p[2]
+    vx, vy, vz = r[0] - p[0], r[1] - p[1], r[2] - p[2]
+    cx = uy * vz - uz * vy
+    cy = uz * vx - ux * vz
+    cz = ux * vy - uy * vx
+    return 0.5 * np.sqrt(cx * cx + cy * cy + cz * cz)
 
-    Mirrors the legacy table exactly: neighbor points one full cell away from
-    the column-0 cell center, converted to spheroidal ECEF, with the focal
-    point taken as the average of the four corner ECEFs.
-    """
+
+def _distances_at_cells(gt, cols, rows, to_ecef):
+    """Ground spans (meters) at the cells whose 0-based column and row
+    indices are the equal-length arrays ``cols`` and ``rows`` (fractional
+    indices allowed): a dict of arrays hA, h, hB (east-west spans of the row
+    above / at / below the cell) and vA, vB (north-south spans up / down),
+    from neighbor points one full cell away from the cell center converted
+    to spheroidal ECEF by ``to_ecef(x, y)``. The legacy table's
+    construction: the focal point is the average of the four corner ECEFs."""
     cellw = gt[1]
     cellh = abs(gt[5])
-    x0 = gt[0] + 0.5 * gt[1]
-    rows = np.arange(height, dtype=np.float64)
-    y0 = gt[3] + (rows + 0.5) * gt[5]
+    x0 = gt[0] + (np.asarray(cols, dtype=np.float64) + 0.5) * gt[1]
+    y0 = gt[3] + (np.asarray(rows, dtype=np.float64) + 0.5) * gt[5]
 
-    above = _ecef(x0, y0 + cellh, a, b)
-    below = _ecef(x0, y0 - cellh, a, b)
-    right = _ecef(x0 + cellw, y0, a, b)
-    nw = _ecef(x0 - cellw, y0 + cellh, a, b)
-    ne = _ecef(x0 + cellw, y0 + cellh, a, b)
-    sw = _ecef(x0 - cellw, y0 - cellh, a, b)
-    se = _ecef(x0 + cellw, y0 - cellh, a, b)
+    above = to_ecef(x0, y0 + cellh)
+    below = to_ecef(x0, y0 - cellh)
+    right = to_ecef(x0 + cellw, y0)
+    nw = to_ecef(x0 - cellw, y0 + cellh)
+    ne = to_ecef(x0 + cellw, y0 + cellh)
+    sw = to_ecef(x0 - cellw, y0 - cellh)
+    se = to_ecef(x0 + cellw, y0 - cellh)
     focal = tuple((nw[i] + ne[i] + sw[i] + se[i]) / 4.0 for i in range(3))
 
     return {
@@ -415,6 +423,415 @@ def _geographic_row_distances(gt, height, a, b):
         "vB": _dist3(focal, below),
         "hB": _dist3(below, se),
     }
+
+
+def _half_distances_at_cells(gt, cols, rows, to_ecef):
+    """The 8-triangle surface-area table at the given cells: SQUARED
+    half-cell distances vA2/hA2/dA2/h2/dB2/hB2/vB2 plus ``pix_m2`` (the true
+    planimetric cell area, m^2, as the sum of the eight 3-D corner
+    triangles), from points offset half a cell from each cell center."""
+    halfx = gt[1] / 2.0
+    halfy = abs(gt[5]) / 2.0
+    x0 = gt[0] + (np.asarray(cols, dtype=np.float64) + 0.5) * gt[1]
+    y0 = gt[3] + (np.asarray(rows, dtype=np.float64) + 0.5) * gt[5]
+
+    above = to_ecef(x0, y0 + halfy)
+    below = to_ecef(x0, y0 - halfy)
+    left = to_ecef(x0 - halfx, y0)
+    right = to_ecef(x0 + halfx, y0)
+    nw = to_ecef(x0 - halfx, y0 + halfy)
+    ne = to_ecef(x0 + halfx, y0 + halfy)
+    sw = to_ecef(x0 - halfx, y0 - halfy)
+    se = to_ecef(x0 + halfx, y0 - halfy)
+    focal = tuple((nw[i] + ne[i] + sw[i] + se[i]) / 4.0 for i in range(3))
+
+    def d2(p, q):
+        return ((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2)
+
+    pix = (_tri_area_3d(focal, above, ne) + _tri_area_3d(focal, ne, right) +
+           _tri_area_3d(focal, right, se) + _tri_area_3d(focal, se, below) +
+           _tri_area_3d(focal, below, sw) + _tri_area_3d(focal, sw, left) +
+           _tri_area_3d(focal, left, nw) + _tri_area_3d(focal, nw, above))
+    return {"vA2": d2(focal, above), "hA2": d2(above, ne),
+            "dA2": d2(focal, ne), "h2": d2(focal, right),
+            "dB2": d2(focal, se), "hB2": d2(below, se),
+            "vB2": d2(focal, below), "pix_m2": pix}
+
+
+def _row_distances_at(gt, height, to_ecef, col):
+    """Per-row spans (arrays of length ``height``) at column ``col`` -- see
+    ``_distances_at_cells``."""
+    return _distances_at_cells(gt, np.full(height, float(col)),
+                               np.arange(height, dtype=np.float64), to_ecef)
+
+
+def _geographic_row_distances(gt, height, a, b):
+    """Per-row meter distances for a geographic raster (see
+    ``_distances_at_cells``), from the column-0 cell centers exactly as the
+    legacy table did -- on a spheroid of revolution every column gives the
+    same table, so no representative column has to be chosen."""
+    return _row_distances_at(gt, height, lambda x, y: _ecef(x, y, a, b), 0.0)
+
+
+# ----------------------------------------------------------------------------
+#  Ground geometry for ANY raster -- geographic or projected
+# ----------------------------------------------------------------------------
+# Every tool that needs the ground distance between neighboring cells (slope
+# and aspect gradients, hillshade normals, surface area, VRM, TRI, TWI, LSRI,
+# the line tools, neighborhood radii in ground units) goes through
+# ``GroundGeometry``. A geographic raster's cell centers are converted to
+# spheroidal ECEF straight from their lon/lat -- per row, exactly as the
+# legacy table did, since on a spheroid of revolution every column is the
+# same. A PROJECTED raster's cell centers are first UNPROJECTED to lon/lat
+# with GDAL's osr and then converted the same way, so the projection's scale
+# distortion drops out: a Web Mercator DEM gets the same true-ground
+# distances as the lat/long DEM it was made from. (Planar cell sizes, cell
+# size x meters-per-unit, are right only where the projection's scale factor
+# is 1; on Web Mercator they understate every slope gradient by cos(lat).)
+#
+# Unprojecting every cell would be slow on a large raster, and one
+# representative column would be wrong for projections whose scale varies
+# along the rows (azimuthal and oblique ones). So a projected raster is
+# sampled on a LATTICE of cell centers -- one node every ``step`` cells in
+# both directions, at most GROUND_LATTICE_MAX_NODES per axis, always
+# including the last row and column -- the spans are computed exactly at the
+# nodes, and every cell's spans are interpolated bilinearly between them.
+# Scale factors vary smoothly, so the interpolation error is far below a
+# hundredth of a percent for any projection, including polar stereographic,
+# gnomonic, orthographic and oblique Mercator. The per-row ``row`` table
+# (center column) remains for neighborhood radii, where it is harmless. The
+# help site's "Projection distortion and terrain analysis" page explains all
+# of this for users.
+
+GROUND_LATTICE_MAX_NODES = 257       # lattice nodes per axis, at most
+GROUND_LATTICE_MIN_STEP = 16         # cells between nodes, at least
+GEOM_STRIP = 512                     # rows per strip in whole-grid gradient loops
+_GROUND_KEYS = ("hA", "h", "hB", "vA", "vB")
+_HALF_KEYS = ("vA2", "hA2", "dA2", "h2", "dB2", "hB2", "vB2", "pix_m2")
+
+_GROUND_CACHE = {}
+
+
+class _ProjectedGround(object):
+    """Callable ``(x, y) -> (X, Y, Z)``: coordinates in a projected raster's
+    own units to spheroidal ECEF meters -- unprojected with GDAL osr, then
+    ``_ecef`` exactly as the geographic path. Built once per coordinate
+    system (see ``_projected_ground``)."""
+
+    def __init__(self, proj_wkt):
+        from osgeo import osr
+        ps = osr.SpatialReference()
+        if ps.ImportFromWkt(proj_wkt) != 0 or not ps.IsProjected():
+            raise ValueError("not a projected coordinate system")
+        gs = ps.CloneGeogCS()
+        for s in (ps, gs):
+            try:
+                s.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+            except Exception:
+                pass
+        self.a = float(gs.GetSemiMajor() or 0.0) or 6378137.0
+        self.b = float(gs.GetSemiMinor() or 0.0) or 6356752.31424518
+        self.ct = osr.CoordinateTransformation(ps, gs)
+        self.name = ps.GetAttrValue("PROJCS") or "projected"
+        self.projection = (ps.GetAttrValue("PROJECTION") or "unknown").replace("_", " ")
+
+    def __call__(self, x, y):
+        xs, ys = np.broadcast_arrays(np.asarray(x, dtype=np.float64),
+                                     np.asarray(y, dtype=np.float64))
+        shape = xs.shape
+        pts = self.ct.TransformPoints(list(zip(xs.ravel().tolist(),
+                                               ys.ravel().tolist())))
+        n = len(pts)
+        lon = np.fromiter((p[0] for p in pts), np.float64, n).reshape(shape)
+        lat = np.fromiter((p[1] for p in pts), np.float64, n).reshape(shape)
+        if not (np.all(np.isfinite(lon)) and np.all(np.isfinite(lat))):
+            raise ValueError("some cell centers could not be unprojected")
+        return _ecef(lon, lat, self.a, self.b)
+
+
+def _projected_ground(proj_wkt):
+    """The cached ``_ProjectedGround`` for a projection WKT (raises when the
+    coordinate system cannot be unprojected)."""
+    key = str(proj_wkt or "")
+    pg = _GROUND_CACHE.get(key)
+    if pg is None:
+        pg = _ProjectedGround(key)
+        if len(_GROUND_CACHE) > 16:
+            _GROUND_CACHE.clear()
+        _GROUND_CACHE[key] = pg
+    return pg
+
+
+def _interp_index(nodes, q):
+    """(index, weight) for linear interpolation of ``q`` between the sorted
+    ``nodes``: value = table[index] * (1 - weight) + table[index + 1] * weight
+    (a single node gives index 0 and weight 0 everywhere)."""
+    n = len(nodes)
+    q = np.asarray(q, dtype=np.float64)
+    if n == 1:
+        return np.zeros(q.shape, dtype=np.int64), np.zeros(q.shape)
+    i = np.clip(np.searchsorted(nodes, q, side="right") - 1, 0, n - 2)
+    w = (q - nodes[i]) / (nodes[i + 1] - nodes[i])
+    return i, np.clip(w, 0.0, 1.0)
+
+
+class GroundGeometry(object):
+    """True-ground cell geometry of a north-up raster in ANY coordinate
+    system (see the section comment above).
+
+    ``row``            per-row dict hA/h/hB/vA/vB (meters, arrays of length
+                       ``height``): column 0 of a geographic raster, the
+                       center column of a projected one -- for neighborhood
+                       radii and other per-row needs.
+    ``rows(r0, r1)``   the same five spans for EVERY cell of rows r0..r1-1
+                       as 2-D arrays of shape (r1 - r0, width).
+    ``half_rows(r0, r1)``  the 8-triangle surface-area table for those cells
+                       (squared half-cell distances vA2/hA2/dA2/h2/dB2/hB2/vB2
+                       and ``pix_m2``, the true planimetric cell area), 2-D.
+    ``half_row``       the per-row version of that table (as ``row``).
+    ``mode``           "geographic", "geodesic" (a projected raster,
+                       unprojected) or "planar" (the fallback when a
+                       projected coordinate system cannot be unprojected).
+    ``info``           scale statistics and the ``note`` / ``warning`` texts
+                       (``ground_geometry`` posts them as run messages).
+    """
+
+    def __init__(self, gt, width, height, sr, proj_wkt=None, what="DEM"):
+        self.gt = tuple(float(v) for v in gt)
+        self.width = int(width)
+        self.height = int(height)
+        self.what = what
+        self.geographic = (sr.type == "Geographic")
+        self.mode = None
+        self.info = {"mode": None, "scale_x": 1.0, "scale_y": 1.0,
+                     "scale_min": 1.0, "scale_max": 1.0,
+                     "lattice": (0, 0), "projection": "", "name": "",
+                     "note": "", "warning": ""}
+        self._to_ecef = None
+        self._half_row = None
+        self._lat_full = None
+        self._lat_half = None
+        W, H = self.width, self.height
+        gt = self.gt
+        if self.geographic:
+            a = float(sr.semiMajorAxis or 6378137.0)
+            b = float(sr.semiMinorAxis or 6356752.31424518)
+            self._to_ecef = lambda x, y: _ecef(x, y, a, b)
+            self.row = _row_distances_at(gt, H, self._to_ecef, 0.0)
+            self.mode = "geographic"
+            self.info["name"] = str(getattr(sr, "name", "") or "")
+            self.info["note"] = (
+                "Geographic {}: ground distances computed per row on the "
+                "spheroid (a = {:.1f} m, b = {:.1f} m).".format(what, a, b))
+        else:
+            mpu = float(sr.metersPerUnit or 1.0)
+            self._cw_nom = abs(gt[1]) * mpu
+            self._ch_nom = abs(gt[5]) * mpu
+            pg = None
+            err = ""
+            for candidate in (proj_wkt, None):
+                if candidate is None:
+                    try:
+                        candidate = sr.exportToString()
+                    except Exception:
+                        candidate = ""
+                if not candidate:
+                    continue
+                try:
+                    pg = _projected_ground(candidate)
+                    row = _row_distances_at(gt, H, pg, (W - 1) / 2.0)
+                    if not all(np.all(np.isfinite(v)) and np.all(v > 0)
+                               for v in row.values()):
+                        raise ValueError("some cell centers could not be unprojected")
+                    self._build_lattice(pg)
+                    break
+                except Exception as e:
+                    pg = None
+                    err = str(e) or e.__class__.__name__
+            if pg is not None:
+                self._to_ecef = pg
+                self.row = row
+                self.mode = "geodesic"
+                self._describe_scale(pg)
+            else:
+                const = np.full(H, 1.0)
+                self.row = {"hA": const * self._cw_nom, "h": const * self._cw_nom,
+                            "hB": const * self._cw_nom, "vA": const * self._ch_nom,
+                            "vB": const * self._ch_nom}
+                self.mode = "planar"
+                self.info["name"] = str(getattr(sr, "name", "") or "")
+                self.info["warning"] = (
+                    "Projected {what}: its coordinate system could not be "
+                    "unprojected ({err}), so cell sizes are taken as {cw:.2f} x "
+                    "{ch:.2f} m everywhere (planar). If the projection has "
+                    "significant scale distortion, gradients and distances "
+                    "will be off by that amount.".format(
+                        what=what, err=err, cw=self._cw_nom, ch=self._ch_nom))
+        self.info["mode"] = self.mode
+
+    # ---- lattice (projected rasters only) ----
+    def _build_lattice(self, to_ecef):
+        W, H = self.width, self.height
+        step = max(GROUND_LATTICE_MIN_STEP,
+                   int(math.ceil(max(W, H) / float(GROUND_LATTICE_MAX_NODES - 1))))
+        lc = np.unique(np.concatenate([np.arange(0, W, step), [W - 1]])).astype(np.float64)
+        lr = np.unique(np.concatenate([np.arange(0, H, step), [H - 1]])).astype(np.float64)
+        cc, rr = np.meshgrid(lc, lr)                       # (nr, nc)
+        full = _distances_at_cells(self.gt, cc.ravel(), rr.ravel(), to_ecef)
+        if not all(np.all(np.isfinite(v)) and np.all(v > 0) for v in full.values()):
+            raise ValueError("some lattice cells could not be unprojected")
+        self._lc, self._lr = lc, lr
+        self._lat_shape = cc.shape
+        self._lat_full = {k: v.reshape(cc.shape) for k, v in full.items()}
+        self._ci, self._wc = _interp_index(lc, np.arange(W, dtype=np.float64))
+        self.info["lattice"] = (len(lr), len(lc))
+
+    def _describe_scale(self, pg):
+        full = self._lat_full
+        kx = self._cw_nom / full["h"]
+        ky = self._ch_nom / ((full["vA"] + full["vB"]) / 2.0)
+        mid = self.height // 2
+        kcx = self._cw_nom / float(self.row["h"][mid])
+        kcy = self._ch_nom / float((self.row["vA"][mid] + self.row["vB"][mid]) / 2.0)
+        kmin = float(min(kx.min(), ky.min()))
+        kmax = float(max(kx.max(), ky.max()))
+        off = max(abs(1.0 - 1.0 / kmin), abs(1.0 - 1.0 / kmax)) * 100.0
+        self.info.update(scale_x=kcx, scale_y=kcy, scale_min=kmin,
+                         scale_max=kmax, projection=pg.projection, name=pg.name)
+        nr, nc = self.info["lattice"]
+        self.info["note"] = (
+            "Projected {what} ({name}; {proj} projection): true ground distances "
+            "computed on the spheroid by unprojecting a lattice of {nr} x {nc} "
+            "cell centers and interpolating between them. The projection's "
+            "scale factor ranges from {kmin:.4f} to {kmax:.4f} across the raster "
+            "({kcx:.4f} east-west and {kcy:.4f} north-south at the center), so "
+            "planar cell sizes ({cw:.2f} x {ch:.2f} m) would put gradients and "
+            "distances off by up to {off:.2f}%.".format(
+                what=self.what, name=pg.name, proj=pg.projection, nr=nr, nc=nc,
+                kmin=kmin, kmax=kmax, kcx=kcx, kcy=kcy, cw=self._cw_nom,
+                ch=self._ch_nom, off=off))
+
+    def _interp(self, table, r0, r1):
+        """Bilinear interpolation of a lattice table to every cell of rows
+        r0..r1-1: a (r1 - r0, width) array."""
+        rows = np.arange(r0, r1, dtype=np.float64)
+        ri, wr = _interp_index(self._lr, rows)
+        if len(self._lr) == 1:
+            rows_i = np.repeat(table[0][None, :], len(rows), axis=0)
+        else:
+            rows_i = table[ri] * (1.0 - wr)[:, None] + table[ri + 1] * wr[:, None]
+        if len(self._lc) == 1:
+            return np.repeat(rows_i[:, :1], self.width, axis=1)
+        return (rows_i[:, self._ci] * (1.0 - self._wc)[None, :] +
+                rows_i[:, self._ci + 1] * self._wc[None, :])
+
+    # ---- per-cell tables ----
+    def rows(self, r0, r1):
+        """hA/h/hB/vA/vB for every cell of rows r0..r1-1 (2-D arrays)."""
+        r0 = max(int(r0), 0)
+        r1 = min(int(r1), self.height)
+        n = max(r1 - r0, 0)
+        if self.mode != "geodesic":
+            return {k: np.broadcast_to(self.row[k][r0:r1, None], (n, self.width))
+                    for k in _GROUND_KEYS}
+        return {k: self._interp(self._lat_full[k], r0, r1) for k in _GROUND_KEYS}
+
+    @property
+    def half_row(self):
+        """Per-row 8-triangle table (see ``half_rows``)."""
+        if self._half_row is None:
+            if self.mode == "planar":
+                const = np.full(self.height, 1.0)
+                hx2 = (self._cw_nom / 2.0) ** 2
+                hy2 = (self._ch_nom / 2.0) ** 2
+                d2 = hx2 + hy2
+                self._half_row = {
+                    "vA2": const * hy2, "hA2": const * hx2, "dA2": const * d2,
+                    "h2": const * hx2, "dB2": const * d2, "hB2": const * hx2,
+                    "vB2": const * hy2,
+                    "pix_m2": const * (self._cw_nom * self._ch_nom)}
+            else:
+                col = 0.0 if self.geographic else (self.width - 1) / 2.0
+                self._half_row = _half_distances_at_cells(
+                    self.gt, np.full(self.height, col),
+                    np.arange(self.height, dtype=np.float64), self._to_ecef)
+        return self._half_row
+
+    def half_rows(self, r0, r1):
+        """The 8-triangle table for every cell of rows r0..r1-1: squared
+        half-cell distances vA2/hA2/dA2/h2/dB2/hB2/vB2 and pix_m2 (2-D)."""
+        r0 = max(int(r0), 0)
+        r1 = min(int(r1), self.height)
+        n = max(r1 - r0, 0)
+        if self.mode != "geodesic":
+            hr = self.half_row
+            return {k: np.broadcast_to(hr[k][r0:r1, None], (n, self.width))
+                    for k in _HALF_KEYS}
+        if self._lat_half is None:
+            cc, rr = np.meshgrid(self._lc, self._lr)
+            half = _half_distances_at_cells(self.gt, cc.ravel(), rr.ravel(),
+                                            self._to_ecef)
+            self._lat_half = {k: v.reshape(cc.shape) for k, v in half.items()}
+        return {k: self._interp(self._lat_half[k], r0, r1) for k in _HALF_KEYS}
+
+    def at_cells(self, cols, rows):
+        """The five spans at arbitrary cells (equal-length index arrays),
+        computed exactly (no interpolation) -- for tools that need a few
+        cells rather than whole rows."""
+        cols = np.asarray(cols, dtype=np.float64)
+        rows = np.asarray(rows, dtype=np.float64)
+        if self.mode == "planar":
+            const = np.ones(cols.shape)
+            return {"hA": const * self._cw_nom, "h": const * self._cw_nom,
+                    "hB": const * self._cw_nom, "vA": const * self._ch_nom,
+                    "vB": const * self._ch_nom}
+        return _distances_at_cells(self.gt, cols, rows, self._to_ecef)
+
+    def cell_size_at(self, row):
+        """(east-west, north-south) ground size in meters of the cells in
+        row ``row`` (center column) -- a representative scalar pair for
+        tools that need one cell size, e.g. a distance transform."""
+        r = min(max(int(row), 0), self.height - 1)
+        return (float(self.row["h"][r]),
+                float((self.row["vA"][r] + self.row["vB"][r]) / 2.0))
+
+
+def ground_geometry(gt, width, height, sr, proj_wkt=None, messages=None,
+                    what="DEM"):
+    """Build the ``GroundGeometry`` of a raster and post its note (and any
+    warning) to ``messages``. ``sr`` is the arcpy spatial reference;
+    ``proj_wkt`` the raster's projection WKT (GDAL's GetProjection; the
+    arcpy string is tried when it is empty)."""
+    gg = GroundGeometry(gt, width, height, sr, proj_wkt, what)
+    if messages is not None:
+        if gg.info["note"]:
+            _msg(messages, gg.info["note"])
+        if gg.info["warning"]:
+            try:
+                messages.addWarningMessage(gg.info["warning"])
+            except Exception:
+                _msg(messages, "WARNING: " + gg.info["warning"])
+    return gg
+
+
+def ground_note_for_metadata(gg):
+    """One or two sentences for output-dataset provenance describing how
+    cell distances were measured (see ``GroundGeometry``)."""
+    info = gg.info if isinstance(gg, GroundGeometry) else dict(gg or {})
+    mode = info.get("mode")
+    if mode == "geographic":
+        return ("Cell dimensions were computed per row on the spheroid "
+                "(geodesic method) because the DEM is in a geographic "
+                "coordinate system.")
+    if mode == "geodesic":
+        return ("Cell dimensions were computed on the spheroid by unprojecting "
+                "a lattice of cell centers ({} projection; scale factor "
+                "{:.4f} to {:.4f} across the raster), so the projection's "
+                "scale distortion does not affect the result.".format(
+                    info.get("projection", "?"), info.get("scale_min", 1.0),
+                    info.get("scale_max", 1.0)))
+    return ("Planar cell dimensions were used (projected DEM whose coordinate "
+            "system could not be unprojected).")
 
 
 # ----------------------------------------------------------------------------
@@ -711,26 +1128,17 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
             blur_radius, kernel))
     else:
         radius_m = blur_radius * _RADIUS_METERS[radius_units]
-        if geographic:
-            a = float(sr.semiMajorAxis or 6378137.0)
-            b = float(sr.semiMinorAxis or 6356752.31424518)
-            dist = _geographic_row_distances(gt, height, a, b)
-            rx_rows = radius_m / np.maximum(dist["h"], 1e-9)
-            ry = radius_m / max(float(np.mean(dist["vA"])), 1e-9)
-            _msg(messages, "Blur radius: {:g} {} = {:,.1f} m, sized per row "
-                           "on the spheroid ({:.1f}-{:.1f} cells across, "
-                           "{:.1f} cells down; {} kernel).".format(
-                               blur_radius, radius_units.lower(), radius_m,
-                               float(rx_rows.min()), float(rx_rows.max()),
-                               ry, kernel))
-        else:
-            mpu = float(sr.metersPerUnit or 1.0)
-            rx_rows = np.full(height, radius_m / (gt[1] * mpu))
-            ry = radius_m / (abs(gt[5]) * mpu)
-            _msg(messages, "Blur radius: {:g} {} = {:,.1f} m = {:.1f} x {:.1f} "
-                           "cells ({} kernel).".format(
-                               blur_radius, radius_units.lower(), radius_m,
-                               float(rx_rows[0]), ry, kernel))
+        # true ground cell sizes per row for ANY coordinate system (the
+        # hillshade engine below posts the ground-geometry note itself)
+        dist = ground_geometry(gt, width, height, sr, proj).row
+        rx_rows = radius_m / np.maximum(dist["h"], 1e-9)
+        ry = radius_m / max(float(np.mean(dist["vA"])), 1e-9)
+        _msg(messages, "Blur radius: {:g} {} = {:,.1f} m, sized per row "
+                       "on the spheroid ({:.1f}-{:.1f} cells across, "
+                       "{:.1f} cells down; {} kernel).".format(
+                           blur_radius, radius_units.lower(), radius_m,
+                           float(rx_rows.min()), float(rx_rows.max()),
+                           ry, kernel))
     if float(np.max(rx_rows)) < 1.0 and ry < 1.0:
         if messages is not None:
             messages.addWarningMessage(
@@ -991,29 +1399,19 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
     gt = src.GetGeoTransform()
     in_nodata = band.GetNoDataValue()
 
-    # Geographic vs projected, spheroid axes, and meters-per-unit factors.
+    # True-ground cell dimensions for ANY coordinate system (a projected DEM
+    # is unprojected on a lattice of cell centers -- see GroundGeometry).
     sr = arcpy.Describe(in_raster).spatialReference
     geographic = (sr.type == "Geographic")
+    ground = ground_geometry(gt, width, height, sr, src.GetProjection(),
+                             messages)
+    cellw_m = float(np.mean(ground.row["h"]))
+    cellh_m = float(np.mean(ground.row["vA"]))
     if geographic:
-        semi_major = float(sr.semiMajorAxis or 6378137.0)
-        semi_minor = float(sr.semiMinorAxis or 6356752.31424518)
         elev_mpu = 1.0                      # legacy: geographic DEMs are meters
-        dist = _geographic_row_distances(gt, height, semi_major, semi_minor)
-        cellw_m = float(np.mean(dist["h"]))
-        cellh_m = float(np.mean(dist["vA"]))
-        _msg(messages, "Geographic DEM: per-row cell dimensions computed on the "
-                       "spheroid (a = {:.1f} m, b = {:.1f} m).".format(
-                           semi_major, semi_minor))
     else:
-        mpu = float(sr.metersPerUnit or 1.0)
         elev_mpu = _ELEV_METERS.get(elev_units, 1.0)
-        cellw_m = gt[1] * mpu
-        cellh_m = abs(gt[5]) * mpu
-        const = np.full(height, 1.0)
-        dist = {"hA": const * cellw_m, "h": const * cellw_m, "hB": const * cellw_m,
-                "vA": const * cellh_m, "vB": const * cellh_m}
-        _msg(messages, "Projected DEM: cell = {:.3f} x {:.3f} m; elevation units "
-                       "= {}.".format(cellw_m, cellh_m, elev_units))
+        _msg(messages, "Elevation units = {}.".format(elev_units))
     zscale = elev_mpu * vert_exag
 
     # Sun geometry (legacy conventions).
@@ -1173,11 +1571,10 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
             SW, S_, SE = pad[dn, :-2], pad[dn, 1:-1], pad[dn, 2:]
 
             rr = slice(r0, r1)                   # absolute row range
-            hA = dist["hA"][rr][:, None]
-            h = dist["h"][rr][:, None]
-            hB = dist["hB"][rr][:, None]
-            vA = dist["vA"][rr][:, None]
-            vB = dist["vB"][rr][:, None]
+            g = ground.rows(r0, r1)              # per-cell ground spans
+            # (the elevation slices above cover the interior columns only)
+            hA, h, hB = g["hA"][:, 1:-1], g["h"][:, 1:-1], g["hB"][:, 1:-1]
+            vA, vB = g["vA"][:, 1:-1], g["vB"][:, 1:-1]
 
             dzdx = ((NE + 2.0 * E_ + SE) - (NW + 2.0 * W_ + SW)) / \
                    (2.0 * hA + 4.0 * h + 2.0 * hB)
@@ -1284,10 +1681,7 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
     try:
         md = arcpy.metadata.Metadata(out_raster)
         md.title = os.path.basename(str(out_raster))
-        geo_note = ("Cell dimensions were computed per row on the spheroid "
-                    "(geodesic method) because the DEM is in a geographic "
-                    "coordinate system." if geographic else
-                    "Planar cell dimensions were used (projected DEM).")
+        geo_note = ground_note_for_metadata(ground)
         hyp_note = (", hypsometric shading {:.0f}%".format(hypso_strength)
                     if use_hypso else "")
         units_note = "Meters (geographic DEM)" if geographic else elev_units

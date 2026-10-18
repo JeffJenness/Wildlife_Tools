@@ -94,7 +94,9 @@ for name, dem_path, exp_slope, exp_asp in (("east_up", dem_e, math.degrees(math.
     with arcpy.da.SearchCursor(fc, ["SHAPE@", "OID@"]) as sc:
         shp, oid = next(sc)
     recs = lst.build_segments(shp, "DEM", dem, 1.0, SR, oid, landscape=True)
-    check("{}: segments built".format(name), len(recs) == 31, len(recs))   # 300 m geodesic walk at 10 m -> 31 pieces
+    # 300 m geodesic walk at 10 m cells -> 30 or 31 pieces: the true ground
+    # cell size on UTM is 10 / 0.9996 m, which tips the exact-30 boundary
+    check("{}: segments built".format(name), len(recs) in (30, 31), len(recs))
     sl = [r["land_slope"] for r in recs]
     asp = [r["land_aspect"] for r in recs]
     check("{}: landscape slope = {:.4f} deg on every segment".format(name, exp_slope),
@@ -158,7 +160,7 @@ check("pyt: both fields created", "Seg_Average_Landscape_Slope" in names
       and "Seg_Average_Landscape_Compass_Direction" in names, names)
 vals = [r for r in arcpy.da.SearchCursor(out, ["Seg_Average_Landscape_Slope",
                                                "Seg_Average_Landscape_Compass_Direction", "Seg_Bearing"])]
-check("pyt: 31 segments", len(vals) == 31, len(vals))
+check("pyt: 30 or 31 segments", len(vals) in (30, 31), len(vals))
 check("pyt: slope values", all(close(v[0], math.degrees(math.atan(0.1)), 0.01) for v in vals), vals[:2])
 check("pyt: aspect 270, bearing ~90 (true bearing of a UTM grid-east line)",
       all(close(v[1], 270.0, 0.01) and close(v[2], 90.0, 1.0) for v in vals), vals[:2])

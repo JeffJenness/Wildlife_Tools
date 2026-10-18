@@ -204,7 +204,34 @@ namespace WildlifeTools.TpiSampler
                     if (sr?.Unit is LinearUnit lu && lu.ConversionFactor > 0) mpu = lu.ConversionFactor;
                 }
                 catch { }
-                g.SetUniformCells(k * cellX * mpu, k * cellY * mpu);
+                double gx = k * cellX * mpu, gy = k * cellY * mpu;
+                // A projected DEM: the TRUE ground size of a snapshot cell, measured
+                // geodesically at the snapshot center, so that a radius in meters is
+                // the right number of cells on Web Mercator and other projections with
+                // scale distortion -- the same correction the Python DEM tools apply
+                // (see the help site's Projection Distortion page). The nominal
+                // cell size is kept only if the distances cannot be measured.
+                if (sr != null && sr.IsProjected)
+                {
+                    try
+                    {
+                        double xc = rext.XMin + (col0 + nw / 2.0) * cellX;
+                        double yc = rext.YMax - (row0 + nh / 2.0) * cellY;
+                        MapPoint pc = MapPointBuilderEx.CreateMapPoint(xc, yc, sr);
+                        MapPoint pe = MapPointBuilderEx.CreateMapPoint(xc + k * cellX, yc, sr);
+                        MapPoint ps = MapPointBuilderEx.CreateMapPoint(xc, yc - k * cellY, sr);
+                        double dx = GeometryEngine.Instance.GeodesicDistance(pc, pe);
+                        double dy = GeometryEngine.Instance.GeodesicDistance(pc, ps);
+                        if (dx > 0 && dy > 0 && !double.IsNaN(dx) && !double.IsNaN(dy)
+                            && !double.IsInfinity(dx) && !double.IsInfinity(dy))
+                        {
+                            gx = dx;
+                            gy = dy;
+                        }
+                    }
+                    catch { }
+                }
+                g.SetUniformCells(gx, gy);
                 g.NativeUnitName = sr?.Unit?.Name ?? "map units";
             }
             g.NativeCellSize = (cellX + cellY) / 2.0;

@@ -340,12 +340,14 @@ def _build_kernel(nbr, hx, hy, hx_in=None, hy_in=None, a0=None, a1=None):
     return k.astype(np.float64)
 
 
-def _neighborhood_groups(nbr, P, gt, height, sr, units, kernel_arr, messages):
+def _neighborhood_groups(nbr, P, gt, height, sr, units, kernel_arr, messages,
+                         width=None, proj=None):
     """Return (groups, note): ``groups`` is a list of (kernel, row_mask). One
-    group for Cells units / projected rasters (constant cell size); several for
-    a geographic raster with a linear-unit neighborhood (cell size varies by
-    row, so the neighborhood spans a different number of cells per row -- the
-    same geodesic per-row treatment VRM and the blur tool use)."""
+    group for Cells units (constant cell size); several for a linear-unit
+    neighborhood (the true ground cell size varies by row -- on a geographic
+    raster and on a projected one with scale distortion alike -- so the
+    neighborhood spans a different number of cells per row: the same
+    per-row treatment VRM and the blur tool use)."""
     import arcpy
     if nbr in ("Irregular", "Weight"):
         note = "kernel file, {}x{} cells".format(
@@ -353,7 +355,8 @@ def _neighborhood_groups(nbr, P, gt, height, sr, units, kernel_arr, messages):
         return [(kernel_arr, slice(None))], note
 
     def conv(length):
-        rx, ry, _ = _tt._radius_row_cells(gt, height, sr, float(length), units)
+        rx, ry, _ = _tt._radius_row_cells(gt, height, sr, float(length), units,
+                                          width, proj)
         return rx, ry
 
     hx_in = hy_in = None
@@ -376,6 +379,11 @@ def _neighborhood_groups(nbr, P, gt, height, sr, units, kernel_arr, messages):
     else:
         raise arcpy.ExecuteError("Unknown neighborhood type: " + str(nbr))
 
+    if units != "Cells":
+        # a neighborhood in linear units is sized from true ground
+        # distances: post the ground-geometry note once per run
+        import hillshade as _hs_note
+        _hs_note.ground_geometry(gt, width or 1, height, sr, proj, messages)
     key = np.rint(hxr)
     groups = []
     for kv in np.unique(key):
@@ -702,7 +710,8 @@ def run_aspect_focal(in_raster, out_raster, statistic,
          "inner": inner_radius, "outer": outer_radius,
          "start": start_angle, "end": end_angle}
     groups, note = _neighborhood_groups(
-        neighborhood, P, gt, height_px, sr, nbr_units, kernel_arr, messages)
+        neighborhood, P, gt, height_px, sr, nbr_units, kernel_arr, messages,
+        width=width_px, proj=proj)
     weighted = (neighborhood == "Weight")
     _say(messages, "Neighborhood: {}.".format(note))
 
@@ -1055,7 +1064,7 @@ def _point_target(in_points, out_points, field_name, default_field,
     return target, path, fld, null_ok
 
 
-def _points_in_raster_window(target, in_raster, messages, what):
+def _points_in_raster_window(target, in_raster, messages, what, margin=2):
     """The target's points in the RASTER's coordinate system, and the window
     of the raster that covers them.
 
@@ -1063,12 +1072,15 @@ def _points_in_raster_window(target, in_raster, messages, what):
     (NAD27 points on a NAD83 raster would land 100-200 m off), so when the
     datums differ the geometry is read natively and projected here with the
     transformation clip_tools chooses; the same datum takes the fast cursor
-    path. Only the window of cells around the points (+2 cells) is read, so
-    the large-raster check applies to that window, not the whole raster.
-    ``what`` names the raster in messages ("aspect", "slope").
+    path. Only the window of cells around the points (+``margin`` cells) is
+    read, so the large-raster check applies to that window, not the whole
+    raster. ``what`` names the raster in messages ("aspect", "slope", "DEM").
 
     Returns a dict: oids, xs, ys, n_pts, arr (float32 window), valid (usable
-    cells: finite, not NoData, not masked), x0w, y0w, csx, csy, nodata."""
+    cells: finite, not NoData, not masked), x0w, y0w, csx, csy, nodata, plus
+    gt_w (the window's geotransform), c0w/r0w (its offset in the raster),
+    proj (the raster's projection WKT) and rsr (its arcpy spatial
+    reference) for tools that derive values from a DEM."""
     import arcpy
     import clip_tools as _ct
     rsr = arcpy.Describe(in_raster).spatialReference
@@ -1123,13 +1135,15 @@ def _points_in_raster_window(target, in_raster, messages, what):
         band = src.GetRasterBand(1)
         W, H = src.RasterXSize, src.RasterYSize
         gt = src.GetGeoTransform()
+        proj = src.GetProjection()
         nodata = band.GetNoDataValue()
         csx, csy = gt[1], abs(gt[5])
+        margin = max(int(margin), 1)
         if n_pts:
-            c_lo = int(np.floor((xs.min() - gt[0]) / csx)) - 2
-            c_hi = int(np.ceil((xs.max() - gt[0]) / csx)) + 2
-            r_lo = int(np.floor((gt[3] - ys.max()) / csy)) - 2
-            r_hi = int(np.ceil((gt[3] - ys.min()) / csy)) + 2
+            c_lo = int(np.floor((xs.min() - gt[0]) / csx)) - margin
+            c_hi = int(np.ceil((xs.max() - gt[0]) / csx)) + margin
+            r_lo = int(np.floor((gt[3] - ys.max()) / csy)) - margin
+            r_hi = int(np.ceil((gt[3] - ys.min()) / csy)) + margin
             c0w = max(0, c_lo)
             r0w = max(0, r_lo)
             c1w = min(W, c_hi)
@@ -1165,7 +1179,8 @@ def _points_in_raster_window(target, in_raster, messages, what):
         valid &= wmask
     return {"oids": oids, "xs": xs, "ys": ys, "n_pts": n_pts, "arr": arr,
             "valid": valid, "x0w": x0w, "y0w": y0w, "csx": csx, "csy": csy,
-            "nodata": nodata}
+            "nodata": nodata, "gt_w": (x0w, csx, 0.0, y0w, 0.0, -csy),
+            "c0w": c0w, "r0w": r0w, "proj": proj, "rsr": rsr}
 
 
 def _write_point_values(target, fld, oids, vals, null_ok, flat_value=None):
@@ -1206,16 +1221,228 @@ def _rows_beyond(target, path, n_pts):
 
 
 # ---------------------------------------------------------------------------
+#  Slope and aspect straight from a DEM, at the cells the points need
+# ---------------------------------------------------------------------------
+# Both point tools can take a DEM instead of a finished slope or aspect
+# raster. The value is then derived here at exactly the cells the sampling
+# step needs (the containing cell, or the four cells around each point) and
+# handed to the same nearest / bilinear code the raster path uses -- so a
+# DEM run gives the same numbers as "make the raster, then extract", for the
+# same method. Two methods:
+#   Horn (3 x 3): the third-order finite difference of Esri's Slope and
+#     Aspect tools (planar method), down to their NoData rule (a NoData
+#     neighbor contributes nothing and its side is rescaled; fewer than 7
+#     valid neighbors gives NoData), over TRUE ground distances
+#     (GroundGeometry) -- identical to Esri's planar tools wherever the
+#     projection is true to scale, and still right on Web Mercator or a
+#     lat/long grid, where Esri's planar method is not.
+#   Quadratic least squares over an n x n window (n = 3 ... 15): the
+#     Evans-Young surface z = a x^2 + b y^2 + c xy + d x + e y + f fitted by
+#     least squares to the valid cells of the window; slope and aspect come
+#     from d and e at the center. At 3 x 3 it is the equal-weight estimator;
+#     wider windows generalize and smooth. (Esri's Surface Parameters tool
+#     fits its quadratic in geocentric coordinates and offers an exact
+#     biquadratic; to extract values made exactly that way, run Surface
+#     Parameters first and extract from its raster.)
+DEM_METHODS = ["Horn (3 x 3; the method of Esri's Slope and Aspect tools)",
+               "Quadratic least squares (choose the window size)"]
+WINDOW_SIZES = [3, 5, 7, 9, 11, 13, 15]
+
+
+def dem_method_key(method):
+    """'quadratic' or 'horn' from a DEM_METHODS label or a plain word."""
+    return "quadratic" if "quad" in str(method or "").lower() else "horn"
+
+
+def _esri_horn_sums(nb, nv):
+    """Esri's planar Slope/Aspect rule on (K, 3, 3) elevations ``nb`` with
+    valid mask ``nv``: a NoData neighbor contributes nothing and its column
+    or row sum is rescaled by 4 / (weighted count of its valid cells);
+    fewer than 7 valid neighbors, or an invalid center, gives no value.
+    Returns (gx, gy, ok): the dz/dx and dz/dy numerators -- (east column -
+    west column) and (south row - north row), each weighted 1-2-1 -- to be
+    divided by the Horn denominators (8 x cell size on a square grid)."""
+    z = np.where(nv, nb, 0.0)
+    v = nv.astype(np.float64)
+    a, b, c = z[:, 0, 0], z[:, 0, 1], z[:, 0, 2]       # north row
+    d, f = z[:, 1, 0], z[:, 1, 2]
+    g, h, i = z[:, 2, 0], z[:, 2, 1], z[:, 2, 2]       # south row
+    va, vb, vc = v[:, 0, 0], v[:, 0, 1], v[:, 0, 2]
+    vd, vf = v[:, 1, 0], v[:, 1, 2]
+    vg, vh, vi = v[:, 2, 0], v[:, 2, 1], v[:, 2, 2]
+    w_e = vc + 2.0 * vf + vi
+    w_w = va + 2.0 * vd + vg
+    w_s = vg + 2.0 * vh + vi
+    w_n = va + 2.0 * vb + vc
+    nvalid = va + vb + vc + vd + vf + vg + vh + vi
+    ok = nv[:, 1, 1] & (nvalid >= 7) & (w_e > 0) & (w_w > 0) & (w_s > 0) & (w_n > 0)
+    safe = lambda w: np.where(w > 0, w, 1.0)
+    gx = (c + 2.0 * f + i) * 4.0 / safe(w_e) - (a + 2.0 * d + g) * 4.0 / safe(w_w)
+    gy = (g + 2.0 * h + i) * 4.0 / safe(w_s) - (a + 2.0 * b + c) * 4.0 / safe(w_n)
+    return gx, gy, ok
+
+
+def _quadratic_gradients(nb, nv, hx, hy):
+    """Least-squares quadratic z = a x^2 + b y^2 + c xy + d x + e y + f over
+    the valid cells of each (n x n) window in ``nb`` (K, n, n), x east and
+    y SOUTH in meters from the center cell (``hx``, ``hy``: the (K,) cell
+    spans); returns (dzdx, dzdy, ok) at the centers, ok = center valid and
+    at least six valid cells with a solvable fit."""
+    K, n, _n = nb.shape
+    R = n // 2
+    j = np.arange(-R, R + 1, dtype=np.float64)
+    X = np.broadcast_to(j[None, None, :] * hx[:, None, None], (K, n, n)).reshape(K, n * n)
+    Y = np.broadcast_to(j[None, :, None] * hy[:, None, None], (K, n, n)).reshape(K, n * n)
+    Z = np.where(nv, nb, 0.0).reshape(K, n * n)
+    Wt = nv.reshape(K, n * n).astype(np.float64)
+    A = np.stack([X * X, Y * Y, X * Y, X, Y, np.ones_like(X)], axis=2)   # (K, n2, 6)
+    AtA = np.einsum("kpi,kp,kpj->kij", A, Wt, A)
+    Atz = np.einsum("kpi,kp,kp->ki", A, Wt, Z)
+    ok = nv[:, R, R] & (Wt.sum(axis=1) >= 6)
+    dzdx = np.zeros(K)
+    dzdy = np.zeros(K)
+    if K:
+        AtA_safe = np.where(ok[:, None, None], AtA, np.eye(6)[None])
+        try:
+            coef = np.linalg.solve(AtA_safe, Atz[:, :, None])[:, :, 0]
+            good = ok & np.all(np.isfinite(coef), axis=1)
+        except np.linalg.LinAlgError:
+            coef = np.zeros((K, 6))
+            good = np.zeros(K, bool)
+            for k in np.flatnonzero(ok):
+                try:
+                    sol, _res, rank, _sv = np.linalg.lstsq(
+                        A[k][nv.reshape(K, n * n)[k]],
+                        Z[k][nv.reshape(K, n * n)[k]], rcond=None)
+                    if rank == 6 and np.all(np.isfinite(sol)):
+                        coef[k] = sol
+                        good[k] = True
+                except np.linalg.LinAlgError:
+                    pass
+        ok = good
+        dzdx = np.where(ok, coef[:, 3], 0.0)
+        dzdy = np.where(ok, coef[:, 4], 0.0)
+    return dzdx, dzdy, ok
+
+
+def _needed_cells(xs, ys, x0w, y0w, csx, csy, Hw, Ww, interpolate):
+    """The unique (rows, cols) of the window cells the sampling step will
+    read for these points: the containing cell, or the four cells around
+    each point for bilinear interpolation (exactly as the samplers index)."""
+    colf = (xs - x0w) / csx
+    rowf = (y0w - ys) / csy
+    if not interpolate:
+        ci = np.floor(colf).astype(np.int64)
+        ri = np.floor(rowf).astype(np.int64)
+    else:
+        c0 = np.floor(colf - 0.5).astype(np.int64)
+        r0 = np.floor(rowf - 0.5).astype(np.int64)
+        ci = np.concatenate([c0, c0 + 1, c0, c0 + 1])
+        ri = np.concatenate([r0, r0, r0 + 1, r0 + 1])
+    inside = (ci >= 0) & (ci < Ww) & (ri >= 0) & (ri < Hw)
+    if not inside.any():
+        return np.zeros(0, np.int64), np.zeros(0, np.int64)
+    flat = np.unique(ri[inside] * Ww + ci[inside])
+    return flat // Ww, flat % Ww
+
+
+def derive_from_dem(w, kind, method, window_size, elev_units, interpolate,
+                    messages):
+    """Slope (degrees) or aspect (compass degrees, -1 flat) derived from the
+    DEM window ``w`` (from ``_points_in_raster_window`` read with a margin
+    of at least window_size // 2 + 1) at the cells the sampling step needs,
+    as (arr, valid, info): a float32 array of the window's shape (NaN
+    elsewhere), its valid mask, and a dict describing the method and the
+    ground geometry (``note``, ``method_text``, ``window``)."""
+    import arcpy
+    key = dem_method_key(method)
+    n = 3 if key == "horn" else int(window_size or 3)
+    if n < 3 or n % 2 == 0 or n > max(WINDOW_SIZES):
+        raise arcpy.ExecuteError(
+            "The window size must be an odd number of cells from 3 to {}; "
+            "got {}.".format(max(WINDOW_SIZES), window_size))
+    R = n // 2
+    arr, valid = w["arr"], w["valid"]
+    Hw, Ww = arr.shape
+    n_pts = w["n_pts"]
+    zscale = _hs._ELEV_METERS.get(elev_units, 1.0)
+    out = np.full(arr.shape, np.nan, dtype=np.float32)
+    out_valid = np.zeros(arr.shape, dtype=bool)
+    info = {"window": n, "method": key, "note": "", "mode": "planar"}
+    method_text = ("Horn's third-order finite difference over the 3 x 3 "
+                   "neighborhood (the method of Esri's Slope and Aspect "
+                   "tools, planar method, including its NoData rule)"
+                   if key == "horn" else
+                   "least-squares quadratic surface fitted to the {n} x {n} "
+                   "neighborhood (Evans-Young; slope and aspect from its "
+                   "first derivatives at the center)".format(n=n))
+    info["method_text"] = method_text
+    if not (n_pts and Hw and Ww):
+        return out, out_valid, info
+
+    # true ground spans at the cells (any coordinate system)
+    ground = _hs.ground_geometry(w["gt_w"], Ww, Hw, w["rsr"], w["proj"],
+                                 messages, what="DEM")
+    info["mode"] = ground.mode
+    info["note"] = ground.info.get("note") or ""
+    for k in ("projection", "scale_min", "scale_max", "scale_x", "scale_y"):
+        info[k] = ground.info.get(k)
+    rows, cols = _needed_cells(w["xs"], w["ys"], w["x0w"], w["y0w"],
+                               w["csx"], w["csy"], Hw, Ww, interpolate)
+    # cells whose full window lies inside the read window
+    inner = (rows >= R) & (rows < Hw - R) & (cols >= R) & (cols < Ww - R)
+    rows, cols = rows[inner], cols[inner]
+    K = len(rows)
+    if K == 0:
+        return out, out_valid, info
+    spans = ground.at_cells(cols, rows)
+    z = np.where(valid, arr, np.nan).astype(np.float64) * zscale
+    # gather the K windows
+    rr = rows[:, None, None] + np.arange(-R, R + 1)[None, :, None]
+    cc = cols[:, None, None] + np.arange(-R, R + 1)[None, None, :]
+    nb = z[rr, cc]
+    nv = valid[rr, cc] & np.isfinite(nb)
+    if key == "horn":
+        gx, gy, ok = _esri_horn_sums(nb, nv)
+        dzdx = gx / (2.0 * spans["hA"] + 4.0 * spans["h"] + 2.0 * spans["hB"])
+        dzdy = gy / (4.0 * spans["vA"] + 4.0 * spans["vB"])
+    else:
+        hy = (spans["vA"] + spans["vB"]) / 2.0
+        dzdx, dzdy, ok = _quadratic_gradients(nb, nv, spans["h"], hy)
+    with np.errstate(invalid="ignore"):
+        if kind == "slope":
+            val = np.degrees(np.arctan(np.hypot(dzdx, dzdy)))
+        else:
+            # Esri's aspect: degrees from atan2(dz/dy, -dz/dx), then to
+            # compass; a zero gradient is flat (-1)
+            asp = np.degrees(np.arctan2(dzdy, -dzdx))
+            comp = np.where(asp < 0.0, 90.0 - asp,
+                            np.where(asp > 90.0, 360.0 - asp + 90.0,
+                                     90.0 - asp)) % 360.0
+            flat = (dzdx == 0.0) & (dzdy == 0.0)
+            val = np.where(flat, -1.0, comp)
+    out[rows[ok], cols[ok]] = val[ok].astype(np.float32)
+    out_valid[rows[ok], cols[ok]] = True
+    return out, out_valid, info
+
+
+# ---------------------------------------------------------------------------
 #  Extract Aspect Values to Points
 # ---------------------------------------------------------------------------
 def run_extract_aspect_points(in_points, in_raster, out_points,
                               interpolate=False, field_name="Aspect",
                               input_convention=INPUT_CONVENTIONS[0],
-                              messages=None, in_place=False):
+                              messages=None, in_place=False, from_dem=False,
+                              dem_method=DEM_METHODS[0], window_size=3,
+                              elev_units="Meters"):
     """Extract the aspect value at each point of ``in_points`` from an aspect
-    raster into a new field -- of a copied point feature class, or, with
-    ``in_place``, of the input feature class itself -- the circular analog
-    of Esri's Extract Values to Points, with no Spatial Analyst.
+    raster -- or, with ``from_dem``, derive it from a DEM (see
+    ``derive_from_dem``: Horn's 3 x 3 method, the one Esri's Aspect tool
+    uses, or a least-squares quadratic over ``window_size`` cells, with the
+    DEM's elevations in ``elev_units``) -- into a new field -- of a copied
+    point feature class, or, with ``in_place``, of the input feature class
+    itself -- the circular analog of Esri's Extract Values to Points, with
+    no Spatial Analyst.
 
     ``interpolate`` False: the value of the cell each point falls in, exactly as
     stored (including -1 for flat). True: a BILINEAR-WEIGHTED MEAN DIRECTION
@@ -1237,26 +1464,40 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
 
     Returns the actual field name created (sanitized/uniquified)."""
     import arcpy
-    is_math = str(input_convention).lower().startswith("math")
+    from_dem = bool(from_dem)
+    is_math = (not from_dem) and str(input_convention).lower().startswith("math")
+    n_win = 3 if dem_method_key(dem_method) == "horn" else int(window_size or 3)
 
     _mh.begin_phases([
         ("Adding the field to the input features..." if in_place
          else "Copying the point features...", 2),
-        ("Reading the aspect raster...", 1),
-        ("Sampling aspect at the points...", 4),
+        ("Reading the DEM..." if from_dem else "Reading the aspect raster...", 1),
+        ("Computing aspect from the DEM at the points..." if from_dem
+         else "Sampling aspect at the points...", 4),
         ("Writing values and field metadata...", 2),
     ])
     target, path, fld, null_ok = _point_target(
         in_points, out_points, field_name, "Aspect", in_place, messages)
 
-    _mh.phase_advance("Reading the aspect raster...")
-    w = _points_in_raster_window(target, in_raster, messages, "aspect")
+    _mh.phase_advance("Reading the DEM..." if from_dem
+                      else "Reading the aspect raster...")
+    w = _points_in_raster_window(target, in_raster, messages,
+                                 "DEM" if from_dem else "aspect",
+                                 margin=(n_win // 2 + 2) if from_dem else 2)
     arr, aw, n_pts = w["arr"], w["valid"], w["n_pts"]
     xs, ys = w["xs"], w["ys"]
     x0w, y0w, csx, csy = w["x0w"], w["y0w"], w["csx"], w["csy"]
 
-    kind, why = _detect_source_kind(in_raster, arr if arr.size else None,
-                                    w["nodata"])
+    dem_info = None
+    if from_dem:
+        arr, aw, dem_info = derive_from_dem(w, "aspect", dem_method, n_win,
+                                            elev_units, interpolate, messages)
+        _say(messages, "Aspect computed from the DEM with {} (elevation units "
+                       "{}).".format(dem_info["method_text"], elev_units))
+        kind, why = "aspect", "derived from the DEM"
+    else:
+        kind, why = _detect_source_kind(in_raster, arr if arr.size else None,
+                                        w["nodata"])
     if kind == "d8":
         _warn(messages, "This looks like a D8 flow-direction raster ({}) -- "
                         "flow codes 1-128, not degrees; not valid aspect "
@@ -1276,7 +1517,8 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
               "values above 360 as directions, which is only meaningful for "
               "true aspect data.".format(n_bad))
 
-    _mh.phase_advance("Sampling aspect at the points...")
+    _mh.phase_advance("Computing aspect from the DEM at the points..."
+                      if from_dem else "Sampling aspect at the points...")
     vals = np.full(n_pts, np.nan)               # NaN = NoData/outside
     Hw, Ww = arr.shape
     if n_pts and Hw and Ww:
@@ -1346,9 +1588,11 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
                        n_pts, n_pts - n_flat - n_nodata, n_flat, n_nodata,
                        "NULL" if null_ok else "-9999"))
     _say(messages, "Values are {} aspect in COMPASS degrees (0 = north, "
-                   "clockwise); -1 = flat.".format(
+                   "clockwise); -1 = flat{}.".format(
                        "bilinear weighted-mean-direction" if interpolate
-                       else "cell-value"))
+                       else "cell-value",
+                       " -- aspect derived from the DEM at each cell first"
+                       if from_dem else ""))
     if in_place:
         beyond = _rows_beyond(target, path, n_pts)
         if beyond:
@@ -1365,13 +1609,20 @@ def run_extract_aspect_points(in_points, in_raster, out_points,
                   else "Value of the raster cell containing the point")
         conv_note = (" Input was read in the mathematical (D-infinity) "
                      "convention and converted to compass." if is_math else "")
+        if dem_info is not None:
+            conv_note = (" Aspect was derived from the DEM by {} over true "
+                         "ground distances ({}); elevation units {}.".format(
+                             dem_info["method_text"],
+                             _hs.ground_note_for_metadata(dem_info),
+                             elev_units))
         tool_metadata.set_entity_and_fields(
             arcpy.Describe(path).catalogPath,
             fields=[{"name": fld, "description":
                      "Aspect at the point, in compass degrees (0-360, 0 = "
                      "north, clockwise); -1 = flat (no aspect); {} = NoData "
-                     "or outside the raster. Method: {}. Source raster: {}.{}"
+                     "or outside the raster. Method: {}. Source {}: {}.{}"
                      .format("NULL" if null_ok else "-9999", method,
+                             "DEM" if from_dem else "raster",
                              str(in_raster), conv_note)}],
             messages=messages)
     except Exception:

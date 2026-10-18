@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.113.61.0" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.113.62.1" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>Wildlife and Forestry Tools</Name>
     <Description>Analytical, cartographic and data-management tools for wildlife research, landscape analysis and general GIS work, by Jenness Enterprises: home ranges, topographic analysis, corridor design, geometry, random samples, hillshades and more, at every ArcGIS Pro license level. Free software under the GNU GPL; it supports the Lois Engelman Memorial Scholarship Fund. Help: www.jennessent.com</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -423,7 +423,7 @@
                 largeImage="Images\BlurredHillshade_32.png"
                 keytip="BH">
           <tooltip heading="Blurred Hillshade">
-            Opens the Blurred Hillshade tool from the Jenness Enterprises toolbox: a deliberately softened hillshade - the blurring component of the classic Swiss method - that de-emphasizes small terrain features so the shading reads as subtle and less distracting. Blur the DEM before shading or the finished hillshade after, with a radius in cells or ground units (sized geodesically on lat/long DEMs). All Enhanced Hillshade options included. Also available in the Cartography Tools toolset and in ModelBuilder.<disabledText />
+            Opens the Blurred Hillshade tool from the Jenness Enterprises toolbox: a deliberately softened hillshade - the blurring component of the classic Swiss method - that de-emphasizes small terrain features so the shading reads as subtle and less distracting. Blur the DEM before shading or the finished hillshade after, with a radius in cells or ground units (sized on the spheroid in any coordinate system). All Enhanced Hillshade options included. Also available in the Cartography Tools toolset and in ModelBuilder.<disabledText />
           </tooltip>
         </button>
         <button id="WildlifeTools_SurfaceAreaRatio"

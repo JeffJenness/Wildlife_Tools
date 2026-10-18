@@ -669,6 +669,7 @@ def load_dem(dem_path, window=None):
     wv = _mh.mask_band_valid(band, np.ones(arr.shape, bool), xoff, yoff)
     if not wv.all():
         arr[~wv] = np.nan       # mask-band-only NoData (gdb GRID fill trap)
+    proj_wkt = ds.GetProjection()
     ds = None
     if tmp:                                    # scratch export no longer needed
         try:
@@ -676,17 +677,20 @@ def load_dem(dem_path, window=None):
         except Exception:
             pass
     sr = arcpy.Describe(dem_path).spatialReference
-    nrows = arr.shape[0]
-    if sr.type == "Projected":
-        mpu = float(sr.metersPerUnit or 1.0)
-        cellw_m = abs(gt[1]) * mpu
-        cellh_m = abs(gt[5]) * mpu
-    else:                                     # geographic: degrees -> ground m
+    nrows, ncols = arr.shape
+    ground = None
+    if sr.type in ("Projected", "Geographic"):
+        # true ground cell sizes on the spheroid in either case (a projected
+        # window is unprojected on a lattice -- hillshade.GroundGeometry)
+        import hillshade as _hs
+        ground = _hs.ground_geometry(gt, ncols, nrows, sr, proj_wkt)
+        cellw_m, cellh_m = ground.cell_size_at(nrows // 2)
+    else:                                     # unknown CS: degrees -> ground m
         lat0 = math.radians(gt[3] + (nrows / 2.0) * gt[5])
         cellh_m = abs(gt[5]) * 111132.0
         cellw_m = abs(gt[1]) * 111320.0 * max(math.cos(lat0), 1e-6)
     return {"arr": arr, "gt": gt, "sr": sr, "nodata": nodata,
-            "cellw_m": cellw_m, "cellh_m": cellh_m,
+            "cellw_m": cellw_m, "cellh_m": cellh_m, "ground": ground,
             "interval_m": max(min(cellw_m, cellh_m), 1e-6)}
 
 
@@ -721,15 +725,14 @@ def project_geometry(geom, dst_sr, extent=None):
 def longest_vertex_step_m(in_lines):
     """The longest vertex-to-vertex step (meters) over every line of
     ``in_lines``: how far an alternative step cast from a vertex can reach,
-    so the DEM window can be padded to cover it. Planar for projected data,
-    geodesic for geographic. 0.0 if nothing can be measured."""
+    so the DEM window can be padded to cover it. Geodesic (true ground
+    meters) for projected and geographic data alike. 0.0 if nothing can be
+    measured."""
     import arcpy
     best = 0.0
     try:
         d = arcpy.Describe(in_lines)
         sr = d.spatialReference
-        geo = (sr.type != "Projected")
-        mpu = 1.0 if geo else float(sr.metersPerUnit or 1.0)
         with arcpy.da.SearchCursor(in_lines, ["SHAPE@"]) as cur:
             for (shp,) in cur:
                 if shp is None:
@@ -738,11 +741,8 @@ def longest_vertex_step_m(in_lines):
                     pts = [q for q in shp.getPart(pi) if q is not None]
                     for i in range(len(pts) - 1):
                         a, b = pts[i], pts[i + 1]
-                        if geo:
-                            _ang, dist = arcpy.PointGeometry(a, sr).angleAndDistanceTo(
-                                arcpy.PointGeometry(b, sr), "GEODESIC")
-                        else:
-                            dist = math.hypot(b.X - a.X, b.Y - a.Y) * mpu
+                        _ang, dist = arcpy.PointGeometry(a, sr).angleAndDistanceTo(
+                            arcpy.PointGeometry(b, sr), "GEODESIC")
                         if dist > best:
                             best = dist
     except Exception:
@@ -759,7 +759,21 @@ def pad_window(window, pad_m, dem_sr):
     xmin, ymin, xmax, ymax = window
     try:
         if dem_sr.type == "Projected":
-            pad = pad_m / float(dem_sr.metersPerUnit or 1.0)
+            # ground meters per map unit at the window's center (geodesic),
+            # so the padding is never short on a distorted projection
+            import arcpy
+            m_per_unit = float(dem_sr.metersPerUnit or 1.0)
+            try:
+                xc, yc = (xmin + xmax) / 2.0, (ymin + ymax) / 2.0
+                span = max(abs(xmax - xmin), 1.0)
+                g0 = arcpy.PointGeometry(arcpy.Point(xc - span / 2.0, yc), dem_sr)
+                g1 = arcpy.PointGeometry(arcpy.Point(xc + span / 2.0, yc), dem_sr)
+                _ang, dm = g0.angleAndDistanceTo(g1, "GEODESIC")
+                if dm > 0:
+                    m_per_unit = min(m_per_unit, dm / span)
+            except Exception:
+                pass
+            pad = pad_m / max(m_per_unit, 1e-9)
             return (xmin - pad, ymin - pad, xmax + pad, ymax + pad)
         lat = math.radians((ymin + ymax) / 2.0)
         pad_lat = pad_m / 111132.0
@@ -844,18 +858,24 @@ def _landscape_grids(dem, elev_m_per_unit):
     arr, gt = dem["arr"], dem["gt"]
     H, W = arr.shape
     z = arr * float(elev_m_per_unit)          # NaN stays NaN
-    if dem["sr"].type == "Projected":
-        cw = np.full(H, float(dem["cellw_m"]))
+    if dem.get("ground") is not None:
+        g = dem["ground"].rows(0, H)           # per-cell true ground spans
+        cw = np.asarray(g["h"], dtype=np.float64)
+        ch = np.asarray((g["vA"] + g["vB"]) / 2.0, dtype=np.float64)
+    elif dem["sr"].type == "Projected":
+        cw = np.full((H, 1), float(dem["cellw_m"]))
+        ch = float(dem["cellh_m"])
     else:
         lat = gt[3] + (np.arange(H) + 0.5) * gt[5]
-        cw = abs(gt[1]) * 111320.0 * np.maximum(np.cos(np.radians(lat)), 1e-6)
-    ch = float(dem["cellh_m"])
+        cw = (abs(gt[1]) * 111320.0
+              * np.maximum(np.cos(np.radians(lat)), 1e-6))[:, None]
+        ch = float(dem["cellh_m"])
     pad = np.pad(z, 1, mode="edge")
     a, b, c = pad[:-2, :-2], pad[:-2, 1:-1], pad[:-2, 2:]
     d, f = pad[1:-1, :-2], pad[1:-1, 2:]
     g, h, i = pad[2:, :-2], pad[2:, 1:-1], pad[2:, 2:]
     with np.errstate(invalid="ignore", divide="ignore"):
-        dzdx = ((c + 2.0 * f + i) - (a + 2.0 * d + g)) / (8.0 * cw[:, None])
+        dzdx = ((c + 2.0 * f + i) - (a + 2.0 * d + g)) / (8.0 * cw)
         dzdy = ((g + 2.0 * h + i) - (a + 2.0 * b + c)) / (8.0 * ch)
         slope = np.degrees(np.arctan(np.hypot(dzdx, dzdy)))
         asp = np.degrees(np.arctan2(dzdy, -dzdx))
@@ -895,13 +915,21 @@ def _landscape_at(dem, pts):
 
 
 def _local_xy_m(points, sr):
-    """Approximate metric planar coordinates for the fractal divider walk. For a
-    projected SR, scale to meters; for geographic, a local equirectangular
-    projection about the first point."""
+    """Approximate metric planar coordinates for the fractal divider walk: a
+    local equirectangular projection about the first point. Projected points
+    are unprojected first, so the projection's scale distortion (e.g. Web
+    Mercator's) does not inflate the walk; if that fails they are scaled by
+    the linear unit."""
     import math as _m
     if sr.type == "Projected":
-        mpu = float(sr.metersPerUnit or 1.0)
-        return [(p.X * mpu, p.Y * mpu) for p in points]
+        try:
+            import arcpy
+            gcs = sr.GCS
+            points = [arcpy.PointGeometry(p, sr).projectAs(gcs).firstPoint
+                      for p in points]
+        except Exception:
+            mpu = float(sr.metersPerUnit or 1.0)
+            return [(p.X * mpu, p.Y * mpu) for p in points]
     lon0 = math.radians(points[0].X)
     lat0 = math.radians(points[0].Y)
     R = 6378137.0
