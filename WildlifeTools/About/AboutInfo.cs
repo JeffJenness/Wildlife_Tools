@@ -109,7 +109,8 @@ namespace WildlifeTools.About
             + "donation toward something that will help develop the next "
             + "generation of foresters, wildlife biologists, ecologists and land "
             + "managers. All donations made toward this fund are fully "
-            + "tax-deductible and donated directly to Northern Arizona University.";
+            + "tax-deductible and donated directly to the Northern Arizona "
+            + "University Foundation.";
 
         // ---- the installed version ------------------------------------------
 
