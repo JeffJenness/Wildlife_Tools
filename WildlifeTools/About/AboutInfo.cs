@@ -86,10 +86,13 @@ namespace WildlifeTools.About
 
         public const string Para2Lead = "Free does not mean lightweight or of little value!";
         public const string Para2Body =
-            "Many of these tools do things that no standard tool in ArcGIS Pro "
+            "These tools do things that no standard tool in ArcGIS Pro "
             + "does, each carries its help and its references with it, and the "
             + "geoprocessing tools run from the Geoprocessing pane, ModelBuilder "
-            + "and Python alike. Building the add-in took me roughly 800 hours, "
+            + "and Python alike. All tools that generate data also generate "
+            + "extensive metadata defining the dataset itself, parameters set by "
+            + "the user, attribute field definitions and more. Building the "
+            + "add-in took me roughly 800 hours, "
             + "and I began with the research already read and most of the "
             + "algorithms already written for the earlier ArcView and ArcMap "
             + "versions of these tools; an organization setting out to build the "
