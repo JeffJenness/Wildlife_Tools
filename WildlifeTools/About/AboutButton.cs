@@ -6,7 +6,7 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version, together with the additional terms
 // in LICENSE-ADDITIONAL-TERMS.md (preservation of the Lois Engelman
-// Memorial Scholarship Fund notice, marking of modified versions, and
+// Memorial Award Fund notice, marking of modified versions, and
 // use of names).
 //
 // This program is distributed in the hope that it will be useful,
@@ -27,8 +27,8 @@ namespace WildlifeTools.About
     /// "Take a Break"-group ribbon button: About the Add-in (tool #112). Opens
     /// the <see cref="AboutWindow"/> card: what the add-in is, the installed
     /// version and whether a newer one exists, a citation to copy, the
-    /// license and the source, the scholarship it supports, and links to the
-    /// Tool Reference and the scholarship page. One shared non-modal window.
+    /// license and the source, the award it supports, and links to the
+    /// Tool Reference and the award page. One shared non-modal window.
     /// </summary>
     internal sealed class AboutButton : Button
     {

@@ -6,7 +6,7 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version, together with the additional terms
 // in LICENSE-ADDITIONAL-TERMS.md (preservation of the Lois Engelman
-// Memorial Scholarship Fund notice, marking of modified versions, and
+// Memorial Award Fund notice, marking of modified versions, and
 // use of names).
 //
 // This program is distributed in the hope that it will be useful,
@@ -100,10 +100,19 @@ namespace WildlifeTools.About
             + "you have is that work, finished, tested and ready to use.";
 
         public const string Para3Lead = "Why give it away?";
-        public const string Para3Body =
+
+        /// <summary>The third paragraph in three pieces, so the card can set
+        /// the fund's name in bold the way the Tool Reference page does. The
+        /// name itself comes from <see cref="Scholarship.ScholarshipInfo.FundName"/>,
+        /// the one place it is typed; <see cref="Para3Body"/> is the whole
+        /// paragraph as plain text.</summary>
+        public const string Para3Before =
             "Because of Lois Engelman, my wife, best friend and partner. Lois "
             + "and I ran Jenness Enterprises together from 2000 until she died in "
-            + "July 2026, and the Lois Engelman Memorial Scholarship Fund at "
+            + "July 2026, and the ";
+        public const string Para3Bold = Scholarship.ScholarshipInfo.FundName;
+        public const string Para3After =
+            " at "
             + "Northern Arizona University was created in her name to support the "
             + "next generation of forestry, wildlife and ecology students. The "
             + "add-in is free so that it reaches as many people as it can, and my "
@@ -114,6 +123,7 @@ namespace WildlifeTools.About
             + "managers. All donations made toward this fund are fully "
             + "tax-deductible and donated directly to the Northern Arizona "
             + "University Foundation.";
+        public const string Para3Body = Para3Before + Para3Bold + Para3After;
 
         // ---- the installed version ------------------------------------------
 

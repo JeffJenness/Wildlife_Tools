@@ -6,7 +6,7 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version, together with the additional terms
 // in LICENSE-ADDITIONAL-TERMS.md (preservation of the Lois Engelman
-// Memorial Scholarship Fund notice, marking of modified versions, and
+// Memorial Award Fund notice, marking of modified versions, and
 // use of names).
 //
 // This program is distributed in the hope that it will be useful,
@@ -23,8 +23,8 @@ using System.Diagnostics;
 namespace WildlifeTools.Scholarship
 {
     /// <summary>
-    /// The scholarship's two destinations, shared by the Scholarship card and
-    /// the About card so both behave the same: the scholarship page on the
+    /// The award's two destinations, shared by the Award card and
+    /// the About card so both behave the same: the award page on the
     /// Jenness Enterprises site, and the university's giving page (which,
     /// until it exists, is explained rather than opened).
     /// </summary>
@@ -41,8 +41,8 @@ namespace WildlifeTools.Scholarship
                     + ScholarshipInfo.FundName + " is being set up. This "
                     + "button will open it as soon as it is ready."
                     + Environment.NewLine + Environment.NewLine
-                    + "Until then, the scholarship page has the latest: "
-                    + "click About the scholarship.",
+                    + "Until then, the award page has the latest: "
+                    + "click About the award.",
                     ScholarshipInfo.FundName);
                 return;
             }

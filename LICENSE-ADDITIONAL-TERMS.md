@@ -13,7 +13,7 @@ the copyright holder supplements the License with the following additional
 terms. Section 7 expressly permits terms of these kinds, and they bind
 every recipient of this program or of any work based on it.
 
-## 1. Preservation of the Lois Engelman Memorial Scholarship Fund notice
+## 1. Preservation of the Lois Engelman Memorial Award Fund notice
 
 (Section 7(b): "Requiring preservation of specified reasonable legal notices
 or author attributions in that material or in the Appropriate Legal Notices
@@ -26,13 +26,13 @@ or in object form:
 > This software is dedicated to the memory of Lois Engelman (wife, best
 > friend and partner of the author for 36 years). If these tools are
 > helpful and valuable to you, please consider donating to the
-> **Lois Engelman Memorial Scholarship Fund**, which helps educate and
+> **Lois Engelman Memorial Award Fund**, which helps educate and
 > train the next generation of land managers and ecologists:
 > https://www.jennessent.com/Lois/
 
 Specifically, the notice must remain (a) in this file, (b) in the
 program's About dialog and any other Appropriate Legal Notices the program
-displays, and (c) in the ribbon element that opens the scholarship fund
+displays, and (c) in the ribbon element that opens the award fund
 page, or, if a work based on this program has no ribbon, in whatever
 interface element that work uses to display its Appropriate Legal Notices.
 The notice may be translated, and its link may be updated to a successor
@@ -65,7 +65,7 @@ Tools for ArcGIS Pro by Jeff Jenness") are permitted and encouraged.
 
 The author asks, but the License cannot require, that anyone who
 redistributes this program or a work based on it keep the "Donate to the
-Lois Engelman Memorial Scholarship Fund" tool on the ribbon as it is, so
+Lois Engelman Memorial Award Fund" tool on the ribbon as it is, so
 that the people who benefit from these tools can find the fund easily.
 Any funds Jenness Enterprises receives in connection with this program go
-to that scholarship.
+to that award.

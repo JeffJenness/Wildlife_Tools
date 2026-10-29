@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Pure-source test of the About card's ArcGIS-free logic (version
-       parsing, release comparison, citation, GitHub JSON). Compiles the two
+       parsing, release comparison, citation, GitHub JSON). Compiles the three
        add-in source files in directly; run it from the repo root with
        dotnet run (the command line is at the top of Program.cs). -->
   <PropertyGroup>
@@ -12,5 +12,7 @@
   <ItemGroup>
     <Compile Include="..\..\WildlifeTools\About\AboutInfo.cs" />
     <Compile Include="..\..\WildlifeTools\About\UpdateCheck.cs" />
+    <!-- AboutInfo.Para3Bold is ScholarshipInfo.FundName (constants only). -->
+    <Compile Include="..\..\WildlifeTools\Scholarship\ScholarshipInfo.cs" />
   </ItemGroup>
 </Project>

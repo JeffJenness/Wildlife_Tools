@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Draws the Lois Engelman Memorial Scholarship Fund card to PNG files
+  <!-- Draws the Lois Engelman Memorial Award Fund card to PNG files
        without ArcGIS Pro, from the BUILT add-in DLL, so its layout can be
        looked at after a change. Build the add-in first (Release), then run
        this project from the repo root; see the top of Program.cs. -->

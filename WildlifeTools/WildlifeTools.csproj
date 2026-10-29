@@ -409,7 +409,7 @@
          picker works via pack URIs wherever the add-in is installed. -->
     <Resource Include="Geometric\Img\*.gif" />
     <Resource Include="Geometric\Img\*.png" />
-    <!-- Lois Engelman Memorial Scholarship Fund card: the photographs of
+    <!-- Lois Engelman Memorial Award Fund card: the photographs of
          Lois and Jeff, embedded so the card loads them by pack URI
          wherever the add-in is installed. -->
     <Resource Include="Scholarship\*.jpg" />

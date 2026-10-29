@@ -6,7 +6,7 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version, together with the additional terms
 // in LICENSE-ADDITIONAL-TERMS.md (preservation of the Lois Engelman
-// Memorial Scholarship Fund notice, marking of modified versions, and
+// Memorial Award Fund notice, marking of modified versions, and
 // use of names).
 //
 // This program is distributed in the hope that it will be useful,
@@ -40,8 +40,8 @@ namespace WildlifeTools.About
     /// release, the three paragraphs from the Tool Reference page (what the
     /// add-in is, what it is worth, and why it is free), a citation to copy,
     /// the license and the source, the dedication, and buttons to the Tool
-    /// Reference, the scholarship page and the university's giving page.
-    /// Non-modal and draggable like the Scholarship card, in the colors of
+    /// Reference, the award page and the university's giving page.
+    /// Non-modal and draggable like the Award card, in the colors of
     /// the web site. One shared instance is reused.
     ///
     /// A plain WPF Window on purpose (not a ProWindow): it needs nothing from

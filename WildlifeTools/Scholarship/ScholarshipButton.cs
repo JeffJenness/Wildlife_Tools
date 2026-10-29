@@ -6,7 +6,7 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version, together with the additional terms
 // in LICENSE-ADDITIONAL-TERMS.md (preservation of the Lois Engelman
-// Memorial Scholarship Fund notice, marking of modified versions, and
+// Memorial Award Fund notice, marking of modified versions, and
 // use of names).
 //
 // This program is distributed in the hope that it will be useful,
@@ -25,9 +25,9 @@ namespace WildlifeTools.Scholarship
 {
     /// <summary>
     /// "Take a Break"-group ribbon button for the Lois Engelman Memorial
-    /// Scholarship Fund: the 100th tool, reserved for it. Opens the
+    /// Award Fund: the 100th tool, reserved for it. Opens the
     /// <see cref="ScholarshipWindow"/> card, which says what the fund is and
-    /// links to the scholarship page and to the university's giving page.
+    /// links to the award page and to the university's giving page.
     /// Runs entirely on the UI thread; one shared non-modal window.
     /// </summary>
     internal sealed class ScholarshipButton : Button
@@ -41,7 +41,7 @@ namespace WildlifeTools.Scholarship
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    $"Could not open the scholarship window:{Environment.NewLine}{Environment.NewLine}{ex.Message}",
+                    $"Could not open the award window:{Environment.NewLine}{Environment.NewLine}{ex.Message}",
                     ScholarshipInfo.FundName);
             }
         }

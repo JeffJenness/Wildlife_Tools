@@ -1,7 +1,7 @@
 <Window x:Class="WildlifeTools.Scholarship.ScholarshipWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Lois Engelman Memorial Scholarship Fund"
+        Title="Lois Engelman Memorial Award Fund"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize" SizeToContent="Height"
@@ -9,7 +9,7 @@
         Loaded="OnLoaded">
   <!-- The colors and lettering are those of the Jenness Enterprises web
        site (forest green, parchment, a gold rule), so the card and the
-       scholarship page it links to belong together. -->
+       award page it links to belong together. -->
   <Window.Resources>
     <FontFamily x:Key="BodyFont">/WildlifeTools;component/Fonts/#EB Garamond, Georgia</FontFamily>
     <SolidColorBrush x:Key="GreenBrush" Color="#24462F" />
@@ -103,7 +103,7 @@
                 BorderThickness="0" ToolTip="Close" />
 
         <StackPanel Margin="34,26,34,22">
-          <TextBlock Text="Lois Engelman Memorial Scholarship Fund"
+          <TextBlock Text="Lois Engelman Memorial Award Fund"
                      FontFamily="{StaticResource BodyFont}" FontSize="29"
                      FontWeight="SemiBold" Foreground="{StaticResource GreenBrush}"
                      HorizontalAlignment="Center" TextAlignment="Center"
@@ -143,17 +143,17 @@
               </TextBlock>
               <TextBlock Style="{StaticResource BodyText}">
                 This free ArcGIS Pro add-in was created to honor and celebrate
-                her memory by supporting a scholarship created in her name at
+                her memory by supporting an award created in her name at
                 Northern Arizona University.
               </TextBlock>
               <TextBlock Style="{StaticResource BodyText}">
-                The scholarship will support the next generation of forestry,
+                The award will support the next generation of forestry,
                 wildlife and ecology students, who we will all depend on to
                 protect our planet and natural resources into the future.
               </TextBlock>
               <TextBlock Style="{StaticResource BodyText}" Margin="0">
                 Any funds Jenness Enterprises receives in connection with this
-                add-in go to the scholarship.
+                add-in go to the award.
               </TextBlock>
             </StackPanel>
           </Grid>
@@ -174,12 +174,12 @@
 
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
                       Margin="0,18,0,0">
-            <Button Content="About the scholarship" Click="OnAbout"
+            <Button Content="About the award" Click="OnAbout"
                     Style="{StaticResource LinkButton}"
-                    ToolTip="Open the scholarship page on the Jenness Enterprises web site." />
+                    ToolTip="Open the award page on the Jenness Enterprises web site." />
             <Button Content="Donate through NAU" Click="OnDonate"
                     Style="{StaticResource LinkButton}"
-                    ToolTip="Open Northern Arizona University's giving page for the scholarship." />
+                    ToolTip="Open Northern Arizona University's giving page for the award." />
             <Button Content="Close" Click="OnClose"
                     Style="{StaticResource QuietButton}" />
           </StackPanel>
