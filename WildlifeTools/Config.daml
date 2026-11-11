@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.113.65.2" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.113.66.2" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>Wildlife and Forestry Tools</Name>
     <Description>Analytical, cartographic and data-management tools for wildlife research, landscape analysis and general GIS work, by Jenness Enterprises: home ranges, topographic analysis, corridor design, geometry, random samples, hillshades and more, at every ArcGIS Pro license level. Free software under the GNU GPL; it supports the Lois Engelman Memorial Award Fund. Help: www.jennessent.com</Description>
     <Image>Images\JennessLogo32.png</Image>

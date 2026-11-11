@@ -60,6 +60,7 @@ import mahalanobis as _mh
 import hillshade as _hs
 import aspect_tools as _at
 import topographic_tools as _tt
+import raster_strips as _rs
 import land_facet_linkage as _lnk
 
 NEIGHBORHOODS = _at.NEIGHBORHOODS
@@ -153,14 +154,13 @@ def vat_class_fields(in_raster):
     return out
 
 
-def _regroup_by_field(arcpy, in_raster, a, valid, cats, class_field,
-                      messages):
-    """Relabel the cells of ``a`` by ``class_field`` of the raster's
+def _regroup_mapping(arcpy, in_raster, cats, class_field, messages):
+    """The regrouping of the raster's classes by ``class_field`` of its
     attribute table: every distinct value of that column becomes one class,
     numbered 1..k in sorted order; a blank entry is its own class; a raster
     value with no row in the table keeps a class of its own, with a warning.
-    Returns (relabeled int32 array, its sorted class codes, a note for the
-    messages/metadata)."""
+    Returns (per_cat codes aligned with ``cats``, the sorted class codes, a
+    note for the messages/metadata); _regroup_apply relabels a block."""
     fields = {f.name.lower(): f.name for f in arcpy.ListFields(in_raster)}
     vname = fields.get("value")
     fname = fields.get(class_field.lower())
@@ -187,9 +187,6 @@ def _regroup_by_field(arcpy, in_raster, a, valid, cats, class_field,
     names = sorted(set(labels_by_cat), key=lambda t: t.lower())
     code_of = {nm: i + 1 for i, nm in enumerate(names)}
     per_cat = np.array([code_of[lab] for lab in labels_by_cat], dtype=np.int32)
-    idx = np.searchsorted(cats, a[valid])
-    out = np.zeros(a.shape, dtype=np.int32)
-    out[valid] = per_cat[idx]
     if missing:
         _warn(messages,
               "{:,} raster value(s) have no row in the attribute table and "
@@ -200,7 +197,18 @@ def _regroup_by_field(arcpy, in_raster, a, valid, cats, class_field,
                                     "; ".join(names)))
     note = " (classified by the attribute field {!r}: {} classes)".format(
         class_field, len(names))
-    return out, np.arange(1, len(names) + 1, dtype=np.int32), note
+    return per_cat, np.arange(1, len(names) + 1, dtype=np.int32), note
+
+
+def _regroup_apply(a, valid, cats, per_cat):
+    """Relabel a block of cells by the regrouping mapping (int32)."""
+    idx = np.searchsorted(cats, a[valid])
+    out = np.zeros(a.shape, dtype=np.int32)
+    out[valid] = per_cat[idx]
+    return out
+
+
+_DIVERSITY_BYTES_PER_CELL = 64   # working memory per cell of a diversity strip
 
 
 def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
@@ -249,224 +257,199 @@ def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
         ("Creating layer file and symbology...", 1),
     ])
 
-    src, in_copy = _hs._open_source(in_raster, scratch, messages)
+    src = _rs.Source(in_raster, scratch, messages)
     try:
-        band = src.GetRasterBand(1)
-        width_px, height_px = src.RasterXSize, src.RasterYSize
+        width_px, height_px = src.width, src.height
         if width_px < 1 or height_px < 1:
             raise arcpy.ExecuteError("The categorical raster is empty.")
-        gt = src.GetGeoTransform()
-        proj = src.GetProjection()
-        in_nodata = band.GetNoDataValue()
+        gt, proj = src.gt, src.proj
         sr = arcpy.Describe(in_raster).spatialReference
-        a = band.ReadAsArray(0, 0, width_px, height_px)
-        vmask = _mh.band_validity_mask(band)   # capture while src is open
-    finally:
-        src = None
-        if in_copy:
-            try:
-                arcpy.management.Delete(in_copy)
-            except Exception:
-                pass
+        is_float = np.issubdtype(np.asarray(src.band.ReadAsArray(0, 0, 1, 1)).dtype, np.floating)
 
-    a = np.asarray(a)
-    is_float = np.issubdtype(a.dtype, np.floating)
-    valid = np.ones(a.shape, dtype=bool)
-    if is_float:
-        valid &= np.isfinite(a)
-    if in_nodata is not None:
-        with np.errstate(invalid="ignore"):
-            valid &= (a != in_nodata)
-    # The clustering tool writes -9999 for outlier cells; honor it even
-    # when the raster never declared it (the gdb round-trip can lose the
-    # declaration) -- same screen as the density/Mahalanobis/invert
-    # siblings, without which those cells became a phantom class inflating
-    # every neighborhood's richness.
-    with np.errstate(invalid="ignore"):
-        valid &= (a != NODATA_OUT)
-    if vmask is not None:
-        valid &= vmask
-    shape = a.shape
-
-    # ---- classes -------------------------------------------------------------
-    _mh.phase_advance("Finding the classes...")
-    cats = np.unique(a[valid])
-    group_note = ""
-    if class_field and str(class_field).strip().lower() != "value":
-        a, cats, group_note = _regroup_by_field(
-            arcpy, in_raster, a, valid, cats, str(class_field).strip(),
-            messages)
-    n_classes = int(cats.size)
-    if n_classes == 0:
-        raise arcpy.ExecuteError("The raster has no valid (non-NoData) cells.")
-    if n_classes > _HARD_CLASSES:
-        raise arcpy.ExecuteError(
-            "The raster has {:,} unique values, which looks like a CONTINUOUS "
-            "raster rather than a categorical one. This tool summarizes the "
-            "diversity of categorical classes (for example a species or "
-            "community raster). If your data really are categorical, reclassify "
-            "to fewer classes first.".format(n_classes))
-    if is_float and not np.all(cats == np.round(cats)):
-        _warn(messages,
-            "The raster is floating-point with non-integer class values; each "
-            "distinct value is treated as its own class. Categorical rasters are "
-            "normally integer.")
-    if n_classes > _SOFT_CLASSES:
-        _warn(messages,
-            "{:,} classes found. This tool makes one neighborhood pass per "
-            "class, so a large number of classes will run slowly.".format(
-                n_classes))
-    elif not group_note:
-        _say(messages, "{:,} classes found.".format(n_classes))
-
-    # ---- neighborhood kernel(s) ---------------------------------------------
-    kernel_arr = None
-    if neighborhood in ("Irregular", "Weight"):
-        if not kernel_file:
+        # ---- classes (pass 1: the distinct values, streamed) ----------------
+        _mh.phase_advance("Finding the classes...")
+        cats = None
+        for y0, y1 in _rs.strip_ranges(height_px, _rs.strip_rows(height_px, width_px, 0, 64)):
+            a, valid = src.read(y0, y1)
+            # The clustering tool writes -9999 for outlier cells; honor it even
+            # when the raster never declared it (the gdb round-trip can lose the
+            # declaration) -- same screen as the density/Mahalanobis/invert
+            # siblings, without which those cells became a phantom class
+            # inflating every neighborhood's richness.
+            with np.errstate(invalid="ignore"):
+                valid &= (a != NODATA_OUT)
+            u = np.unique(a[valid])
+            cats = u if cats is None else np.union1d(cats, u)
+            del a, valid
+        if cats is None:
+            cats = np.zeros(0)
+        group_note = ""
+        per_cat = None
+        raw_cats = cats
+        if class_field and str(class_field).strip().lower() != "value":
+            per_cat, cats, group_note = _regroup_mapping(
+                arcpy, in_raster, raw_cats, str(class_field).strip(), messages)
+        n_classes = int(cats.size)
+        if n_classes == 0:
+            raise arcpy.ExecuteError("The raster has no valid (non-NoData) cells.")
+        if n_classes > _HARD_CLASSES:
             raise arcpy.ExecuteError(
-                "The {} neighborhood needs a kernel file.".format(neighborhood))
-        kernel_arr = _at._parse_kernel_file(kernel_file)
-        if neighborhood == "Irregular":
-            kernel_arr = (kernel_arr != 0).astype(np.float64)
-        if np.any(kernel_arr < 0):
-            raise arcpy.ExecuteError(
-                "The kernel file contains negative weights; weights must be "
-                "zero or positive.")
-        if not np.any(kernel_arr > 0):
-            raise arcpy.ExecuteError(
-                "The kernel file contains no positive weights.")
-    P = {"radius": radius, "width": width, "height": height,
-         "inner": inner_radius, "outer": outer_radius,
-         "start": start_angle, "end": end_angle}
-    groups, note = _at._neighborhood_groups(
-        neighborhood, P, gt, height_px, sr, nbr_units, kernel_arr, messages,
-        width=width_px, proj=proj)
-    weighted = (neighborhood == "Weight")
-    thr = np.float32(1e-6 if weighted else 0.5)
-    _say(messages, "Neighborhood: {}.".format(note))
+                "The raster has {:,} unique values, which looks like a CONTINUOUS "
+                "raster rather than a categorical one. This tool summarizes the "
+                "diversity of categorical classes (for example a species or "
+                "community raster). If your data really are categorical, reclassify "
+                "to fewer classes first.".format(n_classes))
+        if is_float and not np.all(cats == np.round(cats)):
+            _warn(messages,
+                "The raster is floating-point with non-integer class values; each "
+                "distinct value is treated as its own class. Categorical rasters are "
+                "normally integer.")
+        if n_classes > _SOFT_CLASSES:
+            _warn(messages,
+                "{:,} classes found. This tool makes one neighborhood pass per "
+                "class, so a large number of classes will run slowly.".format(
+                    n_classes))
+        elif not group_note:
+            _say(messages, "{:,} classes found.".format(n_classes))
 
-    # ---- accumulate per-class neighborhood counts ---------------------------
-    _mh.phase_advance("Computing the {}...".format(label))
-    qk = _qkey(q)
-    need_S1 = (index == "SHANNON") or (index == "EFFECTIVE" and qk == 1)
-    need_S2 = (index in ("GINISIMPSON", "SIMPSON")) or (index == "EFFECTIVE" and qk == 2)
-    need_rich = (index == "EFFECTIVE" and qk == 0)
-    need_Sq = (index == "EFFECTIVE" and qk is None)
+        # ---- neighborhood kernel(s) -----------------------------------------
+        kernel_arr = None
+        if neighborhood in ("Irregular", "Weight"):
+            if not kernel_file:
+                raise arcpy.ExecuteError(
+                    "The {} neighborhood needs a kernel file.".format(neighborhood))
+            kernel_arr = _at._parse_kernel_file(kernel_file)
+            if neighborhood == "Irregular":
+                kernel_arr = (kernel_arr != 0).astype(np.float64)
+            if np.any(kernel_arr < 0):
+                raise arcpy.ExecuteError(
+                    "The kernel file contains negative weights; weights must be "
+                    "zero or positive.")
+            if not np.any(kernel_arr > 0):
+                raise arcpy.ExecuteError(
+                    "The kernel file contains no positive weights.")
+        P = {"radius": radius, "width": width, "height": height,
+             "inner": inner_radius, "outer": outer_radius,
+             "start": start_angle, "end": end_angle}
+        groups, note = _at._neighborhood_groups(
+            neighborhood, P, gt, height_px, sr, nbr_units, kernel_arr, messages,
+            width=width_px, proj=proj)
+        weighted = (neighborhood == "Weight")
+        thr = np.float32(1e-6 if weighted else 0.5)
+        _say(messages, "Neighborhood: {}.".format(note))
 
-    valid_f = valid.astype(np.float32)
-    total = np.zeros(shape, np.float32)
-    S1 = np.zeros(shape, np.float32) if need_S1 else None
-    S2 = np.zeros(shape, np.float32) if need_S2 else None
-    rich = np.zeros(shape, np.float32) if need_rich else None
-    Sq = np.zeros(shape, np.float32) if need_Sq else None
-    inwin = np.zeros(shape, np.float32) if exclude_if_any_null else None
-    ones_f = np.ones(shape, np.float32) if exclude_if_any_null else None
-    qf = np.float32(q)
-
-    single = (len(groups) == 1)
-    n_conv = len(groups) * (1 + n_classes + (1 if exclude_if_any_null else 0))
-    done = [0]
-
-    def _tick():
-        done[0] += 1
-        _mh.phase_step(done[0], n_conv)
-
-    for kf_arr, rows in groups:
-        kf = kf_arr.astype(np.float32)
-        sel = slice(None) if single else rows
-        total[sel] = _hs.nbr_conv(valid_f, kf)[sel]
-        _tick()
-        if exclude_if_any_null:
-            inwin[sel] = _hs.nbr_conv(ones_f, kf)[sel]
-            _tick()
-        for c in cats:
-            ind = ((a == c) & valid).astype(np.float32)
-            ck = _hs.nbr_conv(ind, kf)[sel]
-            with np.errstate(invalid="ignore", divide="ignore"):
-                if need_S1:
-                    S1[sel] += np.where(ck > np.float32(0),
-                                        ck * np.log(ck), np.float32(0))
-                if need_S2:
-                    S2[sel] += ck * ck
-                if need_rich:
-                    rich[sel] += (ck > thr).astype(np.float32)
-                if need_Sq:
-                    Sq[sel] += np.power(ck, qf)
-            _tick()
-    del valid_f, ones_f
-
-    # ---- assemble the index (float32 throughout) ----------------------------
-    NANF = np.float32(np.nan)
-    ONE = np.float32(1.0)
-    tot_safe = np.where(total > np.float32(0), total, ONE)
-    valid_out = total > thr
-    with np.errstate(invalid="ignore", divide="ignore"):
-        # ln(total) and S1/total are equal when one class fills the
-        # window, but not bit-for-bit in float32: the difference came out
-        # as -2.4e-7 (Jeff, 2026-09-13). Clamp H at 0, and the derived
-        # indices at their theoretical floors, so a pure window reads
-        # exactly 0 (H, Gini-Simpson) or exactly 1 (effective number).
+        # ---- pass 2: the index per strip ------------------------------------
+        _mh.phase_advance("Computing the {}...".format(label))
+        qk = _qkey(q)
+        need_S1 = (index == "SHANNON") or (index == "EFFECTIVE" and qk == 1)
+        need_S2 = (index in ("GINISIMPSON", "SIMPSON")) or (index == "EFFECTIVE" and qk == 2)
+        need_rich = (index == "EFFECTIVE" and qk == 0)
+        need_Sq = (index == "EFFECTIVE" and qk is None)
+        qf = np.float32(q)
+        single = (len(groups) == 1)
+        halo = max(int(k.shape[0] // 2) for k, _r in groups)
+        rows, blocks = _rs.plan(height_px, width_px, halo, _DIVERSITY_BYTES_PER_CELL, messages)
+        writer = _rs.ScratchWriter(gdal, scratch, "diversity", gt, proj, width_px, height_px,
+                                   nodata=float(NODATA_OUT))
+        n_out = 0
+        NANF = np.float32(np.nan)
+        ONE = np.float32(1.0)
         ZERO = np.float32(0.0)
-        if index == "SHANNON":
-            out = np.where(valid_out,
-                           np.maximum(np.log(tot_safe) - S1 / tot_safe, ZERO),
-                           NANF)
-        elif index == "GINISIMPSON":
-            out = np.where(valid_out,
-                           np.maximum(ONE - S2 / (tot_safe * tot_safe), ZERO),
-                           NANF)
-        elif index == "SIMPSON":
-            out = np.where(valid_out,
-                           S2 / (tot_safe * tot_safe), NANF)
-        else:  # EFFECTIVE
-            if need_rich:
-                out = np.where(valid_out, rich, NANF)
-            elif need_S1:
-                h = np.maximum(np.log(tot_safe) - S1 / tot_safe, ZERO)
-                out = np.where(valid_out, np.exp(h), NANF)
-            elif need_S2:
-                out = np.where(valid_out,
-                               (tot_safe * tot_safe)
-                               / np.where(S2 > np.float32(0), S2, ONE), NANF)
-            else:
-                sump = Sq / np.power(tot_safe, qf)
-                out = np.where(valid_out,
-                               np.power(np.where(sump > np.float32(0), sump, ONE),
-                                        np.float32(1.0 / (1.0 - q))), NANF)
-    out = out.astype(np.float32, copy=False)
+        try:
+            for bi, (y0, y1, top, bot) in enumerate(blocks):
+                a, valid = src.read(top, bot)
+                with np.errstate(invalid="ignore"):
+                    valid &= (a != NODATA_OUT)
+                if per_cat is not None:
+                    a = _regroup_apply(a, valid, raw_cats, per_cat)
+                shape = a.shape
+                valid_f = valid.astype(np.float32)
+                total = np.zeros(shape, np.float32)
+                S1 = np.zeros(shape, np.float32) if need_S1 else None
+                S2 = np.zeros(shape, np.float32) if need_S2 else None
+                rich = np.zeros(shape, np.float32) if need_rich else None
+                Sq = np.zeros(shape, np.float32) if need_Sq else None
+                inwin = np.zeros(shape, np.float32) if exclude_if_any_null else None
+                ones_f = np.ones(shape, np.float32) if exclude_if_any_null else None
+                for kf_arr, rows_sel in groups:
+                    sel = _rs.row_select(rows_sel, top, shape[0]) if not single else slice(None)
+                    if sel is None:
+                        continue
+                    kf = kf_arr.astype(np.float32)
+                    total[sel] = _hs.nbr_conv(valid_f, kf)[sel]
+                    if exclude_if_any_null:
+                        inwin[sel] = _hs.nbr_conv(ones_f, kf)[sel]
+                    for c in cats:
+                        ind = ((a == c) & valid).astype(np.float32)
+                        ck = _hs.nbr_conv(ind, kf)[sel]
+                        with np.errstate(invalid="ignore", divide="ignore"):
+                            if need_S1:
+                                S1[sel] += np.where(ck > np.float32(0),
+                                                    ck * np.log(ck), np.float32(0))
+                            if need_S2:
+                                S2[sel] += ck * ck
+                            if need_rich:
+                                rich[sel] += (ck > thr).astype(np.float32)
+                            if need_Sq:
+                                Sq[sel] += np.power(ck, qf)
+                del valid_f, ones_f
 
-    if exclude_if_any_null:
-        out[total < (inwin - thr)] = NANF
-        del inwin
-
-    out_valid = np.isfinite(out)
-    n_out = int(out_valid.sum())
+                # ---- assemble the index (float32 throughout) ----------------
+                tot_safe = np.where(total > np.float32(0), total, ONE)
+                valid_out = total > thr
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    # ln(total) and S1/total are equal when one class fills the
+                    # window, but not bit-for-bit in float32: the difference
+                    # came out as -2.4e-7 (Jeff, 2026-09-13). Clamp H at 0,
+                    # and the derived indices at their theoretical floors, so a
+                    # pure window reads exactly 0 (H, Gini-Simpson) or exactly 1
+                    # (effective number).
+                    if index == "SHANNON":
+                        out = np.where(valid_out,
+                                       np.maximum(np.log(tot_safe) - S1 / tot_safe, ZERO),
+                                       NANF)
+                    elif index == "GINISIMPSON":
+                        out = np.where(valid_out,
+                                       np.maximum(ONE - S2 / (tot_safe * tot_safe), ZERO),
+                                       NANF)
+                    elif index == "SIMPSON":
+                        out = np.where(valid_out,
+                                       S2 / (tot_safe * tot_safe), NANF)
+                    else:  # EFFECTIVE
+                        if need_rich:
+                            out = np.where(valid_out, rich, NANF)
+                        elif need_S1:
+                            h = np.maximum(np.log(tot_safe) - S1 / tot_safe, ZERO)
+                            out = np.where(valid_out, np.exp(h), NANF)
+                        elif need_S2:
+                            out = np.where(valid_out,
+                                           (tot_safe * tot_safe)
+                                           / np.where(S2 > np.float32(0), S2, ONE), NANF)
+                        else:
+                            sump = Sq / np.power(tot_safe, qf)
+                            out = np.where(valid_out,
+                                           np.power(np.where(sump > np.float32(0), sump, ONE),
+                                                    np.float32(1.0 / (1.0 - q))), NANF)
+                out = out.astype(np.float32, copy=False)
+                if exclude_if_any_null:
+                    out[total < (inwin - thr)] = NANF
+                    del inwin
+                out_valid = np.isfinite(out)
+                sl = slice(y0 - top, y1 - top)
+                n_out += int(out_valid[sl].sum())
+                writer.write(y0, out[sl], out_valid[sl])
+                del a, valid, total, S1, S2, rich, Sq, out, out_valid, tot_safe, valid_out
+                _mh.phase_step(bi + 1, len(blocks))
+            out_path, out_stats = writer.finish(messages)
+        except Exception:
+            writer.abandon()
+            raise
+    finally:
+        src.close()
     _say(messages,
         "{}: {:,} of {:,} cells written.".format(
             index_label(index, q).capitalize(), n_out, width_px * height_px))
-
-    # ---- write, stats, metadata, symbology ----------------------------------
     _mh.phase_advance("Writing the output raster...")
-    out_path = arcpy.CreateUniqueName("diversity.tif", scratch)
-    ds, oband = _tt._make_output(gdal, out_path, gt, proj, width_px, height_px)
-    stats = _mh._RasterStats()
-    slab = max(1, int(4_000_000 // max(1, width_px)))
-    for r0 in range(0, height_px, slab):
-        r1 = min(height_px, r0 + slab)
-        v = out[r0:r1][out_valid[r0:r1]]
-        if v.size:
-            stats.add(v.astype(np.float64))
-        _mh.phase_step(r1, height_px)
-    out[~out_valid] = np.float32(NODATA_OUT)
-    oband.WriteArray(out)
-    oband.FlushCache()
-    out_stats = _mh._finalize_stats(oband, stats, messages)
-    if out_stats is not None:
-        out_stats["on_raster"] = _mh._write_gtiff_stats(oband, out_stats)
-    oband.FlushCache()
-    ds.FlushCache()
-    oband = None
-    ds = None
 
     _mh.phase_advance("Saving the output raster...")
     excl = ("Neighborhoods that included any NoData cell were set to NoData. "

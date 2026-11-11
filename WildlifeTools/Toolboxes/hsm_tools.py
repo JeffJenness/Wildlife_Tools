@@ -96,6 +96,7 @@ two Modify tools carry the source's own record forward with a
 ``post_processing`` step appended, exactly like Fill Corridor Holes: the
 output is the SAME analysis product, just modified.
 """
+import math
 import os
 import clip_tools as _ct
 
@@ -104,6 +105,7 @@ import numpy as np
 import mahalanobis as _mh
 import hillshade as _hs
 import topographic_tools as _tt
+import raster_strips as _rs
 import land_facet_linkage as _lnk
 import land_facet_mahalanobis as _lfm
 
@@ -320,14 +322,18 @@ def _same_grid(gt_a, proj_a, w_a, h_a, gt_b, proj_b, w_b, h_b):
     return (proj_a or "") == (proj_b or "") or not proj_a or not proj_b
 
 
-def _read_on_grid(gdal, src, gt, proj, w, h, label, messages):
-    """Band 1 of ``src`` as ``(array, valid)`` on the reference grid,
-    resampling (nearest) when the grids differ."""
+def _read_on_grid(gdal, src, gt, proj, w, h, label, messages, top=0, rows=None,
+                  notes=True):
+    """Band 1 of ``src`` as ``(array, valid)`` on the reference grid for the
+    rows top..top+rows-1 (the whole raster when ``rows`` is None), resampling
+    (nearest) when the grids differ. The grid notes are posted when ``notes``
+    is set (the first strip of a run)."""
+    rows = h - top if rows is None else int(rows)
     s_gt = src.GetGeoTransform()
     s_proj = src.GetProjection()
     if _same_grid(gt, proj, w, h, s_gt, s_proj, src.RasterXSize,
                   src.RasterYSize):
-        if (s_proj or "") != (proj or ""):
+        if notes and (s_proj or "") != (proj or ""):
             # Same dimensions and geotransform but one side has no recorded
             # coordinate system: grid agreement cannot actually be verified.
             _warn(messages,
@@ -337,17 +343,18 @@ def _read_on_grid(gdal, src, gt, proj, w, h, label, messages):
                   "dimensions alone. Confirm they really share one "
                   "grid.".format(label))
         band = src.GetRasterBand(1)
-        a = band.ReadAsArray(0, 0, w, h)
+        a = band.ReadAsArray(0, int(top), w, rows)
         nod = band.GetNoDataValue()
         mask_band = band        # honor the source's per-pixel validity mask
     else:
-        _say(messages,
-             "{} is on a different grid than the first factor and is being "
-             "resampled onto it (nearest neighbour).".format(label))
+        if notes:
+            _say(messages,
+                 "{} is on a different grid than the first factor and is being "
+                 "resampled onto it (nearest neighbour).".format(label))
         xmin = gt[0]
-        ymax = gt[3]
         xmax = xmin + gt[1] * w
-        ymin = ymax + gt[5] * h
+        ymax = gt[3] + gt[5] * top
+        ymin = gt[3] + gt[5] * (top + rows)
         # Hold the warped MEM dataset in a local until fully read -- a
         # chained expression here returns silent NaN (GDAL lifetime trap).
         # dstNodata is REQUIRED: without it the MEM destination is
@@ -356,10 +363,10 @@ def _read_on_grid(gdal, src, gt, proj, w, h, label, messages):
         warped = gdal.Warp(
             "", src, format="MEM", dstSRS=(proj or None),
             outputBounds=(xmin, min(ymin, ymax), xmax, max(ymin, ymax)),
-            width=w, height=h, resampleAlg="near",
+            width=w, height=rows, resampleAlg="near",
             dstNodata=float(_tt.NODATA_OUT))
         band = warped.GetRasterBand(1)
-        a = band.ReadAsArray(0, 0, w, h)
+        a = band.ReadAsArray(0, 0, w, rows)
         nod = band.GetNoDataValue()
         # Warp already wrote dstNodata into source-masked cells, so the
         # nod screen below covers them; the MEM band has no mask to read.
@@ -373,14 +380,16 @@ def _read_on_grid(gdal, src, gt, proj, w, h, label, messages):
     with np.errstate(invalid="ignore"):
         valid &= (a != np.float64(_tt.NODATA_OUT))
     if mask_band is not None:
-        valid = _tt.mask_band_valid(gdal, mask_band, valid)
+        valid = _mh.mask_band_valid(mask_band, valid, 0, int(top))
     return a, valid
 
 
 def _critical_presence_on_grid(gdal, src, gt, proj, w, h, label, scratch,
                                messages):
-    """Boolean (h, w): where the critical-feature RASTER is present, on the
-    HSM grid.
+    """``(code_path, threshold, n_target)``: a scratch Byte raster on the HSM
+    grid coding where the critical-feature RASTER is present (0 = NoData,
+    1 = valid zero, 2 = valid nonzero), the code at or above which a cell
+    counts as the feature, and how many cells do.
 
     Presence is decided on the SOURCE grid and aggregated to the HSM grid
     with MAX ("any presence inside the target cell"). Nearest-neighbor
@@ -390,13 +399,14 @@ def _critical_presence_on_grid(gdal, src, gt, proj, w, h, label, scratch,
     distance transform measured to a dotted line and the distance bands
     were systematically wrong exactly along the feature.
 
-    One strip pass over the source builds a coded Byte grid (0 = NoData,
-    1 = valid zero, 2 = valid nonzero) and collects the distinct values.
-    A two-valued 0/x raster treats 0 as background (presence = code 2);
-    anything else counts every data cell (presence = code >= 1), with the
-    same >50% sanity warning as before, now computed on source cells.
-    MAX-aggregation is exact for both codings: a target cell holding any
-    nonzero source cell aggregates to 2, one holding only zeros to 1.
+    One strip pass over the source builds the coded Byte raster and
+    collects the distinct values. A two-valued 0/x raster treats 0 as
+    background (presence = code 2); anything else counts every data cell
+    (presence = code >= 1), with the same >50% sanity warning as before,
+    computed on source cells. MAX-aggregation is exact for both codings:
+    a target cell holding any nonzero source cell aggregates to 2, one
+    holding only zeros to 1. The codes stay in a file so the caller can
+    read them strip by strip.
     """
     import arcpy
 
@@ -414,22 +424,15 @@ def _critical_presence_on_grid(gdal, src, gt, proj, w, h, label, scratch,
         for i in range(6)))
 
     drv = gdal.GetDriverByName("GTiff")
-    code_path = None
-    if same:
-        codes = np.zeros((sh, sw), dtype=np.uint8)
-        code_ds = None
-    else:
-        code_path = arcpy.CreateUniqueName("hsm_critpres.tif", scratch)
-        code_ds = drv.Create(code_path, sw, sh, 1, gdal.GDT_Byte,
-                             options=["TILED=YES", "COMPRESS=LZW",
-                                      "BIGTIFF=IF_SAFER"])
-        code_ds.SetGeoTransform(sgt)
-        try:
-            code_ds.SetProjection(src.GetProjection())
-        except Exception:                                        # noqa: BLE001
-            pass
-        code_band = code_ds.GetRasterBand(1)
-        codes = None
+    code_path = _rs.scratch_tif(scratch, "hsm_critpres")
+    code_ds = drv.Create(code_path, sw, sh, 1, gdal.GDT_Byte,
+                         options=["TILED=YES", "COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
+    code_ds.SetGeoTransform(sgt)
+    try:
+        code_ds.SetProjection(src.GetProjection())
+    except Exception:                                            # noqa: BLE001
+        pass
+    code_band = code_ds.GetRasterBand(1)
 
     distinct = set()
     many = False
@@ -463,17 +466,14 @@ def _critical_presence_on_grid(gdal, src, gt, proj, w, h, label, scratch,
             if len(distinct) > 3:
                 many = True
                 distinct.clear()     # only the <=2-distinct case matters
-        if same:
-            codes[r0:r0 + nr] = strip
-        else:
-            code_band.WriteArray(strip, 0, r0)
+        code_band.WriteArray(strip, 0, r0)
         del a, v, nz, strip
+    code_band.FlushCache()
+    code_ds.FlushCache()
+    code_band = None
+    code_ds = None
 
     if not same:
-        code_band.FlushCache()
-        code_ds.FlushCache()
-        code_band = None
-        code_ds = None
         _say(messages,
              "{} is on a different grid than the HSM and is aggregated "
              "onto it (a cell counts as the feature when ANY source "
@@ -481,22 +481,24 @@ def _critical_presence_on_grid(gdal, src, gt, proj, w, h, label, scratch,
         xmin, ymax = gt[0], gt[3]
         xmax = xmin + gt[1] * w
         ymin = ymax + gt[5] * h
+        grid_path = _rs.scratch_tif(scratch, "hsm_critgrid")
         code_src = gdal.Open(code_path)
         # No dstNodata: declaring 0 NoData made GDAL "helpfully" rewrite
-        # source code-0 cells to 1 (flooding presence everywhere); the MEM
+        # source code-0 cells to 1 (flooding presence everywhere); the
         # destination zero-initializes, so uncovered ground is code 0
         # (absent) with no declaration needed.
         warped = gdal.Warp(
-            "", code_src, format="MEM", dstSRS=(proj or None),
+            grid_path, code_src, format="GTiff", dstSRS=(proj or None),
             outputBounds=(xmin, min(ymin, ymax), xmax, max(ymin, ymax)),
-            width=w, height=h, resampleAlg="max")
-        codes = warped.GetRasterBand(1).ReadAsArray(0, 0, w, h)
+            width=w, height=h, resampleAlg="max",
+            creationOptions=["TILED=YES", "COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
         warped = None
         code_src = None
         try:
-            arcpy.management.Delete(code_path)
+            os.remove(code_path)
         except Exception:                                        # noqa: BLE001
             pass
+        code_path = grid_path
 
     zero_coded = (not many and len(distinct) == 2
                   and any(d == 0.0 for d in distinct))
@@ -506,17 +508,33 @@ def _critical_presence_on_grid(gdal, src, gt, proj, w, h, label, scratch,
              "The critical-feature raster is coded {:g}/0; cells with "
              "value 0 are treated as background, not part of the "
              "feature.".format(float(other)))
-        target = codes >= 2
+        threshold = 2
     else:
         # not 0/x-coded: every data cell counts as the feature
-        target = codes >= 1
+        threshold = 1
         if n_valid:
             _warn(messages,
                   "All {:,} data cells count as the critical feature. If "
                   "this raster stores background as a data value, "
                   "distances will be wrong -- make the background NoData "
                   "first.".format(n_valid))
-    return target
+    n_target = _count_codes_at_least(gdal, code_path, threshold)
+    return code_path, threshold, n_target
+
+
+def _count_codes_at_least(gdal, path, threshold):
+    """Cells of a Byte scratch raster with a code >= threshold."""
+    ds = gdal.Open(path)
+    band = ds.GetRasterBand(1)
+    w, h = ds.RasterXSize, ds.RasterYSize
+    n = 0
+    slab = max(1, int(8_000_000 // max(1, w)))
+    for r0 in range(0, h, slab):
+        nr = min(slab, h - r0)
+        n += int(np.count_nonzero(band.ReadAsArray(0, r0, w, nr) >= threshold))
+    band = None
+    ds = None
+    return n
 
 
 def _deliver(gdal, out, valid, gt, proj, w, h, out_path, scratch, messages,
@@ -549,10 +567,30 @@ def _deliver(gdal, out, valid, gt, proj, w, h, out_path, scratch, messages,
         tags=_TAGS, citation=_CD_CITATION)
 
 
+def _deliver_writer(tmp, out_stats, out_path, messages, summary, description,
+                    title=None):
+    """CopyRaster delivery of a scratch GeoTIFF written strip by strip (the
+    statistics are already on it), the same shape every raster tool in the
+    suite uses."""
+    _tt._deliver_output(
+        tmp, out_path, out_stats, messages,
+        title=title or os.path.basename(str(out_path)),
+        summary=summary, description=description + " " + _CD_CITATION,
+        tags=_TAGS, citation=_CD_CITATION)
+
+
+_HSM_BYTES_PER_CELL = 48      # working memory per cell and per factor of a combine strip
+_HSM_SIMPLE_BYTES_PER_CELL = 32
+_HSM_DIST_BYTES_PER_CELL = 96
+
+
 def _combine_core(gdal, opened, weights, labels, method, gt, proj, w, h,
                   messages, remaps=None, save_dir=None, saved_paths=None,
-                  scratch=None):
-    """The shared weighted-combine loop over already-opened factor datasets.
+                  scratch=None, writer=None):
+    """The shared weighted-combine loop over already-opened factor datasets,
+    in row strips: every factor is read strip by strip (same grid, or
+    warped onto it) and the combined scores go to ``writer``; the per-factor
+    warnings are counted over the strips and posted after them.
 
     ``remaps`` (run_hsm only): per-factor parsed remap rows; None means the
     factor is already on the 0-100 scale (run_combine). When ``save_dir`` is
@@ -562,73 +600,103 @@ def _combine_core(gdal, opened, weights, labels, method, gt, proj, w, h,
     import arcpy
 
     geometric = (method == GEOMETRIC)
-    acc = np.ones((h, w), dtype=np.float64) if geometric \
-        else np.zeros((h, w), dtype=np.float64)
-    valid_all = np.ones((h, w), dtype=bool)
+    n_fac = len(opened)
+    rows, blocks = _rs.plan(h, w, 0, _HSM_BYTES_PER_CELL * max(1, n_fac), messages)
     used_names = set()
-
-    for i, (src, weight, label) in enumerate(zip(opened, weights, labels)):
+    save_writers = {}
+    save_paths = {}
+    if save_dir:
+        for i, label in enumerate(labels):
+            name = _lfm.safe_name(os.path.splitext(
+                os.path.basename(label))[0])[:28] + "_r"
+            if name.lower() in used_names:
+                name = "{}_{}".format(name, i + 1)
+            used_names.add(name.lower())
+            save_paths[i] = _mh.resolve_raster_output(
+                os.path.join(save_dir, name), messages)
+            save_writers[i] = _rs.ScratchWriter(gdal, scratch, "hsm_r", gt, proj, w, h,
+                                                nodata=float(_tt.NODATA_OUT))
+    n_miss = [0] * n_fac
+    n_neg = [0] * n_fac
+    n_out = [0] * n_fac
+    for _i in range(n_fac):
         _mh.phase_advance()
-        a, valid = _read_on_grid(gdal, src, gt, proj, w, h, label, messages)
-        if remaps is not None:
-            scores, matched = _apply_remap(a, valid, remaps[i], label,
-                                           messages)
-            valid = matched
-            if save_dir:
-                name = _lfm.safe_name(os.path.splitext(
-                    os.path.basename(label))[0])[:28] + "_r"
-                if name.lower() in used_names:
-                    name = "{}_{}".format(name, i + 1)
-                used_names.add(name.lower())
-                rp = _mh.resolve_raster_output(
-                    os.path.join(save_dir, name), messages)
-                keep = scores.astype(np.float32)
-                keep[~valid] = np.float32(_tt.NODATA_OUT)
-                _deliver(gdal, keep, valid, gt, proj, w, h, rp, scratch,
-                         messages,
-                         summary=("Reclassified habitat factor {} (0-100 "
-                                  "suitability scores), an intermediate of "
-                                  "the Habitat Suitability Model tool, "
-                                  "reusable in Combine Habitat "
-                                  "Factors.").format(label),
-                         description=(
-                             "Habitat factor reclassified onto the 0-100 "
-                             "suitability scale with an ASCII remap file, "
-                             "saved for reuse in the Combine Habitat "
-                             "Factors tool."))
-                if saved_paths is not None:
-                    saved_paths.append(rp)
-                del keep
-        else:
-            scores = a
-            n_out = int((valid & ((a < 0) | (a > 100))).sum())
-            if n_out:
-                _warn(messages,
-                      "{:,} cells of {} lie outside the 0-100 suitability "
-                      "scale this tool expects (already-reclassified "
-                      "factors). The combine runs anyway, but check the "
-                      "input.".format(n_out, label))
-        wgt = weight / 100.0
-        if geometric:
-            with np.errstate(invalid="ignore"):
-                term = np.power(np.maximum(scores, 0.0), wgt,
-                                dtype=np.float64)
-            neg = valid & (scores < 0)
-            n_neg = int(neg.sum())
-            if n_neg:
-                _warn(messages,
-                      "{:,} cells of {} are NEGATIVE; a fractional power of "
-                      "a negative number is undefined, so those cells "
-                      "become NoData in the geometric model.".format(
-                          n_neg, label))
-                valid &= ~neg
-            acc *= term
-            del term
-        else:
-            acc += np.asarray(scores, dtype=np.float64) * wgt
-        valid_all &= valid
-        del a, scores, valid
-    return acc, valid_all
+    try:
+        for bi, (y0, y1, top, bot) in enumerate(blocks):
+            nrows = bot - top
+            acc = (np.ones((nrows, w), dtype=np.float64) if geometric
+                   else np.zeros((nrows, w), dtype=np.float64))
+            valid_all = np.ones((nrows, w), dtype=bool)
+            for i, (src, weight, label) in enumerate(zip(opened, weights, labels)):
+                a, valid = _read_on_grid(gdal, src, gt, proj, w, h, label, messages,
+                                         top=top, rows=nrows, notes=(bi == 0))
+                if remaps is not None:
+                    scores, matched = _apply_remap(a, valid, remaps[i], label, None)
+                    n_miss[i] += int(valid.sum()) - int(matched.sum())
+                    valid = matched
+                    if save_dir:
+                        save_writers[i].write(y0, scores.astype(np.float32), valid)
+                else:
+                    scores = a
+                    n_out[i] += int((valid & ((a < 0) | (a > 100))).sum())
+                wgt = weight / 100.0
+                if geometric:
+                    with np.errstate(invalid="ignore"):
+                        term = np.power(np.maximum(scores, 0.0), wgt,
+                                        dtype=np.float64)
+                    neg = valid & (scores < 0)
+                    n_neg[i] += int(neg.sum())
+                    valid &= ~neg
+                    acc *= term
+                    del term
+                else:
+                    acc += np.asarray(scores, dtype=np.float64) * wgt
+                valid_all &= valid
+                del a, scores, valid
+            writer.write(y0, acc.astype(np.float32), valid_all)
+            del acc, valid_all
+            _mh.phase_step(bi + 1, len(blocks))
+    except Exception:
+        for sw_ in save_writers.values():
+            sw_.abandon()
+        raise
+
+    for i, label in enumerate(labels):
+        if n_miss[i]:
+            _warn(messages,
+                  "{:,} cells of {} matched no remap line and became NoData "
+                  "(the original's NODATA missing-values behavior). Extend the "
+                  "remap file if those cells should score.".format(n_miss[i], label))
+        if remaps is None and n_out[i]:
+            _warn(messages,
+                  "{:,} cells of {} lie outside the 0-100 suitability "
+                  "scale this tool expects (already-reclassified "
+                  "factors). The combine runs anyway, but check the "
+                  "input.".format(n_out[i], label))
+        if geometric and n_neg[i]:
+            _warn(messages,
+                  "{:,} cells of {} are NEGATIVE; a fractional power of "
+                  "a negative number is undefined, so those cells "
+                  "become NoData in the geometric model.".format(
+                      n_neg[i], label))
+    if save_dir:
+        for i, label in enumerate(labels):
+            _mh.phase_advance()
+            tmp, st = save_writers[i].finish(messages)
+            rp = save_paths[i]
+            _deliver_writer(tmp, st, rp, messages,
+                            summary=("Reclassified habitat factor {} (0-100 "
+                                     "suitability scores), an intermediate of "
+                                     "the Habitat Suitability Model tool, "
+                                     "reusable in Combine Habitat "
+                                     "Factors.").format(label),
+                            description=(
+                                "Habitat factor reclassified onto the 0-100 "
+                                "suitability scale with an ASCII remap file, "
+                                "saved for reuse in the Combine Habitat "
+                                "Factors tool."))
+            if saved_paths is not None:
+                saved_paths.append(rp)
 
 
 def _weights_ok(weights):
@@ -712,17 +780,20 @@ def run_hsm(factors, method, out_raster, save_reclassified=False,
                  len(factors), "" if len(factors) == 1 else "s", method))
 
         saved = [] if saved_paths is None else saved_paths
-        acc, valid_all = _combine_core(
-            gdal, opened, weights, labels, method, gt, proj, w, h, messages,
-            remaps=remaps, save_dir=save_dir, saved_paths=saved,
-            scratch=scratch)
+        writer = _rs.ScratchWriter(gdal, scratch, "hsm", gt, proj, w, h,
+                                   nodata=float(_tt.NODATA_OUT))
+        try:
+            _combine_core(
+                gdal, opened, weights, labels, method, gt, proj, w, h, messages,
+                remaps=remaps, save_dir=save_dir, saved_paths=saved,
+                scratch=scratch, writer=writer)
+            _mh.phase_advance()
+            tmp, out_stats = writer.finish(messages)
+        except Exception:
+            writer.abandon()
+            raise
         _mh.phase_advance()
-        out = np.full((h, w), np.float32(_tt.NODATA_OUT))
-        out[valid_all] = acc[valid_all].astype(np.float32)
-        del acc
-        _mh.phase_advance()
-        _deliver(gdal, out, valid_all, gt, proj, w, h, out_raster, scratch,
-                 messages,
+        _deliver_writer(tmp, out_stats, out_raster, messages,
                  summary=(
                      "Habitat suitability model (0-100) combined from {n} "
                      "factor{s} by weighted {m}: {f}.").format(
@@ -739,7 +810,6 @@ def run_hsm(factors, method, out_raster, save_reclassified=False,
                      "CorridorDesigner Habitat Suitability Model "
                      "tool.").format(
                      "geometric" if method == GEOMETRIC else "additive"))
-        del out
         _lnk.write(out_raster, _lnk.hsm_record(
             analysis_id=_lnk.new_analysis_id(),
             tool="Habitat Suitability Model",
@@ -817,15 +887,19 @@ def run_combine(factors, method, out_raster, messages=None):
              "model.".format(len(factors),
                              "" if len(factors) == 1 else "s", method))
 
-        acc, valid_all = _combine_core(
-            gdal, opened, weights, labels, method, gt, proj, w, h, messages)
+        writer = _rs.ScratchWriter(gdal, scratch, "hsm", gt, proj, w, h,
+                                   nodata=float(_tt.NODATA_OUT))
+        try:
+            _combine_core(
+                gdal, opened, weights, labels, method, gt, proj, w, h, messages,
+                scratch=scratch, writer=writer)
+            _mh.phase_advance()
+            tmp, out_stats = writer.finish(messages)
+        except Exception:
+            writer.abandon()
+            raise
         _mh.phase_advance()
-        out = np.full((h, w), np.float32(_tt.NODATA_OUT))
-        out[valid_all] = acc[valid_all].astype(np.float32)
-        del acc
-        _mh.phase_advance()
-        _deliver(gdal, out, valid_all, gt, proj, w, h, out_raster, scratch,
-                 messages,
+        _deliver_writer(tmp, out_stats, out_raster, messages,
                  summary=(
                      "Habitat suitability model (0-100) combined from {n} "
                      "previously reclassified factor{s} by weighted {m}: "
@@ -841,7 +915,6 @@ def run_combine(factors, method, out_raster, messages=None):
                      "modernized port of the CorridorDesigner Combine "
                      "Habitat Factors tool.").format(
                      "geometric" if method == GEOMETRIC else "additive"))
-        del out
         _lnk.write(out_raster, _lnk.hsm_record(
             analysis_id=_lnk.new_analysis_id(),
             tool="Combine Habitat Factors",
@@ -911,11 +984,13 @@ def _read_feature_geoms(in_features, rast_sr, densify_step, messages):
     return geoms
 
 
-def _rasterize_mask(gdal, geoms, rast_sr, gt, proj, w, h, scratch,
-                    all_touched=False):
-    """Boolean (H, W) mask of ``geoms`` on the reference grid. Cell-center
-    test by default (matching ExtractByMask); ``all_touched`` for lines and
-    points so thin features are not missed."""
+def _rasterize_mask_file(gdal, geoms, rast_sr, gt, proj, w, h, scratch,
+                         all_touched=False):
+    """A scratch Byte GeoTIFF (1 where ``geoms`` cover the reference grid)
+    and the number of covered cells: ``(path, n_cells)``. Cell-center test by
+    default (matching ExtractByMask); ``all_touched`` for lines and points so
+    thin features are not missed. The mask stays in a file so the callers
+    can read it strip by strip."""
     import arcpy
     from osgeo import ogr
 
@@ -932,8 +1007,10 @@ def _rasterize_mask(gdal, geoms, rast_sr, gt, proj, w, h, scratch,
     # project them, and the rasterized mask would land in the wrong place.
     with _mh.neutral_grid_env():
         arcpy.management.CopyFeatures(geoms, shp)
-    drv = gdal.GetDriverByName("MEM")
-    mds = drv.Create("", w, h, 1, gdal.GDT_Byte)
+    drv = gdal.GetDriverByName("GTiff")
+    path = _rs.scratch_tif(scratch, "hsm_mask")
+    mds = drv.Create(path, w, h, 1, gdal.GDT_Byte,
+                     options=["TILED=YES", "COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
     mds.SetGeoTransform(gt)
     try:
         mds.SetProjection(proj)
@@ -947,10 +1024,26 @@ def _rasterize_mask(gdal, geoms, rast_sr, gt, proj, w, h, scratch,
     finally:
         vec = None
     mds.FlushCache()
-    mask = mds.GetRasterBand(1).ReadAsArray().astype(bool)
     mds = None
     try:
         arcpy.management.Delete(shp)
+    except Exception:                                            # noqa: BLE001
+        pass
+    return path, _count_codes_at_least(gdal, path, 1)
+
+
+def _rasterize_mask(gdal, geoms, rast_sr, gt, proj, w, h, scratch,
+                    all_touched=False):
+    """Boolean (H, W) mask of ``geoms`` on the reference grid (the whole
+    grid, for callers that hold it: Cumulative Surface); the HSM tools use
+    _rasterize_mask_file and read it strip by strip."""
+    path, _n = _rasterize_mask_file(gdal, geoms, rast_sr, gt, proj, w, h, scratch,
+                                    all_touched=all_touched)
+    ds = gdal.Open(path)
+    mask = ds.GetRasterBand(1).ReadAsArray().astype(bool)
+    ds = None
+    try:
+        os.remove(path)
     except Exception:                                            # noqa: BLE001
         pass
     return mask
@@ -1009,27 +1102,17 @@ def run_reclassify_features(in_hsm, in_features, new_score, out_raster,
     scratch = arcpy.env.scratchFolder
     gdal = _mh._gdal()
 
-    src, in_copy = _hs._open_source(str(in_hsm), scratch, messages)
+    src = _rs.Source(str(in_hsm), scratch, messages)
+    mask_path = None
     try:
-        w, h = src.RasterXSize, src.RasterYSize
+        w, h = src.width, src.height
         if w < 1 or h < 1:
             raise arcpy.ExecuteError("The input HSM raster is empty.")
-        gt = src.GetGeoTransform()
-        proj = src.GetProjection()
+        gt, proj = src.gt, src.proj
         _mh.begin_phases([("Reading the input HSM...", 2),
                           ("Rasterizing the features...", 2),
                           ("Applying the new score...", 1),
                           ("Saving the output raster...", 2)])
-        band = src.GetRasterBand(1)
-        a = np.asarray(band.ReadAsArray(0, 0, w, h), dtype=np.float32)
-        nod = band.GetNoDataValue()
-        valid = np.isfinite(a)
-        if nod is not None:
-            with np.errstate(invalid="ignore"):
-                valid &= (a != np.float32(nod))
-        with np.errstate(invalid="ignore"):
-            valid &= (a != np.float32(_tt.NODATA_OUT))
-        valid = _tt.mask_band_valid(gdal, band, valid)
         _mh.phase_advance()
 
         sel_note = _selection_note(in_features, messages)
@@ -1037,11 +1120,37 @@ def run_reclassify_features(in_hsm, in_features, new_score, out_raster,
         rast_sr = arcpy.Describe(str(in_hsm)).spatialReference \
             if proj else None
         geoms = _read_feature_geoms(in_features, rast_sr, step, messages)
-        mask = _rasterize_mask(gdal, geoms, rast_sr, gt, proj, w, h, scratch)
+        mask_path, _n_mask = _rasterize_mask_file(gdal, geoms, rast_sr, gt, proj, w, h, scratch)
         _mh.phase_advance()
 
-        burn = mask & valid
-        n_burn = int(burn.sum())
+        # Row strips (cell by cell: no halo), the mask read alongside.
+        rows, blocks = _rs.plan(h, w, 0, _HSM_SIMPLE_BYTES_PER_CELL, messages)
+        writer = _rs.ScratchWriter(gdal, scratch, "hsm", gt, proj, w, h,
+                                   nodata=float(_tt.NODATA_OUT))
+        mds = gdal.Open(mask_path)
+        mband = mds.GetRasterBand(1)
+        n_burn = 0
+        try:
+            for bi, (y0, y1, top, bot) in enumerate(blocks):
+                z, valid = src.read(top, bot)
+                a = z.astype(np.float32)
+                del z
+                with np.errstate(invalid="ignore"):
+                    valid &= (a != np.float32(_tt.NODATA_OUT))
+                mask = mband.ReadAsArray(0, top, w, bot - top).astype(bool)
+                burn = mask & valid
+                n_burn += int(burn.sum())
+                a[burn] = np.float32(new_score)
+                writer.write(y0, a, valid)
+                del a, valid, mask, burn
+                _mh.phase_step(bi + 1, len(blocks))
+            tmp, out_stats = writer.finish(messages)
+        except Exception:
+            writer.abandon()
+            raise
+        finally:
+            mband = None
+            mds = None
         if not n_burn:
             _warn(messages,
                   "No HSM cells fall inside the features -- the output "
@@ -1051,13 +1160,8 @@ def run_reclassify_features(in_hsm, in_features, new_score, out_raster,
             _say(messages,
                  "{:,} cells reassigned the score {:g}.".format(
                      n_burn, new_score))
-        out = np.where(valid, a, np.float32(_tt.NODATA_OUT)).astype(
-            np.float32)
-        out[burn] = np.float32(new_score)
-        del a, mask, burn
         _mh.phase_advance()
-        _deliver(gdal, out, valid, gt, proj, w, h, out_raster, scratch,
-                 messages,
+        _deliver_writer(tmp, out_stats, out_raster, messages,
                  summary=(
                      "HSM with features reclassified: cells inside {} "
                      "reassigned the suitability score {:g}{}.").format(
@@ -1069,7 +1173,6 @@ def run_reclassify_features(in_hsm, in_features, new_score, out_raster,
                      "influences the base factors could not capture "
                      "(workshop book section 2.6). A modernized port of "
                      "the CorridorDesigner Reclassify Features tool."))
-        del out, valid
         detail = "cells inside {} set to {:g}{}".format(
             os.path.basename(str(in_features)), new_score,
             "; " + sel_note if sel_note else "")
@@ -1078,10 +1181,10 @@ def run_reclassify_features(in_hsm, in_features, new_score, out_raster,
         _mh.end_phases()
         return out_raster
     finally:
-        src = None
-        if in_copy:
+        src.close()
+        if mask_path:
             try:
-                arcpy.management.Delete(in_copy)
+                os.remove(mask_path)
             except Exception:                                    # noqa: BLE001
                 pass
 
@@ -1137,30 +1240,20 @@ def run_critical_feature(in_hsm, in_critical, bands, out_raster,
             raise arcpy.ExecuteError(
                 "The distance bands must be in ascending order.")
 
-    src, in_copy = _hs._open_source(str(in_hsm), scratch, messages)
+    src = _rs.Source(str(in_hsm), scratch, messages)
     crit_ds = None
     crit_copy = None
+    target_path = None
     try:
-        w, h = src.RasterXSize, src.RasterYSize
+        w, h = src.width, src.height
         if w < 1 or h < 1:
             raise arcpy.ExecuteError("The input HSM raster is empty.")
-        gt = src.GetGeoTransform()
-        proj = src.GetProjection()
+        gt, proj = src.gt, src.proj
         _mh.begin_phases([("Reading the input HSM...", 2),
                           ("Locating the critical feature...", 2),
                           ("Computing distances...", 3),
                           ("Applying the distance bands...", 1),
                           ("Saving the output raster...", 2)])
-        band = src.GetRasterBand(1)
-        a = np.asarray(band.ReadAsArray(0, 0, w, h), dtype=np.float32)
-        nod = band.GetNoDataValue()
-        valid = np.isfinite(a)
-        if nod is not None:
-            with np.errstate(invalid="ignore"):
-                valid &= (a != np.float32(nod))
-        with np.errstate(invalid="ignore"):
-            valid &= (a != np.float32(_tt.NODATA_OUT))
-        valid = _tt.mask_band_valid(gdal, band, valid)
         _mh.phase_advance()
 
         hsm_desc = arcpy.Describe(str(in_hsm))
@@ -1201,7 +1294,8 @@ def run_critical_feature(in_hsm, in_critical, bands, out_raster,
                   "raw map units, ASSUMED to be meters.")
 
         # The critical feature: a raster (data cells are the feature) or a
-        # feature layer (rasterized; selections honored).
+        # feature layer (rasterized; selections honored). Either way it
+        # ends up as a scratch Byte raster on the HSM grid, read per strip.
         is_raster = False
         sel_note = None
         try:
@@ -1216,45 +1310,84 @@ def run_critical_feature(in_hsm, in_critical, bands, out_raster,
             # Presence decided on the SOURCE grid and MAX-aggregated onto
             # the HSM grid -- nearest sampling thinned fine linear masks
             # (see _critical_presence_on_grid).
-            target = _critical_presence_on_grid(
+            target_path, threshold, n_target = _critical_presence_on_grid(
                 gdal, crit_ds, gt, proj, w, h,
                 os.path.basename(str(in_critical)), scratch, messages)
+            crit_ds = None
         else:
             sel_note = _selection_note(in_critical, messages)
             step = 0.5 * min(abs(gt[1]), abs(gt[5]))
             geoms = _read_feature_geoms(in_critical, sr, step, messages)
             shape_type = getattr(geoms[0], "type", "polygon").lower()
-            target = _rasterize_mask(
+            target_path, n_target = _rasterize_mask_file(
                 gdal, geoms, sr, gt, proj, w, h, scratch,
                 all_touched=(shape_type in ("polyline", "point",
                                             "multipoint")))
-        if not target.any():
+            threshold = 1
+        if not n_target:
             raise arcpy.ExecuteError(
                 "The critical feature does not overlap the HSM raster at "
                 "all -- every cell's distance would be undefined.")
         _mh.phase_advance()
 
-        dist = ndimage.distance_transform_edt(
-            ~target, sampling=(cellh_m, cellw_m))
-        del target
+        # Row strips with a halo of the last band's distance: a cell whose
+        # nearest feature cell lies beyond the halo is beyond every band
+        # whether the distance transform sees that cell or not, and a cell
+        # whose nearest feature cell is within the halo gets its exact
+        # distance, so the band assignment is the whole-raster one.
+        halo = int(math.ceil(bands[-1][1] / max(float(cellh_m), 1e-9))) + 1
+        rows, blocks = _rs.plan(h, w, halo, _HSM_DIST_BYTES_PER_CELL, messages)
+        writer = _rs.ScratchWriter(gdal, scratch, "hsm", gt, proj, w, h,
+                                   nodata=float(_tt.NODATA_OUT))
+        tds = gdal.Open(target_path)
+        tband = tds.GetRasterBand(1)
+        n_below = n_gap = n_beyond = 0
         _mh.phase_advance()
-
-        pct = np.full((h, w), np.nan, dtype=np.float64)
-        unassigned = np.ones((h, w), dtype=bool)
-        for lo, hi, pc in bands:
-            m = unassigned & (dist >= lo) & (dist <= hi)
-            pct[m] = pc
-            unassigned &= ~m
+        try:
+            for bi, (y0, y1, top, bot) in enumerate(blocks):
+                z, valid = src.read(top, bot)
+                a = z.astype(np.float32)
+                del z
+                with np.errstate(invalid="ignore"):
+                    valid &= (a != np.float32(_tt.NODATA_OUT))
+                target = tband.ReadAsArray(0, top, w, bot - top) >= threshold
+                if target.any():
+                    dist = ndimage.distance_transform_edt(
+                        ~target, sampling=(cellh_m, cellw_m))
+                else:
+                    # no feature cell within the halo: beyond every band
+                    dist = np.full(target.shape, np.inf)
+                del target
+                pct = np.full(a.shape, np.nan, dtype=np.float64)
+                unassigned = np.ones(a.shape, dtype=bool)
+                for lo, hi, pc in bands:
+                    m = unassigned & (dist >= lo) & (dist <= hi)
+                    pct[m] = pc
+                    unassigned &= ~m
+                sl = slice(y0 - top, y1 - top)
+                miss = (unassigned & valid)[sl]
+                below = miss & (dist[sl] < bands[0][0])
+                beyond = miss & (dist[sl] > bands[-1][1])
+                gap = miss & ~below & ~beyond
+                n_below += int(below.sum())
+                n_gap += int(gap.sum())
+                n_beyond += int(beyond.sum())
+                pct[unassigned] = 100.0
+                out = (a.astype(np.float64) * pct / 100.0).astype(np.float32)
+                writer.write(y0, out[sl], valid[sl])
+                del a, valid, dist, pct, unassigned, miss, below, beyond, gap, out
+                _mh.phase_step(bi + 1, len(blocks))
+            tmp, out_stats = writer.finish(messages)
+        except Exception:
+            writer.abandon()
+            raise
+        finally:
+            tband = None
+            tds = None
         # Diagnose the three distinct ways a cell can miss every band --
         # closer than the first band, in a gap between bands, or beyond the
         # last -- each with its own fix; lumping them under 'beyond' pointed
         # users at a final far-out band that would not help the other two.
-        miss = unassigned & valid
-        below = miss & (dist < bands[0][0])
-        beyond = miss & (dist > bands[-1][1])
-        gap = miss & ~below & ~beyond
-        n_below, n_gap, n_beyond = (int(below.sum()), int(gap.sum()),
-                                    int(beyond.sum()))
         if n_below:
             _warn(messages,
                   "{:,} cells are CLOSER than the first band's start "
@@ -1275,18 +1408,10 @@ def run_critical_feature(in_hsm, in_critical, bands, out_raster,
                   "band out to a very large distance to control this "
                   "explicitly (the workshop book's examples end with one, "
                   "e.g. '100 999999 : 0').".format(n_beyond))
-        pct[unassigned] = 100.0
-        del dist, unassigned, miss, below, beyond, gap
-
-        out = np.full((h, w), np.float32(_tt.NODATA_OUT))
-        out[valid] = (a[valid].astype(np.float64)
-                      * pct[valid] / 100.0).astype(np.float32)
-        del a, pct
         _mh.phase_advance()
         band_txt = "; ".join(
             "{:g}-{:g} m: {:g}%".format(lo, hi, pc) for lo, hi, pc in bands)
-        _deliver(gdal, out, valid, gt, proj, w, h, out_raster, scratch,
-                 messages,
+        _deliver_writer(tmp, out_stats, out_raster, messages,
                  summary=(
                      "HSM scaled by distance from the critical feature {} "
                      "(bands, meters: {}){}.").format(
@@ -1299,7 +1424,6 @@ def run_critical_feature(in_hsm, in_critical, bands, out_raster,
                      "species scored 100% within 30 m of water, 0% beyond "
                      "100 m). A modernized port of the CorridorDesigner "
                      "Critical Feature tool."))
-        del out, valid
         detail = "scaled by distance from {} (bands {}{})".format(
             os.path.basename(str(in_critical)), band_txt,
             "; " + sel_note if sel_note else "")
@@ -1308,14 +1432,18 @@ def run_critical_feature(in_hsm, in_critical, bands, out_raster,
         _mh.end_phases()
         return out_raster
     finally:
-        src = None
+        src.close()
         crit_ds = None
-        for cp in (in_copy, crit_copy):
-            if cp:
-                try:
-                    arcpy.management.Delete(cp)
-                except Exception:                                # noqa: BLE001
-                    pass
+        if crit_copy:
+            try:
+                arcpy.management.Delete(crit_copy)
+            except Exception:                                    # noqa: BLE001
+                pass
+        if target_path:
+            try:
+                os.remove(target_path)
+            except Exception:                                    # noqa: BLE001
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -1340,47 +1468,50 @@ def run_normalize(in_raster, worst, best, out_raster, clamp=True,
     scratch = arcpy.env.scratchFolder
     gdal = _mh._gdal()
 
-    src, in_copy = _hs._open_source(str(in_raster), scratch, messages)
+    src = _rs.Source(str(in_raster), scratch, messages)
     try:
-        w, h = src.RasterXSize, src.RasterYSize
+        w, h = src.width, src.height
         if w < 1 or h < 1:
             raise arcpy.ExecuteError("The input raster is empty.")
-        gt = src.GetGeoTransform()
-        proj = src.GetProjection()
+        gt, proj = src.gt, src.proj
         _mh.begin_phases([("Reading the input raster...", 2),
                           ("Stretching to 0-100...", 2),
                           ("Saving the output raster...", 2)])
-        band = src.GetRasterBand(1)
-        a = np.asarray(band.ReadAsArray(0, 0, w, h), dtype=np.float64)
-        nod = band.GetNoDataValue()
-        valid = np.isfinite(a)
-        if nod is not None:
-            with np.errstate(invalid="ignore"):
-                valid &= (a != np.float64(nod))
-        with np.errstate(invalid="ignore"):
-            valid &= (a != np.float64(_tt.NODATA_OUT))
-        valid = _tt.mask_band_valid(gdal, band, valid)
         _mh.phase_advance()
 
-        stretched = (a - worst) / (best - worst) * 100.0
-        n_out = int((valid & ((stretched < 0) | (stretched > 100))).sum())
+        # Row strips (cell by cell: no halo).
+        rows, blocks = _rs.plan(h, w, 0, _HSM_SIMPLE_BYTES_PER_CELL, messages)
+        writer = _rs.ScratchWriter(gdal, scratch, "hsm", gt, proj, w, h,
+                                   nodata=float(_tt.NODATA_OUT))
+        n_out = 0
+        try:
+            for bi, (y0, y1, top, bot) in enumerate(blocks):
+                a, valid = src.read(top, bot)
+                with np.errstate(invalid="ignore"):
+                    valid &= (a != np.float64(_tt.NODATA_OUT))
+                stretched = (a - worst) / (best - worst) * 100.0
+                n_out += int((valid & ((stretched < 0) | (stretched > 100))).sum())
+                if clamp:
+                    np.clip(stretched, 0.0, 100.0, out=stretched)
+                writer.write(y0, stretched.astype(np.float32), valid)
+                del a, valid, stretched
+                _mh.phase_step(bi + 1, len(blocks))
+            tmp, out_stats = writer.finish(messages)
+        except Exception:
+            writer.abandon()
+            raise
         if n_out:
             if clamp:
                 _say(messages,
                      "{:,} cells fell outside 0-100 (values beyond the "
                      "worst/best anchors) and were clamped.".format(n_out))
-                np.clip(stretched, 0.0, 100.0, out=stretched)
             else:
                 _warn(messages,
                       "{:,} cells fell outside 0-100 (values beyond the "
                       "worst/best anchors) and were written as-is; "
                       "downstream HSM tools expect 0-100.".format(n_out))
-        out = np.full((h, w), np.float32(_tt.NODATA_OUT))
-        out[valid] = stretched[valid].astype(np.float32)
-        del a, stretched
         _mh.phase_advance()
-        _deliver(gdal, out, valid, gt, proj, w, h, out_raster, scratch,
-                 messages,
+        _deliver_writer(tmp, out_stats, out_raster, messages,
                  summary=(
                      "Existing HSM {} normalized onto the 0-100 suitability "
                      "scale (worst {:g} -> 0, best {:g} -> 100{}).").format(
@@ -1392,7 +1523,6 @@ def run_normalize(in_raster, worst, best, out_raster, clamp=True,
                      "(100 = best habitat) so it can feed the Modify HSM "
                      "and corridor tools. A modernized port of the "
                      "CorridorDesigner Normalize Existing HSM tool."))
-        del out, valid
         # A fresh analysis id (Normalize CREATES a model), but record the
         # source's own id when it has one, so the Data Report's
         # regenerated-source staleness check can work.
@@ -1407,12 +1537,7 @@ def run_normalize(in_raster, worst, best, out_raster, clamp=True,
         _mh.end_phases()
         return out_raster
     finally:
-        src = None
-        if in_copy:
-            try:
-                arcpy.management.Delete(in_copy)
-            except Exception:                                    # noqa: BLE001
-                pass
+        src.close()
 
 
 def _patch_map_lyrx(out_fc, messages):

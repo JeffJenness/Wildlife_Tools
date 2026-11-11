@@ -82,6 +82,7 @@ import numpy as np
 import mahalanobis as _mh
 import hillshade as _hs
 import topographic_tools as _tt
+import raster_strips as _rs
 import land_facet_linkage as _lnk
 import land_facet_mahalanobis as _lfm
 
@@ -142,53 +143,81 @@ def _facet_of(rec, band_no):
     return None
 
 
-def _invert_values(a, nod, scale, c, label, messages, vmask=None,
-                   method=METHOD_RECIPROCAL):
-    """The shared core: mask, unscale, then invert by ``method`` --
-    reciprocal ``1/(x + c)`` (the Land Facet original) or linear
-    ``100 - x`` (the ArcMap CorridorModel conversion; the constant is not
-    used, and a resulting cost of exactly 0 is bumped to 1 as that tool
-    did, so perfect habitat still carries a small positive cost).
+_INVERT_BYTES_PER_CELL = 24     # working memory per cell of an invert strip
 
-    Returns ``(out, valid)`` -- a float32 grid with NODATA_OUT where invalid,
-    and the validity mask -- after reporting zero/negative diagnostics.
-    ``vmask`` is the band's per-pixel validity (mahalanobis.
-    band_validity_mask) for sources whose NoData lives only in the mask
-    band (gdb GRID phantom-fill trap).
-    """
-    a = np.asarray(a, dtype=np.float32)
+
+def _read_band_rows(band, top, rows, width):
+    """(values as float32, valid mask) for rows top..top+rows-1 of a band,
+    with its NoData value and mask band applied."""
+    a = np.asarray(band.ReadAsArray(0, int(top), int(width), int(rows)), dtype=np.float32)
     valid = np.isfinite(a)
-    if vmask is not None:
-        valid &= vmask
+    nod = band.GetNoDataValue()
     if nod is not None:
         with np.errstate(invalid="ignore"):
             valid &= (a != np.float32(nod))
     with np.errstate(invalid="ignore"):
         valid &= (a != np.float32(_tt.NODATA_OUT))
+    valid = _mh.mask_band_valid(band, valid, 0, int(top))
+    return a, valid
+
+
+def _invert_block(a, valid, scale, c, counts, method=METHOD_RECIPROCAL):
+    """The shared core on one block of rows: unscale, then invert by
+    ``method`` -- reciprocal ``1/(x + c)`` (the Land Facet original) or
+    linear ``100 - x`` (the ArcMap CorridorModel conversion; the constant is
+    not used, and a resulting cost of exactly 0 is bumped to 1 as that tool
+    did, so perfect habitat still carries a small positive cost).
+
+    Returns ``(out, valid)`` -- a float32 block with NODATA_OUT where
+    invalid, and the validity mask -- and adds the block's diagnostics to
+    ``counts`` (n_over, n_zero, n_neg, max_valid) for the once-per-band
+    report (_invert_report)."""
+    a = np.asarray(a, dtype=np.float32)
+    valid = valid.copy()
     if scale:
         # Stored densities cannot exceed 1/scale (10,000); anything larger is
         # a NoData sentinel whose declaration was lost (a file geodatabase may
         # not preserve it on a multi-band raster).
         over = valid & (a > np.float32(1.0 / scale))
-        n_over = int(over.sum())
-        if n_over:
-            _warn(messages,
-                  "{:,} cells of {} hold values above the stored maximum and "
-                  "were treated as NoData -- the density raster has probably "
-                  "lost its NoData declaration in a geodatabase.".format(
-                      n_over, label))
-            valid &= ~over
+        counts["n_over"] += int(over.sum())
+        valid &= ~over
         del over
-        a *= np.float32(scale)
+        a = a * np.float32(scale)
 
     if method == METHOD_LINEAR:
         out = np.full(a.shape, np.float32(_tt.NODATA_OUT))
         res = np.float32(100.0) - a[valid]
-        n_neg = int((res < 0).sum())
-        n_zero = int((res == np.float32(0.0)).sum())
+        counts["n_neg"] += int((res < 0).sum())
+        counts["n_zero"] += int((res == np.float32(0.0)).sum())
         res[res == np.float32(0.0)] = np.float32(1.0)
         out[valid] = res
-        if valid.any() and float(a[valid].max()) <= 1.5:
+        if valid.any():
+            counts["max_valid"] = max(counts["max_valid"], float(a[valid].max()))
+        return out, valid
+
+    if c:
+        a = a + np.float32(c)
+    zero = valid & (a == np.float32(0.0))
+    counts["n_zero"] += int(zero.sum())
+    counts["n_neg"] += int((valid & (a < np.float32(0.0))).sum())
+    valid &= ~zero
+    del zero
+    out = np.full(a.shape, np.float32(_tt.NODATA_OUT))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out[valid] = np.float32(1.0) / a[valid]
+    return out, valid
+
+
+def _invert_report(counts, label, scale, messages, method=METHOD_RECIPROCAL):
+    """The diagnostics of one band, in the shipped wording."""
+    if scale and counts["n_over"]:
+        _warn(messages,
+              "{:,} cells of {} hold values above the stored maximum and "
+              "were treated as NoData -- the density raster has probably "
+              "lost its NoData declaration in a geodatabase.".format(
+                  counts["n_over"], label))
+    if method == METHOD_LINEAR:
+        if counts["max_valid"] > -np.inf and counts["max_valid"] <= 1.5:
             _warn(messages,
                   "The valid values of {} never exceed 1.5 -- this does not "
                   "look like a 0-100 suitability model, so 100 - x will "
@@ -196,43 +225,51 @@ def _invert_values(a, nod, scale, c, label, messages, vmask=None,
                   "The linear method is meant for 0-100 habitat suitability "
                   "models; use the reciprocal for proportion or index "
                   "surfaces.".format(label))
-        if n_zero:
+        if counts["n_zero"]:
             _say(messages,
                  "{:,} cells of {} scored a perfect 100, giving cost 0; "
                  "they were set to cost 1 (as the original ArcMap "
                  "CorridorModel did) so travel is never free.".format(
-                     n_zero, label))
-        if n_neg:
+                     counts["n_zero"], label))
+        if counts["n_neg"]:
             _warn(messages,
                   "{:,} cells of {} exceed 100, so their linear costs are "
                   "NEGATIVE. Least-cost tools reject negative costs; the "
                   "linear method expects a 0-100 suitability model.".format(
-                      n_neg, label))
-        return out, valid
-
-    if c:
-        a += np.float32(c)
-    zero = valid & (a == np.float32(0.0))
-    n_zero = int(zero.sum())
-    n_neg = int((valid & (a < np.float32(0.0))).sum())
-    valid &= ~zero
-    del zero
-
-    out = np.full(a.shape, np.float32(_tt.NODATA_OUT))
-    with np.errstate(divide="ignore", invalid="ignore"):
-        out[valid] = np.float32(1.0) / a[valid]
-
-    if n_zero:
+                      counts["n_neg"], label))
+        return
+    if counts["n_zero"]:
         _warn(messages,
               "{:,} cells of {} were exactly zero after the constant and "
-              "became NoData (division by zero).".format(n_zero, label))
-    if n_neg:
+              "became NoData (division by zero).".format(counts["n_zero"], label))
+    if counts["n_neg"]:
         _warn(messages,
               "{:,} cells of {} were NEGATIVE after the constant, so their "
               "inverted values are negative. Least-cost tools reject negative "
               "costs; add a larger constant or check the input.".format(
-                  n_neg, label))
-    return out, valid
+                  counts["n_neg"], label))
+
+
+def _invert_band(gdal, band, width_px, height_px, gt, proj, scale, c, label,
+                 scratch, messages, method, blocks):
+    """One band, strip by strip, to a finished scratch raster:
+    ``(tmp, out_stats)`` after the diagnostics are posted."""
+    writer = _rs.ScratchWriter(gdal, scratch, "invert", gt, proj, width_px, height_px,
+                               nodata=float(_tt.NODATA_OUT))
+    counts = {"n_over": 0, "n_zero": 0, "n_neg": 0, "max_valid": -np.inf}
+    try:
+        for bi, (y0, y1, top, bot) in enumerate(blocks):
+            a, valid = _read_band_rows(band, top, bot - top, width_px)
+            out, ok = _invert_block(a, valid, scale, c, counts, method=method)
+            writer.write(y0, out, ok)
+            del a, valid, out, ok
+            _mh.phase_step(bi + 1, len(blocks))
+        tmp, out_stats = writer.finish(messages)
+    except Exception:
+        writer.abandon()
+        raise
+    _invert_report(counts, label, scale, messages, method=method)
+    return tmp, out_stats
 
 
 def _formula_text(method, c):
@@ -242,30 +279,11 @@ def _formula_text(method, c):
     return "1 / (x{})".format(" + {:g}".format(c) if c else "")
 
 
-def _deliver(gdal, out, valid, gt, proj, width_px, height_px, out_path,
-             in_raster, label, c, scale, scratch, messages,
+def _deliver(tmp, out_stats, out_path, in_raster, label, c, scale, messages,
              method=METHOD_RECIPROCAL):
-    """Write ``out`` to a scratch GeoTIFF with self-computed statistics and
-    deliver it (CopyRaster, Esri metadata, symmetry with every other tool)."""
+    """Deliver a finished scratch GeoTIFF (statistics already on it):
+    CopyRaster, Esri metadata, symmetry with every other tool."""
     import arcpy
-
-    tmp = arcpy.CreateUniqueName("invert.tif", scratch)
-    ds_out, oband = _tt._make_output(gdal, tmp, gt, proj, width_px, height_px)
-    stats = _mh._RasterStats()
-    slab = max(1, int(4_000_000 // max(1, width_px)))
-    for r0 in range(0, height_px, slab):
-        v = out[r0:r0 + slab][valid[r0:r0 + slab]]
-        if v.size:
-            stats.add(v.astype(np.float64))
-    oband.WriteArray(out)
-    oband.FlushCache()
-    out_stats = _mh._finalize_stats(oband, stats, messages)
-    if out_stats is not None:
-        out_stats["on_raster"] = _mh._write_gtiff_stats(oband, out_stats)
-    oband.FlushCache()
-    ds_out.FlushCache()
-    oband = None
-    ds_out = None
 
     unscale_note = (
         " Stored values were converted to 0-1 proportions (x {:g}) "
@@ -409,20 +427,16 @@ def run_invert(in_raster, out_raster=None, out_workspace=None,
                               ("Inverting {}...".format(label), 3),
                               ("Saving the output raster...", 2)])
             band = src.GetRasterBand(1)
-            a = band.ReadAsArray(0, 0, width_px, height_px)
-            nod = band.GetNoDataValue()
             _mh.phase_advance()
             _say(messages, "Inverting {}: out = {}.".format(
                 label, _formula_text(method, c)))
-            out, valid = _invert_values(a, nod, scale, c, label, messages,
-                                        vmask=_mh.band_validity_mask(band),
-                                        method=method)
-            del a
+            rows, blocks = _rs.plan(height_px, width_px, 0, _INVERT_BYTES_PER_CELL, messages)
+            tmp, out_stats = _invert_band(gdal, band, width_px, height_px, gt, proj, scale, c,
+                                          label, scratch, messages, method, blocks)
+            band = None
             _mh.phase_advance()
-            _deliver(gdal, out, valid, gt, proj, width_px, height_px,
-                     out_raster, in_raster, label, c, scale, scratch, messages,
+            _deliver(tmp, out_stats, out_raster, in_raster, label, c, scale, messages,
                      method=method)
-            del out, valid
             _lnk.write(out_raster, _lnk.inverted_record(
                 analysis_id=analysis_id, source_raster=in_raster,
                 constant=(None if linear else c), scale_applied=bool(scale),
@@ -493,15 +507,13 @@ def run_invert(in_raster, out_raster=None, out_workspace=None,
 
         used = set()
         written = []
+        rows, blocks = _rs.plan(height_px, width_px, 0, _INVERT_BYTES_PER_CELL, messages)
         for i, b in enumerate(band_nos, start=1):
             _mh.phase_advance()
             band = src.GetRasterBand(b)
-            a = band.ReadAsArray(0, 0, width_px, height_px)
-            nod = band.GetNoDataValue()
-            out, valid = _invert_values(a, nod, scale, c, _label(b), messages,
-                                        vmask=_mh.band_validity_mask(band),
-                                        method=method)
-            del a
+            tmp, out_stats = _invert_band(gdal, band, width_px, height_px, gt, proj, scale, c,
+                                          _label(b), scratch, messages, method, blocks)
+            band = None
             name = _name(b)
             if name.lower() in used:
                 # Long labels can truncate to the same safe token; the band
@@ -510,10 +522,8 @@ def run_invert(in_raster, out_raster=None, out_workspace=None,
             used.add(name.lower())
             out_path = _mh.resolve_raster_output(
                 os.path.join(out_workspace, name), messages)
-            _deliver(gdal, out, valid, gt, proj, width_px, height_px,
-                     out_path, in_raster, _label(b), c, scale, scratch,
+            _deliver(tmp, out_stats, out_path, in_raster, _label(b), c, scale,
                      messages, method=method)
-            del out, valid
             _lnk.write(out_path, _lnk.inverted_record(
                 analysis_id=analysis_id, source_raster=in_raster,
                 constant=(None if linear else c), scale_applied=bool(scale),

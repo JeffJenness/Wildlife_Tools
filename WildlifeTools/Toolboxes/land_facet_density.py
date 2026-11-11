@@ -65,6 +65,7 @@ import mahalanobis as _mh
 import hillshade as _hs
 import aspect_tools as _at
 import topographic_tools as _tt
+import raster_strips as _rs
 import land_facet_linkage as _lnk
 
 NEIGHBORHOODS = _at.NEIGHBORHOODS
@@ -85,6 +86,7 @@ STORE_NODATA = 65535
 # an hour of work.
 _SOFT_FACETS = 30
 _HARD_FACETS = 200
+_DENSITY_BYTES_PER_CELL = 48   # working memory per cell of a density strip
 
 _CD_CITATION = (
     "CorridorDesigner: Majka, D., J. Jenness, and P. Beier. 2007. "
@@ -175,49 +177,49 @@ def run_density(in_raster, out_raster, facet_values=None,
         ("Writing the linkage metadata...", 1),
     ])
 
-    src, in_copy = _hs._open_source(in_raster, scratch, messages)
+    src = _rs.Source(in_raster, scratch, messages)
     try:
-        band = src.GetRasterBand(1)
-        width_px, height_px = src.RasterXSize, src.RasterYSize
+        width_px, height_px = src.width, src.height
         if width_px < 1 or height_px < 1:
             raise arcpy.ExecuteError("The land facet raster is empty.")
-        gt = src.GetGeoTransform()
-        proj = src.GetProjection()
-        in_nodata = band.GetNoDataValue()
+        gt, proj = src.gt, src.proj
         sr = arcpy.Describe(in_raster).spatialReference
-        a = band.ReadAsArray(0, 0, width_px, height_px)
-        vmask = _mh.band_validity_mask(band)   # capture while src is open
+        shape = (height_px, width_px)
+
+        # ---- which facets get bands (pass 1: the distinct values, streamed)
+        _mh.phase_advance("Identifying the land facets...")
+        rec = _lnk.read(in_raster, _lnk.FACETS)
+        cats = None
+        for y0, y1 in _rs.strip_ranges(height_px, _rs.strip_rows(height_px, width_px, 0, 64)):
+            a, valid = src.read(y0, y1)
+            # The clustering tool writes -9999 for outliers and over-confusion
+            # cells; honour it even when the raster never declared it as its
+            # NoData value.
+            with np.errstate(invalid="ignore"):
+                valid &= (a != _tt.NODATA_OUT)
+            u = np.unique(a[valid])
+            cats = u if cats is None else np.union1d(cats, u)
+            del a, valid
+        if cats is None or cats.size == 0:
+            raise arcpy.ExecuteError(
+                "The land facet raster has no valid (non-NoData) cells.")
+        _run_density_bands(gdal, src, in_raster, out_raster, facet_values, neighborhood,
+                           radius, width, height, inner_radius, outer_radius, start_angle,
+                           end_angle, nbr_units, kernel_file, denominator, messages,
+                           rec, cats, gt, proj, sr, width_px, height_px, scratch)
     finally:
-        src = None
-        if in_copy:
-            try:
-                arcpy.management.Delete(in_copy)
-            except Exception:
-                pass
+        src.close()
+    return None
 
-    a = np.asarray(a)
-    is_float = np.issubdtype(a.dtype, np.floating)
-    valid = np.ones(a.shape, dtype=bool)
-    if is_float:
-        valid &= np.isfinite(a)
-    if in_nodata is not None:
-        with np.errstate(invalid="ignore"):
-            valid &= (a != in_nodata)
-    # The clustering tool writes -9999 for outliers and over-confusion cells;
-    # honour it even when the raster never declared it as its NoData value.
-    with np.errstate(invalid="ignore"):
-        valid &= (a != _tt.NODATA_OUT)
-    if vmask is not None:
-        valid &= vmask
-    shape = a.shape
 
-    # ---- which facets get bands ---------------------------------------------
-    _mh.phase_advance("Identifying the land facets...")
-    rec = _lnk.read(in_raster, _lnk.FACETS)
-    cats = np.unique(a[valid])
-    if cats.size == 0:
-        raise arcpy.ExecuteError(
-            "The land facet raster has no valid (non-NoData) cells.")
+def _run_density_bands(gdal, src, in_raster, out_raster, facet_values, neighborhood,
+                       radius, width, height, inner_radius, outer_radius, start_angle,
+                       end_angle, nbr_units, kernel_file, denominator, messages,
+                       rec, cats, gt, proj, sr, width_px, height_px, scratch):
+    """The facet selection, neighborhood and the strip pass of run_density
+    (split out so the source stays open for the strips)."""
+    import arcpy
+    shape = (height_px, width_px)
 
     entries = _facets_from_record(rec, cats) if rec else []
     if entries:
@@ -307,85 +309,103 @@ def run_density(in_raster, out_raster, facet_values=None,
     single = (len(groups) == 1)
     _say(messages, "Neighborhood: {}.".format(note))
 
-    # ---- denominator ---------------------------------------------------------
+    # ---- denominator and bands, in row strips -------------------------------
     # nbr_conv zero-pads, so convolving an all-ones grid yields, at every cell,
     # the number of kernel cells that fall inside the raster -- exactly the
-    # original's in-raster count, edge renormalization included.
+    # original's in-raster count, edge renormalization included. Each strip
+    # is read with a halo of the kernel's half-height so the sums are the
+    # whole-raster sums; the strip's rows of every band are written as we go
+    # and each band's statistics accumulate across the strips.
     _mh.phase_advance("Computing neighborhood proportions...")
     faithful = (denominator == _lnk.DENOM_IN_RASTER)
-    denom = np.zeros(shape, np.float32)
-    ref = (np.ones(shape, np.float32) if faithful
-           else valid.astype(np.float32))
-    for kf_arr, rows in groups:
-        sel = slice(None) if single else rows
-        denom[sel] = _hs.nbr_conv(ref, kf_arr.astype(np.float32))[sel]
-    del ref
-    undefined = ~(denom > np.float32(0))
-    n_undef = int(undefined.sum())
-    use_nodata = n_undef > 0
-    if use_nodata:
-        _warn(messages,
-              "{:,} cells have no usable neighborhood and were set to NoData. "
-              "Note that a file geodatabase may not preserve the NoData value "
-              "on a multi-band raster; a GeoTIFF destination will.".format(n_undef))
-    denom_safe = np.where(undefined, np.float32(1.0), denom)
-    del denom
-
-    # ---- one band per facet, written as we go --------------------------------
-    # Never hold all bands at once: 30 bands over a billion cells is tens of GB.
-    # Each iteration keeps only the indicator and its convolution.
-    tmp = arcpy.CreateUniqueName("lf_density.tif", scratch)
-    ds = _make_multiband(gdal, tmp, gt, proj, width_px, height_px,
-                         n_facets, use_nodata)
-    n_conv = max(1, len(groups) * n_facets)
+    halo = max(int(k.shape[0] // 2) for k, _r in groups)
+    rows, blocks = _rs.plan(height_px, width_px, halo, _DENSITY_BYTES_PER_CELL * max(1, min(n_facets, 4)),
+                            messages)
+    tmp = _rs.scratch_tif(scratch, "lf_density")
+    # The NoData declaration is decided by the first strip's undefined cells
+    # being possible at all: a kernel never fully outside the raster has
+    # none, so the declaration follows the whole raster's count, known only
+    # after the pass. Declare it on every band and drop it at the end when
+    # no cell needed it (the band NoData value is metadata, not pixels).
+    ds = _make_multiband(gdal, tmp, gt, proj, width_px, height_px, n_facets, True)
+    accs = [_mh._RasterStats() for _ in entries]
+    n_undef = 0
+    n_conv = max(1, len(blocks) * (1 + n_facets))
     done = 0
     stats_ok = True
     try:
-        for bi, entry in enumerate(entries, start=1):
-            fid = entry["facet_id"]
-            ind = ((a == fid) & valid).astype(np.float32)
-            ck = np.zeros(shape, np.float32)
-            for kf_arr, rows in groups:
-                sel = slice(None) if single else rows
-                ck[sel] = _hs.nbr_conv(ind, kf_arr.astype(np.float32))[sel]
+        for y0, y1, top, bot in blocks:
+            a, valid = src.read(top, bot)
+            with np.errstate(invalid="ignore"):
+                valid &= (a != _tt.NODATA_OUT)
+            bshape = a.shape
+            denom = np.zeros(bshape, np.float32)
+            ref = (np.ones(bshape, np.float32) if faithful
+                   else valid.astype(np.float32))
+            for kf_arr, rows_sel in groups:
+                sel = slice(None) if single else _rs.row_select(rows_sel, top, bshape[0])
+                if sel is None:
+                    continue
+                denom[sel] = _hs.nbr_conv(ref, kf_arr.astype(np.float32))[sel]
+            del ref
+            undefined = ~(denom > np.float32(0))
+            sl = slice(y0 - top, y1 - top)
+            n_undef += int(undefined[sl].sum())
+            denom_safe = np.where(undefined, np.float32(1.0), denom)
+            del denom
+            done += 1
+            _mh.phase_step(done, n_conv)
+            for bi, entry in enumerate(entries, start=1):
+                fid = entry["facet_id"]
+                ind = ((a == fid) & valid).astype(np.float32)
+                ck = np.zeros(bshape, np.float32)
+                for kf_arr, rows_sel in groups:
+                    sel = slice(None) if single else _rs.row_select(rows_sel, top, bshape[0])
+                    if sel is None:
+                        continue
+                    ck[sel] = _hs.nbr_conv(ind, kf_arr.astype(np.float32))[sel]
+                del ind
+                # In place on ck (same operations in the same order and dtype
+                # as the whole-raster version, so the stored values are
+                # bit-identical).
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    ck /= denom_safe
+                np.clip(ck, 0.0, 1.0, out=ck)
+                ck *= np.float32(SCALE)
+                np.rint(ck, out=ck)
+                stored = ck[sl].astype(np.uint16)
+                del ck
+                und = undefined[sl]
+                stored[und] = STORE_NODATA
+                oband = ds.GetRasterBand(bi)
+                oband.WriteArray(stored, 0, int(y0))
+                chunk = stored[und == False]                     # noqa: E712
+                if chunk.size:
+                    accs[bi - 1].add(chunk.astype(np.float64).ravel())
+                oband = None
+                del stored, chunk
                 done += 1
                 _mh.phase_step(done, n_conv)
-            del ind
-            # In place on ck: a separate `prop` array would add one more
-            # full-grid float32 (~4 GB on a billion-cell grid) of peak memory
-            # for no gain. Same operations in the same order and dtype, so the
-            # stored values are bit-identical to the two-array version.
-            with np.errstate(invalid="ignore", divide="ignore"):
-                ck /= denom_safe
-            np.clip(ck, 0.0, 1.0, out=ck)
-            ck *= np.float32(SCALE)
-            np.rint(ck, out=ck)
-            stored = ck.astype(np.uint16)
-            del ck
-            if use_nodata:
-                stored[undefined] = STORE_NODATA
+            del a, valid, denom_safe, undefined
+        use_nodata = n_undef > 0
+        for bi, entry in enumerate(entries, start=1):
             oband = ds.GetRasterBand(bi)
-            oband.WriteArray(stored)
+            fid = entry["facet_id"]
             # Band descriptions do not survive CopyRaster into a geodatabase --
             # set them anyway for the GeoTIFF case, but the linkage record is
             # what downstream tools actually read.
             oband.SetDescription("Facet_{}_density".format(fid))
-            oband.FlushCache()
-
+            if not use_nodata:
+                try:
+                    oband.DeleteNoDataValue()
+                except Exception:                                 # noqa: BLE001
+                    pass
             # Record this band's statistics from the values we already hold, so
             # CopyRaster carries them through and no CalculateStatistics scan is
             # ever needed (it is pathologically slow on geodatabase rasters, and
             # would rescan tens of GB here).
-            acc = _mh._RasterStats()
-            slab = max(1, int(4_000_000 // max(1, width_px)))
-            for r0 in range(0, height_px, slab):
-                chunk = stored[r0:r0 + slab]
-                if use_nodata:
-                    chunk = chunk[undefined[r0:r0 + slab] == False]  # noqa: E712
-                if chunk.size:
-                    acc.add(chunk.astype(np.float64).ravel())
             try:
-                st = _mh._finalize_stats(oband, acc, messages)
+                st = _mh._finalize_stats(oband, accs[bi - 1], messages)
                 if st is not None:
                     _mh._write_gtiff_stats(oband, st)
                 else:
@@ -396,13 +416,16 @@ def run_density(in_raster, out_raster, facet_values=None,
                                 "{}".format(bi, e))
             oband.FlushCache()
             oband = None
-            del stored
             _say(messages, "  band {} of {}: {}".format(
                 bi, n_facets, _lnk.facet_label(entry)))
         ds.FlushCache()
     finally:
         ds = None
-    del denom_safe, undefined, a, valid
+    if use_nodata:
+        _warn(messages,
+              "{:,} cells have no usable neighborhood and were set to NoData. "
+              "Note that a file geodatabase may not preserve the NoData value "
+              "on a multi-band raster; a GeoTIFF destination will.".format(n_undef))
 
     # ---- deliver -------------------------------------------------------------
     _mh.phase_advance("Saving the output raster...")
@@ -462,4 +485,3 @@ def run_density(in_raster, out_raster, facet_values=None,
              "Linkage record written: the Mahalanobis tool can identify each "
              "band's facet and will treat 1.0 (100%) as the ideal density.")
     _mh.end_phases()
-    return None

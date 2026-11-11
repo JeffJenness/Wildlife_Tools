@@ -57,6 +57,7 @@ import numpy as np
 import mahalanobis as _mh
 import hillshade as _hs
 import topographic_tools as _tt
+import raster_strips as _rs
 
 NODATA_OUT = _tt.NODATA_OUT
 
@@ -246,6 +247,40 @@ def _lineage_source_kind(in_raster):
                 re.split(r"[\\/]", src.group(1))[-1]))
     return found
 
+
+
+class _ValueKindProbe(object):
+    """The value fallback of _detect_source_kind gathered over row strips:
+    the largest non-negative value and, while it could still be a D8 raster
+    (all values among the eight codes 1..128), the distinct values."""
+
+    def __init__(self):
+        self.mx = -1.0
+        self.distinct = set()
+        self.many = False
+
+    def update(self, a, valid):
+        finite = valid & (a >= 0)
+        if not finite.any():
+            return
+        self.mx = max(self.mx, float(np.max(a, where=finite, initial=-1.0)))
+        if not self.many and self.mx <= 128.0:
+            self.distinct.update(np.unique(a[finite]).tolist())
+            if len(self.distinct) > 8:
+                self.many = True
+                self.distinct.clear()
+
+    def result(self):
+        if 0.0 < self.mx <= 128.0 and not self.many and self.distinct:
+            u = sorted(self.distinct)
+            if len(u) <= 8 and all(v == round(v) for v in u) and \
+                    set(int(v) for v in u) <= _D8_CODES:
+                return "d8", "pixel values (only the D8 codes 1-128 are present)"
+        return "unknown", ""
+
+
+_FOCAL_BYTES_PER_CELL = 128     # working memory per cell of a focal-statistics strip
+_TRANSFORM_BYTES_PER_CELL = 64  # ... of an aspect-transformation strip
 
 
 def _detect_source_kind(in_raster, arr=None, nodata=None):
@@ -619,36 +654,232 @@ def run_aspect_focal(in_raster, out_raster, statistic,
         ("Creating layer file and symbology...", 1),
     ])
 
-    src, in_copy = _hs._open_source(in_raster, scratch, messages)
+    src = _rs.Source(in_raster, scratch, messages)
     try:
-        band = src.GetRasterBand(1)
-        width_px, height_px = src.RasterXSize, src.RasterYSize
+        width_px, height_px = src.width, src.height
         if width_px < 1 or height_px < 1:
             raise arcpy.ExecuteError("The aspect raster is empty.")
-        gt = src.GetGeoTransform()
-        proj = src.GetProjection()
-        in_nodata = band.GetNoDataValue()
+        gt, proj = src.gt, src.proj
+        in_nodata = src.nodata
         sr = arcpy.Describe(in_raster).spatialReference
-        # float32 throughout: aspect values (0-360) are exact in float32, and
-        # halving every whole-grid array matters on large regional rasters.
-        a = band.ReadAsArray(0, 0, width_px, height_px).astype(np.float32)
-        vmask = _mh.band_validity_mask(band)   # capture while src is open
+
+        # Neighborhood kernel(s).
+        kernel_arr = None
+        if neighborhood in ("Irregular", "Weight"):
+            if not kernel_file:
+                raise arcpy.ExecuteError(
+                    "The {} neighborhood needs a kernel file.".format(neighborhood))
+            kernel_arr = _parse_kernel_file(kernel_file)
+            if neighborhood == "Irregular":
+                kernel_arr = (kernel_arr != 0).astype(np.float64)
+            if np.any(kernel_arr < 0):
+                raise arcpy.ExecuteError(
+                    "The kernel file contains negative weights; weights must be "
+                    "zero or positive for circular statistics.")
+            if not np.any(kernel_arr > 0):
+                raise arcpy.ExecuteError(
+                    "The kernel file contains no positive weights.")
+        P = {"radius": radius, "width": width, "height": height,
+             "inner": inner_radius, "outer": outer_radius,
+             "start": start_angle, "end": end_angle}
+        groups, note = _neighborhood_groups(
+            neighborhood, P, gt, height_px, sr, nbr_units, kernel_arr, messages,
+            width=width_px, proj=proj)
+        weighted = (neighborhood == "Weight")
+        _say(messages, "Neighborhood: {}.".format(note))
+
+        # Row strips with a halo of the kernels' half-height: every output
+        # cell sees its whole neighborhood, memory is bounded by halo x width.
+        halo = max(int(k.shape[0] // 2) for k, _r in groups)
+        rows, blocks = _rs.plan(height_px, width_px, halo, _FOCAL_BYTES_PER_CELL, messages)
+        writer = _rs.ScratchWriter(gdal, scratch, "aspectfocal", gt, proj,
+                                   width_px, height_px, nodata=float(NODATA_OUT))
+
+        _mh.phase_advance("Computing {}...".format(STAT_LABEL[statistic]))
+        # Source-type detection: lineage first; the value fallback is
+        # gathered over the strips and decided after them.
+        lineage = _lineage_source_kind(in_raster)
+        probe = _ValueKindProbe()
+        kish = weighted and statistic in ("RAYLEIGH", "KAPPA")
+        single = (len(groups) == 1)
+        NANF = np.float32(np.nan)
+        fill = _ALLFLAT_FILL[statistic]
+        n_bad = n_out = n_flat_nbr = n_nd = 0
+        nb = len(blocks)
+        try:
+            for bi, (y0, y1, top, bot) in enumerate(blocks):
+                z, valid = src.read(top, bot)
+                # float32 throughout: aspect values (0-360) are exact in
+                # float32, and halving every array matters on large rasters.
+                a = z.astype(np.float32)
+                del z
+                if not lineage:
+                    probe.update(a, valid)
+                n_bad += int(np.count_nonzero(valid & ((a < -1.001) | (a > 360.001))))
+
+                # Flat (-1) vs. directional cells. Any negative valid value is
+                # treated as the flat/no-aspect sentinel; directions are 0-360.
+                flat = valid & (a < 0.0)
+                dvalid = valid & (a >= 0.0)
+                rad = np.radians(np.where(dvalid, a, 0.0)).astype(np.float32)
+                sin_f = np.where(dvalid, np.sin(rad), 0.0).astype(np.float32)
+                cos_f = np.where(dvalid, np.cos(rad), 0.0).astype(np.float32)
+                dvalid_f = dvalid.astype(np.float32)
+                flat_f = flat.astype(np.float32)
+                # Ignore NoData unchecked: count each neighborhood's valid
+                # cells (flat cells are data). correlate() pads with 0, so
+                # cells beyond the raster edge count as missing -- Esri's rule.
+                valid_f = None if ignore_nodata else valid.astype(np.float32)
+                shape = a.shape
+                del a, valid
+
+                S = np.zeros(shape, np.float32)
+                C = np.zeros(shape, np.float32)
+                Ndir = np.zeros(shape, np.float32)
+                Nflat = np.zeros(shape, np.float32)
+                Nw2 = np.zeros(shape, np.float32) if kish else None
+                any_nd = None if ignore_nodata else np.zeros(shape, bool)
+                for k, rows_sel in groups:
+                    sel = _rs.row_select(rows_sel, top, shape[0])
+                    if sel is None:
+                        continue
+                    kf = k.astype(np.float32)
+                    if single:
+                        S = _hs.nbr_conv(sin_f, kf)
+                        C = _hs.nbr_conv(cos_f, kf)
+                        Ndir = _hs.nbr_conv(dvalid_f, kf)
+                        Nflat = _hs.nbr_conv(flat_f, kf)
+                        if kish:
+                            Nw2 = _hs.nbr_conv(dvalid_f, kf * kf)
+                    else:
+                        S[sel] = _hs.nbr_conv(sin_f, kf)[sel]
+                        C[sel] = _hs.nbr_conv(cos_f, kf)[sel]
+                        Ndir[sel] = _hs.nbr_conv(dvalid_f, kf)[sel]
+                        Nflat[sel] = _hs.nbr_conv(flat_f, kf)[sel]
+                        if kish:
+                            Nw2[sel] = _hs.nbr_conv(dvalid_f, kf * kf)[sel]
+                    if not ignore_nodata:
+                        kb = (k > 0).astype(np.float32)
+                        nv = _hs.nbr_conv(valid_f, kb)
+                        short = nv < (np.float32(kb.sum()) - np.float32(0.5))
+                        if single:
+                            any_nd = short
+                        else:
+                            any_nd[sel] = short[sel]
+                        del nv, short
+                del sin_f, cos_f, dvalid_f, flat_f, valid_f
+                if statistic not in _ORDER_STATS:
+                    del rad
+                if not weighted:
+                    np.rint(Ndir, out=Ndir)
+                    np.rint(Nflat, out=Nflat)
+
+                has_dir = Ndir > (1e-6 if weighted else 0.5)
+                ntot = Ndir + Nflat
+                all_flat = (~has_dir) & (ntot > (1e-6 if weighted else 0.5))
+                no_valid = ntot <= (1e-6 if weighted else 0.5)
+
+                # Everything below stays float32 end to end (see the module
+                # notes on float64 promotion).
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    R = np.sqrt(S * S + C * C)
+                    Rbar = np.where(has_dir, R / np.where(Ndir == 0, np.float32(1.0), Ndir),
+                                    np.float32(0.0))
+                del R
+                Rbar = np.clip(Rbar, np.float32(0.0), np.float32(1.0))
+
+                # Assemble the requested statistic on directional cells.
+                if statistic == "MEAN":
+                    out = np.where(has_dir,
+                                   np.degrees(np.arctan2(S, C)) % np.float32(360.0), NANF)
+                elif statistic == "RESULTANT":
+                    out = np.where(has_dir, Rbar, NANF)
+                elif statistic == "CIRCVAR":
+                    out = np.where(has_dir, np.float32(1.0) - Rbar, NANF)
+                elif statistic == "ANGVAR":
+                    out = np.where(has_dir, np.float32(2.0) * (np.float32(1.0) - Rbar), NANF)
+                elif statistic == "CIRCSD":
+                    with np.errstate(invalid="ignore", divide="ignore"):
+                        csd = np.degrees(np.sqrt(np.maximum(np.float32(-2.0) * np.log(
+                            np.clip(Rbar, np.float32(1e-12), np.float32(1.0))),
+                            np.float32(0.0))))
+                    out = np.where(has_dir, csd, NANF)
+                    del csd
+                elif statistic == "ANGDEV":
+                    out = np.where(has_dir,
+                                   np.degrees(np.sqrt(np.maximum(
+                                       np.float32(2.0) * (np.float32(1.0) - Rbar),
+                                       np.float32(0.0)))), NANF)
+                elif statistic == "RAYLEIGH":
+                    if kish:
+                        with np.errstate(divide="ignore", invalid="ignore"):
+                            n_test = np.where(Nw2 > 1e-12, (Ndir * Ndir) / Nw2,
+                                              np.float32(1.0)).astype(np.float32)
+                    else:
+                        n_test = Ndir
+                    p = _rayleigh_p(np.where(n_test == 0, np.float32(1.0), n_test), Rbar)
+                    out = np.where(has_dir, p.astype(np.float32), NANF)
+                    del p
+                elif statistic == "KAPPA":
+                    if kish:
+                        with np.errstate(divide="ignore", invalid="ignore"):
+                            n_k = np.where(Nw2 > 1e-12, (Ndir * Ndir) / Nw2,
+                                           np.float32(1.0)).astype(np.float32)
+                    else:
+                        n_k = Ndir
+                    kap = _kappa_small_sample(_kappa_from_rbar(Rbar), n_k)
+                    out = np.where(has_dir, kap.astype(np.float32), NANF)
+                    del kap, n_k
+                elif statistic == "PROPDEF":
+                    out = np.where(ntot > 0,
+                                   Ndir / np.where(ntot == 0, np.float32(1.0), ntot), NANF)
+                elif statistic in _ORDER_STATS:
+                    out = np.full(shape, np.nan, np.float32)
+                    for k, rows_sel in groups:
+                        sel = _rs.row_select(rows_sel, top, shape[0])
+                        if sel is None:
+                            continue
+                        g = _order_stat(rad, dvalid, k, statistic,
+                                        messages if bi == 0 else None)
+                        out[sel] = g[sel]
+                out = out.astype(np.float32, copy=False)
+                del S, C, Rbar, Ndir, Nflat, ntot
+
+                # Convert direction outputs to compass when the input was
+                # mathematical (in place, on the affected cells only).
+                if statistic in _DIRECTION_STATS and is_math:
+                    conv = has_dir & np.isfinite(out)
+                    out[conv] = (np.float32(90.0) - out[conv]) % np.float32(360.0)
+                    del conv
+                if statistic in _DIRECTION_STATS:
+                    # float32 `x % 360` returns exactly 360.0 when x is a tiny
+                    # negative, so wrap it: 360 == 0.
+                    out[out >= np.float32(360.0)] = np.float32(0.0)
+
+                # Apply the all-flat fill (or NoData), then NoData for
+                # no-valid cells -- all in place.
+                out[all_flat] = NANF if as_nodata else np.float32(fill)
+                out[no_valid] = NANF
+                sl = slice(y0 - top, y1 - top)
+                if any_nd is not None:
+                    n_nd += int(np.count_nonzero((any_nd & ~no_valid)[sl]))
+                    out[any_nd] = NANF
+                    del any_nd
+                out_valid = np.isfinite(out)
+                n_out += int(out_valid[sl].sum())
+                n_flat_nbr += int(all_flat[sl].sum())
+                writer.write(y0, out[sl], out_valid[sl])
+                _mh.phase_step(bi + 1, nb)
+                del out, out_valid, all_flat, no_valid, has_dir, flat, dvalid
+            out_path, out_stats = writer.finish(messages)
+        except Exception:
+            writer.abandon()
+            raise
     finally:
-        src = None
-        if in_copy:
-            try:
-                arcpy.management.Delete(in_copy)
-            except Exception:
-                pass
+        src.close()
 
-    valid = np.isfinite(a)
-    if in_nodata is not None:
-        valid &= (a != in_nodata)
-    if vmask is not None:
-        valid &= vmask
-
-    # Source-type detection + user guidance.
-    kind, why = _detect_source_kind(in_raster, a, in_nodata)
+    # Source-type guidance and the counts, now that every strip is in.
+    kind, why = lineage if lineage else probe.result()
     if kind == "dinf" and not is_math:
         _warn(messages,
             "This looks like a D-infinity flow-direction raster ({}). "
@@ -664,12 +895,6 @@ def run_aspect_focal(in_raster, out_raster, statistic,
             "stores flow codes (1, 2, 4, ... 128), NOT direction in degrees, "
             "so these circular statistics would be meaningless. Use an aspect "
             "or D-infinity raster instead.".format(why))
-
-    # Flat (-1) vs. directional cells. Any negative valid value is treated as
-    # the flat/no-aspect sentinel; directions are 0-360.
-    flat = valid & (a < 0.0)
-    dvalid = valid & (a >= 0.0)
-    n_bad = int(np.count_nonzero(valid & ((a < -1.001) | (a > 360.001))))
     if n_bad:
         _warn(messages,
               "{:,} cell(s) hold values outside the aspect range (-1 to 360 "
@@ -677,213 +902,11 @@ def run_aspect_focal(in_raster, out_raster, statistic,
               "Values below 0 are treated as flat and values above 360 as "
               "directions, which is only meaningful for true aspect "
               "data.".format(n_bad))
-
-    rad = np.radians(np.where(dvalid, a, 0.0)).astype(np.float32)
-    sin_f = np.where(dvalid, np.sin(rad), 0.0).astype(np.float32)
-    cos_f = np.where(dvalid, np.cos(rad), 0.0).astype(np.float32)
-    dvalid_f = dvalid.astype(np.float32)
-    flat_f = flat.astype(np.float32)
-    # Ignore NoData unchecked: count each neighborhood's valid cells (flat
-    # cells are data). correlate() pads with 0, so cells beyond the raster
-    # edge count as missing -- Esri's rule.
-    valid_f = None if ignore_nodata else valid.astype(np.float32)
-    shape = a.shape
-    del a, valid                          # raw grid no longer needed
-
-    # Neighborhood kernel(s).
-    kernel_arr = None
-    if neighborhood in ("Irregular", "Weight"):
-        if not kernel_file:
-            raise arcpy.ExecuteError(
-                "The {} neighborhood needs a kernel file.".format(neighborhood))
-        kernel_arr = _parse_kernel_file(kernel_file)
-        if neighborhood == "Irregular":
-            kernel_arr = (kernel_arr != 0).astype(np.float64)
-        if np.any(kernel_arr < 0):
-            raise arcpy.ExecuteError(
-                "The kernel file contains negative weights; weights must be "
-                "zero or positive for circular statistics.")
-        if not np.any(kernel_arr > 0):
-            raise arcpy.ExecuteError(
-                "The kernel file contains no positive weights.")
-    P = {"radius": radius, "width": width, "height": height,
-         "inner": inner_radius, "outer": outer_radius,
-         "start": start_angle, "end": end_angle}
-    groups, note = _neighborhood_groups(
-        neighborhood, P, gt, height_px, sr, nbr_units, kernel_arr, messages,
-        width=width_px, proj=proj)
-    weighted = (neighborhood == "Weight")
-    _say(messages, "Neighborhood: {}.".format(note))
-
-    _mh.phase_advance("Computing {}...".format(STAT_LABEL[statistic]))
-
-    # Resultant sums (S, C) + directional/flat weighted counts, per group, via
-    # the shared memory-safe size-aware neighborhood convolution (direct spatial
-    # correlation for small neighborhoods, overlap-add FFT for large ones) --
-    # see hillshade.nbr_conv. A whole-grid fftconvolve raised MemoryError on
-    # large regional aspect rasters even for a small neighborhood.
-    S = np.zeros(shape, np.float32)
-    C = np.zeros(shape, np.float32)
-    Ndir = np.zeros(shape, np.float32)
-    Nflat = np.zeros(shape, np.float32)
-    # A Weight kernel's Rayleigh test needs the sum of squared weights too:
-    # Kish's effective sample size (sum w)^2 / sum w^2 depends only on the
-    # RELATIVE weights, so a kernel of 1s and one of 10s give the same p.
-    kish = weighted and statistic in ("RAYLEIGH", "KAPPA")
-    Nw2 = np.zeros(shape, np.float32) if kish else None
-    # Cells whose neighborhood includes NoData or reaches past the edge
-    # (only when Ignore NoData is unchecked).
-    any_nd = None if ignore_nodata else np.zeros(shape, bool)
-    single = (len(groups) == 1)
-    conv_done = [0]
-    conv_total = ((4 + (1 if kish else 0) + (0 if ignore_nodata else 1))
-                  * len(groups) + 1)       # fields per group + assembly
-
-    def _tick():
-        conv_done[0] += 1
-        _mh.phase_step(conv_done[0], conv_total)
-
-    for k, rows in groups:
-        kf = k.astype(np.float32)
-        if single:
-            S = _hs.nbr_conv(sin_f, kf); _tick()
-            C = _hs.nbr_conv(cos_f, kf); _tick()
-            Ndir = _hs.nbr_conv(dvalid_f, kf); _tick()
-            Nflat = _hs.nbr_conv(flat_f, kf); _tick()
-            if kish:
-                Nw2 = _hs.nbr_conv(dvalid_f, kf * kf); _tick()
-        else:
-            S[rows] = _hs.nbr_conv(sin_f, kf)[rows]; _tick()
-            C[rows] = _hs.nbr_conv(cos_f, kf)[rows]; _tick()
-            Ndir[rows] = _hs.nbr_conv(dvalid_f, kf)[rows]; _tick()
-            Nflat[rows] = _hs.nbr_conv(flat_f, kf)[rows]; _tick()
-            if kish:
-                Nw2[rows] = _hs.nbr_conv(dvalid_f, kf * kf)[rows]; _tick()
-        if not ignore_nodata:
-            kb = (k > 0).astype(np.float32)
-            nv = _hs.nbr_conv(valid_f, kb)
-            short = nv < (np.float32(kb.sum()) - np.float32(0.5))
-            if single:
-                any_nd = short
-            else:
-                any_nd[rows] = short[rows]
-            del nv, short
-            _tick()
-    del sin_f, cos_f, dvalid_f, flat_f, valid_f
-    if statistic not in _ORDER_STATS:
-        del rad
-    if not weighted:
-        np.rint(Ndir, out=Ndir)
-        np.rint(Nflat, out=Nflat)
-
-    has_dir = Ndir > (1e-6 if weighted else 0.5)
-    ntot = Ndir + Nflat
-    all_flat = (~has_dir) & (ntot > (1e-6 if weighted else 0.5))
-    no_valid = ntot <= (1e-6 if weighted else 0.5)
-
-    # Everything below stays float32 end to end. Any np.where(cond, f32_array,
-    # python_float) silently promotes to float64 -- an 8-byte-per-cell copy that
-    # DOUBLES memory on a billion-cell regional raster -- so scalars are cast to
-    # float32 and fills happen in place on the one output array.
-    NANF = np.float32(np.nan)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        R = np.sqrt(S * S + C * C)
-        Rbar = np.where(has_dir, R / np.where(Ndir == 0, np.float32(1.0), Ndir),
-                        np.float32(0.0))
-    del R
-    Rbar = np.clip(Rbar, np.float32(0.0), np.float32(1.0))
-
-    # Assemble the requested statistic on directional cells.
-    if statistic == "MEAN":
-        out = np.where(has_dir,
-                       np.degrees(np.arctan2(S, C)) % np.float32(360.0), NANF)
-    elif statistic == "RESULTANT":
-        out = np.where(has_dir, Rbar, NANF)
-    elif statistic == "CIRCVAR":
-        out = np.where(has_dir, np.float32(1.0) - Rbar, NANF)
-    elif statistic == "ANGVAR":
-        out = np.where(has_dir, np.float32(2.0) * (np.float32(1.0) - Rbar), NANF)
-    elif statistic == "CIRCSD":
-        with np.errstate(invalid="ignore", divide="ignore"):
-            csd = np.degrees(np.sqrt(np.maximum(np.float32(-2.0) * np.log(
-                np.clip(Rbar, np.float32(1e-12), np.float32(1.0))),
-                np.float32(0.0))))
-        out = np.where(has_dir, csd, NANF)
-        del csd
-    elif statistic == "ANGDEV":
-        out = np.where(has_dir,
-                       np.degrees(np.sqrt(np.maximum(
-                           np.float32(2.0) * (np.float32(1.0) - Rbar),
-                           np.float32(0.0)))), NANF)
-    elif statistic == "RAYLEIGH":
-        if kish:
-            # Kish (1965) effective sample size for weighted observations:
-            # equals the cell count when all weights are equal, and does not
-            # change when every weight is multiplied by the same constant.
-            with np.errstate(divide="ignore", invalid="ignore"):
-                n_test = np.where(Nw2 > 1e-12, (Ndir * Ndir) / Nw2,
-                                  np.float32(1.0)).astype(np.float32)
-        else:
-            n_test = Ndir
-        p = _rayleigh_p(np.where(n_test == 0, np.float32(1.0), n_test), Rbar)
-        out = np.where(has_dir, p.astype(np.float32), NANF)
-        del p
-    elif statistic == "KAPPA":
-        # Small-sample correction (Fisher 1993 eq. 4.41) for neighborhoods
-        # of 15 or fewer directional cells; with a Weight kernel n is the
-        # Kish effective sample size, as for the Rayleigh test.
-        if kish:
-            with np.errstate(divide="ignore", invalid="ignore"):
-                n_k = np.where(Nw2 > 1e-12, (Ndir * Ndir) / Nw2,
-                               np.float32(1.0)).astype(np.float32)
-        else:
-            n_k = Ndir
-        kap = _kappa_small_sample(_kappa_from_rbar(Rbar), n_k)
-        out = np.where(has_dir, kap.astype(np.float32), NANF)
-        del kap, n_k
-    elif statistic == "PROPDEF":
-        out = np.where(ntot > 0,
-                       Ndir / np.where(ntot == 0, np.float32(1.0), ntot), NANF)
-    elif statistic in _ORDER_STATS:
-        out = np.full(shape, np.nan, np.float32)
-        for k, rows in groups:
-            g = _order_stat(rad, dvalid, k, statistic, messages)
-            out[rows] = g[rows]
-    out = out.astype(np.float32, copy=False)
-    _tick()                               # assembly complete
-    del S, C, Rbar
-    # The counts fed the assembly; free them before the write phase (three
-    # whole-grid float32 arrays matter on a billion-cell raster).
-    del Ndir, Nflat, ntot
-
-    # Convert direction outputs to compass when the input was mathematical
-    # (in place, on the affected cells only).
-    if statistic in _DIRECTION_STATS and is_math:
-        conv = has_dir & np.isfinite(out)
-        out[conv] = (np.float32(90.0) - out[conv]) % np.float32(360.0)
-        del conv
-    if statistic in _DIRECTION_STATS:
-        # float32 `x % 360` returns exactly 360.0 when x is a tiny negative
-        # (e.g. a mean direction a hair west of north), so wrap it: 360 == 0.
-        out[out >= np.float32(360.0)] = np.float32(0.0)
-
-    # Apply the all-flat fill (or NoData), then NoData for no-valid cells --
-    # all in place.
-    fill = _ALLFLAT_FILL[statistic]
-    out[all_flat] = NANF if as_nodata else np.float32(fill)
-    out[no_valid] = NANF
-    if any_nd is not None:
-        n_nd = int(np.count_nonzero(any_nd & ~no_valid))
-        out[any_nd] = NANF
+    if not ignore_nodata:
         _say(messages,
              "Ignore NoData is off: {:,} cell(s) set to NoData because their "
              "neighborhood includes a NoData cell or extends past the edge "
              "of the raster.".format(n_nd))
-        del any_nd
-
-    out_valid = np.isfinite(out)
-    n_out = int(out_valid.sum())
-    n_flat_nbr = int(all_flat.sum())
     _say(messages,
         "{}: {:,} of {:,} cells written{}.".format(
             STAT_LABEL[statistic], n_out, width_px * height_px,
@@ -895,31 +918,7 @@ def run_aspect_focal(in_raster, out_raster, statistic,
             "Direction is reported in COMPASS degrees (0 = north, clockwise); "
             "flat neighborhoods are {}.".format(
                 "NoData" if as_nodata else "-1"))
-
-    # Write, stats, metadata, symbology. Stats accumulate in row slabs and the
-    # NoData fill is in place -- no whole-grid float64 copies (this is the write
-    # path that must survive a billion-cell raster).
     _mh.phase_advance("Writing the output raster...")
-    out_path = arcpy.CreateUniqueName("aspectfocal.tif", scratch)
-    ds, oband = _tt._make_output(gdal, out_path, gt, proj, width_px, height_px)
-    stats = _mh._RasterStats()
-    slab = max(1, int(4_000_000 // max(1, width_px)))
-    for r0 in range(0, height_px, slab):
-        r1 = min(height_px, r0 + slab)
-        v = out[r0:r1][out_valid[r0:r1]]
-        if v.size:
-            stats.add(v.astype(np.float64))
-        _mh.phase_step(r1, height_px)
-    out[~out_valid] = np.float32(NODATA_OUT)
-    oband.WriteArray(out)
-    oband.FlushCache()
-    out_stats = _mh._finalize_stats(oband, stats, messages)
-    if out_stats is not None:
-        out_stats["on_raster"] = _mh._write_gtiff_stats(oband, out_stats)
-    oband.FlushCache()
-    ds.FlushCache()
-    oband = None
-    ds = None
 
     _mh.phase_advance("Saving the output raster...")
     conv_note = ""
@@ -1722,29 +1721,75 @@ def run_aspect_transform(in_raster, out_workspace, transformations,
         phases.append(("Computing {}...".format(_TLABEL[k]), 2))
     _mh.begin_phases(phases)
 
-    src, in_copy = _hs._open_source(in_raster, scratch, messages)
-    try:
-        band = src.GetRasterBand(1)
-        width, height = src.RasterXSize, src.RasterYSize
-        gt = src.GetGeoTransform()
-        proj = src.GetProjection()
-        in_nodata = band.GetNoDataValue()
-        a = band.ReadAsArray(0, 0, width, height).astype(np.float32)
-        vmask = _mh.band_validity_mask(band)   # capture while src is open
-    finally:
-        src = None
-        if in_copy:
-            try:
-                arcpy.management.Delete(in_copy)
-            except Exception:
-                pass
+    ws = str(out_workspace)
+    # is_gdb_workspace, not a bare endswith: this is a USER-TYPED workspace, and
+    # a trailing separator ("...\Data.gdb\") would otherwise flip it to the
+    # folder branch and write .tif names inside the geodatabase.
+    is_gdb = _mh.is_gdb_workspace(ws)
+    outputs = []
 
-    valid = np.isfinite(a)
-    if in_nodata is not None:
-        valid &= (a != in_nodata)
-    if vmask is not None:
-        valid &= vmask
-    kind, why = _detect_source_kind(in_raster, a, in_nodata)
+    src = _rs.Source(in_raster, scratch, messages)
+    writers = {}
+    try:
+        width, height = src.width, src.height
+        gt, proj = src.gt, src.proj
+        in_nodata = src.nodata
+
+        # One scratch output per transformation, all written strip by strip
+        # (every transformation is cell by cell: no halo).
+        rows, blocks = _rs.plan(height, width, 0, _TRANSFORM_BYTES_PER_CELL, messages)
+        for key in keys:
+            if key in _RECLASS_KEYS:
+                writers[key] = _rs.ScratchWriter(gdal, scratch, "asp_reclass", gt, proj, width,
+                                                 height, dtype=gdal.GDT_Int32, nodata=_NODATA_INT,
+                                                 stats=False)
+            else:
+                writers[key] = _rs.ScratchWriter(gdal, scratch, "asp_trig", gt, proj, width,
+                                                 height, dtype=gdal.GDT_Float64,
+                                                 nodata=float(NODATA_OUT))
+        _mh.phase_advance("Computing {}...".format(_TLABEL[keys[0]]))
+        lineage = _lineage_source_kind(in_raster)
+        probe = _ValueKindProbe()
+        n_bad = 0
+        nb = len(blocks)
+        try:
+            for bi, (y0, y1, top, bot) in enumerate(blocks):
+                z, valid = src.read(top, bot)
+                a = z.astype(np.float32)
+                del z
+                if not lineage:
+                    probe.update(a, valid)
+                n_bad += int(np.count_nonzero(valid & ((a < -1.001) | (a > 360.001))))
+                flat = valid & (a < 0.0)
+                dvalid = valid & (a >= 0.0)
+                # Work in compass degrees (float32 -- the input is already
+                # float32, so this loses no precision; the trig outputs are
+                # still written as double-precision rasters). Convert a
+                # mathematical (D-infinity) raster to compass once.
+                compass = np.where(dvalid, a, np.float32(0.0)).astype(np.float32)
+                if is_math:
+                    compass = np.where(dvalid, (np.float32(90.0) - compass) % np.float32(360.0),
+                                       np.float32(0.0)).astype(np.float32)
+                del a, valid
+                for key in keys:
+                    if key in _RECLASS_KEYS:
+                        codes = _reclass_block(key, compass, dvalid, flat, flat_nodata)
+                        writers[key].write(y0, codes, codes != _NODATA_INT)
+                        del codes
+                    else:
+                        v, ok = _trig_block(key, compass, dvalid, bearing)
+                        writers[key].write(y0, v, ok)
+                        del v, ok
+                _mh.phase_step(bi + 1, nb)
+                del compass, dvalid, flat
+        except Exception:
+            for w in writers.values():
+                w.abandon()
+            raise
+    finally:
+        src.close()
+
+    kind, why = lineage if lineage else probe.result()
     if kind == "dinf" and not is_math:
         _warn(messages, "This looks like a D-infinity flow-direction raster "
                         "({}); set the input convention to Mathematical so the "
@@ -1753,34 +1798,15 @@ def run_aspect_transform(in_raster, out_workspace, transformations,
         _warn(messages, "This looks like a D8 flow-direction raster ({}) -- "
                         "flow codes 1-128, not degrees; not valid aspect "
                         "input.".format(why))
-    n_bad = int(np.count_nonzero(valid & ((a < -1.001) | (a > 360.001))))
     if n_bad:
         _warn(messages, "{:,} cell(s) hold values outside the aspect range "
                         "(-1 to 360 degrees) -- this does not appear to be an "
                         "aspect raster.".format(n_bad))
 
-    flat = valid & (a < 0.0)
-    dvalid = valid & (a >= 0.0)
-    # Work in compass degrees (float32 -- the input is already float32, so this
-    # loses no precision while halving the largest shared array; the trig
-    # outputs are still written as double-precision rasters). Convert a
-    # mathematical (D-infinity) raster to compass once.
-    compass = np.where(dvalid, a, np.float32(0.0)).astype(np.float32)
-    if is_math:
-        compass = np.where(dvalid, (np.float32(90.0) - compass) % np.float32(360.0),
-                           np.float32(0.0)).astype(np.float32)
-    del a, valid
-
-    ws = str(out_workspace)
-    # is_gdb_workspace, not a bare endswith: this is a USER-TYPED workspace, and
-    # a trailing separator ("...\Data.gdb\") would otherwise flip it to the
-    # folder branch and write .tif names inside the geodatabase.
-    is_gdb = _mh.is_gdb_workspace(ws)
-    outputs = []
-
-    for key in keys:
+    for ki, key in enumerate(keys):
         label = _TLABEL[key]
-        _mh.phase_advance("Computing {}...".format(label))
+        if ki > 0:
+            _mh.phase_advance("Computing {}...".format(label))
         if key in _RECLASS_KEYS:
             suffix = _RECLASS_SUFFIX[key]
         elif key == "NORTHNESS":
@@ -1793,16 +1819,13 @@ def run_aspect_transform(in_raster, out_workspace, transformations,
             suffix = "_DevFrom{:g}".format(bearing)
         out_name = _unique_ras_name(base + suffix, ws, is_gdb)
         out_path = os.path.join(ws, out_name)
-
+        tmp, out_stats = writers[key].finish(messages)
         if key in _RECLASS_KEYS:
-            out_path, lyrx = _write_reclass(
-                gdal, key, compass, dvalid, flat, flat_nodata, gt, proj,
-                width, height, out_path, in_raster, is_math, scratch, messages)
+            out_path, lyrx = _finish_reclass(key, tmp, flat_nodata, out_path, in_raster,
+                                             is_math, messages)
         else:
-            out_path, lyrx = _write_trig(
-                gdal, key, compass, dvalid, flat, flat_nodata, bearing, gt,
-                proj, width, height, out_path, in_raster, is_math, scratch,
-                messages)
+            out_path, lyrx = _finish_trig(key, tmp, out_stats, bearing, out_path, in_raster,
+                                          is_math, messages)
         if out_path:
             outputs.append(out_path)
             if out_map is not None:
@@ -1838,22 +1861,23 @@ def _unique_ras_name(base, ws, is_gdb):
     return name
 
 
-def _write_reclass(gdal, key, compass, dvalid, flat, flat_nodata, gt, proj,
-                   width, height, out_path, in_raster, is_math, scratch, messages):
-    import arcpy
-    # codes has 0 at every non-directional cell; fill those in place (avoids a
-    # second whole-grid int32 array).
+def _reclass_block(key, compass, dvalid, flat, flat_nodata):
+    """The reclassification codes of one block of rows (int32; NoData =
+    _NODATA_INT; flat cells -1 unless they are dropped)."""
+    # codes has 0 at every non-directional cell; fill those in place.
     codes = _reclass_codes(compass, dvalid, key)
     if flat_nodata:
         codes[~dvalid] = _NODATA_INT
     else:
         codes[flat] = -1
         codes[~dvalid & ~flat] = _NODATA_INT
-    tmp = arcpy.CreateUniqueName("asp_reclass.tif", scratch)
-    ds, ob = _make_typed(gdal, tmp, gt, proj, width, height, gdal.GDT_Int32,
-                         _NODATA_INT)
-    ob.WriteArray(codes)
-    ob.FlushCache(); ds.FlushCache(); ob = None; ds = None
+    return codes
+
+
+def _finish_reclass(key, tmp, flat_nodata, out_path, in_raster, is_math, messages):
+    """Deliver a finished reclassification scratch raster: copy, value
+    attribute table with the Class field, metadata, symbology, pyramids."""
+    import arcpy
     prev = arcpy.env.pyramid
     arcpy.env.pyramid = "NONE"
     try:
@@ -1912,10 +1936,12 @@ def _write_reclass(gdal, key, compass, dvalid, flat, flat_nodata, gt, proj,
     return out_path, lyrx
 
 
-def _write_trig(gdal, key, compass, dvalid, flat, flat_nodata, bearing, gt,
-                proj, width, height, out_path, in_raster, is_math, scratch,
-                messages):
-    import arcpy
+def _trig_block(key, compass, dvalid, bearing):
+    """One trigonometric transformation of a block of rows: (values as
+    float64, valid mask). Flat cells have no direction and are ALWAYS NoData
+    for the trigonometric transforms: -1 would be indistinguishable from a
+    real value (due south for northness, due west for eastness, "facing
+    away" for the deviation)."""
     rad = np.radians(compass)
     if key == "NORTHNESS":
         v = np.cos(rad)
@@ -1926,27 +1952,14 @@ def _write_trig(gdal, key, compass, dvalid, flat, flat_nodata, bearing, gt,
     else:                                   # NUMDEV, degrees 0..180
         d = np.abs((compass - bearing + 180.0) % 360.0 - 180.0)
         v = d
-    # Flat cells have no direction and are ALWAYS NoData for the trigonometric
-    # transforms: -1 would be indistinguishable from a real value (due south for
-    # northness, due west for eastness, "facing away" for the deviation), so a
-    # -1 flat sentinel would be ambiguous here. (The flat toggle only affects
-    # whether the reclassifications keep a Flat class.)
     out = np.where(dvalid, v, np.nan).astype(np.float64)
-    out_valid = np.isfinite(out)
+    return out, np.isfinite(out)
 
-    tmp = arcpy.CreateUniqueName("asp_trig.tif", scratch)
-    ds, ob = _make_typed(gdal, tmp, gt, proj, width, height, gdal.GDT_Float64,
-                         float(NODATA_OUT))
-    stats = _mh._RasterStats()
-    if out_valid.any():
-        stats.add(out[out_valid])
-    ob.WriteArray(np.where(out_valid, out, NODATA_OUT))
-    ob.FlushCache()
-    out_stats = _mh._finalize_stats(ob, stats, messages)
-    if out_stats is not None:
-        out_stats["on_raster"] = _mh._write_gtiff_stats(ob, out_stats)
-    ob.FlushCache(); ds.FlushCache(); ob = None; ds = None
 
+def _finish_trig(key, tmp, out_stats, bearing, out_path, in_raster, is_math, messages):
+    """Deliver a finished trigonometric scratch raster with its metadata and
+    the diverging stretch symbology."""
+    import arcpy
     label = _TLABEL[key]
     cite = {"NORTHNESS": _NE_CITATION, "EASTNESS": _NE_CITATION,
             "TRIGDEV": _TW_CITATION + " " + _BEERS_CITATION,

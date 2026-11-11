@@ -76,6 +76,7 @@ import arcpy
 
 import mahalanobis as _mh
 import hillshade as _hs
+import raster_strips as _rs
 
 RADIUS_UNITS = _hs.RADIUS_UNITS
 _RADIUS_METERS = _hs._RADIUS_METERS
@@ -94,6 +95,7 @@ NODATA_OUT = -9999.0
 # million segments is already far beyond any realistic contour/habitat
 # dataset this tool is meant for.
 _MAX_SEGMENTS = 5_000_000
+_LSRI_BYTES_PER_CELL = 64    # working memory per DEM cell of a strip (raster_strips)
 
 # Memory safety valve for _RadiusLengthEngine.query(): caps how many
 # (center, candidate-segment) pairs one work block materializes -- the
@@ -447,29 +449,85 @@ def _contour_segments_from_band(gdal, ogr, band, proj_wkt, nodata,
            ogr_ds, layer)
 
 
-def _save_contours(out_fc, ogr_layer, sr, messages):
+def _contour_pieces_in_band(ogr, ogr_layer, gt, width, y0, y1, first):
+    """Clip the contour lines of a halo block to the band of rows y0..y1-1
+    (map y between the bottom edge of row y1-1 and the top edge of row y0)
+    and return [(points, contour value)]. The block's own edge rows carry
+    GDAL's half-cell stubs, which lie outside the band; the whole-raster
+    lines are cut at the row boundaries, so the pieces of adjacent strips
+    join with no overlap. A piece lying exactly along the band's top
+    boundary belongs to the strip above (``first`` keeps it)."""
+    x0, x1 = gt[0], gt[0] + gt[1] * width
+    ytop, ybot = gt[3] + y0 * gt[5], gt[3] + y1 * gt[5]
+    ylo, yhi = min(ytop, ybot), max(ytop, ybot)
+    ring = ogr.Geometry(ogr.wkbLinearRing)
+    for px, py in ((x0, ylo), (x1, ylo), (x1, yhi), (x0, yhi), (x0, ylo)):
+        ring.AddPoint_2D(px, py)
+    rect = ogr.Geometry(ogr.wkbPolygon)
+    rect.AddGeometry(ring)
+    pieces = []
+    ogr_layer.ResetReading()
+    for feat in ogr_layer:
+        geom = feat.GetGeometryRef()
+        if geom is None:
+            continue
+        clipped = geom.Intersection(rect)
+        if clipped is None or clipped.IsEmpty():
+            continue
+        parts = ([clipped] if clipped.GetGeometryType() in (ogr.wkbLineString, ogr.wkbLineString25D)
+                 else [clipped.GetGeometryRef(i) for i in range(clipped.GetGeometryCount())])
+        for part in parts:
+            if part is None or part.GetGeometryType() not in (ogr.wkbLineString, ogr.wkbLineString25D):
+                continue
+            pts = part.GetPoints()
+            if pts is None or len(pts) < 2:
+                continue
+            if not first:
+                e = part.GetEnvelope()
+                if e[2] == e[3] == yhi:       # along the band's top boundary
+                    continue
+            xy = [(p[0], p[1]) for p in pts]
+            if all(q == xy[0] for q in xy[1:]):
+                continue                      # a clip that touched the band at one point: no length
+            pieces.append((xy, feat.GetField("Contour")))
+    ogr_layer.ResetReading()
+    return pieces
+
+
+def _save_contours(out_fc, ogr_layer, sr, messages, append=False, final=True,
+                   pieces=None):
     """Write the in-memory OGR contour layer to a real feature class
     DIRECTLY via arcpy (full double precision, no intermediate file
     format -- a shapefile bridge would truncate values, the same reason
     kernel_density.py avoids one for its own scratch contour lines), so it
-    gets the usual Jenness metadata treatment."""
+    gets the usual Jenness metadata treatment. ``append`` adds to a feature
+    class created by an earlier call (a DEM contoured in strips); the
+    metadata and the message come with the ``final`` call."""
     out_dir = os.path.dirname(out_fc)
     out_name = os.path.basename(out_fc)
-    if arcpy.Exists(out_fc):
-        arcpy.management.Delete(out_fc)
-    arcpy.management.CreateFeatureclass(
-        out_dir, out_name, "POLYLINE", spatial_reference=_mh.clean_sr(sr))
-    arcpy.management.AddField(out_fc, "Contour", "DOUBLE")
-    ogr_layer.ResetReading()
+    if not append:
+        if arcpy.Exists(out_fc):
+            arcpy.management.Delete(out_fc)
+        arcpy.management.CreateFeatureclass(
+            out_dir, out_name, "POLYLINE", spatial_reference=_mh.clean_sr(sr))
+        arcpy.management.AddField(out_fc, "Contour", "DOUBLE")
     with arcpy.da.InsertCursor(out_fc, ["SHAPE@", "Contour"]) as ins:
-        for feat in ogr_layer:
-            geom = feat.GetGeometryRef()
-            if geom is None:
-                continue
-            pts = geom.GetPoints()
-            arr = arcpy.Array([arcpy.Point(x, y) for x, y in pts])
-            ins.insertRow([arcpy.Polyline(arr, sr), feat.GetField("Contour")])
-    ogr_layer.ResetReading()
+        if pieces is not None:
+            for pts, value in pieces:
+                arr = arcpy.Array([arcpy.Point(x, y) for x, y in pts])
+                ins.insertRow([arcpy.Polyline(arr, sr), value])
+        else:
+            ogr_layer.ResetReading()
+            for feat in ogr_layer:
+                geom = feat.GetGeometryRef()
+                if geom is None:
+                    continue
+                pts = geom.GetPoints()
+                arr = arcpy.Array([arcpy.Point(x, y) for x, y in pts])
+                ins.insertRow([arcpy.Polyline(arr, sr), feat.GetField("Contour")])
+            ogr_layer.ResetReading()
+    if not final:
+        return
     try:
         md = arcpy.metadata.Metadata(out_fc)
         md.title = out_name
@@ -677,6 +735,104 @@ def _deliver_lsri(out_scratch, out_raster, out_stats, messages, summary, tags):
 # Tool 2 (built first): LSRI on DEM.
 # ---------------------------------------------------------------------------
 
+def _lsri_halo_rows(gt, height, ground, radius_m, radius_map, cellh_m, ecef):
+    """DEM rows of context a strip needs on each side so that every contour
+    segment within the search radius of its own cells is contoured with it:
+    the radius over the smallest north-south ground cell size in the raster
+    (with a 5% margin), plus two rows for the segment itself and the rounding
+    of the output cell centers."""
+    if not ecef:
+        return int(math.ceil(radius_map / max(abs(gt[5]), 1e-12))) + 2
+    ch = float(cellh_m)
+    if ground is not None and ground.mode == "geodesic":
+        step = max(1, int(height) // 64)
+        for r in list(range(0, int(height), step)) + [int(height) - 1]:
+            ch = min(ch, float(ground.cell_size_at(r)[1]))
+    return int(math.ceil(radius_m / max(0.95 * ch, 1e-9))) + 2
+
+
+def _lsri_query_strip(engine, mult, out_valid, out_gt, oy0, oy1, width, writer,
+                      messages, to_ecef, strip_no, n_strips):
+    """Query the per-strip length engine at the output cells of rows
+    oy0..oy1-1 (in sub-strips of _STRIP_ROWS, as the whole-raster writer
+    did) and write them through ``writer``; progress covers the whole run
+    by strip."""
+    xs = out_gt[0] + (np.arange(width) + 0.5) * out_gt[1]
+    strips = [(y, min(_STRIP_ROWS, oy1 - y)) for y in range(oy0, oy1, _STRIP_ROWS)]
+
+    def strip_centers(yoff, rows):
+        row_idx = yoff + np.arange(rows)
+        ys = out_gt[3] + (row_idx + 0.5) * out_gt[5]
+        gx, gy = np.meshgrid(xs, ys)
+        cx = gx.ravel()
+        cy = gy.ravel()
+        flat_valid = None
+        if out_valid is not None:
+            flat_valid = out_valid[yoff - oy0:yoff - oy0 + rows, :].ravel()
+            cx = cx[flat_valid]
+            cy = cy[flat_valid]
+        if to_ecef is not None:
+            ex, ey, ez = to_ecef(cx, cy)
+            centers = np.column_stack([ex, ey, ez])
+        else:
+            centers = np.column_stack([cx, cy])
+        return centers, flat_valid
+
+    strip_counts = []
+    total_pairs = 0
+    for yoff, rows in strips:
+        centers, _ = strip_centers(yoff, rows)
+        cnt = engine.count(centers)
+        strip_counts.append(cnt.astype(np.int32))
+        total_pairs += int(cnt.sum())
+        del centers
+    _hs._msg(messages, "Neighborhood search: {:,} output cells, {:,} candidate "
+                       "segment comparisons, {} threads{}.".format(
+                           int(sum(len(c) for c in strip_counts)), total_pairs,
+                           _QUERY_THREADS,
+                           "" if n_strips == 1 else " (strip {} of {})".format(strip_no, n_strips)))
+
+    label = "Calculating total contour length within radius"
+    units = 1000
+    state = {"done_before": 0, "t0": time.time(), "t_label": 0.0}
+
+    def report(done_in_strip):
+        done = state["done_before"] + done_in_strip
+        frac = (done / float(total_pairs)) if total_pairs else 1.0
+        _mh.phase_step(int(((strip_no - 1) + frac) * units), n_strips * units)
+        now = time.time()
+        if now - state["t_label"] < 1.0 and done < total_pairs:
+            return
+        state["t_label"] = now
+        elapsed = now - state["t0"]
+        pct = 100.0 * frac
+        where = "" if n_strips == 1 else "strip {} of {}, ".format(strip_no, n_strips)
+        if done > 0 and elapsed > 2.0 and done < total_pairs:
+            remaining = elapsed * (total_pairs - done) / done
+            eta = ("about {:.0f} min remaining".format(remaining / 60.0)
+                   if remaining >= 90 else
+                   "about {:.0f} s remaining".format(max(remaining, 1.0)))
+            _hs._set_label("{}: {}{:.0f}% of {:,} comparisons, {}".format(
+                label, where, pct, total_pairs, eta))
+        else:
+            _hs._set_label("{}: {}{:.0f}% of {:,} comparisons".format(
+                label, where, pct, total_pairs))
+
+    for idx, (yoff, rows) in enumerate(strips):
+        centers, flat_valid = strip_centers(yoff, rows)
+        cnt = strip_counts[idx].astype(np.int64)
+        lens = (engine.query(centers, counts=cnt, progress=report)
+                * mult).astype(np.float32)
+        state["done_before"] += int(cnt.sum())
+        if flat_valid is None:
+            writer.write(yoff, lens.reshape(rows, width), np.ones((rows, width), dtype=bool))
+        else:
+            out_flat = np.full(rows * width, NODATA_OUT, dtype=np.float32)
+            out_flat[flat_valid] = lens
+            writer.write(yoff, out_flat.reshape(rows, width), flat_valid.reshape(rows, width))
+    _mh.phase_step(strip_no * units, n_strips * units)
+
+
 def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
                     z_factor=1.0, radius=None, radius_units="Meters",
                     length_units="Meters", out_contours=None,
@@ -725,130 +881,170 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
     _mh.begin_phases(phases)
 
     scratch = arcpy.env.scratchFolder
-    src, in_copy = _hs._open_source(in_raster, scratch, messages)
-    band = src.GetRasterBand(1)
-    width, height = src.RasterXSize, src.RasterYSize
-    if width < 2 or height < 2:
-        raise arcpy.ExecuteError("The DEM must be at least 2 x 2 cells.")
-    gt = src.GetGeoTransform()
-    proj_wkt = src.GetProjection()
-    in_nodata = band.GetNoDataValue()
-
-    to_ecef = None
-    if geographic:
-        mid_row = height // 2
-        lon0 = gt[0] + 0.5 * gt[1]
-        lat0 = gt[3] + (mid_row + 0.5) * gt[5]
-        cellw_m, cellh_m = _cell_size_meters(
-            lon0, lat0, gt[1], abs(gt[5]), semi_major, semi_minor)
-        to_ecef = lambda x, y: _hs._ecef(x, y, semi_major, semi_minor)
-    else:
-        # a projected DEM is unprojected (hillshade.GroundGeometry) so that
-        # contour lengths and the search radius are true ground meters
-        # whatever the projection's scale distortion; the map plane is used
-        # only when the coordinate system cannot be unprojected
-        ground = _hs.ground_geometry(gt, width, height, sr, proj_wkt, messages)
-        cellw_m, cellh_m = ground.cell_size_at(height // 2)
-        to_ecef = ground._to_ecef if ground.mode == "geodesic" else None
-    if radius_units == "Cells":
-        radius_m = radius * ((cellw_m + cellh_m) / 2.0)
-    else:
-        radius_m = radius * _RADIUS_METERS[radius_units]
-    # ECEF space is in meters; the planar fallback works in map units.
-    radius_map = radius_m if to_ecef is not None else (radius_m / mpu)
-
-    arr = band.ReadAsArray(0, 0, width, height).astype(np.float64)
-    valid = np.isfinite(arr)
-    if in_nodata is not None:
-        valid &= (arr != in_nodata)
-    valid = _mh.mask_band_valid(band, valid)
-    scaled = np.where(valid, arr * z_factor, NODATA_OUT)
-    del arr   # only 'scaled' and the boolean 'valid' mask are needed now
-    src = None
-    if in_copy:
-        try:
-            arcpy.management.Delete(in_copy)
-        except Exception:
-            pass
-
-    _mh.phase_advance("Generating contours...")
-    mem_drv = gdal.GetDriverByName("MEM")
-    z_ds = mem_drv.Create("", width, height, 1, gdal.GDT_Float64)
-    z_ds.SetGeoTransform(gt)
+    src = _rs.Source(in_raster, scratch, messages)
     try:
-        z_ds.SetProjection(proj_wkt)
-    except Exception:
-        pass
-    z_band = z_ds.GetRasterBand(1)
-    z_band.SetNoDataValue(NODATA_OUT)
-    z_band.WriteArray(scaled)
-    z_band.FlushCache()
-    del scaled   # the MEM dataset holds its own copy now
+        width, height = src.width, src.height
+        if width < 2 or height < 2:
+            raise arcpy.ExecuteError("The DEM must be at least 2 x 2 cells.")
+        gt = src.gt
+        proj_wkt = src.proj
 
-    p0s, p1s, ogr_ds, ogr_layer = _contour_segments_from_band(
-        gdal, ogr, z_band, proj_wkt, NODATA_OUT, contour_interval, base_contour)
-    # Contouring is done -- release the whole-DEM float64 MEM copy before
-    # the memory-heavy neighborhood-query phase.
-    z_band = None
-    z_ds = None
-    _hs._msg(messages, "Generated {:,} contour segments: interval {:g}, "
-                       "base {:g}, z-factor {:g}{}.".format(
-                           len(p0s), contour_interval, base_contour, z_factor,
-                           " (elevation values scaled by the z-factor before "
-                           "contouring)" if z_factor != 1.0 else ""))
+        to_ecef = None
+        ground = None
+        if geographic:
+            mid_row = height // 2
+            lon0 = gt[0] + 0.5 * gt[1]
+            lat0 = gt[3] + (mid_row + 0.5) * gt[5]
+            cellw_m, cellh_m = _cell_size_meters(
+                lon0, lat0, gt[1], abs(gt[5]), semi_major, semi_minor)
+            to_ecef = lambda x, y: _hs._ecef(x, y, semi_major, semi_minor)
+        else:
+            # a projected DEM is unprojected (hillshade.GroundGeometry) so that
+            # contour lengths and the search radius are true ground meters
+            # whatever the projection's scale distortion; the map plane is used
+            # only when the coordinate system cannot be unprojected
+            ground = _hs.ground_geometry(gt, width, height, sr, proj_wkt, messages)
+            cellw_m, cellh_m = ground.cell_size_at(height // 2)
+            to_ecef = ground._to_ecef if ground.mode == "geodesic" else None
+        if radius_units == "Cells":
+            radius_m = radius * ((cellw_m + cellh_m) / 2.0)
+        else:
+            radius_m = radius * _RADIUS_METERS[radius_units]
+        # ECEF space is in meters; the planar fallback works in map units.
+        radius_map = radius_m if to_ecef is not None else (radius_m / mpu)
+        mult = _LENGTH_MULT[length_units] * (1.0 if to_ecef is not None else mpu)
 
-    if out_contours:
-        _mh.phase_advance("Saving the contour feature class...")
-        _save_contours(out_contours, ogr_layer, sr, messages)
-    # Segment arrays are extracted (and any requested save is done) --
-    # release the OGR in-memory contour geometries too.
-    ogr_layer = None
-    ogr_ds = None
+        # Decouple the OUTPUT query grid from the DEM's native resolution.
+        # Contours are traced at full native resolution (so accuracy is
+        # unaffected); only the grid of cells the length engine is queried
+        # at changes here. A coarser out_cell_size is the single biggest
+        # lever for cutting run time on a large, fine-resolution DEM, since
+        # the query grid (not the contour tracing) is what scales with cell
+        # count.
+        if out_cell_size:
+            native_cw, native_ch = abs(gt[1]), abs(gt[5])
+            scale_x = out_cell_size / native_cw
+            scale_y = out_cell_size / native_ch
+            out_gt = (gt[0], out_cell_size, 0.0, gt[3], 0.0, -out_cell_size)
+            out_width = max(1, int(math.ceil(width / scale_x)))
+            out_height = max(1, int(math.ceil(height / scale_y)))
+            _check_output_size(out_width, out_height)
+            # Sample the native valid-mask at the native cell CONTAINING each
+            # output cell's CENTER (+0.5) -- the same location the length
+            # engine is queried at -- so the NoData flag and the queried
+            # point always agree along NoData boundaries.
+            col_src = np.clip(((np.arange(out_width) + 0.5) * scale_x).astype(np.int64),
+                              0, width - 1)
+            _hs._msg(messages, "Output raster cell size: {:g} (input DEM: "
+                               "{:g} x {:g}) -- {:,} output cells instead of "
+                               "{:,}.".format(out_cell_size, native_cw, native_ch,
+                                              out_width * out_height, width * height))
+        else:
+            out_gt, out_width, out_height = gt, width, height
+            scale_y, col_src = 1.0, None
 
-    _mh.phase_advance("Preparing contour segments...")
-    if to_ecef is not None:
-        e0, e1 = _to_ecef_xy(p0s, p1s, to_ecef)
-        engine = _RadiusLengthEngine(e0, e1, radius_map)
-    else:
-        engine = _RadiusLengthEngine(p0s, p1s, radius_map)
-    mult = _LENGTH_MULT[length_units] * (1.0 if to_ecef is not None else mpu)
+        def dem_row(oy):
+            return int(min(max(int((oy + 0.5) * scale_y), 0), height - 1))
 
-    # Decouple the OUTPUT query grid from the DEM's native resolution.
-    # Contours above were already traced at full native resolution (so
-    # accuracy is unaffected); only the grid of cells the length engine is
-    # queried at changes here. A coarser out_cell_size is the single
-    # biggest lever for cutting run time on a large, fine-resolution DEM,
-    # since the query grid (not the contour tracing) is what scales with
-    # cell count.
-    if out_cell_size:
-        native_cw, native_ch = abs(gt[1]), abs(gt[5])
-        scale_x = out_cell_size / native_cw
-        scale_y = out_cell_size / native_ch
-        out_gt = (gt[0], out_cell_size, 0.0, gt[3], 0.0, -out_cell_size)
-        out_width = max(1, int(math.ceil(width / scale_x)))
-        out_height = max(1, int(math.ceil(height / scale_y)))
-        _check_output_size(out_width, out_height)
-        # Sample the native valid-mask at the native cell CONTAINING each
-        # output cell's CENTER (+0.5) -- the same location the length
-        # engine is queried at -- so the NoData flag and the queried
-        # point always agree along NoData boundaries.
-        row_src = np.clip(((np.arange(out_height) + 0.5) * scale_y).astype(np.int64),
-                          0, height - 1)
-        col_src = np.clip(((np.arange(out_width) + 0.5) * scale_x).astype(np.int64),
-                          0, width - 1)
-        out_valid = valid[row_src][:, col_src]
-        _hs._msg(messages, "Output raster cell size: {:g} (input DEM: "
-                           "{:g} x {:g}) -- {:,} output cells instead of "
-                           "{:,}.".format(out_cell_size, native_cw, native_ch,
-                                          out_width * out_height, width * height))
-    else:
-        out_gt, out_width, out_height, out_valid = gt, width, height, valid
+        # Row strips. Contour segments are local (each comes from one 2 x 2
+        # block of cells), so a strip contoured with a halo of the search
+        # radius holds every segment within the radius of its own cells;
+        # the length engine is built per strip and memory no longer grows
+        # with the DEM. The strips are planned in DEM rows and walked in
+        # output rows.
+        halo_dem = _lsri_halo_rows(gt, height, ground, radius_m, radius_map,
+                                   cellh_m, to_ecef is not None)
+        rows_dem, _blocks = _rs.plan(height, width, halo_dem, _LSRI_BYTES_PER_CELL, messages)
+        out_rows = max(1, int(rows_dem / scale_y))
+        out_strips = _rs.strip_ranges(out_height, out_rows)
+        n_strips = len(out_strips)
 
-    _mh.phase_advance("Calculating total contour length within radius...")
-    out_path, out_stats = _write_lsri_raster(
-        gdal, engine, mult, out_valid, out_gt, proj_wkt, out_width, out_height,
-        scratch, messages,
-        to_ecef=to_ecef)
+        _mh.phase_advance("Generating contours...")
+        if out_contours:
+            _mh.phase_advance("Saving the contour feature class...")
+        _mh.phase_advance("Preparing contour segments...")
+        _mh.phase_advance("Calculating total contour length within radius...")
+        mem_drv = gdal.GetDriverByName("MEM")
+        writer = _rs.ScratchWriter(gdal, scratch, "lsri", out_gt, proj_wkt,
+                                   out_width, out_height, nodata=NODATA_OUT)
+        n_segments = 0
+        try:
+            for si, (oy0, oy1) in enumerate(out_strips):
+                top = max(0, dem_row(oy0) - halo_dem)
+                bot = min(height, dem_row(oy1 - 1) + halo_dem + 1)
+                z, valid = src.read(top, bot)
+                scaled = np.where(valid, z * z_factor, NODATA_OUT)
+                del z
+                z_ds = mem_drv.Create("", width, bot - top, 1, gdal.GDT_Float64)
+                z_ds.SetGeoTransform((gt[0], gt[1], gt[2], gt[3] + top * gt[5], gt[4], gt[5]))
+                try:
+                    z_ds.SetProjection(proj_wkt)
+                except Exception:
+                    pass
+                z_band = z_ds.GetRasterBand(1)
+                z_band.SetNoDataValue(NODATA_OUT)
+                z_band.WriteArray(scaled)
+                z_band.FlushCache()
+                del scaled   # the MEM dataset holds its own copy now
+
+                p0s, p1s, ogr_ds, ogr_layer = _contour_segments_from_band(
+                    gdal, ogr, z_band, proj_wkt, NODATA_OUT, contour_interval, base_contour)
+                z_band = None
+                z_ds = None
+                n_segments += len(p0s)
+                if out_contours:
+                    if n_strips == 1:
+                        _save_contours(out_contours, ogr_layer, sr, messages)
+                    else:
+                        # the DEM rows this strip owns, in the output grid's
+                        # terms: from the first row sampled by its first
+                        # output row to the row before the next strip's
+                        r_first = dem_row(oy0)
+                        r_next = dem_row(oy1) if oy1 < out_height else height
+                        pieces = _contour_pieces_in_band(
+                            ogr, ogr_layer, gt, width, r_first, r_next, si == 0)
+                        _save_contours(out_contours, None, sr, messages, append=(si > 0),
+                                       final=(si == n_strips - 1), pieces=pieces)
+                        del pieces
+                ogr_layer = None
+                ogr_ds = None
+
+                if to_ecef is not None:
+                    e0, e1 = _to_ecef_xy(p0s, p1s, to_ecef)
+                    engine = _RadiusLengthEngine(e0, e1, radius_map)
+                    del e0, e1
+                else:
+                    engine = _RadiusLengthEngine(p0s, p1s, radius_map)
+                del p0s, p1s
+
+                if col_src is None:
+                    out_valid = valid[oy0 - top:oy1 - top]
+                else:
+                    rows_src = np.clip(((np.arange(oy0, oy1) + 0.5) * scale_y).astype(np.int64),
+                                       0, height - 1) - top
+                    out_valid = valid[rows_src][:, col_src]
+                _lsri_query_strip(engine, mult, out_valid, out_gt, oy0, oy1, out_width,
+                                  writer, messages, to_ecef, si + 1, n_strips)
+                del engine, valid, out_valid
+            out_path, out_stats = writer.finish(messages)
+        except Exception:
+            writer.abandon()
+            raise
+        _hs._msg(messages, "Generated {:,} contour segments{}: interval {:g}, "
+                           "base {:g}, z-factor {:g}{}.".format(
+                               n_segments,
+                               "" if n_strips == 1 else
+                               " over {} strips (segments in the strip overlaps are "
+                               "counted in each strip)".format(n_strips),
+                               contour_interval, base_contour, z_factor,
+                               " (elevation values scaled by the z-factor before "
+                               "contouring)" if z_factor != 1.0 else ""))
+
+        if out_contours and n_strips > 1:
+            _hs._msg(messages, "The contour polylines were saved in {} strips of rows and are "
+                               "cut at the strip edges.".format(n_strips))
+    finally:
+        src.close()
 
     _mh.phase_advance("Saving output raster...")
     out_lyrx = _deliver_lsri(

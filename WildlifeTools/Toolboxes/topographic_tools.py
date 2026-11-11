@@ -56,6 +56,7 @@ import numpy as np
 import arcpy
 import mahalanobis as _mh
 import hillshade as _hs
+import raster_strips as _rs
 
 NODATA_OUT = -9999.0
 _STRIP_ROWS = 1024
@@ -553,40 +554,34 @@ def _detrended_dem(in_raster, radius, radius_units, messages):
             "Unknown detrending radius unit: {}.".format(radius_units))
     gdal = _mh._gdal()
     scratch = arcpy.env.scratchFolder
-    src, in_copy = _hs._open_source(in_raster, scratch, messages)
+    src = _rs.Source(in_raster, scratch, messages)
     try:
-        band = src.GetRasterBand(1)
-        width, height = src.RasterXSize, src.RasterYSize
+        width, height = src.width, src.height
         if width < 3 or height < 3:
             raise arcpy.ExecuteError("The DEM must be at least 3 x 3 cells.")
-        gt = src.GetGeoTransform()
-        proj = src.GetProjection()
-        in_nodata = band.GetNoDataValue()
+        gt, proj = src.gt, src.proj
         sr = arcpy.Describe(in_raster).spatialReference
-        z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
-        valid = np.isfinite(z)
-        if in_nodata is not None:
-            valid &= (z != in_nodata)
-        valid = _mh.mask_band_valid(band, valid)
         rx_rows, ry, note = _radius_row_cells(
             gt, height, sr, radius, radius_units, width, proj)
-        smoothed = _hs._blur_grid(z, valid, rx_rows, ry, "Average")
-        resid = np.where(valid & np.isfinite(smoothed),
-                         z - smoothed, NODATA_OUT).astype(np.float32)
-        out_path = arcpy.CreateUniqueName("detrend.tif", scratch)
-        ds, oband = _make_output(gdal, out_path, gt, proj, width, height)
-        oband.WriteArray(resid)
-        oband.FlushCache()
-        ds.FlushCache()
-        oband = None
-        ds = None
+        # row strips with a halo of the detrending radius
+        halo = _rs.halo_rows(ry)
+        rows, blocks = _rs.plan(height, width, halo, _hs._BLUR_BYTES_PER_CELL, messages)
+        writer = _rs.ScratchWriter(gdal, scratch, "detrend", gt, proj, width, height,
+                                   nodata=NODATA_OUT, stats=False)
+        try:
+            for y0, y1, top, bot in blocks:
+                z, valid = src.read(top, bot)
+                smoothed = _hs._blur_grid(z, valid, rx_rows, ry, "Average", row0=top)
+                ok = valid & np.isfinite(smoothed)
+                sl = slice(y0 - top, y1 - top)
+                writer.write(y0, (z - smoothed)[sl], ok[sl])
+                del z, smoothed
+            out_path, _unused = writer.finish()
+        except Exception:
+            writer.abandon()
+            raise
     finally:
-        src = None
-        if in_copy:
-            try:
-                arcpy.management.Delete(in_copy)
-            except Exception:
-                pass
+        src.close()
     _hs._msg(messages, "Local detrending (Dilts et al. 2023): subtracted a "
                        "circular neighborhood mean (radius {}) to remove the "
                        "smooth underlying topography before the index is "
@@ -604,7 +599,7 @@ def _row_gradient_geometry(gt, width, height, sr, proj, elev_mpu,
     return ground, ground.geographic, float(elev_mpu)
 
 
-def _unit_normals(z, valid, ground):
+def _unit_normals(z, valid, ground, row0=0):
     """Unit normal vectors (nx, ny, nz) for the WHOLE grid ``z`` (meters,
     already z-scaled), via the Horn gradient: n = (-dz/dx, -dz/dy, 1) /
     ||...||. This is the same vector Sappington's slope/aspect trig
@@ -612,9 +607,12 @@ def _unit_normals(z, valid, ground):
     changes no vector's length, and VRM depends only on the length of the
     SUM of these vectors) -- but reuses the toolbox's tested, geodesic-correct
     per-cell ground spans (``ground`` is a hillshade.GroundGeometry; the
-    grid is processed in row strips). Returns (nx, ny, nz, ok) full-grid
-    arrays; ``ok`` is False wherever the cell's own 3x3 window touches
-    invalid/out-of-bounds data (NaN elsewhere in nx/ny/nz)."""
+    grid is processed in row strips). ``z`` may be a BLOCK of rows whose
+    first row is raster row ``row0`` (the block's own edge rows then get
+    ok = False, so callers read one halo row beyond what they keep). Returns
+    (nx, ny, nz, ok) arrays of the block's shape; ``ok`` is False wherever
+    the cell's own 3x3 window touches invalid/out-of-bounds data (NaN
+    elsewhere in nx/ny/nz)."""
     H, W = z.shape
     zp = np.full((H + 2, W + 2), np.nan)
     zp[1:-1, 1:-1] = z
@@ -626,7 +624,7 @@ def _unit_normals(z, valid, ground):
     nz = np.full((H, W), np.nan)
     for r0 in range(0, H, _hs.GEOM_STRIP):
         r1 = min(H, r0 + _hs.GEOM_STRIP)
-        g = ground.rows(r0, r1)
+        g = ground.rows(row0 + r0, row0 + r1)
         up, sl, dn = slice(r0, r1), slice(r0 + 1, r1 + 1), slice(r0 + 2, r1 + 2)
         NW, N_, NE = zp[up, :-2], zp[up, 1:-1], zp[up, 2:]
         W_, E_ = zp[sl, :-2], zp[sl, 2:]
@@ -650,7 +648,7 @@ def _unit_normals(z, valid, ground):
     return nx, ny, nz, ok
 
 
-def _circular_vector_sums(nx, ny, nz, ok, rx_rows, ry):
+def _circular_vector_sums(nx, ny, nz, ok, rx_rows, ry, row0=0):
     """Per-cell resultant-vector sums (Rx, Ry, Rz) and valid-neighbor count
     (n) over a circular, NoData-ignoring neighborhood -- the multi-field
     analog of ``hillshade._blur_grid``, sharing one uniform kernel per
@@ -663,13 +661,28 @@ def _circular_vector_sums(nx, ny, nz, ok, rx_rows, ry):
     fields = [np.where(ok, nx, 0.0), np.where(ok, ny, 0.0),
               np.where(ok, nz, 0.0), ok.astype(np.float64)]
     outs = [np.zeros_like(f) for f in fields]
+    H = nx.shape[0]
     # Memory-safe size-aware neighborhood convolution (direct for small kernels,
     # overlap-add FFT for large) -- see hillshade.nbr_conv. A whole-grid
-    # fftconvolve here raised MemoryError on large regional rasters.
+    # fftconvolve here raised MemoryError on large regional rasters. The
+    # arrays may be a block of rows starting at raster row ``row0``: the
+    # row groups span the whole raster and are cut to the block.
     for k, rows in _hs._row_kernel_groups(rx_rows, ry, "Average"):
+        if isinstance(rows, slice):
+            sel = rows
+        else:
+            sel = rows[row0:row0 + H]
+            if not sel.any():
+                continue
         for f, out in zip(fields, outs):
-            out[rows] = _hs.nbr_conv(f, k)[rows]
+            out[sel] = _hs.nbr_conv(f, k)[sel]
     return outs[0], outs[1], outs[2], outs[3]
+
+
+# Working memory per cell of a VRM strip: the elevations and mask, the
+# padded copy, three normals and their mask, four convolution inputs and
+# outputs, and the FFT's temporaries (raster_strips.strip_rows).
+_VRM_BYTES_PER_CELL = 160
 
 
 def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
@@ -734,14 +747,12 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
             "this measures fine-scale surface roughness with the smooth "
             "underlying topography removed (Dilts et al. 2023, VRM_L). "
             "{}").format(dnote, _DETREND_CITATION)
-    src, in_copy = _hs._open_source(work_raster, scratch, messages)
-    band = src.GetRasterBand(1)
-    width, height = src.RasterXSize, src.RasterYSize
+    # the detrended scratch is the DEM's own size: no second size prompt
+    src = _rs.Source(work_raster, scratch, messages, check_size=not detrend)
+    width, height = src.width, src.height
     if width < 3 or height < 3:
         raise arcpy.ExecuteError("The DEM must be at least 3 x 3 cells.")
-    gt = src.GetGeoTransform()
-    proj = src.GetProjection()
-    in_nodata = band.GetNoDataValue()
+    gt, proj = src.gt, src.proj
     sr = arcpy.Describe(work_raster).spatialReference
 
     elev_mpu = 1.0 if sr.type == "Geographic" else _hs._ELEV_METERS.get(elev_units, 1.0)
@@ -765,63 +776,57 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
                                float(rx_rows.min()), float(rx_rows.max()),
                                ry))
 
-    z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
-    valid = np.isfinite(z)
-    if in_nodata is not None:
-        valid &= (z != in_nodata)
-    valid = _mh.mask_band_valid(band, valid)
-    z = np.where(valid, z * zscale, 0.0)
-    src = None
-    if in_copy:
-        try:
-            arcpy.management.Delete(in_copy)
-        except Exception:
-            pass
-    if detrend_scratch:
-        try:
-            arcpy.management.Delete(detrend_scratch)
-        except Exception:
-            pass
-
+    # Row strips: every strip is read with a halo of the VRM radius plus the
+    # one row each neighbor's own 3x3 normal needs, so the result is the
+    # whole-raster result and memory is bounded by halo x width.
+    halo = _rs.halo_rows(ry) + 1
+    rows, blocks = _rs.plan(height, width, halo, _VRM_BYTES_PER_CELL, messages)
+    writer = _rs.ScratchWriter(gdal, scratch, "vrm", gt, proj, width, height,
+                               nodata=NODATA_OUT)
+    n_out = 0
     _mh.phase_advance("Computing orthogonal vectors...")
-    nx, ny, nz, ok = _unit_normals(z, valid, geom)
-    del z
-
-    _mh.phase_advance("Calculating vector dispersion...")
-    Rx, Ry, Rz, n = _circular_vector_sums(nx, ny, nz, ok, rx_rows, ry)
-    del nx, ny, nz, ok
-    # n is an exact integer count of contributing cells; fftconvolve leaves
-    # ~1e-16-scale roundoff noise that a bare `n > 0` test cannot distinguish
-    # from a true zero, so round before testing (otherwise a handful of
-    # cells with NO valid neighbor get a spurious, numerically unstable
-    # "valid" VRM value from dividing by that noise).
-    n = np.rint(n)
-
-    with np.errstate(invalid="ignore", divide="ignore"):
-        R = np.sqrt(Rx * Rx + Ry * Ry + Rz * Rz)
-        vrm = 1.0 - R / n
-    np.clip(vrm, 0.0, 1.0, out=vrm)
-    out_valid = n > 0.0
-    n_out = int(out_valid.sum())
+    dispersion_phase = False
+    try:
+        for y0, y1, top, bot in blocks:
+            z, valid = src.read(top, bot)
+            z = np.where(valid, z * zscale, 0.0)
+            nx, ny, nz, ok = _unit_normals(z, valid, geom, row0=top)
+            del z
+            if not dispersion_phase:
+                _mh.phase_advance("Calculating vector dispersion...")
+                dispersion_phase = True
+            Rx, Ry, Rz, n = _circular_vector_sums(nx, ny, nz, ok, rx_rows, ry, row0=top)
+            del nx, ny, nz, ok
+            # n is an exact integer count of contributing cells; fftconvolve
+            # leaves ~1e-16-scale roundoff noise that a bare `n > 0` test
+            # cannot distinguish from a true zero, so round before testing
+            # (otherwise a handful of cells with NO valid neighbor get a
+            # spurious, numerically unstable "valid" VRM value from dividing
+            # by that noise).
+            n = np.rint(n)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                R = np.sqrt(Rx * Rx + Ry * Ry + Rz * Rz)
+                vrm = 1.0 - R / n
+            np.clip(vrm, 0.0, 1.0, out=vrm)
+            out_valid = n > 0.0
+            sl = slice(y0 - top, y1 - top)
+            n_out += int(out_valid[sl].sum())
+            writer.write(y0, vrm[sl], out_valid[sl])
+            del Rx, Ry, Rz, n, R, vrm, out_valid
+        out_path, out_stats = writer.finish(messages)
+    except Exception:
+        writer.abandon()
+        raise
+    finally:
+        src.close()
+        if detrend_scratch:
+            try:
+                arcpy.management.Delete(detrend_scratch)
+            except Exception:
+                pass
     _hs._msg(messages, "Vector Ruggedness Measure ({}): {:,} of {:,} cells "
                        "have at least one valid neighbor vector.".format(
                            _VRM_CITATION, n_out, width * height))
-
-    out_path = arcpy.CreateUniqueName("vrm.tif", scratch)
-    ds, oband = _make_output(gdal, out_path, gt, proj, width, height)
-    oband.WriteArray(np.where(out_valid, vrm, NODATA_OUT).astype(np.float32))
-    oband.FlushCache()
-    ds.FlushCache()
-    stats = _mh._RasterStats()
-    if out_valid.any():
-        stats.add(vrm[out_valid].astype(np.float64))
-    out_stats = _mh._finalize_stats(oband, stats, messages)
-    if out_stats is not None:
-        out_stats["on_raster"] = _mh._write_gtiff_stats(oband, out_stats)
-    oband.FlushCache()
-    ds.FlushCache()
-    oband = None
-    ds = None                            # close -> flush tiles + write PAM
 
     _mh.phase_advance("Saving the VRM raster...")
     _deliver_output(
@@ -882,6 +887,9 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
 # 3x3 measure; broader-scale roughness comes from the optional Dilts (2023)
 # local detrending (ACR_L), not a neighborhood radius.
 
+# Working memory per cell of an ACR strip (raster_strips.strip_rows).
+_ACR_BYTES_PER_CELL = 160
+
 _ACR_CITATION = (
     "Du Preez, C. 2015. A new arc-chord ratio (ACR) rugosity index for "
     "quantifying three-dimensional landscape structural complexity. Landscape "
@@ -933,14 +941,12 @@ def run_acr(in_raster, out_raster, elev_units="Meters", corner_method=None,
             "underlying topography removed (Dilts et al. 2023, ACR_L). "
             "{}").format(dnote, _DETREND_CITATION)
 
-    src, in_copy = _hs._open_source(work_raster, scratch, messages)
-    band = src.GetRasterBand(1)
-    width, height = src.RasterXSize, src.RasterYSize
+    # the detrended scratch is the DEM's own size: no second size prompt
+    src = _rs.Source(work_raster, scratch, messages, check_size=not detrend)
+    width, height = src.width, src.height
     if width < 3 or height < 3:
         raise arcpy.ExecuteError("The DEM must be at least 3 x 3 cells.")
-    gt = src.GetGeoTransform()
-    proj = src.GetProjection()
-    in_nodata = band.GetNoDataValue()
+    gt, proj = src.gt, src.proj
     sr = arcpy.Describe(work_raster).spatialReference
     geographic = (sr.type == "Geographic")
     elev_mpu = 1.0 if geographic else _hs._ELEV_METERS.get(elev_units, 1.0)
@@ -950,74 +956,70 @@ def run_acr(in_raster, out_raster, elev_units="Meters", corner_method=None,
     if not geographic:
         _hs._msg(messages, "Elevation units = {}.".format(elev_units))
 
-    z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
-    valid = np.isfinite(z)
-    if in_nodata is not None:
-        valid &= (z != in_nodata)
-    valid = _mh.mask_band_valid(band, valid)
-    zwork = np.where(valid, z * elev_mpu, 0.0)      # meters, for area and slope
-    src = None
-    if in_copy:
-        try:
-            arcpy.management.Delete(in_copy)
-        except Exception:
-            pass
-    if detrend_scratch:
-        try:
-            arcpy.management.Delete(detrend_scratch)
-        except Exception:
-            pass
-
+    # Row strips with a one-row halo (every quantity here is a 3 x 3
+    # window): the result is the whole-raster result, memory is bounded.
+    halo = 1
+    rows, blocks = _rs.plan(height, width, halo, _ACR_BYTES_PER_CELL, messages)
+    writer = _rs.ScratchWriter(gdal, scratch, "acr", gt, proj, width, height,
+                               nodata=NODATA_OUT)
+    n_out = 0
     _mh.phase_advance("Calculating surface areas and best-fit-plane slope...")
-    # Surface ratio via the shared 8-triangle method over the whole grid, with
-    # a one-cell NaN/False border so edge and NoData-adjacent cells are masked.
-    zp = np.full((height + 2, width + 2), 0.0)
-    zp[1:-1, 1:-1] = zwork
-    vp = np.zeros((height + 2, width + 2), dtype=bool)
-    vp[1:-1, 1:-1] = valid
-    NW, N_, NE = zp[:-2, :-2], zp[:-2, 1:-1], zp[:-2, 2:]
-    W_, C_, E_ = zp[1:-1, :-2], zp[1:-1, 1:-1], zp[1:-1, 2:]
-    SW, S_, SE = zp[2:, :-2], zp[2:, 1:-1], zp[2:, 2:]
-    g = ground.half_rows(0, height)              # per-cell 8-triangle table
-    with np.errstate(invalid="ignore"):
-        area = _eight_triangle_area(NW, N_, NE, W_, C_, E_, SW, S_, SE,
-                                    g, four_cell)
-        ratio = area / g["pix_m2"]
+    try:
+        for y0, y1, top, bot in blocks:
+            z, valid = src.read(top, bot)
+            hb = bot - top
+            zwork = np.where(valid, z * elev_mpu, 0.0)      # meters, for area and slope
+            del z
+            # Surface ratio via the shared 8-triangle method, with a one-cell
+            # zero/False border so edge and NoData-adjacent cells are masked
+            # (the block's own edge rows are halo rows, never kept).
+            zp = np.full((hb + 2, width + 2), 0.0)
+            zp[1:-1, 1:-1] = zwork
+            vp = np.zeros((hb + 2, width + 2), dtype=bool)
+            vp[1:-1, 1:-1] = valid
+            NW, N_, NE = zp[:-2, :-2], zp[:-2, 1:-1], zp[:-2, 2:]
+            W_, C_, E_ = zp[1:-1, :-2], zp[1:-1, 1:-1], zp[1:-1, 2:]
+            SW, S_, SE = zp[2:, :-2], zp[2:, 1:-1], zp[2:, 2:]
+            g = ground.half_rows(top, bot)           # per-cell 8-triangle table
+            with np.errstate(invalid="ignore"):
+                area = _eight_triangle_area(NW, N_, NE, W_, C_, E_, SW, S_, SE,
+                                            g, four_cell)
+                ratio = area / g["pix_m2"]
+            del zp, vp, g, area
 
-    # cos(best-fit-plane slope) = nz, the vertical component of the Horn unit
-    # normal (VRM's machinery). ACR = surface ratio x cos(slope).
-    _nx, _ny, nz, ok = _unit_normals(zwork, valid, ground)
-    del _nx, _ny
+            # cos(best-fit-plane slope) = nz, the vertical component of the Horn
+            # unit normal (VRM's machinery). ACR = surface ratio x cos(slope).
+            _nx, _ny, nz, ok = _unit_normals(zwork, valid, ground, row0=top)
+            del _nx, _ny
 
-    with np.errstate(invalid="ignore"):
-        acr = ratio * nz
-    # ACR's theoretical minimum is 1 (a flat or smoothly sloped surface). The
-    # 3-D surface area (8-triangle) and the planar area (horizontal area /
-    # cos slope) come from slightly different surface models, so on curved
-    # cells their product can dip a hair below 1; clamp to the documented
-    # floor, exactly as VRM is clamped to its own [0, 1] range above.
-    out_valid = ok & np.isfinite(acr)
-    acr = np.where(out_valid, np.maximum(acr, 1.0), NODATA_OUT).astype(np.float32)
-    n_out = int(out_valid.sum())
+            with np.errstate(invalid="ignore"):
+                acr = ratio * nz
+            # ACR's theoretical minimum is 1 (a flat or smoothly sloped
+            # surface). The 3-D surface area (8-triangle) and the planar area
+            # (horizontal area / cos slope) come from slightly different
+            # surface models, so on curved cells their product can dip a hair
+            # below 1; clamp to the documented floor, exactly as VRM is
+            # clamped to its own [0, 1] range above.
+            out_valid = ok & np.isfinite(acr)
+            acr = np.where(out_valid, np.maximum(acr, 1.0), NODATA_OUT).astype(np.float32)
+            sl = slice(y0 - top, y1 - top)
+            n_out += int(out_valid[sl].sum())
+            writer.write(y0, acr[sl], out_valid[sl])
+            del ratio, nz, ok, acr, out_valid, zwork, valid
+        out_path, out_stats = writer.finish(messages)
+    except Exception:
+        writer.abandon()
+        raise
+    finally:
+        src.close()
+        if detrend_scratch:
+            try:
+                arcpy.management.Delete(detrend_scratch)
+            except Exception:
+                pass
     _hs._msg(messages, "Arc-Chord Ratio ({}): {:,} of {:,} cells have a "
                        "defined value.".format(
                            _ACR_CITATION, n_out, width * height))
-
-    out_path = arcpy.CreateUniqueName("acr.tif", scratch)
-    ds, oband = _make_output(gdal, out_path, gt, proj, width, height)
-    oband.WriteArray(acr)
-    oband.FlushCache()
-    ds.FlushCache()
-    stats = _mh._RasterStats()
-    if out_valid.any():
-        stats.add(acr[out_valid].astype(np.float64))
-    out_stats = _mh._finalize_stats(oband, stats, messages)
-    if out_stats is not None:
-        out_stats["on_raster"] = _mh._write_gtiff_stats(oband, out_stats)
-    oband.FlushCache()
-    ds.FlushCache()
-    oband = None
-    ds = None
 
     elev_label = "Meters (geographic DEM)" if geographic else elev_units
     _mh.phase_advance("Saving the ACR raster...")
@@ -1114,6 +1116,20 @@ _TRI_CITATION = {0: _TRI_RILEY_CIT, 1: _TRI_WILSON_CIT,
 
 
 _TRI_MAX_R = 500          # bounding cell radius cap (a ~1000-cell-wide window)
+_TRI_BYTES_PER_CELL = 112  # working memory per cell of a TRI strip
+
+
+def _ground_min_cell(ground, height):
+    """The smallest ground cell width or height (meters) over the whole
+    raster, from the per-cell spans in row strips."""
+    best = None
+    for r0 in range(0, int(height), _hs.GEOM_STRIP):
+        g = ground.rows(r0, min(int(height), r0 + _hs.GEOM_STRIP))
+        cw = np.asarray(g["h"], dtype=np.float64)
+        ch = np.asarray((g["vA"] + g["vB"]) / 2.0, dtype=np.float64)
+        m = min(float(cw.min()), float(ch.min()))
+        best = m if best is None else min(best, m)
+    return max(best if best is not None else 1e-9, 1e-9)
 
 
 def run_tri(in_raster, out_raster, method=None, radius=1.5,
@@ -1150,27 +1166,19 @@ def run_tri(in_raster, out_raster, method=None, radius=1.5,
     ])
 
     scratch = arcpy.env.scratchFolder
-    src, in_copy = _hs._open_source(in_raster, scratch, messages)
-    band = src.GetRasterBand(1)
-    width, height = src.RasterXSize, src.RasterYSize
+    src = _rs.Source(in_raster, scratch, messages)
+    width, height = src.width, src.height
     if width < 3 or height < 3:
         raise arcpy.ExecuteError("The DEM must be at least 3 x 3 cells.")
-    gt = src.GetGeoTransform()
-    proj = src.GetProjection()
-    in_nodata = band.GetNoDataValue()
+    gt, proj = src.gt, src.proj
     sr = arcpy.Describe(in_raster).spatialReference
     geographic = (sr.type == "Geographic")
 
     elev_mpu = 1.0 if geographic else _hs._ELEV_METERS.get(elev_units, 1.0)
     # Per-cell ground dimensions in meters (any coordinate system) -- for the
     # circular ground-distance neighborhood and the Slope method's neighbor
-    # distances.
+    # distances (read per strip below).
     ground = _hs.ground_geometry(gt, width, height, sr, proj, messages)
-    _g2 = ground.rows(0, height)
-    cw2 = np.asarray(_g2["h"], dtype=np.float64)
-    ch2 = np.asarray((_g2["vA"] + _g2["vB"]) / 2.0, dtype=np.float64)
-    del _g2
-    cw2sq, ch2sq = cw2 * cw2, ch2 * ch2
 
     # Neighborhood geometry. "Cells" -> a fixed cell-space circle (same
     # everywhere, di^2 + dj^2 <= radius^2). A linear unit -> a true ground
@@ -1182,7 +1190,7 @@ def run_tri(in_raster, out_raster, method=None, radius=1.5,
         big_r = int(math.ceil(radius))
     else:
         radius_m = radius * _RADIUS_METERS[radius_units]
-        min_cell = max(min(float(cw2.min()), float(ch2.min())), 1e-9)
+        min_cell = _ground_min_cell(ground, height)
         big_r = int(math.ceil(radius_m / min_cell))
     big_r = max(big_r, 1)
     if big_r > _TRI_MAX_R:
@@ -1209,97 +1217,97 @@ def run_tri(in_raster, out_raster, method=None, radius=1.5,
                                if geographic else
                                "Elevation units: {}.".format(elev_units)))
 
-    z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
-    valid = np.isfinite(z)
-    if in_nodata is not None:
-        valid &= (z != in_nodata)
-    valid = _mh.mask_band_valid(band, valid)
-    # Elevation-unit methods keep the DEM's native z-units; the Slope method
-    # needs meters so its rise/run is dimensionless.
-    zwork = np.where(valid, z * elev_mpu if is_slope else z, np.nan)
-    src = None
-    if in_copy:
-        try:
-            arcpy.management.Delete(in_copy)
-        except Exception:
-            pass
-
-    _mh.phase_advance("Calculating terrain ruggedness...")
+    # Row strips with a halo of the bounding cell radius: every output cell
+    # sees its whole neighborhood, memory is bounded by halo x width.
     R = big_r
-    zp = np.full((height + 2 * R, width + 2 * R), np.nan)
-    zp[R:R + height, R:R + width] = zwork
-    vp = np.zeros((height + 2 * R, width + 2 * R), dtype=bool)
-    vp[R:R + height, R:R + width] = valid
+    rows, blocks = _rs.plan(height, width, R, _TRI_BYTES_PER_CELL, messages)
+    writer = _rs.ScratchWriter(gdal, scratch, "tri", gt, proj, width, height,
+                               nodata=NODATA_OUT)
+    n_out = 0
     need_d = is_slope or not cells_mode
+    _mh.phase_advance("Calculating terrain ruggedness...")
+    try:
+        for y0, y1, top, bot in blocks:
+            z, valid = src.read(top, bot)
+            hb = bot - top
+            # Elevation-unit methods keep the DEM's native z-units; the Slope
+            # method needs meters so its rise/run is dimensionless.
+            zwork = np.where(valid, z * elev_mpu if is_slope else z, np.nan)
+            del z
+            _g2 = ground.rows(top, bot)
+            cw2 = np.asarray(_g2["h"], dtype=np.float64)
+            ch2 = np.asarray((_g2["vA"] + _g2["vB"]) / 2.0, dtype=np.float64)
+            del _g2
+            cw2sq, ch2sq = cw2 * cw2, ch2 * ch2
 
-    with np.errstate(invalid="ignore", divide="ignore"):
-        if is_std:
-            s1 = np.zeros((height, width))
-            s2 = np.zeros((height, width))
-            cnt = np.zeros((height, width))
-        else:
-            acc = np.zeros((height, width))
-            ncnt = np.zeros((height, width))   # valid NEIGHBORS (excl. focal)
+            zp = np.full((hb + 2 * R, width + 2 * R), np.nan)
+            zp[R:R + hb, R:R + width] = zwork
+            vp = np.zeros((hb + 2 * R, width + 2 * R), dtype=bool)
+            vp[R:R + hb, R:R + width] = valid
 
-        for di in range(-R, R + 1):
-            for dj in range(-R, R + 1):
-                if not is_std and di == 0 and dj == 0:
-                    continue
-                d2 = ((dj * dj) * cw2sq + (di * di) * ch2sq
-                      if need_d else None)         # squared meters, per cell
-                if cells_mode:
-                    if di * di + dj * dj > radius * radius:
-                        continue
-                    cell_mask = None               # every cell in the circle
-                else:
-                    cell_mask = d2 <= radius_m * radius_m
-                    if not cell_mask.any():
-                        continue
-                nz = zp[R + di:R + di + height, R + dj:R + dj + width]
-                nv = vp[R + di:R + di + height, R + dj:R + dj + width]
-                member = nv if cell_mask is None else (nv & cell_mask)
+            with np.errstate(invalid="ignore", divide="ignore"):
                 if is_std:
-                    s1 += np.where(member, nz, 0.0)
-                    s2 += np.where(member, nz * nz, 0.0)
-                    cnt += member
+                    s1 = np.zeros((hb, width))
+                    s2 = np.zeros((hb, width))
+                    cnt = np.zeros((hb, width))
                 else:
-                    pair = member & valid
-                    dz = np.where(pair, nz - zwork, 0.0)
-                    if is_wilson:
-                        acc += np.abs(dz)
-                    elif is_slope:
-                        acc += np.where(pair, dz * dz / d2, 0.0)
-                    else:                          # Riley
-                        acc += dz * dz
-                    ncnt += pair
+                    acc = np.zeros((hb, width))
+                    ncnt = np.zeros((hb, width))   # valid NEIGHBORS (excl. focal)
 
-        if is_std:
-            mean = s1 / cnt
-            result = np.sqrt(np.maximum(s2 / cnt - mean * mean, 0.0))
-            out_valid = valid & (cnt >= 2)     # focal + >=1 more
-        else:
-            result = acc / ncnt if is_wilson else np.sqrt(acc)
-            out_valid = valid & (ncnt >= 1)
+                for di in range(-R, R + 1):
+                    for dj in range(-R, R + 1):
+                        if not is_std and di == 0 and dj == 0:
+                            continue
+                        d2 = ((dj * dj) * cw2sq + (di * di) * ch2sq
+                              if need_d else None)         # squared meters, per cell
+                        if cells_mode:
+                            if di * di + dj * dj > radius * radius:
+                                continue
+                            cell_mask = None               # every cell in the circle
+                        else:
+                            cell_mask = d2 <= radius_m * radius_m
+                            if not cell_mask.any():
+                                continue
+                        nz = zp[R + di:R + di + hb, R + dj:R + dj + width]
+                        nv = vp[R + di:R + di + hb, R + dj:R + dj + width]
+                        member = nv if cell_mask is None else (nv & cell_mask)
+                        if is_std:
+                            s1 += np.where(member, nz, 0.0)
+                            s2 += np.where(member, nz * nz, 0.0)
+                            cnt += member
+                        else:
+                            pair = member & valid
+                            dz = np.where(pair, nz - zwork, 0.0)
+                            if is_wilson:
+                                acc += np.abs(dz)
+                            elif is_slope:
+                                acc += np.where(pair, dz * dz / d2, 0.0)
+                            else:                          # Riley
+                                acc += dz * dz
+                            ncnt += pair
 
-    n_out = int(out_valid.sum())
+                if is_std:
+                    mean = s1 / cnt
+                    result = np.sqrt(np.maximum(s2 / cnt - mean * mean, 0.0))
+                    out_valid = valid & (cnt >= 2)     # focal + >=1 more
+                    del s1, s2, cnt, mean
+                else:
+                    result = acc / ncnt if is_wilson else np.sqrt(acc)
+                    out_valid = valid & (ncnt >= 1)
+                    del acc, ncnt
+            sl = slice(y0 - top, y1 - top)
+            n_out += int(out_valid[sl].sum())
+            writer.write(y0, result[sl], out_valid[sl])
+            del zp, vp, zwork, valid, result, out_valid, cw2sq, ch2sq
+        out_path, out_stats = writer.finish(messages)
+    except Exception:
+        writer.abandon()
+        raise
+    finally:
+        src.close()
+
     _hs._msg(messages, "{:,} of {:,} cells have a defined value ({}).".format(
         n_out, width * height, _TRI_CITATION[m_idx]))
-
-    out_path = arcpy.CreateUniqueName("tri.tif", scratch)
-    ds, oband = _make_output(gdal, out_path, gt, proj, width, height)
-    oband.WriteArray(np.where(out_valid, result, NODATA_OUT).astype(np.float32))
-    oband.FlushCache()
-    ds.FlushCache()
-    stats = _mh._RasterStats()
-    if out_valid.any():
-        stats.add(result[out_valid].astype(np.float64))
-    out_stats = _mh._finalize_stats(oband, stats, messages)
-    if out_stats is not None:
-        out_stats["on_raster"] = _mh._write_gtiff_stats(oband, out_stats)
-    oband.FlushCache()
-    ds.FlushCache()
-    oband = None
-    ds = None
 
     elev_label = "Meters (geographic DEM)" if geographic else elev_units
     out_units = ("a dimensionless rise/run (slope)" if is_slope else
@@ -1409,6 +1417,7 @@ _FD_DBC_CIT = (
     "(https://doi.org/10.1016/j.patcog.2009.03.001).")
 _FD_CITATION = {0: _FD_TPM_CIT, 1: _FD_VARIO_CIT, 2: _FD_VARIO_CIT,
                 3: _FD_DBC_CIT}
+_FD_BYTES_PER_CELL = 256   # working memory per cell of a fractal-dimension strip
 
 
 def _fd_cell_meters(gt, sr, height):
@@ -1677,15 +1686,12 @@ def run_fractal_dimension(in_raster, out_raster, method=None, window_size=25,
     ])
 
     scratch = arcpy.env.scratchFolder
-    src, in_copy = _hs._open_source(in_raster, scratch, messages)
-    band = src.GetRasterBand(1)
-    width, height = src.RasterXSize, src.RasterYSize
+    src = _rs.Source(in_raster, scratch, messages)
+    width, height = src.width, src.height
     if width < wsize or height < wsize:
         raise arcpy.ExecuteError(
             "The DEM must be at least {0} x {0} cells for a window of {0}.".format(wsize))
-    gt = src.GetGeoTransform()
-    proj = src.GetProjection()
-    in_nodata = band.GetNoDataValue()
+    gt, proj = src.gt, src.proj
     sr = arcpy.Describe(in_raster).spatialReference
 
     cell_m, geographic = _fd_cell_meters(gt, sr, height)
@@ -1699,62 +1705,60 @@ def run_fractal_dimension(in_raster, out_raster, method=None, window_size=25,
                            "assumed meters" if geographic else elev_units))
     _fd_report_steps(messages, m_idx, wsize, hmax)
 
-    z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
-    valid = np.isfinite(z)
-    if in_nodata is not None:
-        valid &= (z != in_nodata)
-    valid = _mh.mask_band_valid(band, valid)
-    # Fill NoData with the valid mean so the vectorized math never sees NaN;
-    # any window touching NoData is masked out of the result below, so the
-    # fill value never reaches the output.
-    fill = float(z[valid].mean()) if valid.any() else 0.0
-    z = np.where(valid, z, fill) * elev_mpu
-    src = None
-    if in_copy:
-        try:
-            arcpy.management.Delete(in_copy)
-        except Exception:
-            pass
-
-    _mh.phase_advance("Calculating fractal dimension...")
-    if is_tpm:
-        Dblk = _fd_tpm(z, wsize, cell_m, height, width)
-    elif is_vario:
-        Dblk = _fd_variation(z, wsize, 2.0, height, width, hmax)
-    elif is_mado:
-        Dblk = _fd_variation(z, wsize, 1.0, height, width, hmax)
-    else:
-        Dblk = _fd_dbc(z, wsize, cell_m, height, width)
-    np.clip(Dblk, 2.0, 3.0, out=Dblk)        # a surface's D is in [2, 3]
-
-    # A window is usable only if it has no NoData cell anywhere inside it.
+    # Row strips with a halo of half the window: a window is a bounded
+    # neighborhood, so each strip's windows are the whole-raster windows.
     hw = (wsize - 1) // 2
-    inv_win = _fd_box_sum((~valid).astype(np.float64), wsize, wsize)
-    ok = inv_win < 0.5
-    out = np.full((height, width), NODATA_OUT, dtype=np.float32)
-    center = out[hw:hw + Dblk.shape[0], hw:hw + Dblk.shape[1]]
-    center[ok] = Dblk[ok].astype(np.float32)
-    out_valid = np.zeros((height, width), dtype=bool)
-    out_valid[hw:hw + Dblk.shape[0], hw:hw + Dblk.shape[1]] = ok
-    n_out = int(out_valid.sum())
+    rows, blocks = _rs.plan(height, width, hw, _FD_BYTES_PER_CELL, messages)
+    writer = _rs.ScratchWriter(gdal, scratch, "fd", gt, proj, width, height,
+                               nodata=NODATA_OUT)
+    n_out = 0
+    _mh.phase_advance("Calculating fractal dimension...")
+    try:
+        for y0, y1, top, bot in blocks:
+            # the window machinery needs at least wsize rows: a short block
+            # (a forced tiny strip at the raster's edge) grows within the
+            # raster, the extra rows being more halo
+            if bot - top < wsize:
+                top = max(0, bot - wsize)
+                bot = min(height, top + wsize)
+            z, valid = src.read(top, bot)
+            hb = bot - top
+            # Fill NoData with the block's valid mean so the vectorized math
+            # never sees NaN; any window touching NoData is masked out of the
+            # result below, so the fill value never reaches the output.
+            fill = float(z[valid].mean()) if valid.any() else 0.0
+            z = np.where(valid, z, fill) * elev_mpu
+            if is_tpm:
+                Dblk = _fd_tpm(z, wsize, cell_m, hb, width)
+            elif is_vario:
+                Dblk = _fd_variation(z, wsize, 2.0, hb, width, hmax)
+            elif is_mado:
+                Dblk = _fd_variation(z, wsize, 1.0, hb, width, hmax)
+            else:
+                Dblk = _fd_dbc(z, wsize, cell_m, hb, width)
+            del z
+            np.clip(Dblk, 2.0, 3.0, out=Dblk)        # a surface's D is in [2, 3]
+
+            # A window is usable only if it has no NoData cell anywhere inside it.
+            inv_win = _fd_box_sum((~valid).astype(np.float64), wsize, wsize)
+            ok = inv_win < 0.5
+            out = np.full((hb, width), NODATA_OUT, dtype=np.float32)
+            center = out[hw:hw + Dblk.shape[0], hw:hw + Dblk.shape[1]]
+            center[ok] = Dblk[ok].astype(np.float32)
+            out_valid = np.zeros((hb, width), dtype=bool)
+            out_valid[hw:hw + Dblk.shape[0], hw:hw + Dblk.shape[1]] = ok
+            sl = slice(y0 - top, y1 - top)
+            n_out += int(out_valid[sl].sum())
+            writer.write(y0, out[sl], out_valid[sl])
+            del Dblk, inv_win, ok, out, out_valid, valid
+        out_path, out_stats = writer.finish(messages)
+    except Exception:
+        writer.abandon()
+        raise
+    finally:
+        src.close()
     _hs._msg(messages, "{:,} of {:,} cells have a fully-valid window ({}).".format(
         n_out, width * height, _FD_CITATION[m_idx]))
-
-    out_path = arcpy.CreateUniqueName("fd.tif", scratch)
-    ds, oband = _make_output(gdal, out_path, gt, proj, width, height)
-    oband.WriteArray(out)
-    oband.FlushCache()
-    ds.FlushCache()
-    stats = _mh._RasterStats()
-    if out_valid.any():
-        stats.add(out[out_valid].astype(np.float64))
-    out_stats = _mh._finalize_stats(oband, stats, messages)
-    if out_stats is not None:
-        out_stats["on_raster"] = _mh._write_gtiff_stats(oband, out_stats)
-    oband.FlushCache()
-    ds.FlushCache()
-    oband = None
-    ds = None
 
     _mh.phase_advance("Saving the fractal-dimension raster...")
     _deliver_output(

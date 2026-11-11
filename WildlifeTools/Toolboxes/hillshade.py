@@ -918,20 +918,44 @@ def nbr_conv(field, kernel):
     return oaconvolve(field, kernel[::-1, ::-1], mode="same")
 
 
-def _blur_grid(z, valid, rx_rows, ry, kernel):
-    """NoData-ignoring circular mean of ``z`` (full grid). ``valid`` is the
-    data mask; invalid cells are excluded from every mean and stay invalid in
-    the result (matching Focal Statistics with Ignore NoData). See
-    ``_row_kernel_groups`` for how rows are grouped by radius."""
+# Working memory per cell of a strip while blurring (the elevations, the
+# mask, the two convolution inputs and outputs, the result and the FFT's
+# temporaries), for raster_strips.strip_rows.
+_BLUR_BYTES_PER_CELL = 96
+# ... and of a hillshade strip (padded elevations and mask, the per-cell
+# ground spans, gradients, slope, aspect, shade and levels; measured at
+# ~170 bytes per strip cell on a 4,000-wide DEM), so the hillshade engine's
+# strip height follows the same budget rule as the other strip tools instead
+# of a fixed row count (which was 650 MB per strip at 4,000 columns and
+# would have been 23 GB at 226,812).
+_HILLSHADE_BYTES_PER_CELL = 176
+
+
+def _blur_grid(z, valid, rx_rows, ry, kernel, row0=0):
+    """NoData-ignoring circular mean of ``z``: the whole grid, or a BLOCK of
+    rows whose first row is raster row ``row0`` (``rx_rows`` always spans the
+    whole raster; rows within a kernel's half-height of the block's edge see
+    the block's zero padding, so callers read a halo and keep only the
+    interior rows). ``valid`` is the data mask; invalid cells are excluded
+    from every mean and stay invalid in the result (matching Focal
+    Statistics with Ignore NoData). See ``_row_kernel_groups`` for how rows
+    are grouped by radius."""
     num = np.where(valid, z, 0.0)
     den = valid.astype(np.float64)
     out = np.full(z.shape, np.nan)
+    H = z.shape[0]
     for k, rows in _row_kernel_groups(rx_rows, ry, kernel):
+        if isinstance(rows, slice):
+            sel = rows
+        else:
+            sel = rows[row0:row0 + H]
+            if not sel.any():
+                continue
         cn = nbr_conv(num, k)
         cd = nbr_conv(den, k)
         with np.errstate(invalid="ignore", divide="ignore"):
             vals = cn / np.maximum(cd, 1e-12)
-        out[rows] = vals[rows]
+        out[sel] = vals[sel]
     out[~valid] = np.nan
     return out
 
@@ -940,7 +964,8 @@ def _blur_grid(z, valid, rx_rows, ry, kernel):
 #  Cast-shadow sweep
 # ----------------------------------------------------------------------------
 
-def _cast_shadow_mask(z_m, cellw_m, cellh_m, azimuth, altitude, sun_progress=(0, 1)):
+def _cast_shadow_mask(z_m, cellw_m, cellh_m, azimuth, altitude, sun_progress=(0, 1),
+                      progress=True):
     """Boolean mask of cells hidden from the sun (True = in shadow).
 
     ``z_m``: full elevation grid in meters (NaN = NoData; NaN cells neither
@@ -1000,7 +1025,7 @@ def _cast_shadow_mask(z_m, cellw_m, cellh_m, azimuth, altitude, sun_progress=(0,
         row = z[r]
         mask[r] = row < (cur - 1e-6)
         np.maximum(row, cur, out=carry)
-        if r % tick == 0:
+        if progress and r % tick == 0:
             _mh.phase_step(sun_i * nrows + r, sun_n * nrows)
 
     for op in reversed(flips):
@@ -1152,34 +1177,36 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
         "DEM blurred before shading" if dem_first
         else "hillshade blurred after shading")
 
+    # raster_strips imports this module, so it is imported here, not at the top
+    import raster_strips as _rs
+
     if dem_first:
-        # Blur the terrain, then run the standard pipeline on the result.
+        # Blur the terrain in row strips (a halo of the blur radius on each
+        # side of every strip), then run the standard pipeline on the result.
         _set_label("Reading the DEM for blurring...")
-        z = band.ReadAsArray(0, 0, width, height).astype(np.float64)
-        valid = np.isfinite(z)
-        if in_nodata is not None:
-            valid &= (z != in_nodata)
-        valid = _mh.mask_band_valid(band, valid)
+        halo = _rs.halo_rows(ry)
+        rows, blocks = _rs.plan(height, width, halo, _BLUR_BYTES_PER_CELL, messages)
         _mh.phase_advance("Blurring the DEM...")
         _msg(messages, "Blurring the DEM (circular mean of the elevations)...")
-        zb = _blur_grid(z, valid, rx_rows, ry, kernel)
-        del z
         BLUR_ND = -3.0e38
-        tmp_dem = arcpy.CreateUniqueName("blurred_dem.tif", scratch)
-        drv = gdal.GetDriverByName("GTiff")
-        tds = drv.Create(tmp_dem, width, height, 1, gdal.GDT_Float32,
-                         options=["TILED=YES", "COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
-        tds.SetGeoTransform(gt)
+        writer = _rs.ScratchWriter(gdal, scratch, "blurred_dem", gt, proj, width,
+                                   height, nodata=BLUR_ND, stats=False)
+        tmp_dem = writer.path
         try:
-            tds.SetProjection(proj)
+            for y0, y1, top, bot in blocks:
+                z = band.ReadAsArray(0, top, width, bot - top).astype(np.float64)
+                valid = np.isfinite(z)
+                if in_nodata is not None:
+                    valid &= (z != in_nodata)
+                valid = _mh.mask_band_valid(band, valid, 0, top)
+                zb = _blur_grid(z, valid, rx_rows, ry, kernel, row0=top)
+                sl = slice(y0 - top, y1 - top)
+                writer.write(y0, zb[sl], valid[sl])
+                del z, zb
+            writer.finish()
         except Exception:
-            pass
-        tb = tds.GetRasterBand(1)
-        tb.SetNoDataValue(BLUR_ND)
-        tb.WriteArray(np.where(valid, zb, BLUR_ND).astype(np.float32))
-        tb.FlushCache()
-        tds = None
-        del zb
+            writer.abandon()
+            raise
         src = None
         try:
             out_lyrx = _run_hillshade(
@@ -1215,40 +1242,31 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
                             hypso_strength, vert_exag, model_shadows,
                             shadow_dim, messages, _finalize=False,
                             own_phases=False)
-    hds = gdal.Open(hs_tmp)
-    arr = hds.GetRasterBand(1).ReadAsArray().astype(np.float64)
-    hgt, hproj = hds.GetGeoTransform(), hds.GetProjection()
-    hds = None
-    hvalid = arr != NODATA_OUT
+    # Blur the finished hillshade in row strips (halo = the blur radius).
+    hsrc = _rs.Source(hs_tmp, scratch, messages, check_size=False)
+    hgt, hproj = hsrc.gt, hsrc.proj
+    halo = _rs.halo_rows(ry)
+    rows, blocks = _rs.plan(hsrc.height, hsrc.width, halo, _BLUR_BYTES_PER_CELL, messages)
     _mh.phase_advance("Blurring the hillshade...")
     _msg(messages, "Blurring the finished hillshade (circular mean of the "
                    "hillshade values)...")
-    hb = _blur_grid(arr, hvalid, rx_rows, ry, kernel)
-    vals = np.rint(np.where(hvalid, hb, NODATA_OUT))
-    out_arr = np.where(hvalid, vals, NODATA_OUT).astype(np.int16)
-
-    out_path = arcpy.CreateUniqueName("hillshade_blurred.tif", scratch)
-    drv = gdal.GetDriverByName("GTiff")
-    ods = drv.Create(out_path, width, height, 1, gdal.GDT_Int16,
-                     options=["TILED=YES", "COMPRESS=LZW", "BIGTIFF=IF_SAFER"])
-    ods.SetGeoTransform(hgt)
+    writer = _rs.ScratchWriter(gdal, scratch, "hillshade_blurred", hgt, hproj,
+                               width, height, dtype=gdal.GDT_Int16, nodata=NODATA_OUT)
     try:
-        ods.SetProjection(hproj)
+        for y0, y1, top, bot in blocks:
+            arr, hvalid = hsrc.read(top, bot)
+            hvalid &= (arr != NODATA_OUT)
+            hb = _blur_grid(arr, hvalid, rx_rows, ry, kernel, row0=top)
+            vals = np.rint(np.where(hvalid, hb, NODATA_OUT))
+            sl = slice(y0 - top, y1 - top)
+            writer.write(y0, vals[sl], hvalid[sl])
+            del arr, hb, vals
+        out_path, out_stats = writer.finish(messages)
     except Exception:
-        pass
-    ob = ods.GetRasterBand(1)
-    ob.SetNoDataValue(NODATA_OUT)
-    ob.WriteArray(out_arr)
-    ob.FlushCache()
-    stats = _mh._RasterStats()
-    if hvalid.any():
-        stats.add(vals[hvalid])
-    out_stats = _mh._finalize_stats(ob, stats, messages)
-    if out_stats is not None:
-        out_stats["on_raster"] = _mh._write_gtiff_stats(ob, out_stats)
-    ob.FlushCache()
-    ods.FlushCache()
-    ods = None
+        writer.abandon()
+        raise
+    finally:
+        hsrc.close()
 
     _mh.phase_advance("Saving output raster...")
     prev_pyramid = arcpy.env.pyramid
@@ -1455,53 +1473,44 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
                        "range {:.6g} to {:.6g}.".format(hypso_strength, s_min, s_max))
     s_frac = hypso_strength / 100.0
 
-    # Optional cast shadows need the whole grid at once (shadows are non-local).
-    shadow_mask = None                  # standard mode: one mask
-    shadow_masks = None                 # multi mode: one mask per sun
+    # Optional cast shadows are swept per strip. A cell can only be shadowed
+    # by terrain within relief / tan(altitude) of it (the carried shadow
+    # surface drops by tan(altitude) per meter and never exceeds the highest
+    # cell), so a strip read with that many extra rows on each side and
+    # swept on its own gets the whole-raster mask for its own rows; the
+    # counts are gathered over the strips and reported after them.
+    shadow_halo = 0
+    shadow_suns = []                    # (azimuth, altitude) per sweep
+    shadow_counts = []
+    n_valid_total = 0
     if model_shadows:
         if first_phase and not use_hypso:
             _set_label("Reading the DEM for the cast-shadow sweep...")
         else:
             _mh.phase_advance("Reading the DEM for the cast-shadow sweep...")
-        z_full = band.ReadAsArray(0, 0, width, height).astype(np.float32)
-        z_full = z_full.astype(np.float64)
-        invalid = ~np.isfinite(z_full)
-        if in_nodata is not None:
-            invalid |= (z_full == in_nodata)
-        vm = _mh.band_validity_mask(band)
-        if vm is not None:
-            invalid |= ~vm
-        z_full[invalid] = np.nan
-        z_full *= zscale
-        n_valid = max(int(invalid.size - invalid.sum()), 1)
-        geo_note = (" (mean-cell-size approximation on this geographic DEM)"
-                    if geographic else "")
-        if mode == "multi":
-            _mh.phase_advance("Sweeping cast shadows...")
-            shadow_masks = []
-            for i, (a, al, _w) in enumerate(suns):
-                _set_label("Sweeping cast shadows (sun {} of {})...".format(
-                    i + 1, len(suns)))
-                m = _cast_shadow_mask(z_full, cellw_m, cellh_m, a, al,
-                                      sun_progress=(i, len(suns)))
-                shadow_masks.append(m)
-                n_sh = int(m.sum())
-                _msg(messages, "Cast shadows, sun {} ({:g} deg / {:g} deg): "
-                               "{:,} cells ({:.1f}%) dimmed to {:g}% before "
-                               "averaging{}.".format(
-                                   i + 1, a, al, n_sh,
-                                   100.0 * n_sh / n_valid, shadow_dim,
-                                   geo_note))
+        if use_hypso:
+            z_lo, z_hi = s_min, s_max
         else:
-            _mh.phase_advance("Sweeping cast shadows...")
-            shadow_mask = _cast_shadow_mask(z_full, cellw_m, cellh_m, azimuth, altitude)
-            n_sh = int(shadow_mask.sum())
-            _msg(messages, "Cast shadows: {:,} cells ({:.1f}%) are hidden from the "
-                           "sun and will be dimmed to {:g}% of their unshadowed "
-                           "value{}.".format(
-                               n_sh, 100.0 * n_sh / n_valid, shadow_dim,
-                               geo_note))
-        del z_full
+            try:
+                z_lo, z_hi = band.ComputeRasterMinMax(0)
+            except RuntimeError:
+                z_lo = z_hi = None
+            if (z_lo is None or z_hi is None or
+                    not (math.isfinite(z_lo) and math.isfinite(z_hi))):
+                raise arcpy.ExecuteError(
+                    "The DEM has no valid elevation values, so cast shadows "
+                    "cannot be computed.")
+        shadow_suns = ([(a, al) for a, al, _w in suns] if mode == "multi"
+                       else [(azimuth, altitude)])
+        min_alt = max(min(al for _a, al in shadow_suns), 0.1)
+        reach_m = (z_hi - z_lo) * zscale / math.tan(math.radians(min_alt))
+        shadow_halo = int(math.ceil(reach_m / max(float(cellh_m), 1e-9))) + 2
+        shadow_counts = [0] * len(shadow_suns)
+        _mh.phase_advance("Sweeping cast shadows...")
+        _msg(messages, "Cast shadows are swept strip by strip with {:,} rows of "
+                       "context on each side (the farthest a shadow can reach: "
+                       "{:,.0f} m of relief over tan({:g} deg)).".format(
+                           shadow_halo, (z_hi - z_lo) * zscale, min_alt))
 
     # Output scratch GeoTIFF (Int16; NoData -9999), stats accumulated as we go.
     out_path = arcpy.CreateUniqueName("hillshade.tif", scratch)
@@ -1544,7 +1553,14 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
     else:
         _mh.phase_advance("Calculating hillshade...")
     stats = _mh._RasterStats()
-    strips = [(y, min(_STRIP_ROWS, height - y)) for y in range(0, height, _STRIP_ROWS)]
+    # Strip height from the memory budget (raster_strips imports this module,
+    # hence the lazy import), with the shadow halo when shadows are swept; the
+    # one run message states the layout.
+    import raster_strips as _rs
+    halo_rows = shadow_halo if model_shadows else 1
+    strip_h = _rs.strip_rows(height, width, halo_rows, _HILLSHADE_BYTES_PER_CELL)
+    strips = [(y, min(strip_h, height - y)) for y in range(0, height, strip_h)]
+    _msg(messages, _rs.strip_note(height, width, strip_h, halo_rows, _HILLSHADE_BYTES_PER_CELL))
 
     for idx, (yoff, rows) in enumerate(strips):
         # Read the strip plus a 1-row halo on each side (clamped at the edges).
@@ -1556,6 +1572,27 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
             valid &= (pad != in_nodata)
         valid = _mh.mask_band_valid(band, valid, 0, top)
         pad = np.where(valid, pad * zscale, 0.0)
+
+        # cast shadows for this strip's rows, from a block with the halo
+        strip_masks = None
+        if model_shadows:
+            btop = max(0, yoff - shadow_halo)
+            bbot = min(height, yoff + rows + shadow_halo)
+            zb = band.ReadAsArray(0, btop, width, bbot - btop).astype(np.float64)
+            bvalid = np.isfinite(zb)
+            if in_nodata is not None:
+                bvalid &= (zb != in_nodata)
+            bvalid = _mh.mask_band_valid(band, bvalid, 0, btop)
+            zb[~bvalid] = np.nan
+            zb *= zscale
+            n_valid_total += int(bvalid[yoff - btop:yoff - btop + rows].sum())
+            strip_masks = []
+            for si, (a_s, al_s) in enumerate(shadow_suns):
+                m = _cast_shadow_mask(zb, cellw_m, cellh_m, a_s, al_s, progress=False)
+                m = m[yoff - btop:yoff - btop + rows]
+                shadow_counts[si] += int(m.sum())
+                strip_masks.append(m)
+            del zb, bvalid
 
         out = np.full((rows, width), NODATA_OUT, dtype=np.int16)
         # Rows of this strip that have both neighbors inside the raster.
@@ -1613,8 +1650,8 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
                 for i, (cz_i, sz_i, ar_i, w_i) in enumerate(sun_geom):
                     sh = cz_i * cslope + sz_i * sslope * np.cos(ar_i - aspect)
                     np.maximum(sh, 0.0, out=sh)
-                    if shadow_masks is not None:
-                        sh[shadow_masks[i][rr, 1:-1]] *= shadow_dim / 100.0
+                    if strip_masks is not None:
+                        sh[strip_masks[i][(r0 - yoff):(r1 - yoff), 1:-1]] *= shadow_dim / 100.0
                     shade += w_i * sh
             else:
                 shade = cosz * np.cos(slope) + sinz * np.sin(slope) * np.cos(az_rad - aspect)
@@ -1622,9 +1659,9 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
             if use_hypso:
                 hs *= ((C_ - hyp_lo) / hyp_range) * s_frac + (1.0 - s_frac)
             np.maximum(hs, 0.0, out=hs)
-            if shadow_mask is not None:
+            if strip_masks is not None and mode != "multi":
                 # Shadowed cells keep shadow_dim percent of their unshadowed value.
-                hs[shadow_mask[rr, 1:-1]] *= shadow_dim / 100.0
+                hs[strip_masks[0][(r0 - yoff):(r1 - yoff), 1:-1]] *= shadow_dim / 100.0
 
             ok = (valid[up, :-2] & valid[up, 1:-1] & valid[up, 2:] &
                   valid[sl, :-2] & valid[sl, 1:-1] & valid[sl, 2:] &
@@ -1638,6 +1675,26 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
                 stats.add(vals[ok])
         out_band.WriteArray(out, 0, yoff)
         _mh.phase_step(idx + 1, len(strips))
+
+    if model_shadows:
+        n_valid = max(n_valid_total, 1)
+        geo_note = (" (mean-cell-size approximation on this geographic DEM)"
+                    if geographic else "")
+        if mode == "multi":
+            for i, ((a_s, al_s), n_sh) in enumerate(zip(shadow_suns, shadow_counts)):
+                _msg(messages, "Cast shadows, sun {} ({:g} deg / {:g} deg): "
+                               "{:,} cells ({:.1f}%) dimmed to {:g}% before "
+                               "averaging{}.".format(
+                                   i + 1, a_s, al_s, n_sh,
+                                   100.0 * n_sh / n_valid, shadow_dim,
+                                   geo_note))
+        else:
+            n_sh = shadow_counts[0]
+            _msg(messages, "Cast shadows: {:,} cells ({:.1f}%) are hidden from the "
+                           "sun and will be dimmed to {:g}% of their unshadowed "
+                           "value{}.".format(
+                               n_sh, 100.0 * n_sh / n_valid, shadow_dim,
+                               geo_note))
 
     out_band.FlushCache()
     out_ds.FlushCache()
