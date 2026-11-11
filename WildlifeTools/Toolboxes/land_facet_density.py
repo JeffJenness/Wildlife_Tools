@@ -190,7 +190,10 @@ def run_density(in_raster, out_raster, facet_values=None,
         _mh.phase_advance("Identifying the land facets...")
         rec = _lnk.read(in_raster, _lnk.FACETS)
         cats = None
-        for y0, y1 in _rs.strip_ranges(height_px, _rs.strip_rows(height_px, width_px, 0, 64)):
+        scan = _rs.strip_ranges(height_px, _rs.strip_rows(height_px, width_px, 0, 64))
+        scan_prog = _rs.Progress("Identifying the land facets", scan)
+        for si, (y0, y1) in enumerate(scan):
+            scan_prog.update(si, 0.0)
             a, valid = src.read(y0, y1)
             # The clustering tool writes -9999 for outliers and over-confusion
             # cells; honour it even when the raster never declared it as its
@@ -333,8 +336,10 @@ def _run_density_bands(gdal, src, in_raster, out_raster, facet_values, neighborh
     n_conv = max(1, len(blocks) * (1 + n_facets))
     done = 0
     stats_ok = True
+    prog = _rs.Progress("Computing neighborhood proportions", blocks)
     try:
-        for y0, y1, top, bot in blocks:
+        for bi, (y0, y1, top, bot) in enumerate(blocks):
+            prog.update(bi, 0.0)
             a, valid = src.read(top, bot)
             with np.errstate(invalid="ignore"):
                 valid &= (a != _tt.NODATA_OUT)
@@ -354,8 +359,8 @@ def _run_density_bands(gdal, src, in_raster, out_raster, facet_values, neighborh
             denom_safe = np.where(undefined, np.float32(1.0), denom)
             del denom
             done += 1
-            _mh.phase_step(done, n_conv)
-            for bi, entry in enumerate(entries, start=1):
+            prog.update(bi, (done - bi * (1 + n_facets)) / float(1 + n_facets))
+            for fi, entry in enumerate(entries, start=1):
                 fid = entry["facet_id"]
                 ind = ((a == fid) & valid).astype(np.float32)
                 ck = np.zeros(bshape, np.float32)
@@ -377,15 +382,15 @@ def _run_density_bands(gdal, src, in_raster, out_raster, facet_values, neighborh
                 del ck
                 und = undefined[sl]
                 stored[und] = STORE_NODATA
-                oband = ds.GetRasterBand(bi)
+                oband = ds.GetRasterBand(fi)
                 oband.WriteArray(stored, 0, int(y0))
                 chunk = stored[und == False]                     # noqa: E712
                 if chunk.size:
-                    accs[bi - 1].add(chunk.astype(np.float64).ravel())
+                    accs[fi - 1].add(chunk.astype(np.float64).ravel())
                 oband = None
                 del stored, chunk
                 done += 1
-                _mh.phase_step(done, n_conv)
+                prog.update(bi, (done - bi * (1 + n_facets)) / float(1 + n_facets))
             del a, valid, denom_safe, undefined
         use_nodata = n_undef > 0
         for bi, entry in enumerate(entries, start=1):

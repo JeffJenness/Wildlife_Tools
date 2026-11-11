@@ -269,7 +269,10 @@ def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
         # ---- classes (pass 1: the distinct values, streamed) ----------------
         _mh.phase_advance("Finding the classes...")
         cats = None
-        for y0, y1 in _rs.strip_ranges(height_px, _rs.strip_rows(height_px, width_px, 0, 64)):
+        scan = _rs.strip_ranges(height_px, _rs.strip_rows(height_px, width_px, 0, 64))
+        scan_prog = _rs.Progress("Finding the classes", scan)
+        for si, (y0, y1) in enumerate(scan):
+            scan_prog.update(si, 0.0)
             a, valid = src.read(y0, y1)
             # The clustering tool writes -9999 for outlier cells; honor it even
             # when the raster never declared it (the gdb round-trip can lose the
@@ -355,8 +358,10 @@ def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
         NANF = np.float32(np.nan)
         ONE = np.float32(1.0)
         ZERO = np.float32(0.0)
+        prog = _rs.Progress("Computing the {}".format(label), blocks)
         try:
             for bi, (y0, y1, top, bot) in enumerate(blocks):
+                prog.update(bi, 0.0)
                 a, valid = src.read(top, bot)
                 with np.errstate(invalid="ignore"):
                     valid &= (a != NODATA_OUT)
@@ -439,7 +444,7 @@ def run_diversity(in_raster, out_raster, index="EFFECTIVE", q=1.0,
                 n_out += int(out_valid[sl].sum())
                 writer.write(y0, out[sl], out_valid[sl])
                 del a, valid, total, S1, S2, rich, Sq, out, out_valid, tot_safe, valid_out
-                _mh.phase_step(bi + 1, len(blocks))
+                prog.update(bi)
             out_path, out_stats = writer.finish(messages)
         except Exception:
             writer.abandon()

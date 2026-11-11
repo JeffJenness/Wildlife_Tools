@@ -1026,7 +1026,10 @@ def _cast_shadow_mask(z_m, cellw_m, cellh_m, azimuth, altitude, sun_progress=(0,
         mask[r] = row < (cur - 1e-6)
         np.maximum(row, cur, out=carry)
         if progress and r % tick == 0:
-            _mh.phase_step(sun_i * nrows + r, sun_n * nrows)
+            if callable(progress):
+                progress(r / float(nrows))
+            else:
+                _mh.phase_step(sun_i * nrows + r, sun_n * nrows)
 
     for op in reversed(flips):
         if op == "T":
@@ -1192,8 +1195,10 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
         writer = _rs.ScratchWriter(gdal, scratch, "blurred_dem", gt, proj, width,
                                    height, nodata=BLUR_ND, stats=False)
         tmp_dem = writer.path
+        prog = _rs.Progress("Blurring the DEM", blocks)
         try:
-            for y0, y1, top, bot in blocks:
+            for bi, (y0, y1, top, bot) in enumerate(blocks):
+                prog.update(bi, 0.0)
                 z = band.ReadAsArray(0, top, width, bot - top).astype(np.float64)
                 valid = np.isfinite(z)
                 if in_nodata is not None:
@@ -1203,6 +1208,7 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
                 sl = slice(y0 - top, y1 - top)
                 writer.write(y0, zb[sl], valid[sl])
                 del z, zb
+                prog.update(bi)
             writer.finish()
         except Exception:
             writer.abandon()
@@ -1252,8 +1258,10 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
                    "hillshade values)...")
     writer = _rs.ScratchWriter(gdal, scratch, "hillshade_blurred", hgt, hproj,
                                width, height, dtype=gdal.GDT_Int16, nodata=NODATA_OUT)
+    prog = _rs.Progress("Blurring the hillshade", blocks)
     try:
-        for y0, y1, top, bot in blocks:
+        for bi, (y0, y1, top, bot) in enumerate(blocks):
+            prog.update(bi, 0.0)
             arr, hvalid = hsrc.read(top, bot)
             hvalid &= (arr != NODATA_OUT)
             hb = _blur_grid(arr, hvalid, rx_rows, ry, kernel, row0=top)
@@ -1261,6 +1269,7 @@ def run_blurred_hillshade(in_raster, out_raster, elev_units="Meters",
             sl = slice(y0 - top, y1 - top)
             writer.write(y0, vals[sl], hvalid[sl])
             del arr, hb, vals
+            prog.update(bi)
         out_path, out_stats = writer.finish(messages)
     except Exception:
         writer.abandon()
@@ -1562,7 +1571,9 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
     strips = [(y, min(strip_h, height - y)) for y in range(0, height, strip_h)]
     _msg(messages, _rs.strip_note(height, width, strip_h, halo_rows, _HILLSHADE_BYTES_PER_CELL))
 
+    prog = _rs.Progress("Calculating hillshade", [(y, y + r) for y, r in strips])
     for idx, (yoff, rows) in enumerate(strips):
+        prog.update(idx, 0.0)
         # Read the strip plus a 1-row halo on each side (clamped at the edges).
         top = max(yoff - 1, 0)
         bot = min(yoff + rows + 1, height)
@@ -1588,11 +1599,15 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
             n_valid_total += int(bvalid[yoff - btop:yoff - btop + rows].sum())
             strip_masks = []
             for si, (a_s, al_s) in enumerate(shadow_suns):
-                m = _cast_shadow_mask(zb, cellw_m, cellh_m, a_s, al_s, progress=False)
+                m = _cast_shadow_mask(
+                    zb, cellw_m, cellh_m, a_s, al_s,
+                    progress=(lambda frac, si=si: prog.update(
+                        idx, 0.5 * (si + frac) / len(shadow_suns))))
                 m = m[yoff - btop:yoff - btop + rows]
                 shadow_counts[si] += int(m.sum())
                 strip_masks.append(m)
             del zb, bvalid
+            prog.update(idx, 0.5)
 
         out = np.full((rows, width), NODATA_OUT, dtype=np.int16)
         # Rows of this strip that have both neighbors inside the raster.
@@ -1674,7 +1689,7 @@ def _run_hillshade(mode, in_raster, out_raster, elev_units, azimuth, altitude,
             if ok.any():
                 stats.add(vals[ok])
         out_band.WriteArray(out, 0, yoff)
-        _mh.phase_step(idx + 1, len(strips))
+        prog.update(idx)
 
     if model_shadows:
         n_valid = max(n_valid_total, 1)

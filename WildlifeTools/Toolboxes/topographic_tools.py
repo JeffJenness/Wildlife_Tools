@@ -339,7 +339,9 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
     strips = [(y, min(_STRIP_ROWS, height - y))
               for y in range(0, height, _STRIP_ROWS)]
 
+    prog = _rs.Progress("Calculating surface areas", [(y, y + r) for y, r in strips])
     for idx, (yoff, rows) in enumerate(strips):
+        prog.update(idx, 0.0)
         top = max(yoff - 1, 0)
         bot = min(yoff + rows + 1, height)
         pad = band.ReadAsArray(0, top, width, bot - top).astype(np.float64)
@@ -395,7 +397,7 @@ def run_surface_area(in_raster, out_area=None, out_ratio=None, out_flat=None,
 
         for k in outputs:
             outputs[k]["band"].WriteArray(out_arrs[k], 0, yoff)
-        _mh.phase_step(idx + 1, len(strips))
+        prog.update(idx)
 
     src = None
     if in_copy:
@@ -569,7 +571,9 @@ def _detrended_dem(in_raster, radius, radius_units, messages):
         writer = _rs.ScratchWriter(gdal, scratch, "detrend", gt, proj, width, height,
                                    nodata=NODATA_OUT, stats=False)
         try:
-            for y0, y1, top, bot in blocks:
+            prog = _rs.Progress("Detrending the DEM", blocks)
+            for bi, (y0, y1, top, bot) in enumerate(blocks):
+                prog.update(bi, 0.0)
                 z, valid = src.read(top, bot)
                 smoothed = _hs._blur_grid(z, valid, rx_rows, ry, "Average", row0=top)
                 ok = valid & np.isfinite(smoothed)
@@ -786,12 +790,15 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
     n_out = 0
     _mh.phase_advance("Computing orthogonal vectors...")
     dispersion_phase = False
+    prog = _rs.Progress("Calculating vector dispersion", blocks)
     try:
-        for y0, y1, top, bot in blocks:
+        for bi, (y0, y1, top, bot) in enumerate(blocks):
+            prog.update(bi, 0.0)
             z, valid = src.read(top, bot)
             z = np.where(valid, z * zscale, 0.0)
             nx, ny, nz, ok = _unit_normals(z, valid, geom, row0=top)
             del z
+            prog.update(bi, 0.4)
             if not dispersion_phase:
                 _mh.phase_advance("Calculating vector dispersion...")
                 dispersion_phase = True
@@ -813,6 +820,7 @@ def run_vrm(in_raster, out_raster, elev_units="Meters", radius=1.5,
             n_out += int(out_valid[sl].sum())
             writer.write(y0, vrm[sl], out_valid[sl])
             del Rx, Ry, Rz, n, R, vrm, out_valid
+            prog.update(bi)
         out_path, out_stats = writer.finish(messages)
     except Exception:
         writer.abandon()
@@ -964,8 +972,10 @@ def run_acr(in_raster, out_raster, elev_units="Meters", corner_method=None,
                                nodata=NODATA_OUT)
     n_out = 0
     _mh.phase_advance("Calculating surface areas and best-fit-plane slope...")
+    prog = _rs.Progress("Calculating surface areas and best-fit-plane slope", blocks)
     try:
-        for y0, y1, top, bot in blocks:
+        for bi, (y0, y1, top, bot) in enumerate(blocks):
+            prog.update(bi, 0.0)
             z, valid = src.read(top, bot)
             hb = bot - top
             zwork = np.where(valid, z * elev_mpu, 0.0)      # meters, for area and slope
@@ -986,6 +996,7 @@ def run_acr(in_raster, out_raster, elev_units="Meters", corner_method=None,
                                             g, four_cell)
                 ratio = area / g["pix_m2"]
             del zp, vp, g, area
+            prog.update(bi, 0.5)
 
             # cos(best-fit-plane slope) = nz, the vertical component of the Horn
             # unit normal (VRM's machinery). ACR = surface ratio x cos(slope).
@@ -1006,6 +1017,7 @@ def run_acr(in_raster, out_raster, elev_units="Meters", corner_method=None,
             n_out += int(out_valid[sl].sum())
             writer.write(y0, acr[sl], out_valid[sl])
             del ratio, nz, ok, acr, out_valid, zwork, valid
+            prog.update(bi)
         out_path, out_stats = writer.finish(messages)
     except Exception:
         writer.abandon()
@@ -1226,8 +1238,10 @@ def run_tri(in_raster, out_raster, method=None, radius=1.5,
     n_out = 0
     need_d = is_slope or not cells_mode
     _mh.phase_advance("Calculating terrain ruggedness...")
+    prog = _rs.Progress("Calculating terrain ruggedness", blocks)
     try:
-        for y0, y1, top, bot in blocks:
+        for bi, (y0, y1, top, bot) in enumerate(blocks):
+            prog.update(bi, 0.0)
             z, valid = src.read(top, bot)
             hb = bot - top
             # Elevation-unit methods keep the DEM's native z-units; the Slope
@@ -1285,6 +1299,7 @@ def run_tri(in_raster, out_raster, method=None, radius=1.5,
                             else:                          # Riley
                                 acc += dz * dz
                             ncnt += pair
+                    prog.update(bi, (di + R + 1) / float(2 * R + 1))
 
                 if is_std:
                     mean = s1 / cnt
@@ -1299,6 +1314,7 @@ def run_tri(in_raster, out_raster, method=None, radius=1.5,
             n_out += int(out_valid[sl].sum())
             writer.write(y0, result[sl], out_valid[sl])
             del zp, vp, zwork, valid, result, out_valid, cw2sq, ch2sq
+            prog.update(bi)
         out_path, out_stats = writer.finish(messages)
     except Exception:
         writer.abandon()
@@ -1448,17 +1464,21 @@ def _fd_divisor_steps(wsize):
     return [S for S in range(1, m // 2 + 1) if m % S == 0]
 
 
-def _fd_progress(total):
-    """A work-weighted sub-progress reporter for the current phase. `total` is
-    the total number of work units; the returned ``step(units)`` advances the
-    bar. Work is very uneven across step sizes (a step size of 1 tiles the
-    window far more finely than 12), so progress is weighted by actual tile
-    count rather than by step index."""
+def _fd_progress(total, report=None):
+    """A work-weighted sub-progress reporter. `total` is the total number of
+    work units; the returned ``step(units)`` advances the bar, or calls
+    ``report(fraction_done)`` when the caller (the strip loop) is given.
+    Work is very uneven across step sizes (a step size of 1 tiles the window
+    far more finely than 12), so progress is weighted by actual tile count
+    rather than by step index."""
     state = {"done": 0.0, "total": float(max(total, 1))}
 
     def step(units):
         state["done"] += units
-        _mh.phase_step(state["done"], state["total"])
+        if report is not None:
+            report(state["done"] / state["total"])
+        else:
+            _mh.phase_step(state["done"], state["total"])
     return step
 
 
@@ -1530,10 +1550,10 @@ def _fd_prism_area(z, S, cell):
     return tri(zA, zB) + tri(zB, zC) + tri(zC, zD) + tri(zD, zA)
 
 
-def _fd_tpm(z, wsize, cell, H, W):
+def _fd_tpm(z, wsize, cell, H, W, report=None):
     steps = _fd_divisor_steps(wsize)
     logS = np.log(np.asarray(steps, float))
-    prog = _fd_progress(sum(((wsize - 1) // S) ** 2 for S in steps))
+    prog = _fd_progress(sum(((wsize - 1) // S) ** 2 for S in steps), report)
     logA = None
     for i, S in enumerate(steps):
         A = _fd_comb_sum(_fd_prism_area(z, S, cell), S, (wsize - 1) // S,
@@ -1553,14 +1573,14 @@ def _fd_default_max_lag(wsize):
     return max(2, wsize // 3)
 
 
-def _fd_variation(z, wsize, p, H, W, hmax=None):
+def _fd_variation(z, wsize, p, H, W, hmax=None, report=None):
     hmax = int(hmax) if hmax else _fd_default_max_lag(wsize)
     lags = list(range(1, hmax + 1))
     logh = np.log(np.asarray(lags, float))
     nrf, ncf = H - wsize + 1, W - wsize + 1
     logV = np.empty((len(lags), nrf, ncf))
     maxvar = np.zeros((nrf, ncf))
-    prog = _fd_progress(len(lags))
+    prog = _fd_progress(len(lags), report)
     for i, h in enumerate(lags):
         dh = np.abs(z[:, h:] - z[:, :-h]) ** p
         dv = np.abs(z[h:, :] - z[:-h, :]) ** p
@@ -1577,10 +1597,10 @@ def _fd_variation(z, wsize, p, H, W, hmax=None):
     return D
 
 
-def _fd_dbc(z, wsize, cell, H, W):
+def _fd_dbc(z, wsize, cell, H, W, report=None):
     box_sizes = _fd_dbc_box_sizes(wsize)
     logS = np.log(np.asarray(box_sizes, float))
-    prog = _fd_progress(sum((wsize // s) ** 2 for s in box_sizes))
+    prog = _fd_progress(sum((wsize // s) ** 2 for s in box_sizes), report)
     logN = None
     for i, s in enumerate(box_sizes):
         rng = _fd_block_range(z, s)
@@ -1713,8 +1733,10 @@ def run_fractal_dimension(in_raster, out_raster, method=None, window_size=25,
                                nodata=NODATA_OUT)
     n_out = 0
     _mh.phase_advance("Calculating fractal dimension...")
+    prog = _rs.Progress("Calculating fractal dimension", blocks)
     try:
-        for y0, y1, top, bot in blocks:
+        for bi, (y0, y1, top, bot) in enumerate(blocks):
+            prog.update(bi, 0.0)
             # the window machinery needs at least wsize rows: a short block
             # (a forced tiny strip at the raster's edge) grows within the
             # raster, the extra rows being more halo
@@ -1728,14 +1750,15 @@ def run_fractal_dimension(in_raster, out_raster, method=None, window_size=25,
             # result below, so the fill value never reaches the output.
             fill = float(z[valid].mean()) if valid.any() else 0.0
             z = np.where(valid, z, fill) * elev_mpu
+            rep = (lambda frac, bi=bi: prog.update(bi, 0.9 * frac))
             if is_tpm:
-                Dblk = _fd_tpm(z, wsize, cell_m, hb, width)
+                Dblk = _fd_tpm(z, wsize, cell_m, hb, width, report=rep)
             elif is_vario:
-                Dblk = _fd_variation(z, wsize, 2.0, hb, width, hmax)
+                Dblk = _fd_variation(z, wsize, 2.0, hb, width, hmax, report=rep)
             elif is_mado:
-                Dblk = _fd_variation(z, wsize, 1.0, hb, width, hmax)
+                Dblk = _fd_variation(z, wsize, 1.0, hb, width, hmax, report=rep)
             else:
-                Dblk = _fd_dbc(z, wsize, cell_m, hb, width)
+                Dblk = _fd_dbc(z, wsize, cell_m, hb, width, report=rep)
             del z
             np.clip(Dblk, 2.0, 3.0, out=Dblk)        # a surface's D is in [2, 3]
 
@@ -1751,6 +1774,7 @@ def run_fractal_dimension(in_raster, out_raster, method=None, window_size=25,
             n_out += int(out_valid[sl].sum())
             writer.write(y0, out[sl], out_valid[sl])
             del Dblk, inv_win, ok, out, out_valid, valid
+            prog.update(bi)
         out_path, out_stats = writer.finish(messages)
     except Exception:
         writer.abandon()

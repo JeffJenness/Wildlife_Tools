@@ -257,13 +257,15 @@ def _invert_band(gdal, band, width_px, height_px, gt, proj, scale, c, label,
     writer = _rs.ScratchWriter(gdal, scratch, "invert", gt, proj, width_px, height_px,
                                nodata=float(_tt.NODATA_OUT))
     counts = {"n_over": 0, "n_zero": 0, "n_neg": 0, "max_valid": -np.inf}
+    prog = _rs.Progress("Inverting {}".format(label), blocks)
     try:
         for bi, (y0, y1, top, bot) in enumerate(blocks):
+            prog.update(bi, 0.0)
             a, valid = _read_band_rows(band, top, bot - top, width_px)
             out, ok = _invert_block(a, valid, scale, c, counts, method=method)
             writer.write(y0, out, ok)
             del a, valid, out, ok
-            _mh.phase_step(bi + 1, len(blocks))
+            prog.update(bi)
         tmp, out_stats = writer.finish(messages)
     except Exception:
         writer.abandon()

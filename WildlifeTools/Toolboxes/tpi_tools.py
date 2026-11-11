@@ -53,6 +53,7 @@ import arcpy
 import mahalanobis as _mh
 import hillshade as _hs
 import topographic_tools as _tt
+import raster_strips as _rs
 import classification_store as _store
 
 NODATA_OUT = 0                       # class 0 = unclassified / outside data
@@ -1306,14 +1307,16 @@ def run_classification(family, in_raster, out_raster, system, sources,
         ncls = 0
         nvalid = 0
         obs_max = {}                 # role -> observed maximum of a supplied pctl TPI
+        prog = _rs.Progress("Computing TPI, slope and classes", ranges)
         for i, (y0, y1) in enumerate(ranges):
             top = max(0, y0 - halo)
             bot = min(height, y1 + halo)
             sl = slice(y0 - top, y1 - top)
+            prog.update(i, 0.0)
             blocks = {}              # source path -> (values, valid) for rows top..bot
             resolved = {}
             valid_all = None
-            for item in plan:
+            for pi, item in enumerate(plan):
                 src = item["src"]
                 if src.path not in blocks:
                     blocks[src.path] = src.read(top, bot)
@@ -1348,6 +1351,7 @@ def run_classification(family, in_raster, out_raster, system, sources,
                 gi = g[sl]
                 vi = v[sl]
                 resolved[item["role"]] = gi
+                prog.update(i, (pi + 1.0) / (len(plan) + 1.0))
                 valid_all = vi.copy() if valid_all is None else (valid_all & vi)
                 if item.get("track_max"):
                     fin = gi[np.isfinite(gi)]
@@ -1363,7 +1367,7 @@ def run_classification(family, in_raster, out_raster, system, sources,
             ncls += int((cls != NODATA_OUT).sum())
             nvalid += int(valid_all.sum())
             blocks.clear()
-            _mh.phase_step(i + 1, len(ranges))
+            prog.update(i)
 
         for item in plan:
             if item.get("track_max") and item["role"] in obs_max:
@@ -1540,6 +1544,8 @@ def run_tpi(in_raster, out_raw=None, out_dev=None, out_pctl=None,
 
         _mh.phase_advance("Computing TPI...")
         nvalid = 0
+        prog = _rs.Progress("Computing TPI", ranges)
+        n_parts = 1 + int(need_focal) + int("dev_tpi" in keys) + int("pctl" in keys)
         for i, (y0, y1) in enumerate(ranges):
             top = max(0, y0 - halo)
             bot = min(height, y1 + halo)
@@ -1547,11 +1553,15 @@ def run_tpi(in_raster, out_raw=None, out_dev=None, out_pctl=None,
             z, valid = src.read(top, bot)
             nvalid += int(valid[sl].sum())
             grids = {}
+            k = 0
+            prog.update(i, 0.0)
             if need_focal:
                 fs = focal_stats(np.where(valid, z, 0.0), valid, groups, top,
                                  want_sd=("dev" in keys))
                 ok = valid & (fs["count"] >= 0.5)
                 tpi = np.where(ok, z - fs["mean"], np.nan)
+                k += 1
+                prog.update(i, k / float(n_parts))
                 if "raw" in keys:
                     grids["raw"] = tpi
                 if "dev" in keys:
@@ -1567,6 +1577,8 @@ def run_tpi(in_raster, out_raw=None, out_dev=None, out_pctl=None,
                         g = np.where(sdt > 0, tpi / np.where(sdt > 0, sdt, 1.0), 0.0)
                     g[~np.isfinite(tpi)] = np.nan
                     grids["dev_tpi"] = g
+                    k += 1
+                    prog.update(i, k / float(n_parts))
             if "demstd" in keys:
                 gmean, gsd = dem_stats
                 g = np.full(z.shape, np.nan)
@@ -1575,11 +1587,13 @@ def run_tpi(in_raster, out_raw=None, out_dev=None, out_pctl=None,
             if "pctl" in keys:
                 grids["pctl"] = focal_percentile(z, valid, rxo[top:bot], ryo,
                                                  rxi[top:bot], ryi, None)
+                k += 1
+                prog.update(i, k / float(n_parts))
             for u, w in writers.items():
                 g = grids[u][sl]
                 w.write(y0, g, valid[sl] & np.isfinite(g))
             grids.clear()
-            _mh.phase_step(i + 1, len(ranges))
+            prog.update(i)
         if nvalid == 0:
             raise arcpy.ExecuteError("The DEM has no valid cells.")
 

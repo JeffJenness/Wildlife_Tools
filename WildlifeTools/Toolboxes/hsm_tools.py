@@ -621,8 +621,10 @@ def _combine_core(gdal, opened, weights, labels, method, gt, proj, w, h,
     n_out = [0] * n_fac
     for _i in range(n_fac):
         _mh.phase_advance()
+    prog = _rs.Progress("Combining habitat factors", blocks)
     try:
         for bi, (y0, y1, top, bot) in enumerate(blocks):
+            prog.update(bi, 0.0)
             nrows = bot - top
             acc = (np.ones((nrows, w), dtype=np.float64) if geometric
                    else np.zeros((nrows, w), dtype=np.float64))
@@ -653,9 +655,10 @@ def _combine_core(gdal, opened, weights, labels, method, gt, proj, w, h,
                     acc += np.asarray(scores, dtype=np.float64) * wgt
                 valid_all &= valid
                 del a, scores, valid
+                prog.update(bi, (i + 1.0) / (n_fac + 1.0))
             writer.write(y0, acc.astype(np.float32), valid_all)
             del acc, valid_all
-            _mh.phase_step(bi + 1, len(blocks))
+            prog.update(bi)
     except Exception:
         for sw_ in save_writers.values():
             sw_.abandon()
@@ -1130,8 +1133,10 @@ def run_reclassify_features(in_hsm, in_features, new_score, out_raster,
         mds = gdal.Open(mask_path)
         mband = mds.GetRasterBand(1)
         n_burn = 0
+        prog = _rs.Progress("Applying the new score", blocks)
         try:
             for bi, (y0, y1, top, bot) in enumerate(blocks):
+                prog.update(bi, 0.0)
                 z, valid = src.read(top, bot)
                 a = z.astype(np.float32)
                 del z
@@ -1143,7 +1148,7 @@ def run_reclassify_features(in_hsm, in_features, new_score, out_raster,
                 a[burn] = np.float32(new_score)
                 writer.write(y0, a, valid)
                 del a, valid, mask, burn
-                _mh.phase_step(bi + 1, len(blocks))
+                prog.update(bi)
             tmp, out_stats = writer.finish(messages)
         except Exception:
             writer.abandon()
@@ -1343,8 +1348,10 @@ def run_critical_feature(in_hsm, in_critical, bands, out_raster,
         tband = tds.GetRasterBand(1)
         n_below = n_gap = n_beyond = 0
         _mh.phase_advance()
+        prog = _rs.Progress("Applying the distance bands", blocks)
         try:
             for bi, (y0, y1, top, bot) in enumerate(blocks):
+                prog.update(bi, 0.0)
                 z, valid = src.read(top, bot)
                 a = z.astype(np.float32)
                 del z
@@ -1376,7 +1383,7 @@ def run_critical_feature(in_hsm, in_critical, bands, out_raster,
                 out = (a.astype(np.float64) * pct / 100.0).astype(np.float32)
                 writer.write(y0, out[sl], valid[sl])
                 del a, valid, dist, pct, unassigned, miss, below, beyond, gap, out
-                _mh.phase_step(bi + 1, len(blocks))
+                prog.update(bi)
             tmp, out_stats = writer.finish(messages)
         except Exception:
             writer.abandon()
@@ -1484,8 +1491,10 @@ def run_normalize(in_raster, worst, best, out_raster, clamp=True,
         writer = _rs.ScratchWriter(gdal, scratch, "hsm", gt, proj, w, h,
                                    nodata=float(_tt.NODATA_OUT))
         n_out = 0
+        prog = _rs.Progress("Stretching to 0-100", blocks)
         try:
             for bi, (y0, y1, top, bot) in enumerate(blocks):
+                prog.update(bi, 0.0)
                 a, valid = src.read(top, bot)
                 with np.errstate(invalid="ignore"):
                     valid &= (a != np.float64(_tt.NODATA_OUT))
@@ -1495,7 +1504,7 @@ def run_normalize(in_raster, worst, best, out_raster, clamp=True,
                     np.clip(stretched, 0.0, 100.0, out=stretched)
                 writer.write(y0, stretched.astype(np.float32), valid)
                 del a, valid, stretched
-                _mh.phase_step(bi + 1, len(blocks))
+                prog.update(bi)
             tmp, out_stats = writer.finish(messages)
         except Exception:
             writer.abandon()

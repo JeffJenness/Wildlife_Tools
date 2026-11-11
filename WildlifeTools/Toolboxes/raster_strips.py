@@ -46,6 +46,7 @@ the same strips.
 """
 import math
 import os
+import time
 import uuid
 
 import arcpy
@@ -120,6 +121,78 @@ def plan(height, width, halo, bytes_per_cell, messages=None):
     rows = strip_rows(height, width, halo, bytes_per_cell)
     _hs._msg(messages, strip_note(height, width, rows, halo, bytes_per_cell))
     return rows, block_ranges(height, rows, halo)
+
+
+def eta_text(seconds):
+    """'about 2 h 05 min', 'about 12 min' or 'about 45 s'."""
+    s = max(float(seconds), 0.0)
+    if s >= 3600.0:
+        h = int(s // 3600.0)
+        m = int(round((s - 3600.0 * h) / 60.0))
+        if m == 60:
+            h, m = h + 1, 0
+        return "about {} h {:02d} min".format(h, m)
+    if s >= 90.0:
+        return "about {:.0f} min".format(s / 60.0)
+    return "about {:.0f} s".format(max(s, 1.0))
+
+
+class Progress(object):
+    """Strip-by-strip progress inside the current phase of the run's
+    progressor (mahalanobis.begin_phases / phase_step). The bar advances
+    with every strip, or with every part of a strip the tool reports, and
+    the label names the strip, its rows and the time the phase has left,
+    estimated from the strips done so far (the strips are alike in cost, so
+    the estimate settles after the first one). ``blocks`` are the planned
+    ranges, (y0, y1, ...) tuples; ``label`` is the phase's text without its
+    trailing dots. Harmless outside a geoprocessing run (every arcpy call
+    is guarded by the mahalanobis helpers)."""
+
+    def __init__(self, label, blocks):
+        self.label = str(label)
+        self.ranges = [(int(b[0]), int(b[1])) for b in blocks]
+        self.n = max(len(self.ranges), 1)
+        self.t0 = time.time()
+        self.t_label = 0.0
+        self.last = -1.0
+        self.last_label = None
+
+    def update(self, i, frac=1.0, label=None, bar_only=False):
+        """Strip ``i`` (0-based) is ``frac`` done: 0.0 as it starts, 1.0 when
+        it is written; in between for the parts of a strip. ``label`` names
+        the current stage of the strip instead of the phase text; with
+        ``bar_only`` the caller writes its own label."""
+        frac = min(max(float(frac), 0.0), 1.0)
+        done = min(i + frac, float(self.n))
+        if done < self.last:
+            return                          # never move the bar backwards
+        self.last = done
+        _mh.phase_step(done, self.n)
+        if bar_only:
+            return
+        now = time.time()
+        stage = label or self.label
+        if (0.0 < frac < 1.0 and now - self.t_label < 1.0
+                and stage == self.last_label):
+            return                          # parts of a strip: at most once a second
+        self.t_label = now
+        self.last_label = stage
+        _mh._set_label(self.text(i, frac, now - self.t0, stage))
+
+    def text(self, i, frac, elapsed, label=None):
+        i = min(max(int(i), 0), self.n - 1)
+        y0, y1 = self.ranges[i] if self.ranges else (0, 0)
+        if self.n == 1:
+            where = "{:.0f}% done".format(100.0 * frac) if frac < 1.0 else "done"
+        else:
+            where = "strip {:,} of {:,} (rows {:,} to {:,})".format(i + 1, self.n, y0 + 1, y1)
+            if 0.0 < frac < 1.0:
+                where += ", {:.0f}%".format(100.0 * frac)
+        done = i + frac
+        if 0.0 < done < self.n and elapsed > 2.0:
+            left = elapsed * (self.n - done) / done
+            return "{}: {}, {} remaining".format(label or self.label, where, eta_text(left))
+        return "{}: {}".format(label or self.label, where)
 
 
 def row_select(rows, row0, H):

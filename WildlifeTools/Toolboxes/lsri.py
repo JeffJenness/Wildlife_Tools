@@ -214,7 +214,7 @@ class _RadiusLengthEngine(object):
     order of (radius^3 / earth_radius^2), a fraction of a millimeter even
     at a 10 km radius."""
 
-    def __init__(self, p0s, p1s, radius):
+    def __init__(self, p0s, p1s, radius, progress=None):
         self.radius = float(radius)
         max_piece = max(self.radius, 1e-9)
         self.p0s, self.p1s = _subdivide(p0s, p1s, max_piece)
@@ -223,8 +223,12 @@ class _RadiusLengthEngine(object):
         # segments, but cKDTree construction is an opaque scipy call with
         # no progress hook of its own, so this at least shows the bar
         # advance once subdivision is done and again once the tree (the
-        # part that can't report finer detail) is built.
-        _mh.phase_step(1, 2)
+        # part that can't report finer detail) is built. A strip loop
+        # passes ``progress(fraction)`` and places the two steps itself.
+        if progress is not None:
+            progress(0.5)
+        else:
+            _mh.phase_step(1, 2)
         if len(self.p0s):
             d = self.p1s - self.p0s
             self.max_piece_len = float(np.sqrt(np.sum(d * d, axis=1)).max())
@@ -233,7 +237,10 @@ class _RadiusLengthEngine(object):
         else:
             self.tree = None
             self.max_piece_len = 0.0
-        _mh.phase_step(2, 2)
+        if progress is not None:
+            progress(1.0)
+        else:
+            _mh.phase_step(2, 2)
 
     def count(self, centers):
         """Per-center candidate-piece counts (an int array; no Python
@@ -752,7 +759,7 @@ def _lsri_halo_rows(gt, height, ground, radius_m, radius_map, cellh_m, ecef):
 
 
 def _lsri_query_strip(engine, mult, out_valid, out_gt, oy0, oy1, width, writer,
-                      messages, to_ecef, strip_no, n_strips):
+                      messages, to_ecef, strip_no, n_strips, prog=None):
     """Query the per-strip length engine at the output cells of rows
     oy0..oy1-1 (in sub-strips of _STRIP_ROWS, as the whole-raster writer
     did) and write them through ``writer``; progress covers the whole run
@@ -799,7 +806,10 @@ def _lsri_query_strip(engine, mult, out_valid, out_gt, oy0, oy1, width, writer,
     def report(done_in_strip):
         done = state["done_before"] + done_in_strip
         frac = (done / float(total_pairs)) if total_pairs else 1.0
-        _mh.phase_step(int(((strip_no - 1) + frac) * units), n_strips * units)
+        if prog is not None:
+            prog.update(strip_no - 1, 0.4 + 0.6 * frac, bar_only=True)
+        else:
+            _mh.phase_step(int(((strip_no - 1) + frac) * units), n_strips * units)
         now = time.time()
         if now - state["t_label"] < 1.0 and done < total_pairs:
             return
@@ -830,7 +840,10 @@ def _lsri_query_strip(engine, mult, out_valid, out_gt, oy0, oy1, width, writer,
             out_flat = np.full(rows * width, NODATA_OUT, dtype=np.float32)
             out_flat[flat_valid] = lens
             writer.write(yoff, out_flat.reshape(rows, width), flat_valid.reshape(rows, width))
-    _mh.phase_step(strip_no * units, n_strips * units)
+    if prog is not None:
+        prog.update(strip_no - 1, 1.0, label=label)
+    else:
+        _mh.phase_step(strip_no * units, n_strips * units)
 
 
 def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
@@ -969,9 +982,14 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
                                    out_width, out_height, nodata=NODATA_OUT)
         n_segments = 0
         try:
+            # One progress object for the strips; every stage of a strip
+            # (contours, saving, segments, lengths) reports into it, so the
+            # bar only ever moves forward and the label names the stage.
+            prog = _rs.Progress("Calculating LSRI", out_strips)
             for si, (oy0, oy1) in enumerate(out_strips):
                 top = max(0, dem_row(oy0) - halo_dem)
                 bot = min(height, dem_row(oy1 - 1) + halo_dem + 1)
+                prog.update(si, 0.0, label="Generating contours")
                 z, valid = src.read(top, bot)
                 scaled = np.where(valid, z * z_factor, NODATA_OUT)
                 del z
@@ -993,6 +1011,7 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
                 z_ds = None
                 n_segments += len(p0s)
                 if out_contours:
+                    prog.update(si, 0.25, label="Saving the contour feature class")
                     if n_strips == 1:
                         _save_contours(out_contours, ogr_layer, sr, messages)
                     else:
@@ -1009,12 +1028,15 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
                 ogr_layer = None
                 ogr_ds = None
 
+                prog.update(si, 0.3, label="Preparing contour segments")
+                seg_prog = (lambda f, si=si: prog.update(
+                    si, 0.3 + 0.1 * f, label="Preparing contour segments"))
                 if to_ecef is not None:
                     e0, e1 = _to_ecef_xy(p0s, p1s, to_ecef)
-                    engine = _RadiusLengthEngine(e0, e1, radius_map)
+                    engine = _RadiusLengthEngine(e0, e1, radius_map, progress=seg_prog)
                     del e0, e1
                 else:
-                    engine = _RadiusLengthEngine(p0s, p1s, radius_map)
+                    engine = _RadiusLengthEngine(p0s, p1s, radius_map, progress=seg_prog)
                 del p0s, p1s
 
                 if col_src is None:
@@ -1024,7 +1046,7 @@ def run_lsri_on_dem(in_raster, out_raster, contour_interval, base_contour=0.0,
                                        0, height - 1) - top
                     out_valid = valid[rows_src][:, col_src]
                 _lsri_query_strip(engine, mult, out_valid, out_gt, oy0, oy1, out_width,
-                                  writer, messages, to_ecef, si + 1, n_strips)
+                                  writer, messages, to_ecef, si + 1, n_strips, prog=prog)
                 del engine, valid, out_valid
             out_path, out_stats = writer.finish(messages)
         except Exception:

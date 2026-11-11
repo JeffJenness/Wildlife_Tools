@@ -706,8 +706,10 @@ def run_aspect_focal(in_raster, out_raster, statistic,
         fill = _ALLFLAT_FILL[statistic]
         n_bad = n_out = n_flat_nbr = n_nd = 0
         nb = len(blocks)
+        prog = _rs.Progress("Computing {}".format(STAT_LABEL[statistic]), blocks)
         try:
             for bi, (y0, y1, top, bot) in enumerate(blocks):
+                prog.update(bi, 0.0)
                 z, valid = src.read(top, bot)
                 # float32 throughout: aspect values (0-360) are exact in
                 # float32, and halving every array matters on large rasters.
@@ -869,7 +871,7 @@ def run_aspect_focal(in_raster, out_raster, statistic,
                 n_out += int(out_valid[sl].sum())
                 n_flat_nbr += int(all_flat[sl].sum())
                 writer.write(y0, out[sl], out_valid[sl])
-                _mh.phase_step(bi + 1, nb)
+                prog.update(bi)
                 del out, out_valid, all_flat, no_valid, has_dir, flat, dvalid
             out_path, out_stats = writer.finish(messages)
         except Exception:
@@ -1752,8 +1754,11 @@ def run_aspect_transform(in_raster, out_workspace, transformations,
         probe = _ValueKindProbe()
         n_bad = 0
         nb = len(blocks)
+        prog = _rs.Progress("Computing {}".format(
+            _TLABEL[keys[0]] if len(keys) == 1 else "the aspect transformations"), blocks)
         try:
             for bi, (y0, y1, top, bot) in enumerate(blocks):
+                prog.update(bi, 0.0)
                 z, valid = src.read(top, bot)
                 a = z.astype(np.float32)
                 del z
@@ -1771,7 +1776,7 @@ def run_aspect_transform(in_raster, out_workspace, transformations,
                     compass = np.where(dvalid, (np.float32(90.0) - compass) % np.float32(360.0),
                                        np.float32(0.0)).astype(np.float32)
                 del a, valid
-                for key in keys:
+                for ki, key in enumerate(keys):
                     if key in _RECLASS_KEYS:
                         codes = _reclass_block(key, compass, dvalid, flat, flat_nodata)
                         writers[key].write(y0, codes, codes != _NODATA_INT)
@@ -1780,7 +1785,8 @@ def run_aspect_transform(in_raster, out_workspace, transformations,
                         v, ok = _trig_block(key, compass, dvalid, bearing)
                         writers[key].write(y0, v, ok)
                         del v, ok
-                _mh.phase_step(bi + 1, nb)
+                    prog.update(bi, (ki + 1.0) / len(keys))
+                prog.update(bi)
                 del compass, dvalid, flat
         except Exception:
             for w in writers.values():
