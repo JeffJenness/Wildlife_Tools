@@ -913,7 +913,13 @@ class _ClassWriter(object):
         band.SetNoDataValue(NODATA_OUT)
         rat = gdal.RasterAttributeTable()
         rat.CreateColumn("Value", gdal.GFT_Integer, gdal.GFU_MinMax)
-        rat.CreateColumn("Count", gdal.GFT_Integer, gdal.GFU_PixelCount)
+        # GDAL's integer column is 32-bit: a class of more than 2,147,483,647
+        # cells (a 21-billion-cell DEM) needs a Real column. Pro rebuilds the
+        # table on delivery (BuildRasterAttributeTable, Count as Double), so
+        # the type here only has to hold the number.
+        big_counts = max(self.counts.values()) > 2 ** 31 - 1 if self.counts else False
+        rat.CreateColumn("Count", gdal.GFT_Real if big_counts else gdal.GFT_Integer,
+                         gdal.GFU_PixelCount)
         rat.CreateColumn("Class_Name", gdal.GFT_String, gdal.GFU_Name)
         rat.CreateColumn("Red", gdal.GFT_Integer, gdal.GFU_Red)
         rat.CreateColumn("Green", gdal.GFT_Integer, gdal.GFU_Green)
@@ -924,7 +930,10 @@ class _ClassWriter(object):
         for row, v in enumerate(present):
             col = self.colors.get(v) or (180, 180, 180)
             rat.SetValueAsInt(row, 0, v)
-            rat.SetValueAsInt(row, 1, self.counts[v])
+            if big_counts:
+                rat.SetValueAsDouble(row, 1, float(self.counts[v]))
+            else:
+                rat.SetValueAsInt(row, 1, self.counts[v])
             rat.SetValueAsString(row, 2, self.names[v])
             rat.SetValueAsInt(row, 3, int(col[0]))
             rat.SetValueAsInt(row, 4, int(col[1]))
