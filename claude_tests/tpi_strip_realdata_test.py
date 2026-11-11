@@ -52,6 +52,7 @@ import mahalanobis as _mh                      # noqa: E402
 _mh._confirm = lambda *a, **k: True            # headless: no Yes/No dialog on the large-raster warning
 import tpi_tools as new                        # noqa: E402
 import tpi_tools_whole_ref as ref              # noqa: E402
+import tpi_flat_check as fc                    # noqa: E402
 
 FULL = r"D:\GIS_Data\DEM_Stuff\Full_DEM_Data.gdb\All_US_NoNull"
 passed = failed = 0
@@ -117,7 +118,11 @@ def md_of(path):
     return (md.summary or "", md.description or "", md.tags or "")
 
 
-def compare_float(label, a, b, exact):
+def compare_float(label, a, b, exact, flat=None):
+    """``flat`` = (dem, (rxo, ryo, rxi, ryi)) for an SD-based output: cells
+    beyond the tolerance are accepted only where the engine reported 0 and
+    the brute-force SD over the engine's kernel is below the quantization
+    floor (tpi_flat_check)."""
     A, B = read(a), read(b)
     na, nb = np.isnan(A), np.isnan(B)
     if A.shape != B.shape or not np.array_equal(na, nb):
@@ -129,17 +134,51 @@ def compare_float(label, a, b, exact):
     d = float(np.max(np.abs(fa - fb))) / scale if fa.size else 0.0
     if exact:
         check(label + " bit-identical", ndiff == 0, "{} cells differ, max rel {:.3g}".format(ndiff, d))
-    else:
-        check(label + " within float32 rounding (FFT path)", d <= 1e-6,
+    elif d <= 1e-6 or flat is None:
+        check(label + " within float32 rounding", d <= 1e-6,
               "{} of {} cells differ, max rel {:.3g}".format(ndiff, fa.size, d))
+    else:
+        z, valid = flat[0]
+        ex = fc.explain_mismatch(A, B, z, valid, flat[1], 1e-6)
+        check(label + " within float32 rounding except verified quantization-flat cells", ex["ok"],
+              ("{} of {} cells differ; {} beyond 1e-6, {} checked by brute force: {} floored, {} match exact "
+               "arithmetic, {} within the near-floor error bound (worst {:.2g} = {:.0%} of the bound); "
+               "max rel elsewhere {:.3g}{}").format(
+                  ndiff, fa.size, ex["n_mismatch"], ex["n_checked"], ex["n_floored"], ex["n_exact"],
+                  ex["n_near"], ex["worst_rel_near_floor"], ex["worst_bound_use"], ex["max_rel_elsewhere"],
+                  "" if ex["ok"] else "; unexplained: {}".format(ex["bad"][:3])))
     check(label + " metadata identical", md_of(a) == md_of(b))
 
 
-def compare_class(label, a, b):
+def compare_class(label, a, b, flat=None):
+    """``flat`` = ((z, valid), [radii, ...]): a differing class is accepted
+    only where the neighborhood is quantization-flat under at least one of
+    the TPI radii that feed the classification (brute force)."""
     A, B = read_int(a), read_int(b)
     ndiff = int(np.sum(A != B))
-    check(label + " classes identical", ndiff == 0, "{} of {} cells differ".format(ndiff, A.size))
-    check(label + " attribute table identical", rat_rows(a) == rat_rows(b))
+    if ndiff == 0 or flat is None:
+        check(label + " classes identical", ndiff == 0, "{} of {} cells differ".format(ndiff, A.size))
+    else:
+        (z, valid), radii_list = flat
+        bad = []
+        cells = np.argwhere(A != B)
+        for r, c in cells[:2000]:
+            r, c = int(r), int(c)
+            if not any(fc.is_floored_cell(z, valid, rad, r, c)[0] for rad in radii_list):
+                bad.append((r, c, int(A[r, c]), int(B[r, c])))
+        check(label + " classes identical except verified quantization-flat cells", not bad,
+              "{} of {} cells differ, {} checked by brute force{}".format(
+                  ndiff, A.size, min(len(cells), 2000), "" if not bad else "; unexplained: {}".format(bad[:3])))
+    if ndiff == 0:
+        check(label + " attribute table identical", rat_rows(a) == rat_rows(b))
+    else:
+        # the verified cells moved between classes, so the counts differ by
+        # construction; the class values and names must still match
+        ra, rb = rat_rows(a), rat_rows(b)
+        strip = lambda rows: sorted(tuple(x for x in r if not isinstance(x, (int, float)) or x == r[0]) for r in rows)  # noqa: E731
+        check(label + " attribute table identical apart from the counts of the verified cells",
+              strip(ra) == strip(rb) and sum(r[1] for r in ra) == sum(r[1] for r in rb),
+              "{} vs {}".format(ra, rb) if strip(ra) != strip(rb) else "")
     check(label + " metadata identical", md_of(a) == md_of(b))
 
 
@@ -197,9 +236,14 @@ def window_compare(dem, out):
             print("  strip note: " + s)
     check("same Landform warnings", sorted(runs["ref"][1].warn) == sorted(runs["new"][1].warn),
           "{} vs {}".format(runs["ref"][1].warn, runs["new"][1].warn))
-    compare_class(tag + " Landform", a["class"], b["class"])
-    compare_float(tag + " saved small TPI (100 m, direct)", a["tpi_small"], b["tpi_small"], exact=True)
-    compare_float(tag + " saved large TPI (500 m, FFT)", a["tpi_large"], b["tpi_large"], exact=False)
+    zv = fc.read_dem(dem)
+    rad_small = fc.radii_for_raster(dem, 100.0, 0.0, "Meters")
+    rad_large = fc.radii_for_raster(dem, 500.0, 0.0, "Meters")
+    compare_class(tag + " Landform", a["class"], b["class"], flat=(zv, [rad_small, rad_large]))
+    compare_float(tag + " saved small TPI (100 m, direct, centered SD)", a["tpi_small"], b["tpi_small"],
+                  exact=False, flat=(zv, rad_small))
+    compare_float(tag + " saved large TPI (500 m, FFT)", a["tpi_large"], b["tpi_large"], exact=False,
+                  flat=(zv, rad_large))
     compare_float(tag + " saved slope", a["slope"], b["slope"], exact=True)
     compare_float(tag + " TPI raw 3 cells", a["tpi_raw"], b["tpi_raw"], exact=True)
     compare_float(tag + " TPI pctl 3 cells", a["tpi_pctl"], b["tpi_pctl"], exact=True)

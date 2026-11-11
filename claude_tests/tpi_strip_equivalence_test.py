@@ -34,7 +34,14 @@ statistics.
 Identity rules (Jeff, 2026-11-10): direct-correlation kernels (<= 225
 cells), percentile counting, slope and classes must be BIT-identical; the
 FFT path (larger kernels) and streamed whole-raster statistics may differ at
-rounding level (reported; tolerance 1e-9 relative).
+rounding level (reported; tolerance 1e-8 relative). Since the centered-SD
+fix (Jeff, 2026-11-10, second commit) the SD-based types (dev, dev_tpi and
+the saved 'dev' TPI rasters) may also differ at rounding level on the
+direct path: the oracle squares raw elevations, the engine squares
+centered ones. The engine also floors the SD of a neighborhood that is
+flat to a few float32 steps (standardized TPI 0) where the oracle divides
+by rounding noise; every such disputed cell is verified by brute force
+(tpi_flat_check) and counted, never waved through.
 
 Run with ArcGIS Pro's Python:
   "C:/Program Files/ArcGIS/Pro/bin/Python/envs/arcgispro-py3/python.exe" claude_tests/tpi_strip_equivalence_test.py [--quick]
@@ -59,10 +66,12 @@ import arcpy                                   # noqa: E402
 import hillshade as _hs                        # noqa: E402
 import tpi_tools as new                        # noqa: E402
 import tpi_tools_whole_ref as ref              # noqa: E402
+import tpi_flat_check as fc                    # noqa: E402
 
 QUICK = "--quick" in sys.argv
 passed = failed = 0
 worst = {"fft": 0.0, "stats": 0.0}
+floored = {"cells": 0, "cases": 0}
 
 
 def check(label, ok, detail=""):
@@ -285,7 +294,7 @@ def level1():
                                 label = "{}x{} {:<9} r={:<4g} {:<7} {} {:<7} strip={}".format(
                                     H, W, holes, r, shape, "vary" if varying else "const", t, rows or "whole")
                                 n_cases += 1
-                                if direct or t in ("pctl", "demstd"):
+                                if (direct and t not in ("dev", "dev_tpi")) or t in ("pctl", "demstd"):
                                     ok = same(want, got)
                                     if not ok:
                                         _c, d = close(want, got)
@@ -295,14 +304,38 @@ def level1():
                                     else:
                                         passed += 1
                                 else:
-                                    ok, d = close(want, got)
-                                    worst["fft"] = max(worst["fft"], d)
+                                    ok, d = close(want, got, rel=1e-8)
+                                    note = ""
+                                    if ok:
+                                        worst["fft"] = max(worst["fft"], d)
+                                    elif t in ("dev", "dev_tpi"):
+                                        # quantization floor: verify every disputed cell
+                                        if t == "dev":
+                                            base, bvalid = z0, valid
+                                        else:
+                                            base = ref.tpi_representation(z0, valid, rxo, ryo, rxi, ryi, "raw", None)
+                                            bvalid = np.isfinite(base)
+                                        ex = fc.explain_mismatch(want, got, base, bvalid, (rxo, ryo, rxi, ryi), 1e-8)
+                                        ok = ex["ok"]
+                                        if ok:
+                                            floored["cells"] += ex["n_checked"]
+                                            floored["cases"] += 1
+                                            worst["fft"] = max(worst["fft"], ex["max_rel_elsewhere"])
+                                            note = ("; {} disputed cells verified by brute force ({} floored, {} match exact "
+                                                    "arithmetic, {} within the near-floor error bound, worst {:.2g} = {:.0%} of "
+                                                    "the bound)").format(
+                                                ex["n_checked"], ex["n_floored"], ex["n_exact"], ex["n_near"],
+                                                ex["worst_rel_near_floor"], ex["worst_bound_use"])
+                                        else:
+                                            note = "; unexplained cells: {}".format(ex["bad"][:3])
                                     if not ok or n_cases % 97 == 0:
-                                        check(label + " FFT path within 1e-9", ok, "max rel diff {:.3g}".format(d))
+                                        check(label + " rounding-level path within 1e-8", ok,
+                                              "max rel diff {:.3g}{}".format(d, note))
                                     else:
                                         passed += 1
-    print("  level 1 TPI cases: {}  (worst FFT-path relative difference {:.3g})".format(
-        n_cases, worst["fft"]))
+    print("  level 1 TPI cases: {}  (worst FFT-path relative difference {:.3g}; {} quantization-flat "
+          "cells floored in {} cases, each verified by brute force)".format(
+              n_cases, worst["fft"], floored["cells"], floored["cases"]))
 
     # ---- slope: projected (UTM) and geographic (geodesic per-row spans)
     print("  slope")
@@ -521,8 +554,13 @@ def level2():
                     if key.startswith("class:"):
                         compare_class_outputs("{} {} {}{}".format(tag, name, key, sfx), a, b)
                     else:
+                        # bit-identity is required only for the outputs whose
+                        # arithmetic is unchanged: raw TPI and slope on the direct
+                        # path, percentile and DEM-scale z-score anywhere; the
+                        # SD-based outputs use centered elevations
                         compare_float_outputs("{} {} {}{}".format(tag, name, key, sfx), a, b,
-                                              direct=direct or key.endswith(":pctl") or key.endswith(":demstd")
+                                              direct=(direct and (key.endswith(":raw") or key.endswith(":slope")))
+                                              or key.endswith(":pctl") or key.endswith(":demstd")
                                               or key.endswith(":slope"))
             return want
 

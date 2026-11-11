@@ -379,6 +379,16 @@ def _kernel_groups(rx_out_rows, ry_out, rx_in_rows, ry_in):
             for rows, rxo, rxi in _row_groups(rx_out_rows, rx_in_rows)]
 
 
+# A neighborhood whose standard deviation is within this many float32 steps
+# of its own elevation counts as flat (SD = 0, standardized TPI = 0). A lake
+# in a Float32 DEM is flat only to the float32 spacing (1.2e-4 m at 1,600 m):
+# a few cells one or two steps higher give a "true" SD of 5e-5 m and a
+# standardized TPI of +-1 or more from nothing but quantization, enough to
+# cross the +-1 SD class thresholds (seen on a Grand Canyon lake, 2026-11-10).
+# Four steps is 4.8e-7 of the elevation, far below any DEM's accuracy.
+_SD_FLOOR_ULPS = 4.0
+
+
 def focal_stats(z, valid, groups, row0=0, want_sd=False):
     """NoData-ignoring focal mean (and optionally SD / variance) over an
     (annular) neighborhood, for a BLOCK of rows whose first row is raster
@@ -389,9 +399,26 @@ def focal_stats(z, valid, groups, row0=0, want_sd=False):
     the block's zero padding instead of the raster: callers read a halo and
     keep only the interior rows."""
     H = z.shape[0]
-    num = np.where(valid, z, 0.0)
     den = valid.astype(np.float64)
-    numsq = np.where(valid, z * z, 0.0) if want_sd else None
+    # Centering (want_sd only): the variance is cs/cd - m^2, the difference of
+    # two numbers of order z^2 (~2.6e6 for a 1,600 m DEM). The FFT path sums
+    # z^2 with a relative error of ~1e-14, i.e. ~5e-8 absolute in the
+    # variance, which swamps the true variance of a lake or any neighborhood
+    # flat to a few millimeters, and the standardized TPI there becomes
+    # arithmetic noise that depends on the FFT block layout. Shifting the
+    # elevations by one constant (the block mean) before squaring leaves the
+    # mean, TPI and variance unchanged in exact arithmetic (all three are
+    # translation invariant) and shrinks that error by the ratio of z^2 to
+    # (z - c)^2, measured as 65,000x on a Grand Canyon lake at 1,616 m. The
+    # mean is shifted back before it is returned. Paths without the SD are
+    # untouched (the raw and percentile TPI stay bit-identical).
+    c = 0.0
+    if want_sd:
+        zv = z[valid]
+        c = float(zv.mean()) if zv.size else 0.0
+    zc = z - c if c != 0.0 else z
+    num = np.where(valid, zc, 0.0)
+    numsq = np.where(valid, zc * zc, 0.0) if want_sd else None
 
     mean = np.full(z.shape, np.nan)
     cnt = np.zeros(z.shape)
@@ -418,12 +445,18 @@ def focal_stats(z, valid, groups, row0=0, want_sd=False):
         with np.errstate(invalid="ignore", divide="ignore"):
             m = np.where(ok, cn / np.maximum(cd_r, 1e-9), np.nan)
         cnt[sel] = cd_r[sel]
-        mean[sel] = m[sel]
+        mean[sel] = (m + c)[sel] if c != 0.0 else m[sel]
         if want_sd:
             cs = _hs.nbr_conv(numsq, k)
             with np.errstate(invalid="ignore", divide="ignore"):
                 v = np.where(ok, cs / np.maximum(cd_r, 1e-9) - m * m, np.nan)
                 v = np.where(np.isfinite(v), np.maximum(v, 0.0), np.nan)
+                # quantization floor (see _SD_FLOOR_ULPS): per cell, from the
+                # magnitude of its own neighborhood mean, so the result does
+                # not depend on the strip layout
+                mag = np.abs(m + c) if c != 0.0 else np.abs(m)
+                floor = _SD_FLOOR_ULPS * np.spacing(mag.astype(np.float32)).astype(np.float64)
+                v = np.where(v < floor * floor, 0.0, v)
             var[sel] = v[sel]
             sd[sel] = np.sqrt(v[sel])
     out = {"mean": mean, "count": cnt}
