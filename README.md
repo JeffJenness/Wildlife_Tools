@@ -340,6 +340,8 @@ As did Lois, it supports wildlife and forestry students who want to focus on
 spatial ecology. The **Lois Engelman Scholarship** button in the Take a Break
 group explains the fund and links to its
 [page](https://www.jennessent.com/lois-engelman-memorial-scholarship.html).
+To give, use the Northern Arizona University Foundation's
+[giving page for the Lois Engelman Memorial Award](https://securelb.imodules.com/s/1898/giving19/form.aspx?sid=1898&gid=2&pgid=418&bledit=1&dids=4296).
 Any funds Jenness Enterprises receives in connection with this add-in go to
 that award. Please keep that button in place if you redistribute or
 modify the add-in.

@@ -55,9 +55,11 @@ namespace WildlifeTools.Scholarship
         public const string PageRelative = "lois-engelman-memorial-scholarship.html";
 
         /// <summary>Northern Arizona University's giving page for the fund.
-        /// EMPTY until the university publishes it: the Donate button then
-        /// says the page is being set up instead of opening a dead link.
-        /// Paste the address here when it exists.</summary>
-        public const string NauDonateUrl = "";
+        /// Opened 2026-11-13; the form opens with the designation "Lois
+        /// Engelman Memorial Award" already selected. If this is ever
+        /// EMPTY, the Donate button says the page is being set up instead
+        /// of opening a dead link.</summary>
+        public const string NauDonateUrl =
+            "https://securelb.imodules.com/s/1898/giving19/form.aspx?sid=1898&gid=2&pgid=418&bledit=1&dids=4296";
     }
 }
