@@ -1,4 +1,4 @@
-# Generates the Lois Engelman Memorial Award Fund button icons from scholarship_icon.svg and
+# Generates the Lois Engelman Memorial Award button icons from scholarship_icon.svg and
 # scholarship_icon_dark.svg:
 #   Images\Scholarship_16.png / _32.png       light theme
 #   DarkImages\Scholarship_16.png / _32.png   dark theme (same names -- ArcGIS Pro

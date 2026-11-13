@@ -6,7 +6,7 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version, together with the additional terms
 // in LICENSE-ADDITIONAL-TERMS.md (preservation of the Lois Engelman
-// Memorial Award Fund notice, marking of modified versions, and
+// Memorial Award notice, marking of modified versions, and
 // use of names).
 //
 // This program is distributed in the hope that it will be useful,
@@ -30,7 +30,7 @@ using System.Windows.Navigation;
 namespace WildlifeTools.Scholarship
 {
     /// <summary>
-    /// The card behind the Lois Engelman Memorial Award Fund button: a
+    /// The card behind the Lois Engelman Memorial Award button: a
     /// photograph of Lois and Jeff (one of two, chosen at random each time
     /// the card opens), a few sentences on what the fund is, the dedication
     /// notice the license requires, and two links -- the award page on

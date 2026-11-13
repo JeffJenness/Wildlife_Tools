@@ -7,7 +7,7 @@
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version, together with the additional terms
 # in LICENSE-ADDITIONAL-TERMS.md (preservation of the Lois Engelman
-# Memorial Award Fund notice, marking of modified versions, and
+# Memorial Award notice, marking of modified versions, and
 # use of names).
 #
 # This program is distributed in the hope that it will be useful,

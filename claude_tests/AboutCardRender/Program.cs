@@ -71,8 +71,8 @@ internal static class Program
         var states = new (string Tag, string Name)[]
         {
             (null, "opening"),
-            ("v1.113.61.0", "newer_available"),
-            ("v1.112.60.0", "current"),
+            ("v1.114.70.0", "newer_available"),
+            ("v1.113.69.5", "current"),
         };
         foreach (var (tag, name) in states)
         {
@@ -80,7 +80,7 @@ internal static class Program
             // Outside an installed add-in there is no Config.daml beside the
             // DLL and the process is not Pro: show the card as it looks there.
             winType.GetMethod("SetVersion", Any).Invoke(win,
-                new object[] { "1.112.60.0", new DateTime(2026, 10, 13), "3.7.1" });
+                new object[] { "1.113.69.5", new DateTime(2026, 11, 13), "3.7.3" });
             if (tag != null)
             {
                 winType.GetMethod("ApplyUpdateResult", Any).Invoke(win, new object[] { tag });

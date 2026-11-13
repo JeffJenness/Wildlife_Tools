@@ -13,8 +13,8 @@ parameter, or open the tool's help panel).
 
 The add-in is dedicated to the memory of Lois Engelman. If these tools are
 useful to you, please consider a donation to the **Lois Engelman Memorial
-Award Fund**, which helps educate and train the next generation of land
-managers and ecologists. See [Support](#support-the-lois-engelman-memorial-award-fund)
+Award**, which helps educate and train the next generation of land
+managers and ecologists. See [Support](#support-the-lois-engelman-memorial-award)
 below.
 
 ## Requirements and installation
@@ -317,7 +317,7 @@ them.
   from a snapshot of your own map.
 - **ArcMap Easter Egg** – a small tribute to a classic.
 - **Lois Engelman Scholarship** *(window)* – what the Lois Engelman Memorial
-  Award Fund is, and where to give (see below).
+  Award is, and where to give (see below).
 - **About the Add-in** *(window)* – what the add-in is and what it is worth,
   the installed version and whether a newer release exists on GitHub, a
   citation to copy, the license and the source, and links to the Tool
@@ -331,7 +331,7 @@ topographic roughness, corridor design) and tutorials with sample data. The
 help pages give the recommended citation for each tool and the literature it
 implements.
 
-## Support the Lois Engelman Memorial Award Fund
+## Support the Lois Engelman Memorial Award
 
 The author's wife, best friend and partner of 36 years, Lois Engelman, died in
 July 2026. The award was created by Jeff Jenness in her honor and
@@ -352,7 +352,7 @@ This program is free software under the
 [GNU General Public License, version 3](LICENSE) or (at your option) any
 later version, with the
 [additional terms](LICENSE-ADDITIONAL-TERMS.md) permitted by section 7 of
-that license: the award-fund notice must be preserved, modified versions
+that license: the award notice must be preserved, modified versions
 must be marked as modified, and the Jenness Enterprises name may not be used
 to promote derived works. The bundled fonts are under the SIL Open Font
 License; see `WildlifeTools/Fonts/Licenses`.

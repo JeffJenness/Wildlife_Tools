@@ -8,7 +8,7 @@
         ResizeMode="NoResize" SizeToContent="Height"
         Width="940" MaxHeight="1000" Opacity="0"
         Loaded="OnLoaded">
-  <!-- The same card as the Lois Engelman Memorial Award Fund window:
+  <!-- The same card as the Lois Engelman Memorial Award window:
        the colors and lettering of the Jenness Enterprises web site (forest
        green, parchment, a gold rule), draggable, non-modal. -->
   <Window.Resources>
@@ -238,6 +238,9 @@
             <Button Content="Tool Reference" Click="OnToolReference"
                     Style="{StaticResource LinkButton}"
                     ToolTip="Open the Tool Reference on the Jenness Enterprises web site: every tool, its help page and the download." />
+            <Button Content="See what's new" Click="OnWhatsNew"
+                    Style="{StaticResource LinkButton}"
+                    ToolTip="Open the add-in's release notes on GitHub: what changed in each version." />
             <Button Content="About the award" Click="OnScholarship"
                     Style="{StaticResource LinkButton}"
                     ToolTip="Open the award page on the Jenness Enterprises web site." />

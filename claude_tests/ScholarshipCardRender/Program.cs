@@ -1,4 +1,4 @@
-// Draws the Lois Engelman Memorial Award Fund card (the add-in's
+// Draws the Lois Engelman Memorial Award card (the add-in's
 // WildlifeTools.Scholarship.ScholarshipWindow) to PNG files, once for each
 // photograph, WITHOUT ArcGIS Pro: the card is a plain WPF Window that needs
 // nothing from Pro to draw itself. It reads the built add-in DLL, so build

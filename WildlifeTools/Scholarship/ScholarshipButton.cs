@@ -6,7 +6,7 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version, together with the additional terms
 // in LICENSE-ADDITIONAL-TERMS.md (preservation of the Lois Engelman
-// Memorial Award Fund notice, marking of modified versions, and
+// Memorial Award notice, marking of modified versions, and
 // use of names).
 //
 // This program is distributed in the hope that it will be useful,
@@ -25,7 +25,7 @@ namespace WildlifeTools.Scholarship
 {
     /// <summary>
     /// "Take a Break"-group ribbon button for the Lois Engelman Memorial
-    /// Award Fund: the 100th tool, reserved for it. Opens the
+    /// Award: the 100th tool, reserved for it. Opens the
     /// <see cref="ScholarshipWindow"/> card, which says what the fund is and
     /// links to the award page and to the university's giving page.
     /// Runs entirely on the UI thread; one shared non-modal window.
