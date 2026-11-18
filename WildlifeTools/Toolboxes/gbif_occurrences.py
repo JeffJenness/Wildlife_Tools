@@ -1336,8 +1336,8 @@ def request_download(flt, account):
     except GbifError as e:
         if e.status == 401:
             raise GbifError(
-                "GBIF did not accept the stored sign-in for the account \"{}\". Open the Species "
-                "Occurrences (GBIF) window, click Sign in on tab 4 and sign in again (the password "
+                "GBIF did not accept the stored sign-in for the account \"{}\". Open the GBIF "
+                "Species Occurrences window, click Sign in on tab 4 and sign in again (the password "
                 "may have changed at GBIF).".format(account[0]), 401)
         raise
     return text.strip().strip('"')

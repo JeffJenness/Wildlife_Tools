@@ -2628,7 +2628,7 @@ namespace WildlifeTools.OnlineData.Gbif
                      + "Or, in a Command Prompt or PowerShell window, type this line with your own user name; "
                      + "Windows then asks for the password without showing it:\n"
                      + "cmdkey /generic:" + CredentialStore.TargetName(GbifClient.Service) + " /user:YOUR_GBIF_USER_NAME /pass\n\n"
-                     + "To remove the entry, click Forget in the tool, or find it in the same list in Credential Manager and click Remove.",
+                     + "To remove the entry, click Sign out in this window, or find it in the same list in Credential Manager and click Remove.",
             };
             p.Children.Add(how);
             var link = new TextBlock { Margin = new Thickness(0, 10, 0, 0) };

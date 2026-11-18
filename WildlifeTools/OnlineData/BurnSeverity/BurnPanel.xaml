@@ -171,7 +171,7 @@
 
             <TextBlock Style="{StaticResource Head}" Margin="0,14,0,4" Text="Data bundles, by email (optional)" />
             <TextBlock TextWrapping="Wrap"
-                       Text="A fire's data bundle holds what the map services do not: the continuous indices, in the fire's own projection with true 30-meter cells, and the rasters of fires too recent to be in the national mosaics. The Burn Severity Portal sends bundles by email only. Give an address and the tool asks the portal for the bundles of the checked fires, in one request." />
+                       Text="A fire's data bundle holds what the image services do not: the continuous indices, with their true cells and in the projection chosen below, and the rasters of fires too recent to be in the national mosaics. The Burn Severity Portal sends bundles by email only. Give an address and the tool asks the portal for the bundles of the checked fires, in one request." />
             <TextBlock TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,4,0,0"
                        Text="Nothing is downloaded by this window. The portal emails you a link, usually within minutes. You download the zip file yourself, then load it with Load Burn Severity Bundle (Online Data)." />
             <StackPanel Orientation="Horizontal" Margin="0,6,0,0">

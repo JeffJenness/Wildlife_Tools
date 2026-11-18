@@ -37,6 +37,7 @@ namespace WildlifeTools.OnlineData.Movebank
         {
             InitializeComponent();
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
+            OnlineWindowFit.Apply(this);     // never larger than the screen
             panel.CloseRequested += (_, _) => Close();
         }
 

@@ -791,8 +791,8 @@ namespace WildlifeTools.OnlineData.Movebank
                 {
                     Text = "Years of fixes",
                     ToolTip = "The year of the study's first location fix and the year of its last, as Movebank records "
-                        + "them. A year with a question mark cannot be right: it is later than this year, or earlier "
-                        + "than 1900. It is the date Movebank gives for the study. A study whose last fix is dated "
+                        + "them. A year with a question mark is from a date that cannot be right: later than today, or "
+                        + "earlier than 1900. It is the date Movebank gives for the study. A study whose last fix is dated "
                         + "later than today is listed after the others.",
                 };
                 DateColumn.Width = new DataGridLength(104);

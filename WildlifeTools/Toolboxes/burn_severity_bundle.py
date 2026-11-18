@@ -642,7 +642,7 @@ def _run(source, out_workspace, out_perimeters=None, out_summary=None, messages=
             if kind == "classified" and classes:
                 B.write_class_table(tmp, classes, cell_m2=cell_m2)   # Copy Raster carries the table along
             try:
-                arcpy.management.CopyRaster(tmp, final)
+                B.copy_raster_in(tmp, final)
             finally:
                 for old in (tmp, tmp + ".aux.xml"):
                     try:

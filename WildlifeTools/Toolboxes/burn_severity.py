@@ -34,7 +34,7 @@ What a program can do without an account, and what this engine does:
   * FIND fires by name, year and place in the catalog the Burn Severity
     Portal's own viewer uses (a USGS GeoServer feature service), and
     write their perimeters.
-  * FETCH each fire's CLASSIFIED raster from the public map services,
+  * FETCH each fire's CLASSIFIED raster from the public image services,
     cut to the fire's perimeter. These rasters are the services' Web
     Mercator copies of the programs' national mosaics: right for
     looking and for overlay, not the original cells of the fire's own
@@ -400,6 +400,48 @@ def box_of(fire):
     if not xs:
         return None
     return min(xs), min(ys), max(xs), max(ys)
+
+
+def copy_raster_in(src, final, tries=3):
+    """Copy Raster of ``src`` to ``final``, replacing a raster of that name. Returns ``final``.
+
+    Inside ArcGIS Pro this copy has stopped with "ERROR 160333: The table was not found" when the
+    perimeter feature class of an earlier run, of the same name, was still a layer in the map (Jeff,
+    2026-11-18). The rasters themselves were replaced without trouble in the next run, which differed
+    only in the perimeters' name, so the error is not about the raster. It may therefore arrive after
+    the raster has in fact been written: the raster is looked for before the copy is tried again, and
+    a cleared workspace cache and a short wait come between tries. A copy that still will not go
+    through raises a FireError that says what to do, in place of the bare geodatabase error."""
+    import arcpy
+
+    def there():
+        try:
+            return bool(arcpy.Exists(final)) and int(getattr(arcpy.Describe(final), "width", 0) or 0) > 0
+        except Exception:                                        # noqa: BLE001
+            return False
+
+    last = None
+    for attempt in range(max(1, tries)):
+        gone = False
+        try:
+            if arcpy.Exists(final):
+                arcpy.management.Delete(final)
+            gone = not arcpy.Exists(final)
+            arcpy.management.CopyRaster(src, final)
+            return final
+        except Exception as e:                                   # noqa: BLE001
+            last = e
+            if gone and there():
+                return final                                     # written: the error came from elsewhere
+            try:
+                arcpy.management.ClearWorkspaceCache()
+            except Exception:                                    # noqa: BLE001
+                pass
+            time.sleep(1.5 * (attempt + 1))
+    raise FireError("ArcGIS Pro would not write the raster {} ({}). This has happened when an output of an "
+                    "earlier run, of the same name, was still in the map. Give the fire perimeters a new "
+                    "name, or remove the earlier run's layers from the map, and run the tool again.".format(
+                        os.path.basename(final), " ".join(str(last).split())[:300]))
 
 
 def area_of(fire):
@@ -1223,9 +1265,7 @@ def _run(out_perimeters, program="MTBS", fire_name=None, year_from=None, year_to
                 final = cut
                 if in_gdb:
                     final = os.path.join(ws, name)
-                    if arcpy.Exists(final):
-                        arcpy.management.Delete(final)
-                    arcpy.management.CopyRaster(cut, final)
+                    copy_raster_in(cut, final)
                     try:
                         arcpy.management.Delete(cut)
                     except Exception:                            # noqa: BLE001
@@ -1238,7 +1278,7 @@ def _run(out_perimeters, program="MTBS", fire_name=None, year_from=None, year_to
             n0(len(all_rasters)), "raster" if len(all_rasters) == 1 else "rasters", ws))
         if failed:
             not_asked = todo - done if in_a_row >= MAX_FAILS else 0
-            warn("{} COULD NOT BE FETCHED, because the map service failed or refused the request: {}{}. The "
+            warn("{} COULD NOT BE FETCHED, because the image service failed or refused the request: {}{}. The "
                  "last reason given: {} This is not the same as a fire that has no raster: run the tool again "
                  "later for {}.{}".format(
                      "1 raster" if len(failed) == 1 else "{} rasters".format(n0(len(failed))),
@@ -1249,7 +1289,7 @@ def _run(out_perimeters, program="MTBS", fire_name=None, year_from=None, year_to
                      "asked for.".format(MAX_FAILS, n0(not_asked), "raster was" if not_asked == 1 else "rasters were")
                      if not_asked else ""))
         if partial:
-            warn("{} only a small part of {} fire: {}{}. The map service holds classified cells for that part of "
+            warn("{} only a small part of {} fire: {}{}. The image service holds classified cells for that part of "
                  "the fire only, so {} not a map of the whole fire, and {} percentages are of the mapped part "
                  "alone. The fire's data bundle may hold a complete raster, or none.".format(
                      "1 of the rasters covers" if len(partial) == 1
@@ -1260,14 +1300,17 @@ def _run(out_perimeters, program="MTBS", fire_name=None, year_from=None, year_to
                      "the raster is" if len(partial) == 1 else "these rasters are",
                      "its" if len(partial) == 1 else "their"))
         if missing:
-            warn("The map services hold no classified raster for {} of the fires: {}{}. {} {}".format(
-                     n0(len(missing)), "; ".join(missing[:12]),
+            fires_missing = len({m.rsplit(" (", 1)[0] for m in missing})   # one entry for each raster
+            warn("The image services hold no classified raster for {} of the fires{}: {}{}. {} {}".format(
+                     n0(fires_missing),
+                     "" if len(missing) == fires_missing else " ({} rasters)".format(n0(len(missing))),
+                     "; ".join(missing[:12]),
                      " and {} more".format(n0(len(missing) - 12)) if len(missing) > 12 else "",
                      "The services carry MTBS's yearly national mosaics, and a fire mapped after its year's "
                      "mosaic was made is not in it yet." if program == "MTBS"
-                     else "The map service carries RAVG's yearly mosaics for 2012 to 2023 only."
+                     else "The image service carries RAVG's yearly mosaics for 2012 to 2023 only."
                      if program == "RAVG"
-                     else "The map service carries the soil burn severity the Forest Service has published, "
+                     else "The image service carries the soil burn severity the Forest Service has published, "
                           "from 2017, and not for every fire.",
                      "A fire's data bundle may have what the service lacks, and it is the only other source, but "
                      "it does not always hold a soil burn severity raster: for some fires none was published, "
@@ -1277,7 +1320,7 @@ def _run(out_perimeters, program="MTBS", fire_name=None, year_from=None, year_to
                      else "Such a fire has its rasters only in its data bundle, which the Burn Severity Portal "
                           "sends by email: give an email address to this tool to ask for it."))
         if all_rasters:
-            say("These rasters are the map services' copies of {}'s national mosaics, in the Web Mercator "
+            say("These rasters are the image services' copies of {}'s national mosaics, in the Web Mercator "
                 "coordinate system with cells of 30 map units, cut to each fire's perimeter. They are right "
                 "for looking and for overlay. A cell is not 30 meters on the ground (Web Mercator stretches "
                 "distance with latitude), so do not count cells to measure area: use a tool that measures "
@@ -1345,7 +1388,7 @@ def _run(out_perimeters, program="MTBS", fire_name=None, year_from=None, year_to
         warn("THE DATA BUNDLES WERE NOT DOWNLOADED. The portal prepares the bundles and sends an email to {} with a link, "
              "usually within minutes. Open that email and download the zip file yourself; the link works for "
              "30 days. Then run the Load Burn Severity Bundle tool on the zip file. The "
-             "bundles hold what the map services do not: {}{}, in the {} projection.".format(
+             "bundles hold what the image services do not: {}{}, in the {} projection.".format(
                  bundle_email,
                  "the continuous dNBR and RdNBR with each fire's true 30-meter cells, the rasters of fires too "
                  "recent for the national mosaics, and each fire's thresholds in its perimeter"
@@ -1419,7 +1462,7 @@ def stamp_raster(raster, program, product, fire, today):
                 "and its share of the fire in Percent.".format(product, info["name"], program, info["agency"],
                                                               fire_words)) + "</p>"
             "<p>" + G.html_text(
-                "This raster is the map service's copy of the program's national mosaic, in the Web Mercator "
+                "This raster is the image service's copy of the program's national mosaic, in the Web Mercator "
                 "coordinate system with cells of 30 map units, cut to the fire's perimeter. It is right for "
                 "looking and for overlay. A cell is not 30 meters on the ground (Web Mercator stretches distance "
                 "with latitude), so do not count cells to measure area. The original cells are in the fire's "
@@ -1462,7 +1505,7 @@ def stamp_metadata(fc, program, summary, today, rasters, messages=None):
             "territories only.</p>"
             "<p><b>Where these perimeters came from.</b> The fire catalog of the Burn Severity Portal, read on "
             + today + " from the U.S. Geological Survey's map server."
-            + (" The classified rasters named in the raster field came from the public map services of the "
+            + (" The classified rasters named in the raster field came from the public image services of the "
                "USDA Forest Service and the U.S. Geological Survey: they are Web Mercator copies of the "
                "program's national mosaics, cut to each perimeter." if rasters else "") + "</p>"
             "<p><b>Links to the sources:</b></p>" + G.html_list(links))

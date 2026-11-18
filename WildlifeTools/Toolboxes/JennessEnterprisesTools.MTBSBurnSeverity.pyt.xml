@@ -14,13 +14,13 @@
 
 <b>Finding fires.</b> Give any of a fire name, a range of years, a study area and the programs' fire IDs; a fire must match all that you give. The study area only <i>selects</i> fires: every fire whose perimeter touches it is written whole, including the parts outside it. Nothing is clipped.
 
-<b>The classified rasters are copies.</b> The rasters this tool fetches come from public map services, which hold copies of the program's national mosaics in the Web Mercator coordinate system. They are right for looking and for overlay. Their cells are not 30 meters on the ground, so do not count cells to measure area. Each raster's attribute table names every class (Class_Name) and gives its true area (Hectares, Acres) and its share of the fire (Percent). Cells the program could not assess, such as cloud, are named as a mask class and left out of the percentages. The original cells, in the fire's own projection, are in the fire's data bundle.
+<b>The classified rasters are copies.</b> The rasters this tool fetches come from public image services, which hold copies of the program's national mosaics in the Web Mercator coordinate system. They are right for looking and for overlay. Their cells are not 30 meters on the ground, so do not count cells to measure area. Each raster's attribute table names every class (Class_Name) and gives its true area (Hectares, Acres) and its share of the fire (Percent). Cells the program could not assess, such as cloud, are named as a mask class and left out of the percentages. The original cells, in the fire's own projection, are in the fire's data bundle.
 
-<b>Which fires have a raster.</b> The map services carry MTBS's yearly national mosaics. A fire mapped after its year's mosaic was made is not in it yet, and the tool says which fires those are. Their rasters are in their data bundles.
+<b>Which fires have a raster.</b> The image services carry MTBS's yearly national mosaics. A fire mapped after its year's mosaic was made is not in it yet, and the tool says which fires those are. Their rasters are in their data bundles.
 
-<b>Data bundles come by email.</b> A fire's data bundle holds what the map services do not: the continuous indices, in the fire's own projection with true 30-meter cells, and the rasters of fires too recent to be in the national mosaics. The Burn Severity Portal does not hand bundles to a program. Give an email address and this tool asks the portal for the bundles of every fire it found, in one request of up to 500 fires. <b>Nothing is downloaded by the tool.</b> The portal sends an email with a link, usually within minutes; you download the zip file yourself (the link works for 30 days), and then run the <i>Load Burn Severity Bundle</i> tool on it.
+<b>Data bundles come by email.</b> A fire's data bundle holds what the image services do not: the continuous indices, in the fire's own projection with true 30-meter cells, and the rasters of fires too recent to be in the national mosaics. The Burn Severity Portal does not hand bundles to a program. Give an email address and this tool asks the portal for the bundles of every fire it found, in one request of up to 500 fires. <b>Nothing is downloaded by the tool.</b> The portal sends an email with a link, usually within minutes; you download the zip file yourself (the link works for 30 days), and then run the <i>Load Burn Severity Bundle</i> tool on it.
 
-<b>The internet.</b> The tool reads the fire catalog of the Burn Severity Portal and the map services of the U.S. Geological Survey and the USDA Forest Service. If one of them cannot be reached, the tool stops with a message that names it, and writes nothing.</usage>
+<b>The internet.</b> The tool reads the fire catalog of the Burn Severity Portal and the image services of the U.S. Geological Survey and the USDA Forest Service. If the fire catalog cannot be reached, the tool stops with a message that names it, and writes nothing. If a raster service cannot be reached, the perimeters are still written and the rasters are reported as not fetched.</usage>
 		<parameters>
 			<param name="fire_name" displayname="Fire name (all or part of it; several separated by semicolons)" type="Optional" direction="Input" datatype="String" expression="{fire_name}"><dialogReference><para>All or part of a fire's name, in capitals or not: museum finds MUSEUM. Several names can be given, separated by semicolons, and a fire matching any of them is found. Many fires share a name, so give years or a study area as well. Empty for any name.</para></dialogReference></param>
 			<param name="year_from" displayname="First year" type="Optional" direction="Input" datatype="Long" expression="{year_from}"><dialogReference><para>The first year of ignition to include, from 1984. Empty for no limit.</para></dialogReference></param>
@@ -41,14 +41,14 @@
 arcpy.ImportToolbox(r"C:\path\to\JennessEnterprisesTools.pyt")  # your install path
 arcpy.jenness.MTBSBurnSeverity(
     fire_name="museum", year_from=2019, year_to=2019,
-    out_perimeters=r"D:\data\fire.gdb\Museum_MTBS"))</code></scriptExample><scriptExample><title>Every fire that touched a study area, with a request for the data bundles</title><para>All MTBS fires since 2000 whose perimeter touches a study area; perimeters only, and a request for the bundles by email.</para><code>import arcpy
+    out_perimeters=r"D:\data\fire.gdb\Museum_MTBS")</code></scriptExample><scriptExample><title>Every fire that touched a study area, with a request for the data bundles</title><para>All MTBS fires since 2000 whose perimeter touches a study area; perimeters only, and a request for the bundles by email.</para><code>import arcpy
 arcpy.ImportToolbox(r"C:\path\to\JennessEnterprisesTools.pyt")  # your install path
 arcpy.jenness.MTBSBurnSeverity(
     year_from=2000,
     study_area=r"D:\data\fire.gdb\Study_Area",
     out_perimeters=r"D:\data\fire.gdb\MTBS_fires",
     products="",
-    bundle_email="you@example.org"))</code></scriptExample></scriptExamples>
+    bundle_email="you@example.org")</code></scriptExample></scriptExamples>
 	</tool>
 	<dataIdInfo><searchKeys><keyword>MTBS</keyword><keyword>burn severity</keyword><keyword>fire severity</keyword><keyword>wildfire</keyword><keyword>fire perimeter</keyword><keyword>dNBR</keyword><keyword>online data</keyword></searchKeys><idCredit>Jeff Jenness, Jenness Enterprises (http://www.jennessent.com). Data from the Burn Severity Portal of the U.S. Geological Survey and the USDA Forest Service (https://burnseverity.cr.usgs.gov).</idCredit></dataIdInfo>
 </metadata>

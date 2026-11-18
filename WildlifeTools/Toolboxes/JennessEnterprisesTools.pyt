@@ -18165,8 +18165,8 @@ class GBIFSpeciesOccurrences(object):
         if m == G.METHOD_DOWNLOAD and not G.stored_user_name():
             P["method"].setErrorMessage(
                 "A GBIF download needs your GBIF account, and no sign-in is "
-                "stored on this computer. Open the Species Occurrences "
-                "(GBIF) window (Data Tools, Online Data), click Sign in on "
+                "stored on this computer. Open the GBIF Species Occurrences "
+                "window (Data Tools, Online Data), click Sign in on "
                 "tab 4 and leave Remember checked. The tool reads the "
                 "sign-in from Windows Credential Manager; it is never a "
                 "parameter.")

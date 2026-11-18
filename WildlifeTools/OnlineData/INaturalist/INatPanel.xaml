@@ -204,7 +204,7 @@
             <CheckBox x:Name="ObscuredBox" Click="OnChoiceChanged"
                       Content="Leave out observations whose location is obscured" />
             <TextBlock Style="{StaticResource Note}"
-                       Text="iNaturalist hides the true location of observations of species at risk, and of any observation whose observer asks for it. It shows a random point within about 0.2 degrees of latitude and longitude of the true one instead, which can be up to about 20 kilometers away. Unchecked, those observations are written with their obscured field set to Yes, and the report counts them. Checked, they are left out, which removes most observations of species at risk." />
+                       Text="iNaturalist hides the true location of observations of species at risk, and of any observation whose observer asks for it. It shows a random point within about 0.2 degrees of latitude and longitude of the true one instead, which can be as much as about 30 kilometers away. Unchecked, those observations are written with their obscured field set to Yes, and the report counts them. Checked, they are left out, which removes most observations of species at risk." />
             <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
               <TextBlock Text="Stated accuracy no more than" VerticalAlignment="Center" />
               <TextBox x:Name="AccuracyBox" Width="80" Height="24" Margin="8,0,0,0" VerticalContentAlignment="Center"

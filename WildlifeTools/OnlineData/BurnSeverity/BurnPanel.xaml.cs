@@ -60,7 +60,7 @@ namespace WildlifeTools.OnlineData.BurnSeverity
                     + "ownerships, since 1984. Its burn severity classes are set for each fire by an analyst from the change in "
                     + "the Normalized Burn Ratio (dNBR), so a class does not mean the same amount of change in every fire.",
                 Products = new[] { "Thematic burn severity (6 classes)" },
-                ProductNote = "The map services carry MTBS's yearly national mosaics. A fire mapped after its year's mosaic was "
+                ProductNote = "The image services carry MTBS's yearly national mosaics. A fire mapped after its year's mosaic was "
                     + "made has its raster only in its data bundle; the report says which fires those are.",
             },
             ["RAVG"] = new ProgramInfo
@@ -70,7 +70,7 @@ namespace WildlifeTools.OnlineData.BurnSeverity
                     + "area lost, the percent of canopy cover lost and the composite burn index, with regression models built from "
                     + "field plots. The models are calibrated for forest and do not hold in other vegetation.",
                 Products = new[] { "Basal area loss (7 classes)", "Canopy cover loss (5 classes)", "Composite burn index (4 classes)" },
-                ProductNote = "The map service carries RAVG's mosaics for 2012 to 2023 only. Fires of other years have their "
+                ProductNote = "The image service carries RAVG's mosaics for 2012 to 2023 only. Fires of other years have their "
                     + "rasters only in their data bundles.",
             },
             ["BAER"] = new ProgramInfo
@@ -80,7 +80,7 @@ namespace WildlifeTools.OnlineData.BurnSeverity
                     + "in the field and produces the soil burn severity map, which describes the fire's effect on the soil and "
                     + "ground cover, not on the vegetation canopy.",
                 Products = new[] { "Soil burn severity (4 classes)" },
-                ProductNote = "The map service carries the soil burn severity the Forest Service has published, from 2017, and not "
+                ProductNote = "The image service carries the soil burn severity the Forest Service has published, from 2017, and not "
                     + "for every fire. A fire's data bundle may have it when the service does not, but for some fires none "
                     + "was published.",
             },

@@ -742,7 +742,7 @@ namespace WildlifeTools.OnlineData.Gbif
                 case 401: lead = "GBIF did not accept the user name and password."; break;
                 case 413: lead = "GBIF refused the request as too large."; break;
                 case 420:
-                case 429: lead = "GBIF is limiting requests from this computer. Wait a minute and try again, or request a download instead."; break;
+                case 429: lead = "GBIF is limiting requests from this computer or this account. Wait a minute and try again, or request a download instead."; break;
                 case 503: lead = "GBIF is busy or unavailable right now. Try again in a few minutes."; break;
                 default: lead = "GBIF returned an error (" + ((int)status).ToString(CultureInfo.InvariantCulture) + ")."; break;
             }

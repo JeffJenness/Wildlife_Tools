@@ -1182,8 +1182,8 @@ def _run(out_fc, taxa=None, study_area=None, extent=None, place=None, quality_gr
              "to judge them.".format(n0(unverified)))
     if r.obscured:
         warn("{} of the points have an OBSCURED location (the obscured field is Yes): iNaturalist shows a "
-             "random point within about 0.2 degrees of latitude and longitude of the true one, which is up "
-             "to about 20 kilometers away. They are observations of species at risk, or ones whose "
+             "random point within about 0.2 degrees of latitude and longitude of the true one, which can be "
+             "as much as about 30 kilometers away. They are observations of species at risk, or ones whose "
              "observers chose to hide the place. Do not use those points for work finer than that. "
              "Their coordUncert_m field gives the size of the area.".format(n0(r.obscured)))
     if r.by_license:
