@@ -16,6 +16,5 @@
     <Compile Include="..\..\WildlifeTools\OnlineData\CredentialStore.cs" Link="CredentialStore.cs" />
     <Compile Include="..\..\WildlifeTools\OnlineData\Gbif\GbifFilter.cs" Link="GbifFilter.cs" />
     <Compile Include="..\..\WildlifeTools\OnlineData\Gbif\GbifClient.cs" Link="GbifClient.cs" />
-    <Compile Include="..\..\WildlifeTools\OnlineData\Gbif\GbifDownloadFile.cs" Link="GbifDownloadFile.cs" />
   </ItemGroup>
 </Project>

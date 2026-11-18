@@ -57,6 +57,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import gbif_occurrences as G
+
 SERVICE = "https://www.movebank.org/movebank/service/direct-read?"
 STUDY_PAGE = "https://www.movebank.org/cms/webapp?gwt_fragment=page=studies,path=study{}"
 TERMS_OF_USE = "https://www.movebank.org/cms/movebank-content/general-movebank-terms-of-use"
@@ -76,8 +78,7 @@ def _errors():
     return movebank_tracks.MovebankError, movebank_tracks.Cancelled
 
 
-def n0(n):
-    return "{:,}".format(int(n))
+n0 = G.n0
 
 
 def sign_in():

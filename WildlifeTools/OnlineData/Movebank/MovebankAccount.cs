@@ -31,10 +31,17 @@ using System.Threading.Tasks;
 
 namespace WildlifeTools.OnlineData.Movebank
 {
-    /// <summary>A study in Movebank that the signed-in account may download.</summary>
+    /// <summary>A study in Movebank that the signed-in account can see.
+    /// <see cref="CanDownload"/> says whether it may also download it.</summary>
     internal sealed class MovebankStudy
     {
         public string Id, Name, Taxa, Sensors, License, Citation, Investigator, Contact, Objective, First, Last;
+        /// <summary>The investigator's address and email, where the study gives them. Movebank gives the
+        /// email only for an investigator who has no Movebank account.</summary>
+        public string InvestigatorAddress, InvestigatorEmail;
+        public bool CanDownload = true;
+        /// <summary>The account may look at the study's tracks on Movebank's own map.</summary>
+        public bool CanSeeTracks;
         public long Animals = -1, Locations = -1;
         public double Lat = double.NaN, Lon = double.NaN;
         public string Page => "https://www.movebank.org/cms/webapp?gwt_fragment=page=studies,path=study" + Id;
@@ -60,6 +67,8 @@ namespace WildlifeTools.OnlineData.Movebank
         private readonly HttpClient _http;
         private List<MovebankStudy> _studies;                   // the list of the account now signed in
         private string _studiesOf;
+        private List<MovebankStudy> _others;                    // the studies it can see and may not download
+        private string _othersOf;
 
         internal MovebankAccount()
         {
@@ -86,6 +95,8 @@ namespace WildlifeTools.OnlineData.Movebank
         {
             _studies = null;
             _studiesOf = null;
+            _others = null;
+            _othersOf = null;
         }
 
         /// <summary>True when Movebank accepts the user name and password.
@@ -133,6 +144,38 @@ namespace WildlifeTools.OnlineData.Movebank
                 filtered = false;
                 text = await GetAsync("entity_type=study", user, password, ct).ConfigureAwait(false);
             }
+            List<MovebankStudy> list = ReadStudies(text, filtered).Where(s => s.CanDownload).ToList();
+            _studies = list;
+            _studiesOf = user;
+            return list;
+        }
+
+        /// <summary>The studies the stored account can see and may NOT
+        /// download: the ones whose owners would have to be asked. Read
+        /// once and kept until the sign-in changes. Movebank has no request
+        /// for just these, so its whole table of studies is fetched, with
+        /// every study's description, citation and terms: it is large, and
+        /// the first call takes a while.</summary>
+        internal async Task<List<MovebankStudy>> OtherStudiesAsync(CancellationToken ct)
+        {
+            Credentials(out string user, out string password);
+            if (_others != null && _othersOf == user)
+            {
+                return _others;
+            }
+            string text = await GetAsync("entity_type=study", user, password, ct).ConfigureAwait(false);
+            List<MovebankStudy> list = ReadStudies(text, false).Where(s => !s.CanDownload).ToList();
+            _others = list;
+            _othersOf = user;
+            return list;
+        }
+
+        /// <summary>The studies of an answer of Movebank's study table.
+        /// <paramref name="filtered"/>: the answer was asked for with the
+        /// download filter, so a study without the access column is one
+        /// the account may download.</summary>
+        private static List<MovebankStudy> ReadStudies(string text, bool filtered)
+        {
             List<string[]> rows = ParseCsv(text);
             var list = new List<MovebankStudy>();
             if (rows.Count > 0)
@@ -147,12 +190,16 @@ namespace WildlifeTools.OnlineData.Movebank
                 bool test = !filtered || col.ContainsKey("i_have_download_access");
                 foreach (string[] r in rows.Skip(1))
                 {
-                    if ((test && V(r, "i_have_download_access") != "true") || V(r, "id").Length == 0)
+                    if (V(r, "id").Length == 0)
                     {
                         continue;
                     }
                     var s = new MovebankStudy
                     {
+                        CanDownload = !test || V(r, "i_have_download_access") == "true",
+                        CanSeeTracks = V(r, "i_can_see_data") == "true",
+                        InvestigatorAddress = MovebankClient.Plain(V(r, "principal_investigator_address")),
+                        InvestigatorEmail = V(r, "principal_investigator_email").Trim(),
                         Id = V(r, "id"),
                         Name = V(r, "name"),
                         Taxa = V(r, "taxon_ids").Replace(",", ", "),
@@ -182,8 +229,6 @@ namespace WildlifeTools.OnlineData.Movebank
                     list.Add(s);
                 }
             }
-            _studies = list;
-            _studiesOf = user;
             return list;
         }
 

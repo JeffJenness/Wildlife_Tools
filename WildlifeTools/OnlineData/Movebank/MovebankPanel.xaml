@@ -71,6 +71,9 @@
               <RadioButton x:Name="SourceStudies" GroupName="mbsource" Margin="0,4,0,0" Checked="OnSourceChanged"
                            Content="Studies in Movebank that my Movebank account may download (needs a sign-in)"
                            ToolTip="The studies in Movebank itself whose owners let your account download their data: many more than have been published. You sign in with your own Movebank user name and password, and you must read and accept each study's license terms before its data are fetched. A study is not a published dataset: its owner can add to it and correct it." />
+              <RadioButton x:Name="SourceOthers" GroupName="mbsource" Margin="0,4,0,0" Checked="OnSourceChanged"
+                           Content="Studies in Movebank that my account may not download yet (needs a sign-in; slow to load)"
+                           ToolTip="The studies in Movebank that your account can see and may not download. Nothing can be fetched from this list: it is for finding a study and the people to ask for its data. Click a study to see who owns it, and open its page at Movebank from here. Movebank has to send its whole table of studies for this list, which takes a while the first time. After that the list is searched on this computer, and searching is quick." />
               <DockPanel Margin="0,8,0,0">
                 <Button x:Name="SignInButton" DockPanel.Dock="Left" Content="Sign in to Movebank..." Height="26" Padding="12,0"
                         Click="OnSignIn"
@@ -146,7 +149,8 @@
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate>
                     <TextBlock Margin="2,0,0,0" TextTrimming="CharacterEllipsis">
-                      <Hyperlink od:LinkContrast.Around="{Binding Foreground, RelativeSource={RelativeSource AncestorType=TextBlock}}" Click="OnTitleLink"
+                      <Hyperlink od:LinkContrast.Around="{Binding Foreground, RelativeSource={RelativeSource AncestorType=TextBlock}}"
+                                 od:LinkContrast.Warn="{Binding Locked, Mode=OneWay}" Click="OnTitleLink"
                                  ToolTip="Open this dataset's or study's page at Movebank in your web browser."><Run Text="{Binding Title, Mode=OneWay}" /></Hyperlink>
                     </TextBlock>
                   </DataTemplate>

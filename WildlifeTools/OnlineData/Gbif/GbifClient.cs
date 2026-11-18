@@ -484,48 +484,6 @@ namespace WildlifeTools.OnlineData.Gbif
             }
         }
 
-        /// <summary>Asks GBIF to prepare a download. Returns its key at
-        /// once; the file is ready when its status becomes SUCCEEDED.
-        /// <paramref name="format"/>: SIMPLE_CSV, DWCA or SPECIES_LIST.</summary>
-        internal async Task<string> RequestDownloadAsync(GbifFilter filter, string format = "SIMPLE_CSV",
-            bool emailWhenReady = false, CancellationToken ct = default)
-        {
-            RequireAccount();
-            string body;
-            using (var ms = new MemoryStream())
-            {
-                using (var w = new Utf8JsonWriter(ms))
-                {
-                    w.WriteStartObject();
-                    w.WriteString("creator", _user);
-                    w.WriteBoolean("sendNotification", emailWhenReady);
-                    w.WriteString("format", format);
-                    w.WritePropertyName("predicate");
-                    if (filter == null || !filter.WritePredicate(w))
-                    {
-                        throw new InvalidOperationException(
-                            "A download needs at least one filter (a taxon or a study area).");
-                    }
-                    w.WriteEndObject();
-                }
-                body = Encoding.UTF8.GetString(ms.ToArray());
-            }
-            using (var req = new HttpRequestMessage(HttpMethod.Post, V1 + "occurrence/download/request"))
-            {
-                req.Content = new StringContent(body, Encoding.UTF8, "application/json");
-                AddAuth(req);
-                using (HttpResponseMessage resp = await _http.SendAsync(req, ct).ConfigureAwait(false))
-                {
-                    string text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                    if (!resp.IsSuccessStatusCode)
-                    {
-                        throw new GbifException(resp.StatusCode, Explain(resp.StatusCode, text));
-                    }
-                    return text.Trim().Trim('"');
-                }
-            }
-        }
-
         /// <summary>The state of one download (no account needed).</summary>
         internal async Task<GbifDownload> DownloadStatusAsync(string key, CancellationToken ct = default)
         {
@@ -570,49 +528,6 @@ namespace WildlifeTools.OnlineData.Gbif
                         string text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
                         throw new GbifException(resp.StatusCode, Explain(resp.StatusCode, text));
                     }
-                }
-            }
-        }
-
-        /// <summary>Saves a finished download's zip file. Reports bytes
-        /// received and the total (0 when GBIF does not say).</summary>
-        internal async Task FetchDownloadAsync(GbifDownload download, string zipPath,
-            Action<long, long> progress = null, CancellationToken ct = default)
-        {
-            string url = !string.IsNullOrEmpty(download.DownloadLink)
-                ? download.DownloadLink
-                : V1 + "occurrence/download/request/" + Uri.EscapeDataString(download.Key) + ".zip";
-            using (var req = new HttpRequestMessage(HttpMethod.Get, url))
-            {
-                req.Headers.Accept.Clear();
-                req.Headers.Accept.ParseAdd("*/*");
-                using (HttpResponseMessage resp = await _http.SendAsync(req,
-                    HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
-                {
-                    if (!resp.IsSuccessStatusCode)
-                    {
-                        throw new GbifException(resp.StatusCode, Explain(resp.StatusCode, ""));
-                    }
-                    long total = resp.Content.Headers.ContentLength ?? download.Size;
-                    string tmp = zipPath + ".part";
-                    using (Stream src = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
-                    using (var dst = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
-                    {
-                        var buf = new byte[1 << 16];
-                        long done = 0;
-                        int n;
-                        while ((n = await src.ReadAsync(buf.AsMemory(0, buf.Length), ct).ConfigureAwait(false)) > 0)
-                        {
-                            await dst.WriteAsync(buf.AsMemory(0, n), ct).ConfigureAwait(false);
-                            done += n;
-                            progress?.Invoke(done, total);
-                        }
-                    }
-                    if (File.Exists(zipPath))
-                    {
-                        File.Delete(zipPath);
-                    }
-                    File.Move(tmp, zipPath);
                 }
             }
         }

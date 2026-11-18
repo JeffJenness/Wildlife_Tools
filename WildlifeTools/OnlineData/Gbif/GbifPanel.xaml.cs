@@ -1026,6 +1026,10 @@ namespace WildlifeTools.OnlineData.Gbif
             {
                 const int Max = 500;
                 List<GbifFacetCount> list = await _gbif.FacetAsync(f, "SPECIES_KEY", Max, 0, cts.Token);
+                if (cts.IsCancellationRequested || !ReferenceEquals(cts, _speciesCts))
+                {
+                    return;         // a newer request owns the list now: this answer must not add rows to it
+                }
                 foreach (GbifFacetCount c in list)
                 {
                     _species.Add(new SpeciesRow { Key = c.Name, Count = c.Count, Name = "(looking up the name...)" });
@@ -1097,7 +1101,10 @@ namespace WildlifeTools.OnlineData.Gbif
             }
             catch (Exception ex)
             {
-                SpeciesNote.Text = Short(ex);
+                if (ReferenceEquals(cts, _speciesCts))
+                {
+                    SpeciesNote.Text = Short(ex);
+                }
             }
         }
 
@@ -1268,6 +1275,10 @@ namespace WildlifeTools.OnlineData.Gbif
             {
                 const int Max = 300;
                 List<GbifFacetCount> list = await _gbif.FacetAsync(f, "DATASET_KEY", Max, 0, cts.Token);
+                if (cts.IsCancellationRequested || !ReferenceEquals(cts, _sourcesCts))
+                {
+                    return;         // a newer request owns the list now: this answer must not add rows to it
+                }
                 foreach (GbifFacetCount c in list)
                 {
                     var row = new SourceRow
@@ -1328,7 +1339,10 @@ namespace WildlifeTools.OnlineData.Gbif
             }
             catch (Exception ex)
             {
-                SourcesNote.Text = Short(ex);
+                if (ReferenceEquals(cts, _sourcesCts))
+                {
+                    SourcesNote.Text = Short(ex);
+                }
             }
         }
 
@@ -1646,14 +1660,6 @@ namespace WildlifeTools.OnlineData.Gbif
             return q;
         }
 
-        // lines of every geoprocessing run that say nothing about this one
-        private static readonly string[] ToolBoilerplate =
-        {
-            "Start Time:", "Succeeded at", "Failed at", "Failed to execute", "Executing:", "Executing (",
-            "View online help files:", "To run this tool from a script", "Running script", "Completed script",
-            "Canceled function", "Cancelled function",
-        };
-
         private int _toolMessages;
         private bool _toolSaidCancelled;
 
@@ -1661,17 +1667,15 @@ namespace WildlifeTools.OnlineData.Gbif
         private void OnToolMessage(string text, int severity)
         {
             _toolMessages++;
-            if (string.IsNullOrWhiteSpace(text)
-                || ToolBoilerplate.Any(b => text.TrimStart().StartsWith(b, StringComparison.Ordinal))
-                || text.TrimEnd().EndsWith("aborted by User.", StringComparison.OrdinalIgnoreCase))
+            if (OnlineReport.IsBoilerplate(text))
             {
                 return;
             }
-            if (text.TrimStart().StartsWith("Cancelled", StringComparison.Ordinal))
+            if (OnlineReport.SaysCancelled(text))
             {
                 _toolSaidCancelled = true;
             }
-            Log(severity == 2 ? "Stopped: " + text.Trim() : text.TrimEnd());
+            Log(OnlineReport.Line(text, severity));
         }
 
         /// <summary>Runs the GBIF Species Occurrences geoprocessing tool

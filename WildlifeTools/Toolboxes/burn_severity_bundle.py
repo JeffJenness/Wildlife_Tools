@@ -478,6 +478,7 @@ def run(source, out_workspace, **kwargs):
 
 def _run(source, out_workspace, out_perimeters=None, out_summary=None, messages=None):
     import arcpy
+    import clip_tools
     import mahalanobis as _mh
     import tool_metadata
 
@@ -726,7 +727,9 @@ def _run(source, out_workspace, out_perimeters=None, out_summary=None, messages=
                                                     for nm, kind, length, _src in spec])
         with arcpy.da.InsertCursor(out_perimeters, ["SHAPE@"] + [s[0] for s in spec]) as cur:
             for key, attrs, shape, fire_name, year in perims:
-                row = [shape.projectAs(wgs)]
+                # across datums only through the suite's helper: a bare projectAs applies no datum
+                # transformation, which puts a NAD 27 perimeter 100 to 200 meters off
+                row = [clip_tools.project_geometry(shape, wgs)]
                 for nm, kind, length, srcf in spec:
                     v = year if nm == "fire_year" else attrs.get(srcf)
                     if nm == "program" and not v:
@@ -802,9 +805,12 @@ def _inside(raster, shape, np):
         ds = gdal.Open(raster)
         sr = ds.GetSpatialRef()
         import arcpy
+        import clip_tools
 
         try:
-            g = shape.projectAs(arcpy.SpatialReference(text=sr.ExportToWkt()))
+            # with the datum transformation: some older rasters are in NAD 27, and their perimeters,
+            # from the fire catalog, are in WGS 84
+            g = clip_tools.project_geometry(shape, arcpy.SpatialReference(text=sr.ExportToWkt()))
             geom = ogr.CreateGeometryFromWkb(bytes(g.WKB))
             if geom is None or geom.IsEmpty():
                 raise ValueError("empty")
@@ -816,7 +822,8 @@ def _inside(raster, shape, np):
             wgs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
             to = osr.SpatialReference(sr.ExportToWkt())
             to.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-            geom = ogr.CreateGeometryFromWkb(bytes(shape.projectAs(arcpy.SpatialReference(4326)).WKB))
+            geom = ogr.CreateGeometryFromWkb(bytes(
+                clip_tools.project_geometry(shape, arcpy.SpatialReference(4326)).WKB))
             geom.Transform(osr.CoordinateTransformation(wgs, to))
         mem = ogr.GetDriverByName("MEM").CreateDataSource("m")
         lyr = mem.CreateLayer("p", sr, geom.GetGeometryType())

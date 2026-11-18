@@ -1071,28 +1071,18 @@ namespace WildlifeTools.OnlineData.INaturalist
             }
         };
 
-        // lines of every geoprocessing run that say nothing about this one
-        private static readonly string[] ToolBoilerplate =
-        {
-            "Start Time:", "Succeeded at", "Failed at", "Failed to execute", "Executing:", "Executing (",
-            "View online help files:", "To run this tool from a script", "Running script", "Completed script",
-            "Canceled function", "Cancelled function", "import arcpy", "arcpy.ImportToolbox(", "arcpy.jenness.",
-        };
-
         private void OnToolMessage(string text, int severity)
         {
             _toolMessages++;
-            if (string.IsNullOrWhiteSpace(text)
-                || ToolBoilerplate.Any(b => text.TrimStart().StartsWith(b, StringComparison.Ordinal))
-                || text.TrimEnd().EndsWith("aborted by User.", StringComparison.OrdinalIgnoreCase))
+            if (OnlineReport.IsBoilerplate(text))
             {
                 return;
             }
-            if (text.TrimStart().StartsWith("Cancelled", StringComparison.Ordinal))
+            if (OnlineReport.SaysCancelled(text))
             {
                 _toolSaidCancelled = true;
             }
-            Log(severity == 2 ? "Stopped: " + text.Trim() : severity == 1 ? "Note: " + text.Trim() : text.TrimEnd());
+            Log(OnlineReport.Line(text, severity));
         }
 
         // =====================================================================

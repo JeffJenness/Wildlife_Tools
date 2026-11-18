@@ -445,65 +445,6 @@ namespace WildlifeTools.OnlineData.Gbif
             return f;
         }
 
-        /// <summary>A copy of this filter whose study area is the convex
-        /// hull of all its polygons: a shape GBIF's Download service always
-        /// accepts, and one that contains every true polygon. Records fetched
-        /// with it must then be passed through <see cref="Contains"/> of the
-        /// ORIGINAL filter.</summary>
-        public GbifFilter WithConvexHull()
-        {
-            var pts = new List<(double Lon, double Lat)>();
-            foreach (var poly in Polygons)
-            {
-                if (poly.Count > 0)
-                {
-                    pts.AddRange(poly[0]);              // outer rings are enough
-                }
-            }
-            GbifFilter f = Clone();
-            f.Polygons.Clear();
-            List<(double Lon, double Lat)> hull = ConvexHull(pts);
-            if (hull.Count >= 3)
-            {
-                f.Polygons.Add(new List<List<(double Lon, double Lat)>> { hull });
-            }
-            return f;
-        }
-
-        /// <summary>Andrew's monotone chain; returns the hull counter-clockwise,
-        /// not closed.</summary>
-        internal static List<(double Lon, double Lat)> ConvexHull(List<(double Lon, double Lat)> points)
-        {
-            var p = points.Distinct().OrderBy(q => q.Lon).ThenBy(q => q.Lat).ToList();
-            if (p.Count < 3)
-            {
-                return p;
-            }
-            double Cross((double Lon, double Lat) o, (double Lon, double Lat) a, (double Lon, double Lat) b) =>
-                ((a.Lon - o.Lon) * (b.Lat - o.Lat)) - ((a.Lat - o.Lat) * (b.Lon - o.Lon));
-            var h = new List<(double Lon, double Lat)>(p.Count * 2);
-            foreach (var q in p)
-            {
-                while (h.Count >= 2 && Cross(h[h.Count - 2], h[h.Count - 1], q) <= 0)
-                {
-                    h.RemoveAt(h.Count - 1);
-                }
-                h.Add(q);
-            }
-            int lower = h.Count + 1;
-            for (int i = p.Count - 2; i >= 0; i--)
-            {
-                var q = p[i];
-                while (h.Count >= lower && Cross(h[h.Count - 2], h[h.Count - 1], q) <= 0)
-                {
-                    h.RemoveAt(h.Count - 1);
-                }
-                h.Add(q);
-            }
-            h.RemoveAt(h.Count - 1);
-            return h;
-        }
-
         // ---- geometry helpers -------------------------------------------------
         internal static List<(double Lon, double Lat)> CloseRing(IList<(double Lon, double Lat)> ring)
         {
@@ -532,39 +473,6 @@ namespace WildlifeTools.OnlineData.Gbif
                 a += (ring[j].Lon * ring[i].Lat) - (ring[i].Lon * ring[j].Lat);
             }
             return a / 2.0;
-        }
-
-        /// <summary>Even-odd point-in-polygon test against the filter's own
-        /// polygons (holes respected). Used for the final local filter when
-        /// GBIF was sent a simplified shape. True when there is no polygon.</summary>
-        public bool Contains(double lon, double lat)
-        {
-            if (Polygons.Count == 0)
-            {
-                return true;
-            }
-            foreach (var poly in Polygons)
-            {
-                bool inside = false;
-                foreach (var ring in poly)
-                {
-                    for (int i = 0, j = ring.Count - 1; i < ring.Count; j = i++)
-                    {
-                        var a = ring[i];
-                        var b = ring[j];
-                        if ((a.Lat > lat) != (b.Lat > lat) &&
-                            lon < ((b.Lon - a.Lon) * (lat - a.Lat) / (b.Lat - a.Lat)) + a.Lon)
-                        {
-                            inside = !inside;
-                        }
-                    }
-                }
-                if (inside)
-                {
-                    return true;
-                }
-            }
-            return false;
         }
 
         // ---- JSON helpers -----------------------------------------------------

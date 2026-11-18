@@ -46,7 +46,13 @@ namespace WildlifeTools.OnlineData.Movebank
         private readonly MovebankAccount _account = new MovebankAccount();
         private readonly ObservableCollection<StudyRow> _studyRows = new ObservableCollection<StudyRow>();
         private MovebankStudy _study;           // the study selected on tab 1 (in place of _chosen)
-        private bool _studyMode;                // tab 1 lists the account's studies, not the repository
+        private bool _studyMode;                // tab 1 lists studies in Movebank, not the repository
+        // Tab 1 lists the studies the account may NOT download (a study mode too). Nothing is fetched from
+        // that list: it shows who owns a study, and the Choose button opens the study's page at Movebank.
+        private bool _noAccess;
+        private readonly ObservableCollection<StudyRow> _otherRows = new ObservableCollection<StudyRow>();
+        private MovebankStudy _lockedStudy;     // the one selected in that list (never _study: it cannot go to tab 2)
+        private object _chooseTip;              // the Choose button's own hover help
         private int _terms;                     // of _study: 0 not yet asked, 1 shown and to be accepted, 2 already accepted
         private string _noteA, _noteB;          // the repository's notes, kept while the studies' notes are shown
         private readonly ObservableCollection<PackageRow> _rows = new ObservableCollection<PackageRow>();
@@ -232,8 +238,11 @@ namespace WildlifeTools.OnlineData.Movebank
             _filesCts?.Cancel();
             _chosen = null;
             _study = null;
+            _lockedStudy = null;
             ChooseButton.IsEnabled = false;
-            DetailTitle.Text = _studyMode
+            DetailTitle.Text = _noAccess
+                ? "Click a study in the list to see who owns it. Then click Open the study's page at Movebank to read more about it."
+                : _studyMode
                 ? "Click a study in the list to see its details here. Then click Choose this study to go on to tab 2."
                 : "Click a dataset in the list to see its details here. Then click Choose this dataset to go on to tab 2.";
             DetailFacts.Text = "";
@@ -247,6 +256,18 @@ namespace WildlifeTools.OnlineData.Movebank
         /// <summary>Choose this dataset: on to tab 2 with the dataset whose details are shown.</summary>
         private void OnChoose(object sender, RoutedEventArgs e)
         {
+            if (_noAccess)
+            {
+                // a study the account may not download cannot go to tab 2: the button opens its page instead
+                if (_lockedStudy == null)
+                {
+                    SetStatus("Click a study in the list first.");
+                    return;
+                }
+                SetStatus(null);
+                OpenUrl(_lockedStudy.Page);
+                return;
+            }
             if (_chosen == null && _study == null)
             {
                 SetStatus(_studyMode ? "Click a study in the list first." : "Click a dataset in the list first.");
@@ -271,7 +292,7 @@ namespace WildlifeTools.OnlineData.Movebank
                     ? System.Windows.Media.VisualTreeHelper.GetParent(from) : LogicalTreeHelper.GetParent(from);
             }
             if (((from as DataGridRow)?.Item is PackageRow && _chosen != null)
-                || ((from as DataGridRow)?.Item is StudyRow && _study != null))
+                || ((from as DataGridRow)?.Item is StudyRow && (_study != null || (_noAccess && _lockedStudy != null))))
             {
                 OnChoose(sender, e);
             }
@@ -287,8 +308,12 @@ namespace WildlifeTools.OnlineData.Movebank
             _total = 0;
             _rows.Clear();
             _studyRows.Clear();
+            _otherRows.Clear();
             MoreButton.IsEnabled = false;
-            SearchNote.Text = _studyMode
+            SearchNote.Text = _noAccess
+                ? "The list is empty. Type a species, a place or any other word and click Search, or click Search with the "
+                  + "box empty to list every study your account can see and may not download."
+                : _studyMode
                 ? "The list is empty. Type a species, a place or any other word and click Search, or click Search with the "
                   + "box empty to list every study your account may download."
                 : "The list is empty. Type a species, a place or any other word and click Search, or click Search "
@@ -512,28 +537,18 @@ namespace WildlifeTools.OnlineData.Movebank
             CancelButton.IsEnabled = busy;
         }
 
-        // lines of every geoprocessing run that say nothing about this one
-        private static readonly string[] ToolBoilerplate =
-        {
-            "Start Time:", "Succeeded at", "Failed at", "Failed to execute", "Executing:", "Executing (",
-            "View online help files:", "To run this tool from a script", "Running script", "Completed script",
-            "Canceled function", "Cancelled function",
-        };
-
         private void OnToolMessage(string text, int severity)
         {
             _toolMessages++;
-            if (string.IsNullOrWhiteSpace(text)
-                || ToolBoilerplate.Any(b => text.TrimStart().StartsWith(b, StringComparison.Ordinal))
-                || text.TrimEnd().EndsWith("aborted by User.", StringComparison.OrdinalIgnoreCase))
+            if (OnlineReport.IsBoilerplate(text))
             {
                 return;
             }
-            if (text.TrimStart().StartsWith("Cancelled", StringComparison.Ordinal))
+            if (OnlineReport.SaysCancelled(text))
             {
                 _toolSaidCancelled = true;
             }
-            Log(severity == 2 ? "Stopped: " + text.Trim() : text.TrimEnd());
+            Log(OnlineReport.Line(text, severity));
         }
 
         // =====================================================================
@@ -727,11 +742,12 @@ namespace WildlifeTools.OnlineData.Movebank
             }
             _account.Forget();
             ShowAccount();
+            _otherRows.Clear();
             if (_studyMode)
             {
                 _studyRows.Clear();
                 NoDataset();
-                SearchNote.Text = "Signed out. Sign in to Movebank to list the studies your account may download.";
+                SearchNote.Text = "Signed out. " + SignInFirst();
             }
         }
 
@@ -743,26 +759,78 @@ namespace WildlifeTools.OnlineData.Movebank
             {
                 return;                         // still being built
             }
-            bool studies = SourceStudies.IsChecked == true;
-            if (studies == _studyMode)
+            if (SourceOthers == null)
+            {
+                return;                         // still being built
+            }
+            bool others = SourceOthers.IsChecked == true;
+            bool studies = others || SourceStudies.IsChecked == true;
+            if (studies == _studyMode && others == _noAccess)
             {
                 return;
             }
             _studyMode = studies;
+            _noAccess = others;
             _searchCts?.Cancel();
-            ResultsGrid.ItemsSource = studies ? (System.Collections.IEnumerable)_studyRows : _rows;
+            if (others)
+            {
+                ResultsGrid.ItemsSource = _otherRows;
+            }
+            else if (studies)
+            {
+                ResultsGrid.ItemsSource = _studyRows;
+            }
+            else
+            {
+                ResultsGrid.ItemsSource = _rows;
+            }
             TitleColumn.Header = studies ? "Study" : "Dataset";
-            DateColumn.Header = studies ? "Fixes from" : "Published";
-            ChooseButton.Content = studies ? "Choose this study" : "Choose this dataset";
+            if (studies)
+            {
+                DateColumn.Header = new TextBlock
+                {
+                    Text = "Years of fixes",
+                    ToolTip = "The year of the study's first location fix and the year of its last, as Movebank records "
+                        + "them. A year with a question mark cannot be right: it is later than this year, or earlier "
+                        + "than 1900. It is the date Movebank gives for the study. A study whose last fix is dated "
+                        + "later than today is listed after the others.",
+                };
+                DateColumn.Width = new DataGridLength(104);
+            }
+            else
+            {
+                DateColumn.Header = "Published";
+                DateColumn.Width = new DataGridLength(86);
+            }
+            if (_chooseTip == null)
+            {
+                _chooseTip = ChooseButton.ToolTip;
+            }
+            ChooseButton.Content = others ? "Open the study's page at Movebank" : studies ? "Choose this study" : "Choose this dataset";
+            ChooseButton.ToolTip = others
+                ? "Open the page of the study whose details are shown here, at Movebank, in your web browser, to read more "
+                  + "about the study and its owner. Nothing can be fetched from this list. A double-click on a row of the "
+                  + "list does the same."
+                : _chooseTip;
             AreaRow.Visibility = studies ? Visibility.Visible : Visibility.Collapsed;
             NoteC.Visibility = studies ? Visibility.Collapsed : Visibility.Visible;
             MoreButton.Visibility = studies ? Visibility.Collapsed : Visibility.Visible;
-            NoteA.Text = studies
+            NoteA.Text = others
+                ? "These are the studies in Movebank that your account can see and may not download. Search them by species "
+                  + "(scientific name), place, owner or any other word, and limit the list to the studies whose main "
+                  + "location is in a study area. The list is for finding a study and the people to ask for its data. "
+                  + "The studies' names are in red, because nothing can be fetched from them."
+                : studies
                 ? "These are the studies in Movebank whose owners let your account download their data. Search by species "
                   + "(scientific name), place, owner or any other word, and limit the list to the studies whose main "
                   + "location is in a study area."
                 : _noteA;
-            NoteB.Text = studies
+            NoteB.Text = others
+                ? "Nothing can be fetched from this list. A study's data belong to the people who collected them, and they "
+                  + "decide who may have them. Click a study to see who owns it, then open its page at Movebank to read "
+                  + "more. Movebank asks that you tell a study's owner what you intend to do with the data, and credit them. "
+                  + "This list is slow to load the first time: Movebank sends its whole table of studies for it."
+                : studies
                 ? "Caution: A study is not a published dataset. Its owner can add to it and correct it, so the same request "
                   + "made later may return different data, and it has no DOI. Before a study's data are fetched you must "
                   + "read and accept its license terms, on tab 2. Movebank asks that you contact a study's owner about "
@@ -771,14 +839,20 @@ namespace WildlifeTools.OnlineData.Movebank
             NoDataset();
             if (studies)
             {
+                ObservableCollection<StudyRow> rows = others ? _otherRows : _studyRows;
                 if (MovebankAccount.SignedInAs() == null)
                 {
-                    _studyRows.Clear();
-                    SearchNote.Text = "Sign in to Movebank to list the studies your account may download.";
+                    rows.Clear();
+                    SearchNote.Text = SignInFirst();
                 }
-                else if (_studyRows.Count == 0)
+                else if (rows.Count == 0)
                 {
                     await SearchStudiesAsync();
+                }
+                else
+                {
+                    SearchNote.Text = rows.Count.ToString("N0", CultureInfo.CurrentCulture)
+                        + (rows.Count == 1 ? " study is listed." : " studies are listed.");
                 }
             }
             else
@@ -831,20 +905,28 @@ namespace WildlifeTools.OnlineData.Movebank
         /// once for a sign-in, and searched here.</summary>
         private async Task SearchStudiesAsync()
         {
+            bool others = _noAccess;
+            ObservableCollection<StudyRow> rows = others ? _otherRows : _studyRows;
+            string which = others ? "studies your account can see and may not download" : "studies your account may download";
             if (MovebankAccount.SignedInAs() == null)
             {
-                _studyRows.Clear();
-                SearchNote.Text = "Sign in to Movebank to list the studies your account may download.";
+                rows.Clear();
+                SearchNote.Text = SignInFirst();
                 Say("Sign in to Movebank first: click Sign in to Movebank at the top of this tab.");
                 return;
             }
             _searchCts?.Cancel();
             var cts = _searchCts = new CancellationTokenSource();
-            SearchNote.Text = "Asking Movebank for the studies your account may download...";
+            SearchNote.Text = others
+                ? "Asking Movebank for its whole table of studies. This takes a while the first time; after that the list "
+                  + "is searched on this computer, and searching is quick. Choose another list above to stop waiting."
+                : "Asking Movebank for the studies your account may download...";
             try
             {
-                List<MovebankStudy> all = await _account.StudiesAsync(cts.Token);
-                if (cts.IsCancellationRequested)
+                List<MovebankStudy> all = others
+                    ? await _account.OtherStudiesAsync(cts.Token)
+                    : await _account.StudiesAsync(cts.Token);
+                if (cts.IsCancellationRequested || others != _noAccess)
                 {
                     return;
                 }
@@ -875,7 +957,8 @@ namespace WildlifeTools.OnlineData.Movebank
                 {
                     hits = hits.Where(s =>
                     {
-                        string hay = string.Join(" ", s.Name, s.Taxa, s.Investigator, s.Contact, s.Objective, s.Citation, s.Id);
+                        string hay = string.Join(" ", s.Name, s.Taxa, s.Investigator, s.Contact, s.Objective, s.Citation, s.Id,
+                            s.InvestigatorAddress, s.InvestigatorEmail);
                         return words.All(w => hay.IndexOf(w, StringComparison.OrdinalIgnoreCase) >= 0);
                     });
                 }
@@ -889,18 +972,23 @@ namespace WildlifeTools.OnlineData.Movebank
                     hits = hits.Where(s => !double.IsNaN(s.Lat) && s.Lat >= b.South && s.Lat <= b.North
                         && (b.West <= b.East ? s.Lon >= b.West && s.Lon <= b.East : s.Lon >= b.West || s.Lon <= b.East));
                 }
-                List<MovebankStudy> list = hits.OrderByDescending(s => s.Last ?? "", StringComparer.Ordinal).ToList();
-                _studyRows.Clear();
+                // The most recent fixes first. A last fix dated later than today cannot be right, and such a
+                // study must not head the list: it goes last, with the studies that give no date.
+                List<MovebankStudy> list = hits
+                    .OrderByDescending(s => Doubtful(s.Last) ? "" : (s.Last ?? ""), StringComparer.Ordinal).ToList();
+                bool anyDoubtful = list.Any(s => Doubtful(s.Last));
+                rows.Clear();
                 foreach (MovebankStudy s in list)
                 {
-                    _studyRows.Add(new StudyRow(s));
+                    rows.Add(new StudyRow(s));
                 }
                 SearchNote.Text = list.Count == 0
-                    ? "None of the " + all.Count.ToString("N0", CultureInfo.CurrentCulture) + " studies your account may download matches"
+                    ? "None of the " + all.Count.ToString("N0", CultureInfo.CurrentCulture) + " " + which + " matches"
                       + areaWords + ". Try a scientific name, fewer words, or a larger area."
                     : list.Count.ToString("N0", CultureInfo.CurrentCulture) + " of the " + all.Count.ToString("N0", CultureInfo.CurrentCulture)
-                      + " studies your account may download " + (list.Count == 1 ? "matches" : "match") + areaWords
-                      + ", the most recent fixes first.";
+                      + " " + which + " " + (list.Count == 1 ? "matches" : "match") + areaWords
+                      + ", the most recent fixes first."
+                      + (anyDoubtful ? " Studies whose last fix is dated later than today are listed last." : "");
             }
             catch (OperationCanceledException)
             {
@@ -911,8 +999,60 @@ namespace WildlifeTools.OnlineData.Movebank
             }
         }
 
+        /// <summary>The sentence that asks for a sign-in, for the list now shown.</summary>
+        private string SignInFirst() => _noAccess
+            ? "Sign in to Movebank to list the studies your account can see and may not download."
+            : "Sign in to Movebank to list the studies your account may download.";
+
+        /// <summary>The details of a study the account may NOT download:
+        /// who owns it and how to learn more. It is never made the study of
+        /// tab 2.</summary>
+        private void ShowLockedStudy(MovebankStudy s)
+        {
+            _filesCts?.Cancel();
+            _study = null;
+            _chosen = null;
+            _lockedStudy = s;
+            ChooseButton.IsEnabled = true;          // in this list it opens the study's page
+            DetailTitle.Text = s.Name;
+            DetailFacts.Text = string.Join("   ", new[]
+            {
+                string.IsNullOrEmpty(s.Taxa) ? null : s.Taxa,
+                s.Animals >= 0 ? s.Animals.ToString("N0", CultureInfo.CurrentCulture) + " animals" : null,
+                s.Locations >= 0 ? s.Locations.ToString("N0", CultureInfo.CurrentCulture) + " locations" : null,
+                string.IsNullOrEmpty(s.Sensors) ? null : s.Sensors,
+                "License: " + s.LicenseName,
+                "Movebank study " + s.Id,
+            }.Where(x => x != null));
+            DetailFiles.Text = "Your Movebank account may not download this study, so nothing can be fetched from it here."
+                + (s.CanSeeTracks ? " Your account may look at its tracks on Movebank's own map." : "");
+            DetailCitation.Text = "To ask for its data, write to the study's owner and say what you intend to do with them. "
+                + "Open the study's page at Movebank (the button above, or the study's name in the list) to read more about "
+                + "the study and its owner.";
+            DetailMore.Text = string.Join(Environment.NewLine, new[]
+            {
+                string.IsNullOrEmpty(s.Investigator) ? null : "Principal investigator: " + s.Investigator,
+                string.IsNullOrEmpty(s.InvestigatorAddress) ? null : "Address: " + s.InvestigatorAddress,
+                string.IsNullOrEmpty(s.InvestigatorEmail) ? null : "Email: " + s.InvestigatorEmail,
+                string.IsNullOrEmpty(s.Contact) ? null : "Contact person: " + s.Contact,
+                FixesSentence(s),
+                double.IsNaN(s.Lat) ? null : "Main location: latitude " + s.Lat.ToString("0.###", CultureInfo.CurrentCulture)
+                    + ", longitude " + s.Lon.ToString("0.###", CultureInfo.CurrentCulture)
+                    + " (one point for the whole study, set by its owner; the animals may travel far from it)",
+                string.IsNullOrEmpty(s.Citation) ? null : "Citation the study gives: " + s.Citation,
+            }.Where(x => x != null));
+            DetailAbstract.Text = s.Objective ?? "";
+            ShowChosen();
+        }
+
         private void ShowStudy(MovebankStudy s)
         {
+            if (!s.CanDownload)
+            {
+                ShowLockedStudy(s);
+                return;
+            }
+            _lockedStudy = null;
             _filesCts?.Cancel();
             bool changed = !ReferenceEquals(_study, s);
             _study = s;
@@ -937,7 +1077,7 @@ namespace WildlifeTools.OnlineData.Movebank
             {
                 string.IsNullOrEmpty(s.Investigator) ? null : "Principal investigator: " + s.Investigator,
                 string.IsNullOrEmpty(s.Contact) ? null : "Contact person: " + s.Contact,
-                string.IsNullOrEmpty(s.First) ? null : "Fixes from " + Day(s.First) + " to " + Day(s.Last) + " (UTC)",
+                FixesSentence(s),
                 double.IsNaN(s.Lat) ? null : "Main location: latitude " + s.Lat.ToString("0.###", CultureInfo.CurrentCulture)
                     + ", longitude " + s.Lon.ToString("0.###", CultureInfo.CurrentCulture)
                     + " (one point for the whole study, set by its owner; the animals may travel far from it)",
@@ -1009,6 +1149,36 @@ namespace WildlifeTools.OnlineData.Movebank
 
         private static string Day(string stamp) => string.IsNullOrEmpty(stamp) ? "?" : stamp.Length >= 10 ? stamp.Substring(0, 10) : stamp;
 
+        /// <summary>True for a date of a first or last fix that cannot be
+        /// right: later than today, or before 1900. Movebank's table of
+        /// studies holds such dates (seen 2026-11-18: last fixes dated up
+        /// to the year 2105, a first fix in the year 0015).</summary>
+        internal static bool Doubtful(string stamp)
+        {
+            if (string.IsNullOrEmpty(stamp) || stamp.Length < 4)
+            {
+                return false;
+            }
+            string day = stamp.Length >= 10 ? stamp.Substring(0, 10) : stamp;
+            string tomorrow = DateTime.UtcNow.AddDays(1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            return string.CompareOrdinal(day, tomorrow) > 0
+                || string.CompareOrdinal(stamp.Substring(0, 4), "1900") < 0;
+        }
+
+        /// <summary>The dates of a study's first and last fix, in a
+        /// sentence, saying so when one of them cannot be right.</summary>
+        private static string FixesSentence(MovebankStudy s)
+        {
+            if (string.IsNullOrEmpty(s.First))
+            {
+                return null;
+            }
+            return "Fixes from " + Day(s.First) + " to " + Day(s.Last) + " (UTC)"
+                + (Doubtful(s.First) || Doubtful(s.Last)
+                    ? ". One of these dates cannot be right. They are the dates Movebank gives for the study."
+                    : "");
+        }
+
         private static string ShortAccount(Exception ex)
         {
             if (ex is TaskCanceledException || ex is OperationCanceledException)
@@ -1031,11 +1201,29 @@ namespace WildlifeTools.OnlineData.Movebank
             public string Species => Study.Taxa;
             public string AnimalsText => Study.Animals >= 0 ? Study.Animals.ToString("N0", CultureInfo.CurrentCulture) : "";
             public string LocationsText => Study.Locations >= 0 ? Study.Locations.ToString("N0", CultureInfo.CurrentCulture) : "";
-            public string Issued => string.IsNullOrEmpty(Study.First) ? ""
-                : Study.First.Substring(0, Math.Min(4, Study.First.Length))
-                  + (string.IsNullOrEmpty(Study.Last) || Study.Last.Substring(0, Math.Min(4, Study.Last.Length)) == Study.First.Substring(0, Math.Min(4, Study.First.Length))
-                      ? "" : "–" + Study.Last.Substring(0, Math.Min(4, Study.Last.Length)));
+            /// <summary>The year of the first fix and the year of the last
+            /// ("2014–2026", or one year when they are the same). A year
+            /// that cannot be right is followed by a question mark.</summary>
+            public string Issued
+            {
+                get
+                {
+                    if (string.IsNullOrEmpty(Study.First))
+                    {
+                        return "";
+                    }
+                    string first = Study.First.Substring(0, Math.Min(4, Study.First.Length)) + (Doubtful(Study.First) ? "?" : "");
+                    if (string.IsNullOrEmpty(Study.Last))
+                    {
+                        return first;
+                    }
+                    string last = Study.Last.Substring(0, Math.Min(4, Study.Last.Length)) + (Doubtful(Study.Last) ? "?" : "");
+                    return first == last ? first : first + "–" + last;
+                }
+            }
             public string LicenseShort => Study.LicenseName;
+            /// <summary>The account may not download the study: its name is drawn in red.</summary>
+            public bool Locked => !Study.CanDownload;
         }
 
         /// <summary>One row of the results list.</summary>
@@ -1050,6 +1238,7 @@ namespace WildlifeTools.OnlineData.Movebank
             public string AnimalsText => Package.Animals >= 0 ? Package.Animals.ToString("N0", CultureInfo.CurrentCulture) : "";
             public string LocationsText => Package.Locations >= 0 ? Package.Locations.ToString("N0", CultureInfo.CurrentCulture) : "";
             public string Issued => Package.Issued;
+            public bool Locked => false;            // a published dataset can always be loaded
             public string LicenseShort
             {
                 get

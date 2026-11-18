@@ -46,6 +46,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import gbif_occurrences as G
+
 REPO = "https://datarepository.movebank.org/server/api/"
 REPO_SITE = "https://datarepository.movebank.org"
 USER_AGENT = "WildlifeTools-AddIn (Jenness Enterprises; ArcGIS Pro)"
@@ -102,29 +104,11 @@ class Cancelled(Exception):
     """The user cancelled the tool."""
 
 
-def n0(n):
-    return "{:,}".format(int(n))
-
-
-def size_words(n):
-    n = float(n)
-    if n < 1024:
-        return "{:.0f} bytes".format(n)
-    if n < 1024 * 1024:
-        return "{:.0f} KB".format(n / 1024)
-    if n < 1024 ** 3:
-        return "{:.1f} MB".format(n / 1024 ** 2)
-    return "{:.2f} GB".format(n / 1024 ** 3)
-
-
-def span(seconds):
-    s = int(round(seconds))
-    if s < 90:
-        return "{} seconds".format(s)
-    m = int(round(s / 60.0))
-    if m < 90:
-        return "{} minutes".format(m)
-    return "{:.1f} hours".format(s / 3600.0)
+# numbers, sizes, times and lists in words: the one copy, shared with the other Online Data engines
+n0 = G.n0
+size_words = G.size_words
+span = G.span
+split_list = G.split_list
 
 
 # ---------------------------------------------------------------------------
@@ -583,15 +567,6 @@ def check_output(path):
     return None
 
 
-def split_list(text):
-    out = []
-    for part in re.split(r"[;\r\n]+", text or ""):
-        s = part.strip().strip("'\"").strip()
-        if s:
-            out.append(s)
-    return out
-
-
 def run(dataset, **kwargs):
     """Runs the tool (see ``_run``). Returns a dict: points, lines,
     doi, citation, folder."""
@@ -672,6 +647,7 @@ def _run(dataset, output=OUT_BOTH, out_points=None, out_lines=None, animals=None
     package = None
     reference = None
     readme_path = None                 # the README fetched or written in this run
+    disk = None                        # what the README beside files already on disk says they are
     import movebank_account as _acct
     study_id = None if (os.path.isdir(src) or os.path.isfile(src)) else _acct.parse_study(src)
     if study_id:
@@ -756,8 +732,22 @@ def _run(dataset, output=OUT_BOTH, out_points=None, out_lines=None, animals=None
                                 "and individual-local-identifier columns).".format(src))
         reference = refs[0] if refs else None
         say("Loading Movebank data already on disk: {}.".format("; ".join(os.path.basename(p) for p in data_paths)))
-        warn("The files on disk do not say which published dataset they are, so the output's metadata "
-             "carries no DOI or citation. Cite the dataset as its owner asks.")
+        # The data files do not say which dataset they are. The README beside them does, when it is one
+        # this tool wrote for a study or one the Movebank Data Repository publishes with a dataset.
+        disk = describe_readme(read_readme(folder))
+        if disk and disk["kind"] == "study":
+            say("The README beside {} says what {}: the Movebank study \"{}\" (study ID {}){}. A study is not "
+                "a published dataset: its owner may have added to it or corrected it since.".format(
+                    "it" if len(data_paths) == 1 else "them", "it is" if len(data_paths) == 1 else "they are",
+                    disk["name"], disk["study_id"],
+                    ", as this tool fetched it on {}".format(disk["fetched"]) if disk["fetched"] else ""))
+        elif disk:
+            say("The README beside {} says what {}: a dataset published in the Movebank Data Repository{}.".format(
+                "it" if len(data_paths) == 1 else "them", "it is" if len(data_paths) == 1 else "they are",
+                " (DOI {})".format(disk["doi"]) if disk["doi"] else ""))
+        else:
+            warn("No README beside the files says which dataset they are, so the output's metadata carries no "
+                 "DOI or citation. Cite the dataset as its owner asks.")
     else:
         package = find_package(src)
         say("Dataset: {}".format(package["title"]))
@@ -1013,7 +1003,7 @@ def _run(dataset, output=OUT_BOTH, out_points=None, out_lines=None, animals=None
         say("{} long text values were shortened to fit their fields.".format(n0(truncated)))
     if written == 0:
         warn("No fixes matched the animals and dates asked for, so the output is empty.")
-    cite = package["citation"] if package else None
+    cite = package["citation"] if package else ((disk or {}).get("citation") or None)
     if package:
         say("License: {}{}.".format(package["license"] or "not stated",
                                     " ({})".format(package["license_url"]) if package["license_url"] else ""))
@@ -1033,6 +1023,13 @@ def _run(dataset, output=OUT_BOTH, out_points=None, out_lines=None, animals=None
                 package["paper"].replace("doi:", "https://doi.org/")))
         say("All use of Movebank data is subject to the dataset's license and to Movebank's general "
             "terms of use. Read the README in the download folder before using the data.")
+    elif disk:
+        if disk.get("license"):
+            say("License, as the README gives it: {}.".format(disk["license"]))
+        if cite:
+            say("The README gives this citation for the data: " + cite)
+        say("All use of Movebank data is subject to the dataset's license and to Movebank's general "
+            "terms of use. Read the README in the folder before using the data.")
 
     # ---- metadata ---------------------------------------------------------
     summary = ("Created {} by the Movebank Animal Tracks tool from {}. {} location fixes of {} animals{}. "
@@ -1045,8 +1042,14 @@ def _run(dataset, output=OUT_BOTH, out_points=None, out_lines=None, animals=None
                     if package and package.get("source") == "study" else
                     "the published dataset \"{}\" (DOI {}; license {}) in the Movebank Data Repository".format(
                        package["title"], package["doi"] or "none", package["license"] or "not stated")
-                    if package else "Movebank data files on disk ({})".format(
-                        "; ".join(os.path.basename(p) for p in data_paths))),
+                    if package else "Movebank data files on disk ({}){}".format(
+                        "; ".join(os.path.basename(p) for p in data_paths),
+                        "" if not disk
+                        else ", which the README beside them names as the Movebank study \"{}\" (study ID {}{})".format(
+                            disk["name"], disk["study_id"], "; fetched " + disk["fetched"] if disk["fetched"] else "")
+                        if disk["kind"] == "study"
+                        else ", which the README beside them names as a dataset published in the Movebank Data "
+                             "Repository{}".format(" (DOI {})".format(disk["doi"]) if disk["doi"] else ""))),
                    n0(written), n0(len(tracks) if want_lines else len(set(only) or sc.animals)),
                    ", {} to {} (UTC)".format(sc.first[:10], sc.last[:10]) if sc.first and sc.last else "",
                    "Left out: {}. ".format("; ".join(left)) if left else "",
@@ -1074,15 +1077,21 @@ def _run(dataset, output=OUT_BOTH, out_points=None, out_lines=None, animals=None
               "(https://www.movebank.org/cms/movebank-content/general-movebank-terms-of-use).")
     readme_html = ""
     if readme:
-        readme_html = (("<p><b>The README this tool wrote from the study's record at Movebank, with the "
-                        "study's terms of use:</b></p>" if package and package.get("source") == "study" else
-                        "<p><b>The dataset's README, as the Movebank Data Repository published it:</b></p>")
+        # whose README it is: the one this tool writes for a study, the one the repository publishes with a
+        # dataset, or (for files on disk whose README is neither) simply the one that was found
+        kind = ("study" if package and package.get("source") == "study" else "published" if package
+                else disk["kind"] if disk else "found")
+        readme_html = ({"study": "<p><b>The README this tool wrote from the study's record at Movebank, with the "
+                                 "study's terms of use:</b></p>",
+                        "published": "<p><b>The dataset's README, as the Movebank Data Repository published "
+                                     "it:</b></p>",
+                        "found": "<p><b>The README found beside the files:</b></p>"}[kind]
                        + text_as_html(readme))
         say("The {} is recorded in the metadata of the output{}: the whole of it under "
             "Description, and its terms of use under Use Limitations. Right-click the layer and choose "
             "View Metadata to read it.".format(
-                "README this tool wrote for the study, with its terms of use,"
-                if package and package.get("source") == "study" else "dataset's README",
+                {"study": "README this tool wrote for the study, with its terms of use,",
+                 "published": "dataset's README", "found": "README found beside the files"}[kind],
                 "s" if want_points and want_lines else ""))
     if want_points:
         _stamp(out_points, "<p>Animal location fixes from Movebank. Each point is one fix: where a tagged "
@@ -1101,8 +1110,36 @@ def _run(dataset, output=OUT_BOTH, out_points=None, out_lines=None, animals=None
                [{"name": nm, "description": d} for nm, _a, _t, _l, d in LINE_FIELDS], messages, limits)
     step(100, "Done: {} fixes{}.".format(n0(written), ", {} track lines".format(n0(n_lines)) if want_lines else ""))
     return {"points": out_points, "lines": out_lines, "written": written, "line_count": n_lines,
-            "doi": package["doi"] if package else "", "citation": cite or "", "folder": folder,
-            "study_id": (package or {}).get("study_id", "")}
+            "doi": package["doi"] if package else (disk or {}).get("doi", ""), "citation": cite or "",
+            "folder": folder, "study_id": (package or {}).get("study_id", "") or (disk or {}).get("study_id", "")}
+
+
+def describe_readme(text):
+    """What a README beside Movebank files says the files are, or None when
+    it does not say (or there is no README).
+
+    Two READMEs are known. The one this tool writes beside a study it
+    fetched gives {"kind": "study", "name", "study_id", "page", "fetched",
+    "license", "citation"}. The one the Movebank Data Repository publishes
+    with a dataset gives {"kind": "published", "citation", "doi"}."""
+    if not text:
+        return None
+    m = re.match(r"\s*Movebank study: (.*)\nMovebank study ID: (\d+)\nStudy page: (\S+)", text)
+    if m:
+        when = re.search(r"^Fetched (\d{4}-\d{2}-\d{2})", text, flags=re.M)
+        lic = re.search(r"^License: (.+)$", text, flags=re.M)
+        cit = re.search(r"^Citation: (.*?)(?=^(?:Acknowledgements|Grants used|Taxa|Sensors|Study objective): "
+                        r"|^-{5,}|\Z)", text, flags=re.M | re.S)
+        return {"kind": "study", "name": m.group(1).strip(), "study_id": m.group(2), "page": m.group(3),
+                "fetched": when.group(1) if when else "", "license": lic.group(1).strip() if lic else "",
+                "citation": " ".join(cit.group(1).split()) if cit else "", "doi": ""}
+    m = re.search(r"^Data package citation:[ \t]*\n(.+?)(?:\n[ \t]*\n|\Z)", text, flags=re.M | re.S)
+    if m and "Movebank Data Repository" in text[:800]:
+        citation = " ".join(m.group(1).split())
+        doi = re.search(r"https?://doi\.org/(10\.5441/[^\s]+)", citation)
+        return {"kind": "published", "citation": citation, "doi": doi.group(1).rstrip(".") if doi else "",
+                "license": ""}
+    return None
 
 
 def read_readme(folder):

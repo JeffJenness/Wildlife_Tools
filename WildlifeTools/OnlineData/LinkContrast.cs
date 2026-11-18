@@ -33,17 +33,30 @@ namespace WildlifeTools.OnlineData
     /// <code>
     /// &lt;Hyperlink od:LinkContrast.Around="{Binding Foreground, RelativeSource={RelativeSource AncestorType=TextBlock}}" ...
     /// </code>
+    /// <c>Warn</c> draws a link in red: for a row whose link can be
+    /// followed but whose data cannot be had (a Movebank study the account
+    /// may not download). It is a light red where the text around it is
+    /// light, for the same reason.
     /// </summary>
     public static class LinkContrast
     {
-        private static readonly Brush OnDark = MakeBrush();
+        private static readonly Brush OnDark = MakeBrush(0xC4, 0xE4, 0xFF);
+        private static readonly Brush WarnBrush = MakeBrush(0xC6, 0x28, 0x28);
+        private static readonly Brush WarnOnDark = MakeBrush(0xFF, 0xB4, 0xB4);
 
-        private static Brush MakeBrush()
+        private static Brush MakeBrush(byte r, byte g, byte b)
         {
-            var b = new SolidColorBrush(Color.FromRgb(0xC4, 0xE4, 0xFF));
-            b.Freeze();
-            return b;
+            var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+            brush.Freeze();
+            return brush;
         }
+
+        public static readonly DependencyProperty WarnProperty = DependencyProperty.RegisterAttached(
+            "Warn", typeof(bool), typeof(LinkContrast), new PropertyMetadata(false, OnAroundChanged));
+
+        public static bool GetWarn(DependencyObject d) => (bool)d.GetValue(WarnProperty);
+
+        public static void SetWarn(DependencyObject d, bool value) => d.SetValue(WarnProperty, value);
 
         public static readonly DependencyProperty AroundProperty = DependencyProperty.RegisterAttached(
             "Around", typeof(Brush), typeof(LinkContrast), new PropertyMetadata(null, OnAroundChanged));
@@ -59,12 +72,16 @@ namespace WildlifeTools.OnlineData
                 return;
             }
             bool light = false;
-            if (e.NewValue is SolidColorBrush s)
+            if (GetAround(link) is SolidColorBrush s)
             {
                 Color c = s.Color;
                 light = c.A > 128 && (0.299 * c.R + 0.587 * c.G + 0.114 * c.B) > 170.0;
             }
-            if (light)
+            if (GetWarn(link))
+            {
+                link.Foreground = light ? WarnOnDark : WarnBrush;
+            }
+            else if (light)
             {
                 link.Foreground = OnDark;
             }

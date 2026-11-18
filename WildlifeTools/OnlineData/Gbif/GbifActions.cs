@@ -315,8 +315,6 @@ namespace WildlifeTools.OnlineData.Gbif
         internal static async Task<IGPResult> RunToolAsync(ToolRequest q, Action<string, int> onMessage,
             Action<string, int> onProgress, CancellationToken ct)
         {
-            string toolPath = global::WildlifeTools.ToolboxPaths.ToolPath(ToolName)
-                ?? throw new InvalidOperationException("Could not find JennessEnterprisesTools.pyt next to the add-in.");
             object layerArg = "";
             object extentArg = "";
             if (q.Area != null && q.Area.Kind == AreaChoice.KindLayer && q.Area.Layer is FeatureLayer fl)
@@ -352,47 +350,7 @@ namespace WildlifeTools.OnlineData.Gbif
                 q.MaxWaitMinutes.ToString(inv),
                 q.OutputPath);
 
-            GPToolExecuteEventHandler callback = (eventName, o) =>
-            {
-                try
-                {
-                    switch (eventName)
-                    {
-                        case "OnMessage":
-                            if (o is IGPMessage m && onMessage != null)
-                            {
-                                onMessage(m.Text ?? "", m.Type == GPMessageType.Error ? 2
-                                    : m.Type == GPMessageType.Warning ? 1 : 0);
-                            }
-                            break;
-                        case "OnProgressMessage":
-                            onProgress?.Invoke(o as string, -1);
-                            break;
-                        case "OnProgressPos":
-                            if (o is int pos)
-                            {
-                                onProgress?.Invoke(null, pos);
-                            }
-                            break;
-                    }
-                }
-                catch (Exception)
-                {
-                    // a display problem must never stop the tool
-                }
-            };
-            // the window has always replaced an existing feature class of the same name
-            var env = Geoprocessing.MakeEnvironmentArray(overwriteoutput: true);
-            try
-            {
-                return await Geoprocessing.ExecuteToolAsync(toolPath, args, env, ct, callback,
-                    GPExecuteToolFlags.Default | GPExecuteToolFlags.AddToHistory);
-            }
-            catch (NullReferenceException)
-            {
-                // the flags overloads have misfired before (see the Land Facet window)
-                return await Geoprocessing.ExecuteToolAsync(toolPath, args);
-            }
+            return await OnlineToolRunner.RunAsync(ToolName, args, onMessage, onProgress, ct);
         }
 
         /// <summary>The sources of a written feature class (record count
