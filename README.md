@@ -262,6 +262,23 @@ inside ArcGIS Pro.
   permutation (optionally repeated within each replicate), random integers or
   decimals, or normal random values.
 
+The **Online Data** menu of this group holds tools that download data from
+online providers onto your own disk, where every tool can work on them. Each
+has a window and a geoprocessing tool of the same name:
+
+- **GBIF Species Occurrences** *(window)* – species occurrence records from
+  the Global Biodiversity Information Facility: which species have been
+  recorded in an area, or where a species has been recorded.
+- **iNaturalist Observations** *(window)* – observations straight from
+  iNaturalist.org, of every quality grade and license.
+- **Movebank Animal Tracks** *(window)* – animal tracking data from Movebank,
+  as points and as a track line for each animal.
+- **MTBS Burn Severity**, **RAVG Burn Severity** and **BAER Burn Severity**
+  *(windows)* – fire perimeters and classified burn severity rasters from
+  three programs of the United States Government.
+- **Load Burn Severity Bundle** – loads the full data bundles that those
+  programs' portal sends a link to by email.
+
 ### Terrain Graphs
 
 - **Polar Plots** *(window)* – circular plots of directional data, nine plot
