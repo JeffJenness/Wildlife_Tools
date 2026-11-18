@@ -1,0 +1,368 @@
+<UserControl x:Class="WildlifeTools.OnlineData.INaturalist.INatPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:od="clr-namespace:WildlifeTools.OnlineData">
+  <!-- The whole content of the iNaturalist Observations window: plain WPF,
+       so it can be drawn and checked outside ArcGIS Pro. Everything that
+       needs Pro (the map's study areas, the default output path, running
+       the geoprocessing tool, the help page) is in INatActions. No colors
+       are set on text: the window's theme applies. -->
+  <UserControl.Resources>
+    <Style TargetType="ToolTip">
+      <Setter Property="MaxWidth" Value="420" />
+      <Setter Property="ContentTemplate">
+        <Setter.Value>
+          <DataTemplate>
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="400" />
+          </DataTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="Head" TargetType="TextBlock">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Margin" Value="0,0,0,4" />
+    </Style>
+    <Style x:Key="Note" TargetType="TextBlock">
+      <Setter Property="TextWrapping" Value="Wrap" />
+      <Setter Property="Opacity" Value="0.8" />
+      <Setter Property="Margin" Value="0,2,0,0" />
+    </Style>
+  </UserControl.Resources>
+
+  <DockPanel Margin="12">
+    <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+      <Button DockPanel.Dock="Right" Content="Close" Width="84" Click="OnClose" IsCancel="True" />
+      <!-- the suite's round blue help button -->
+      <Button DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,12,0" Width="20" Height="20"
+              Padding="0" Background="Transparent" BorderThickness="0" Cursor="Hand" Click="OnHelp"
+              ToolTip="Open the online help page for this tool">
+        <Grid>
+          <Ellipse Width="18" Height="18" Fill="#0079C1" />
+          <TextBlock Text="?" Foreground="White" FontWeight="Bold" FontSize="12"
+                     HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0" />
+        </Grid>
+      </Button>
+      <TextBlock VerticalAlignment="Center">
+        <Run Text="Data from" />
+        <Hyperlink NavigateUri="https://www.inaturalist.org" RequestNavigate="OnLink"
+                   ToolTip="Open iNaturalist in your web browser.">iNaturalist</Hyperlink>
+      </TextBlock>
+    </DockPanel>
+    <TextBlock x:Name="StatusText" DockPanel.Dock="Bottom" TextWrapping="Wrap" Margin="0,8,0,0"
+               FontWeight="SemiBold" Visibility="Collapsed" />
+
+    <TabControl x:Name="Tabs" SelectionChanged="OnTabChanged">
+      <!-- ============================================================ -->
+      <TabItem Header="1. What and where">
+        <DockPanel Margin="10">
+          <TextBlock DockPanel.Dock="Top" Style="{StaticResource Note}" Margin="0,0,0,8"
+                     Text="This window gets observations straight from iNaturalist. GBIF holds only part of iNaturalist: the research-grade observations whose observers chose a CC0, CC BY or CC BY-NC license. Here you can also get the observations that still need an identification, the casual ones and the ones under other terms, with iNaturalist's own fields. For research-grade observations in bulk, or with a DOI to cite, use the GBIF Species Occurrences window. No account is needed." />
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="3*" />
+              <ColumnDefinition Width="18" />
+              <ColumnDefinition Width="2*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- species -->
+            <DockPanel Grid.Column="0">
+              <TextBlock DockPanel.Dock="Top" Style="{StaticResource Head}" Text="Species or groups" />
+              <DockPanel DockPanel.Dock="Top">
+                <Button DockPanel.Dock="Right" Content="Search" Width="80" Height="26" Margin="8,0,0,0"
+                        Click="OnTaxonSearch"
+                        ToolTip="Find the species and groups whose scientific or common name matches." />
+                <TextBox x:Name="TaxonBox" Height="26" VerticalContentAlignment="Center" KeyDown="OnTaxonKey"
+                         ToolTip="A scientific or common name, or part of one: pronghorn, Antilocapra, owls, Pinus ponderosa. A group (a genus, a family, Mammals) brings every species in it." />
+              </DockPanel>
+              <TextBlock x:Name="TaxonNote" DockPanel.Dock="Top" Style="{StaticResource Note}"
+                         Text="Search for a name, then select the species or groups you want and click Add. Add as many as you like." />
+
+              <DockPanel DockPanel.Dock="Bottom" Height="170" Margin="0,8,0,0">
+                <TextBlock DockPanel.Dock="Top" Style="{StaticResource Head}" Text="Species or groups to get" />
+                <TextBlock x:Name="ChosenNote" DockPanel.Dock="Bottom" Style="{StaticResource Note}"
+                           Text="None chosen: observations of every species will be asked for, so choose a study area or a place." />
+                <ListBox x:Name="ChosenList" HorizontalContentAlignment="Stretch">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate>
+                      <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="Remove" Padding="8,0" Click="OnTaxonRemove" />
+                        <TextBlock Text="{Binding Display}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                      </DockPanel>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+              </DockPanel>
+
+              <DockPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+                <Button DockPanel.Dock="Right" Content="Add" Width="84" Height="26" Click="OnAddSelectedTaxa"
+                        ToolTip="Add every selected species or group to the list below." />
+                <TextBlock Style="{StaticResource Note}" VerticalAlignment="Center" Margin="0,0,8,0"
+                           Text="Select one or more rows (hold Shift or Ctrl for several), or a name in the taxonomy, then click Add. A double-click adds one row." />
+              </DockPanel>
+
+              <TabControl x:Name="NameTabs" Margin="0,6,0,0" SelectionChanged="OnNameTabChanged">
+                <TabItem Header="Search results">
+              <DataGrid x:Name="TaxonGrid" BorderThickness="0" AutoGenerateColumns="False" IsReadOnly="True"
+                        CanUserAddRows="False" HeadersVisibility="Column" SelectionMode="Extended"
+                        SelectionUnit="FullRow" GridLinesVisibility="Horizontal"
+                        MouseDoubleClick="OnTaxonGridDoubleClick">
+                <DataGrid.Columns>
+                  <DataGridTemplateColumn Header="Scientific name" Width="3*">
+                    <DataGridTemplateColumn.CellTemplate>
+                      <DataTemplate>
+                        <TextBlock Margin="2,0,0,0" TextTrimming="CharacterEllipsis">
+                          <Hyperlink od:LinkContrast.Around="{Binding Foreground, RelativeSource={RelativeSource AncestorType=TextBlock}}" Click="OnTaxonLink"
+                                     ToolTip="Open this species or group on iNaturalist."><Run Text="{Binding Name, Mode=OneWay}" /></Hyperlink>
+                        </TextBlock>
+                      </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                  </DataGridTemplateColumn>
+                  <DataGridTextColumn Header="Common name" Binding="{Binding Common}" Width="2*" />
+                  <DataGridTextColumn Header="Rank" Binding="{Binding Rank}" Width="76" />
+                  <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="80" />
+                  <DataGridTextColumn Header="Observations" Binding="{Binding CountText}" Width="90" />
+                </DataGrid.Columns>
+              </DataGrid>
+                </TabItem>
+                <TabItem Header="Browse the taxonomy">
+                  <TreeView x:Name="BrowseTree" BorderThickness="0" MouseDoubleClick="OnTreeDoubleClick"
+                            ToolTip="Open a kingdom and work down through iNaturalist&apos;s taxonomy to a family, a genus or a species. Names are in alphabetical order, and the number is what iNaturalist holds worldwide, of every grade. Select a name and click Add." />
+                </TabItem>
+              </TabControl>
+            </DockPanel>
+
+            <!-- where -->
+            <StackPanel Grid.Column="2">
+              <TextBlock Style="{StaticResource Head}" Text="Study area from the map" />
+              <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Refresh" Height="26" Padding="10,0" Margin="8,0,0,0"
+                        Click="OnRefreshAreas"
+                        ToolTip="Read the polygon layers of the active map again." />
+                <ComboBox x:Name="AreaBox" Height="26" SelectionChanged="OnAreaChanged"
+                          ToolTip="No study area, the area the map shows now, or the polygons of a layer in the map (its selected polygons when there is a selection)." />
+              </DockPanel>
+              <TextBlock x:Name="AreaNote" Style="{StaticResource Note}" />
+              <TextBlock Style="{StaticResource Note}" FontWeight="SemiBold" Margin="0,8,0,0"
+                         Text="iNaturalist searches by rectangle, not by polygon. For a polygon layer, the observations are asked for in the rectangle around the polygons and cut to the polygons when they are written. The counts and the species list in this window are for the rectangle, so they can be higher than what is written." />
+
+              <TextBlock Style="{StaticResource Head}" Margin="0,16,0,4" Text="Or a place on iNaturalist" />
+              <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Find" Width="60" Height="26" Margin="8,0,0,0" Click="OnPlaceSearch"
+                        ToolTip="List iNaturalist's places whose name starts with these letters." />
+                <TextBox x:Name="PlaceBox" Height="26" VerticalContentAlignment="Center" KeyDown="OnPlaceKey"
+                         ToolTip="The start of a place's name: a country, a state, a county, a national forest or park. iNaturalist searches a named place by its own boundary, exactly, so no polygon layer is needed." />
+              </DockPanel>
+              <ComboBox x:Name="PlaceList" Height="26" Margin="0,6,0,0" SelectionChanged="OnPlaceChanged"
+                        ToolTip="The places that match. Choose one, or 'No place'." />
+              <TextBlock x:Name="PlaceNote" Style="{StaticResource Note}"
+                         Text="No place is chosen. A place and a study area can be used together: the observations are then those in both." />
+
+              <Button Content="Count the observations" Margin="0,18,0,0" Height="28" HorizontalAlignment="Left" Padding="14,0"
+                      Click="OnCount"
+                      ToolTip="Ask iNaturalist how many observations match the choices on this tab and on tab 2. Nothing is fetched." />
+              <TextBlock x:Name="CountText1" TextWrapping="Wrap" Margin="0,8,0,0" FontWeight="SemiBold"
+                         Text="{Binding Text, ElementName=CountText}" />
+            </StackPanel>
+          </Grid>
+        </DockPanel>
+      </TabItem>
+
+      <!-- ============================================================ -->
+      <TabItem Header="2. Which observations">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+          <StackPanel Margin="10">
+            <TextBlock Style="{StaticResource Head}" Text="Quality grades" />
+            <CheckBox x:Name="ResearchBox" IsChecked="True" Click="OnChoiceChanged"
+                      Content="Research grade: dated, located, with a photograph or sound, wild, and identified to species with more than two-thirds of the identifiers agreeing" />
+            <CheckBox x:Name="NeedsIdBox" Margin="0,4,0,0" Click="OnChoiceChanged"
+                      Content="Needs ID: meets the same conditions, but the community has not yet agreed on an identification" />
+            <CheckBox x:Name="CasualBox" Margin="0,4,0,0" Click="OnChoiceChanged"
+                      Content="Casual: lacks a date, a location or a photograph or sound, or is captive or cultivated, or was voted down" />
+            <CheckBox x:Name="CaptiveBox" Margin="20,4,0,0" IsChecked="True" Click="OnChoiceChanged"
+                      Content="Leave out captive or cultivated organisms (pets, zoo animals, garden plants)"
+                      ToolTip="Captive and cultivated organisms are always casual grade, so this matters only when Casual is checked." />
+            <TextBlock Style="{StaticResource Note}"
+                       Text="Identifications on iNaturalist are made by volunteers. Observations that are not research grade have an identification nobody has confirmed, or lack what is needed to check it. The output's qualityGrade field tells them apart, and its idAgree and idDisagree fields give the number of identifiers on each side." />
+
+            <TextBlock Style="{StaticResource Head}" Margin="0,14,0,4" Text="Dates" />
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="Observed from" VerticalAlignment="Center" />
+              <TextBox x:Name="DateFromBox" Width="100" Height="24" Margin="8,0,0,0" VerticalContentAlignment="Center"
+                       LostFocus="OnChoiceChanged" ToolTip="The first date, written YYYY-MM-DD (2024-05-01), or just a year (2024). Empty for no limit." />
+              <TextBlock Text="to" VerticalAlignment="Center" Margin="8,0,0,0" />
+              <TextBox x:Name="DateToBox" Width="100" Height="24" Margin="8,0,0,0" VerticalContentAlignment="Center"
+                       LostFocus="OnChoiceChanged" ToolTip="The last date, written YYYY-MM-DD (2024-09-30), or just a year (2024). Empty for no limit." />
+              <TextBlock Text="(YYYY-MM-DD, or a year)" VerticalAlignment="Center" Margin="8,0,0,0" Opacity="0.8" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+              <TextBlock Text="Months:" VerticalAlignment="Center" Margin="0,0,8,0" />
+              <WrapPanel x:Name="MonthPanel" />
+            </StackPanel>
+            <TextBlock Style="{StaticResource Note}" Text="With no month checked, every month is included." />
+
+            <TextBlock Style="{StaticResource Head}" Margin="0,14,0,4" Text="Locations" />
+            <CheckBox x:Name="ObscuredBox" Click="OnChoiceChanged"
+                      Content="Leave out observations whose location is obscured" />
+            <TextBlock Style="{StaticResource Note}"
+                       Text="iNaturalist hides the true location of observations of species at risk, and of any observation whose observer asks for it. It shows a random point within about 0.2 degrees of latitude and longitude of the true one instead, which can be up to about 20 kilometers away. Unchecked, those observations are written with their obscured field set to Yes, and the report counts them. Checked, they are left out, which removes most observations of species at risk." />
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+              <TextBlock Text="Stated accuracy no more than" VerticalAlignment="Center" />
+              <TextBox x:Name="AccuracyBox" Width="80" Height="24" Margin="8,0,0,0" VerticalContentAlignment="Center"
+                       LostFocus="OnChoiceChanged"
+                       ToolTip="Keep only observations whose observer stated a location accuracy below this many meters. Observations that state no accuracy are left out. Empty for no limit." />
+              <TextBlock Text="meters (observations stating none are left out)" VerticalAlignment="Center" Margin="8,0,0,0" />
+            </StackPanel>
+
+            <TextBlock Style="{StaticResource Head}" Margin="0,14,0,4" Text="Licenses and photographs" />
+            <CheckBox x:Name="OpenLicenseBox" Click="OnChoiceChanged"
+                      Content="Only observations under CC0 or a Creative Commons license (leave out 'all rights reserved')" />
+            <CheckBox x:Name="CommercialBox" Margin="0,4,0,0" Click="OnChoiceChanged"
+                      Content="Only observations whose license allows commercial use"
+                      ToolTip="Keeps CC0, CC BY, CC BY-SA and CC BY-ND. Most iNaturalist observations are licensed for non-commercial use only, so this leaves out most of them." />
+            <CheckBox x:Name="PhotosBox" Margin="0,4,0,0" Click="OnChoiceChanged"
+                      Content="Only observations with a photograph" />
+
+            <TextBlock Style="{StaticResource Head}" Margin="0,14,0,4" Text="Other limits" />
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+              </Grid.RowDefinitions>
+              <TextBlock Grid.Row="0" Text="Native or introduced:" VerticalAlignment="Center" Margin="0,0,8,0" />
+              <ComboBox x:Name="EstablishmentBox" Grid.Row="0" Grid.Column="1" Height="24" SelectionChanged="OnChoiceChanged"
+                        ToolTip="Any, or only the species iNaturalist lists as native, or as introduced, at the place of the observation. Those lists are kept by iNaturalist's community and are not complete for every place." />
+              <TextBlock Grid.Row="1" Text="Only this observer:" VerticalAlignment="Center" Margin="0,6,8,0" />
+              <TextBox x:Name="ObserverBox" Grid.Row="1" Grid.Column="1" Height="24" Margin="0,6,0,0" VerticalContentAlignment="Center"
+                       LostFocus="OnChoiceChanged" ToolTip="The iNaturalist login name of one person, to get that person's observations only." />
+              <TextBlock Grid.Row="2" Text="Only this project:" VerticalAlignment="Center" Margin="0,6,8,0" />
+              <TextBox x:Name="ProjectBox" Grid.Row="2" Grid.Column="1" Height="24" Margin="0,6,0,0" VerticalContentAlignment="Center"
+                       LostFocus="OnChoiceChanged" ToolTip="One iNaturalist project, named by the last part of its web address (for inaturalist.org/projects/my-class-bioblitz, write my-class-bioblitz) or by its id." />
+            </Grid>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+      <!-- ============================================================ -->
+      <TabItem Header="3. Species found">
+        <DockPanel Margin="10">
+          <TextBlock DockPanel.Dock="Top" Style="{StaticResource Note}" Margin="0,0,0,8"
+                     Text="The species among the observations that match the choices on tabs 1 and 2, most observed first. Use it to see what has been recorded in a study area or a place before getting anything, or to pick the species to get. Check groups beside List only to list just their species. Click show to see photographs of a species from those observations." />
+          <DockPanel DockPanel.Dock="Top">
+            <Button x:Name="SpeciesButton" DockPanel.Dock="Left" Content="List the species" Height="26" Padding="12,0"
+                    Click="OnListSpecies"
+                    ToolTip="Ask iNaturalist for the species among the matching observations, with the number of observations of each. Nothing is written." />
+            <Button x:Name="SpeciesMoreButton" DockPanel.Dock="Right" Content="Show more" Height="26" Padding="12,0"
+                    Click="OnMoreSpecies" IsEnabled="False" ToolTip="Add the next 500 species to the list." />
+            <Button DockPanel.Dock="Right" Content="Save the list..." Height="26" Padding="12,0" Margin="0,0,8,0"
+                    Click="OnSaveSpecies" ToolTip="Save the species listed here as a CSV file." />
+            <TextBlock x:Name="SpeciesNote" Style="{StaticResource Note}" VerticalAlignment="Center" Margin="10,0" />
+          </DockPanel>
+          <WrapPanel x:Name="GroupPanel" DockPanel.Dock="Top" Margin="0,8,0,0">
+            <TextBlock Text="List only:" VerticalAlignment="Center" Margin="0,0,10,2" FontWeight="SemiBold"
+                       ToolTip="Check one or more groups to list only their species. With none checked, every species is listed. This narrows the list on this tab only: it does not change the count or the observations you get." />
+          </WrapPanel>
+          <!-- photographs of one species -->
+          <DockPanel DockPanel.Dock="Bottom" Height="222" Margin="0,8,0,0">
+            <DockPanel DockPanel.Dock="Top">
+              <Button x:Name="MorePhotosButton" DockPanel.Dock="Left" Content="More photographs" Padding="12,2"
+                      Click="OnMorePhotos" IsEnabled="False"
+                      ToolTip="Show the next few photographs of the same species." />
+              <TextBlock x:Name="PhotoNote" Style="{StaticResource Note}" Margin="12,0,0,0" VerticalAlignment="Center"
+                         Text="Click &quot;show&quot; beside a species to see photographs of it here." />
+            </DockPanel>
+            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                          Margin="0,6,0,0" Focusable="False">
+              <StackPanel x:Name="PhotoPanel" Orientation="Horizontal" />
+            </ScrollViewer>
+          </DockPanel>
+          <DataGrid x:Name="SpeciesGrid" Margin="0,8,0,0" AutoGenerateColumns="False" IsReadOnly="True"
+                    CanUserAddRows="False" HeadersVisibility="Column" SelectionMode="Single"
+                    GridLinesVisibility="Horizontal">
+            <DataGrid.Columns>
+              <DataGridTemplateColumn Width="54">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Button Content="Add" Padding="6,0" Margin="2,1" Click="OnTaxonAdd"
+                            ToolTip="Add this species to the species to get, on tab 1." />
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="Scientific name" Width="2*">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <TextBlock Margin="2,0,0,0" TextTrimming="CharacterEllipsis">
+                      <Hyperlink od:LinkContrast.Around="{Binding Foreground, RelativeSource={RelativeSource AncestorType=TextBlock}}" Click="OnTaxonLink"
+                                 ToolTip="Open this species on iNaturalist."><Run Text="{Binding Name, Mode=OneWay}" /></Hyperlink>
+                    </TextBlock>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTextColumn Header="Common name" Binding="{Binding Common}" Width="2*" />
+              <DataGridTextColumn Header="Rank" Binding="{Binding Rank}" Width="80" />
+              <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="110" />
+              <DataGridTextColumn Header="Observations" Binding="{Binding CountText}" Width="100" />
+              <DataGridTemplateColumn Header="Photographs" Width="100">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <TextBlock Margin="2,0,0,0">
+                      <Hyperlink od:LinkContrast.Around="{Binding Foreground, RelativeSource={RelativeSource AncestorType=TextBlock}}" Click="OnSpeciesPhotosLink"
+                                 ToolTip="Show a few photographs of this species from the matching observations, below the list.">show</Hyperlink>
+                    </TextBlock>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+            </DataGrid.Columns>
+          </DataGrid>
+        </DockPanel>
+      </TabItem>
+
+      <!-- ============================================================ -->
+      <TabItem Header="4. Get the observations">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+          <StackPanel Margin="10">
+            <TextBlock Style="{StaticResource Head}" Text="The request" />
+            <TextBlock x:Name="RequestText" TextWrapping="Wrap" />
+            <DockPanel Margin="0,6,0,0">
+              <Button DockPanel.Dock="Left" Content="Count again" Height="24" Padding="10,0" Click="OnCount"
+                      ToolTip="Ask iNaturalist again how many observations match the choices on tabs 1 and 2." />
+              <TextBlock x:Name="CountText" TextWrapping="Wrap" FontWeight="SemiBold" VerticalAlignment="Center" Margin="10,0,0,0" />
+            </DockPanel>
+            <TextBlock Style="{StaticResource Note}"
+                       Text="iNaturalist gives 200 observations for each request, and asks for no more than 60 requests a minute and 10,000 requests a day. This tool therefore makes no more than one request a second: about two minutes for 10,000 observations, about twenty minutes for 100,000 and about three hours for a million. A fetch can be cancelled at any time.&#10;&#10;Ten thousand requests bring 2,000,000 observations, so that is the most one run will fetch. When more than that match, the Get the observations button is greyed out. The limit respects iNaturalist, which says its service is not meant for copying its data in bulk, and it keeps iNaturalist from blocking your computer." />
+            <TextBlock Style="{StaticResource Note}" Margin="0,6,0,0">
+              <Run Text="For a large order, iNaturalist refers you to the data it publishes for bulk download:" />
+              <Hyperlink NavigateUri="https://www.inaturalist.org/pages/developers" RequestNavigate="OnLink"
+                         ToolTip="Open iNaturalist's page about its data exports in your web browser.">iNaturalist's data exports</Hyperlink><Run Text="." />
+            </TextBlock>
+
+            <TextBlock Style="{StaticResource Head}" Margin="0,14,0,4" Text="Output points (in a file geodatabase)" />
+            <DockPanel>
+              <Button DockPanel.Dock="Right" Content="Browse..." Width="84" Height="24" Margin="8,0,0,0" Click="OnBrowseOutput"
+                      ToolTip="Choose the file geodatabase to save the observations in, and type a name for the new feature class. The path is put in the box, where it can still be edited. Nothing is created until you click Get the observations." />
+              <TextBox x:Name="OutputBox" Height="24" VerticalContentAlignment="Center"
+                       ToolTip="The full path of the point feature class to create, inside a file geodatabase. An existing feature class of that name is replaced." />
+            </DockPanel>
+
+            <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+              <Button x:Name="GetButton" Content="Get the observations" Height="30" Padding="18,0" Click="OnGet"
+                      ToolTipService.ShowOnDisabled="True"
+                      ToolTip="Fetches the matching observations from iNaturalist, writes them as points with iNaturalist's fields (identification, quality grade, agreement, annotations, obscured location, license, first photograph), adds them to the active map, and reports what was written, the licenses and how to cite the data. For a polygon study area the observations are cut to the polygons. The work is done by the iNaturalist Observations geoprocessing tool, so the run is also recorded in the Geoprocessing History." />
+              <Button x:Name="CancelButton" Content="Cancel" Height="30" Padding="14,0" Margin="8,0,0,0"
+                      Click="OnCancel" IsEnabled="False" />
+            </StackPanel>
+            <ProgressBar x:Name="Progress" Height="14" Margin="0,10,0,0" Minimum="0" Maximum="100" />
+            <TextBlock x:Name="ProgressText" TextWrapping="Wrap" Margin="0,4,0,0" />
+            <RichTextBox x:Name="LogBox" Height="300" Margin="0,8,0,0" IsReadOnly="True"
+                         VerticalScrollBarVisibility="Auto" />
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+    </TabControl>
+  </DockPanel>
+</UserControl>

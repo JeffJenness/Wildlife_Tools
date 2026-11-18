@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Headless test of the GBIF point writer under ArcGIS CoreHost (ArcGIS
+       Pro installed and licensed, but not running a session of its own is
+       fine). Compiles the add-in's own OnlineData sources.
+       Run from the repo root:
+         dotnet run (project option: claude_tests/GbifWriterTest), optionally
+         followed by the path of a GBIF SIMPLE_CSV download zip. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>disable</Nullable>
+    <RootNamespace>GbifWriterTest</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\WildlifeTools\OnlineData\CredentialStore.cs" Link="CredentialStore.cs" />
+    <Compile Include="..\..\WildlifeTools\OnlineData\Gbif\GbifFilter.cs" Link="GbifFilter.cs" />
+    <Compile Include="..\..\WildlifeTools\OnlineData\Gbif\GbifClient.cs" Link="GbifClient.cs" />
+    <Compile Include="..\..\WildlifeTools\OnlineData\Gbif\GbifDownloadFile.cs" Link="GbifDownloadFile.cs" />
+    <Compile Include="..\..\WildlifeTools\OnlineData\Gbif\GbifFeatureWriter.cs" Link="GbifFeatureWriter.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="ArcGIS.Core">
+      <HintPath>C:\Program Files\ArcGIS\Pro\bin\ArcGIS.Core.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="ArcGIS.CoreHost">
+      <HintPath>C:\Program Files\ArcGIS\Pro\bin\ArcGIS.CoreHost.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

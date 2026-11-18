@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+<!-- Movebank Animal Tracks: an animal's track through its location fixes, and a download arrow, light theme -->
+<rect x="1.5" y="1.5" width="24" height="24" rx="3" fill="#E6F1E0" stroke="#3B6B35" stroke-width="1.2"/>
+<path d="M5 21 C8 14 11 20 13.5 13 C15.5 8 18 12 22 5.5" fill="none" stroke="#1F4E79" stroke-width="1.6" stroke-linecap="round" stroke-dasharray="3 1.6"/>
+<circle cx="5" cy="21" r="2.3" fill="#2E8B57" stroke="#14532D" stroke-width="0.8"/>
+<circle cx="13.5" cy="13" r="2.3" fill="#D9792B" stroke="#7A3D0E" stroke-width="0.8"/>
+<circle cx="22" cy="5.5" r="2.3" fill="#B33A2B" stroke="#6B1D14" stroke-width="0.8"/>
+<circle cx="24" cy="24" r="7" fill="#FFFFFF" stroke="#1F4E79" stroke-width="1.2"/>
+<path d="M24 19.5 V27 M20.6 23.8 L24 27.4 L27.4 23.8" fill="none" stroke="#1F4E79" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

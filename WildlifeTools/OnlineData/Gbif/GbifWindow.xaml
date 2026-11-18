@@ -1,0 +1,11 @@
+<controls:ProWindow x:Class="WildlifeTools.OnlineData.Gbif.GbifWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        xmlns:local="clr-namespace:WildlifeTools.OnlineData.Gbif"
+        Title="GBIF Species Occurrences"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Width="1040" Height="780" MinWidth="860" MinHeight="620"
+        ResizeMode="CanResizeWithGrip">
+  <local:GbifPanel x:Name="panel" />
+</controls:ProWindow>

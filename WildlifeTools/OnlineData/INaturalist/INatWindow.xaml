@@ -1,0 +1,11 @@
+<controls:ProWindow x:Class="WildlifeTools.OnlineData.INaturalist.INatWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        xmlns:local="clr-namespace:WildlifeTools.OnlineData.INaturalist"
+        Title="iNaturalist Observations"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Width="1080" Height="800" MinWidth="860" MinHeight="620"
+        ResizeMode="CanResizeWithGrip">
+  <local:INatPanel x:Name="panel" />
+</controls:ProWindow>

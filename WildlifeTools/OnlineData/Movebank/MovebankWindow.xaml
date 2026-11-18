@@ -1,0 +1,11 @@
+<controls:ProWindow x:Class="WildlifeTools.OnlineData.Movebank.MovebankWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+        xmlns:local="clr-namespace:WildlifeTools.OnlineData.Movebank"
+        Title="Movebank Animal Tracks"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Width="1040" Height="780" MinWidth="860" MinHeight="620"
+        ResizeMode="CanResizeWithGrip">
+  <local:MovebankPanel x:Name="panel" />
+</controls:ProWindow>

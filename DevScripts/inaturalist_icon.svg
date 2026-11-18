@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+<!-- iNaturalist Observations: an observer's binoculars over a map tile, and a download arrow, light theme -->
+<rect x="1.5" y="1.5" width="24" height="24" rx="3" fill="#E6F1E0" stroke="#3B6B35" stroke-width="1.2"/>
+<rect x="5.2" y="7" width="6.2" height="5" rx="1.2" fill="#3B6B35"/>
+<rect x="15.6" y="7" width="6.2" height="5" rx="1.2" fill="#3B6B35"/>
+<rect x="11" y="9" width="5" height="3" fill="#3B6B35"/>
+<circle cx="8.3" cy="15.5" r="4.6" fill="#74AC00" stroke="#2F5A12" stroke-width="1.1"/>
+<circle cx="18.7" cy="15.5" r="4.6" fill="#74AC00" stroke="#2F5A12" stroke-width="1.1"/>
+<circle cx="8.3" cy="15.5" r="2" fill="#F4FAEC"/>
+<circle cx="18.7" cy="15.5" r="2" fill="#F4FAEC"/>
+<circle cx="24" cy="24" r="7" fill="#FFFFFF" stroke="#1F4E79" stroke-width="1.2"/>
+<path d="M24 19.5 V27 M20.6 23.8 L24 27.4 L27.4 23.8" fill="none" stroke="#1F4E79" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

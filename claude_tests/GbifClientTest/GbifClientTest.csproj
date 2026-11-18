@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Headless test of the GBIF client behind the species occurrence tool.
+       Compiles the add-in's own OnlineData sources (no ArcGIS types in
+       them) and talks to the live GBIF services, so it needs the internet.
+       Run from the repo root:
+         dotnet run (project option: claude_tests/GbifClientTest)
+       Add the word "account" to also test the signed-in calls with the
+       GBIF sign-in stored in Windows Credential Manager. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>disable</Nullable>
+    <RootNamespace>GbifClientTest</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\WildlifeTools\OnlineData\CredentialStore.cs" Link="CredentialStore.cs" />
+    <Compile Include="..\..\WildlifeTools\OnlineData\Gbif\GbifFilter.cs" Link="GbifFilter.cs" />
+    <Compile Include="..\..\WildlifeTools\OnlineData\Gbif\GbifClient.cs" Link="GbifClient.cs" />
+    <Compile Include="..\..\WildlifeTools\OnlineData\Gbif\GbifDownloadFile.cs" Link="GbifDownloadFile.cs" />
+  </ItemGroup>
+</Project>

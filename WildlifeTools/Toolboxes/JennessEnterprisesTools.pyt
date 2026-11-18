@@ -97,6 +97,12 @@ _HELP_PAGES = {
     "MahalanobisPoints": "home-range/mahalanobis-distance-at-points.html",
     "MahalanobisRaster": "home-range/mahalanobis-distance-raster.html",
     "MaximumInscribedGeometry": "geometric-tools/maximum-inscribed-geometry.html",
+    "MovebankAnimalTracks": "data-tools/movebank-animal-tracks.html",
+    "INaturalistObservations": "data-tools/inaturalist-observations.html",
+    "MTBSBurnSeverity": "data-tools/mtbs-burn-severity.html",
+    "RAVGBurnSeverity": "data-tools/ravg-burn-severity.html",
+    "BAERBurnSeverity": "data-tools/baer-burn-severity.html",
+    "LoadBurnSeverityBundle": "data-tools/load-burn-severity-bundle.html",
     "MultiSunHillshade": "cartography/multi-sun-hillshade.html",
     "NormalizeExistingHSM": "corridor-designer-tools/normalize-existing-hsm.html",
     "PatchAnalysis": "corridor-designer-tools/patch-analysis.html",
@@ -111,6 +117,7 @@ _HELP_PAGES = {
     "SimpleTPI": "topographic-analysis/topographic-position-index.html",
     "SlopePositionClassification": "topographic-analysis/slope-position-classification.html",
     "SlopeZonalStatisticsAsTable": "topographic-analysis/slope-zonal-statistics-as-table.html",
+    "GBIFSpeciesOccurrences": "data-tools/gbif-species-occurrences.html",
     "SpatiallyBalancedSample": "geometric-tools/spatially-balanced-sample.html",
     "SplitLinesIntoSegments": "topographic-analysis/split-lines-into-topography-segments.html",
     "SurfaceAreaRatio": "topographic-analysis/surface-area-and-ratio.html",
@@ -205,6 +212,11 @@ import unit_converter  # noqa: E402
 import crop_plots  # noqa: E402
 import weighted_stats  # noqa: E402
 import raster_extremes  # noqa: E402
+import gbif_occurrences  # noqa: E402
+import movebank_tracks  # noqa: E402
+import inaturalist_observations  # noqa: E402
+import burn_severity  # noqa: E402
+import burn_severity_bundle  # noqa: E402
 import tool_metadata  # noqa: E402
 import error_report   # noqa: E402
 
@@ -549,7 +561,11 @@ class Toolbox(object):
                       CompareAccuracyAnalyses, AccuracySampleSize,
                       SelectRandomRecords, ConvertFieldUnits,
                       PlotDesigner, CreateArrayAlongAxes,
-                      FusePlotsAndField, AddRandomNumbers]
+                      FusePlotsAndField, AddRandomNumbers,
+                      GBIFSpeciesOccurrences, MovebankAnimalTracks,
+                      INaturalistObservations, MTBSBurnSeverity,
+                      RAVGBurnSeverity, BAERBurnSeverity,
+                      LoadBurnSeverityBundle]
 
 
 class LoCoHStandard(object):
@@ -17949,3 +17965,1141 @@ class AddRandomNumbers(object):
                 messages=messages)
             P["out_table"].value = P["in_table"].valueAsText
         _crop_error_boundary(self, parameters, messages, body)
+
+
+class GBIFSpeciesOccurrences(object):
+    """GBIF Species Occurrences -- occurrence records from GBIF.org as
+    points. See ``gbif_occurrences.run``. The GBIF Species Occurrences
+    window runs this tool for its last step, so every run of the window
+    leaves a Geoprocessing History entry."""
+
+    def __init__(self):
+        self.label = "GBIF Species Occurrences"
+        self.description = (
+            "Gets species occurrence records from the Global Biodiversity "
+            "Information Facility (GBIF.org) and writes them as a point "
+            "feature class, for the species or groups, study area, dates "
+            "and kinds of record you choose. The records are fetched "
+            "directly (up to 100,000), or through a GBIF download that "
+            "GBIF prepares under your free account and that carries a DOI "
+            "to cite, or from a download that already exists. This is the "
+            "scripting form of the GBIF Species Occurrences window, "
+            "which finds species by common name, lists the species and "
+            "sources of an area, shows photographs, and then runs this "
+            "tool. Works at every license level.")
+        self.category = "Data Tools"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        G = gbif_occurrences
+        taxa = arcpy.Parameter(
+            displayName="Species or groups (scientific names or GBIF taxon "
+                        "keys, separated by semicolons)",
+            name="taxa", datatype="GPString", parameterType="Optional",
+            direction="Input")
+        study_area = arcpy.Parameter(
+            displayName="Study area polygons (selection honored)",
+            name="study_area", datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Optional", direction="Input")
+        try:
+            study_area.filter.list = ["Polygon"]
+        except Exception:
+            pass
+        extent = arcpy.Parameter(
+            displayName="Or a rectangle as the study area",
+            name="extent", datatype="GPExtent", parameterType="Optional",
+            direction="Input")
+        country = arcpy.Parameter(
+            displayName="Country (two-letter code, such as US)",
+            name="country", datatype="GPString", parameterType="Optional",
+            direction="Input")
+        state = arcpy.Parameter(
+            displayName="State or province (exactly as the records spell "
+                        "it, such as Arizona)",
+            name="state_province", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        no_coords = arcpy.Parameter(
+            displayName="Also get records that have no coordinates",
+            name="include_no_coordinates", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        no_coords.value = False
+        year_from = arcpy.Parameter(
+            displayName="First year", name="year_from", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        year_to = arcpy.Parameter(
+            displayName="Last year", name="year_to", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        months = arcpy.Parameter(
+            displayName="Months (empty for all)", name="months",
+            datatype="GPLong", parameterType="Optional", direction="Input",
+            multiValue=True)
+        months.filter.type = "ValueList"
+        months.filter.list = list(range(1, 13))
+        kinds = arcpy.Parameter(
+            displayName="Kinds of record", name="record_kinds",
+            datatype="GPString", parameterType="Optional", direction="Input",
+            multiValue=True)
+        kinds.filter.type = "ValueList"
+        kinds.filter.list = list(G.RECORD_KIND_NAMES)
+        kinds.values = list(G.RECORD_KIND_DEFAULT)
+        no_issues = arcpy.Parameter(
+            displayName="Leave out records whose location GBIF flags as a "
+                        "problem",
+            name="exclude_location_problems", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        no_issues.value = True
+        no_centroids = arcpy.Parameter(
+            displayName="Leave out records placed at the center of a "
+                        "country or region",
+            name="exclude_centroids", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        no_centroids.value = True
+        present = arcpy.Parameter(
+            displayName="Presence records only", name="present_only",
+            datatype="GPBoolean", parameterType="Optional",
+            direction="Input")
+        present.value = True
+        no_nc = arcpy.Parameter(
+            displayName="Leave out records licensed for non-commercial use "
+                        "only (CC BY-NC)",
+            name="exclude_noncommercial", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        no_nc.value = False
+        images = arcpy.Parameter(
+            displayName="Only records with a photograph",
+            name="images_only", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        images.value = False
+        uncert = arcpy.Parameter(
+            displayName="Coordinate uncertainty no more than (meters)",
+            name="max_uncertainty", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        excluded = arcpy.Parameter(
+            displayName="Sources to leave out (GBIF dataset keys, "
+                        "separated by semicolons)",
+            name="excluded_sources", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        method = arcpy.Parameter(
+            displayName="How to get the records", name="method",
+            datatype="GPString", parameterType="Required", direction="Input")
+        method.filter.type = "ValueList"
+        method.filter.list = list(G.METHODS)
+        method.value = G.METHOD_FETCH
+        existing = arcpy.Parameter(
+            displayName="Existing download (its GBIF key, or the path of "
+                        "its zip file)",
+            name="existing_download", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        max_wait = arcpy.Parameter(
+            displayName="Longest wait for GBIF to prepare a download "
+                        "(minutes)",
+            name="max_wait_minutes", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        max_wait.value = 60
+        out_fc = arcpy.Parameter(
+            displayName="Output point feature class (in a file "
+                        "geodatabase)",
+            name="out_features", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        out_key = arcpy.Parameter(
+            displayName="GBIF download key", name="download_key",
+            datatype="GPString", parameterType="Derived", direction="Output")
+        out_doi = arcpy.Parameter(
+            displayName="DOI of the download", name="download_doi",
+            datatype="GPString", parameterType="Derived", direction="Output")
+        out_zip = arcpy.Parameter(
+            displayName="GBIF's original zip file", name="download_file",
+            datatype="GPString", parameterType="Derived", direction="Output")
+        for p in (country, state, no_coords):
+            p.category = "Region and records without coordinates"
+        for p in (year_from, year_to, months):
+            p.category = "Dates"
+        for p in (kinds, no_issues, no_centroids, present, no_nc, images,
+                  uncert, excluded):
+            p.category = "Which records"
+        return [taxa, study_area, extent, country, state, no_coords,
+                year_from, year_to, months, kinds, no_issues, no_centroids,
+                present, no_nc, images, uncert, excluded, method, existing,
+                max_wait, out_fc, out_key, out_doi, out_zip]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        G = gbif_occurrences
+        m = P["method"].valueAsText or G.METHOD_FETCH
+        P["max_wait_minutes"].enabled = m != G.METHOD_FETCH
+        outp = P["out_features"]
+        if not outp.altered and not outp.valueAsText:
+            try:
+                ws = arcpy.env.workspace
+                if ws and mahalanobis.is_gdb_workspace(ws) \
+                        and not mahalanobis.is_memory_workspace(ws):
+                    outp.value = _unique_name("GBIF_occurrences", ws)
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        G = gbif_occurrences
+        m = P["method"].valueAsText or G.METHOD_FETCH
+        ex = (P["existing_download"].valueAsText or "").strip()
+        if m == G.METHOD_LOAD:
+            if not ex:
+                P["existing_download"].setErrorMessage(
+                    "Give the download's GBIF key (such as "
+                    "0012345-260101123456789) or the path of its zip file.")
+            elif not G.KEY_RE.match(ex.strip('"')) \
+                    and not os.path.isfile(ex.strip('"')):
+                P["existing_download"].setErrorMessage(
+                    "This is neither a GBIF download key (such as "
+                    "0012345-260101123456789) nor the path of an existing "
+                    "zip file.")
+        elif ex:
+            P["existing_download"].setErrorMessage(
+                "An existing download is named, so choose the method \"{}\", "
+                "or clear this box to ask GBIF for the records afresh."
+                .format(G.METHOD_LOAD))
+        if m == G.METHOD_DOWNLOAD and not G.stored_user_name():
+            P["method"].setErrorMessage(
+                "A GBIF download needs your GBIF account, and no sign-in is "
+                "stored on this computer. Open the Species Occurrences "
+                "(GBIF) window (Data Tools, Online Data), click Sign in on "
+                "tab 4 and leave Remember checked. The tool reads the "
+                "sign-in from Windows Credential Manager; it is never a "
+                "parameter.")
+        if P["study_area"].valueAsText and P["extent"].valueAsText:
+            P["extent"].setErrorMessage(
+                "Give a study area layer or a rectangle, not both.")
+        if m != G.METHOD_LOAD and not (
+                (P["taxa"].valueAsText or "").strip()
+                or P["study_area"].valueAsText or P["extent"].valueAsText
+                or (P["country"].valueAsText or "").strip()):
+            P["taxa"].setErrorMessage(
+                "Choose at least one species or group, a study area, or a "
+                "country. With none of them, the request is every record "
+                "GBIF holds.")
+        c = (P["country"].valueAsText or "").strip()
+        if c and not (len(c) == 2 and c.isalpha()):
+            P["country"].setErrorMessage(
+                "Give the two-letter country code, such as US, CA or MX.")
+        y0, y1 = P["year_from"].value, P["year_to"].value
+        for nm, y in (("year_from", y0), ("year_to", y1)):
+            if y is not None and not (1500 <= int(y) <= 2200):
+                P[nm].setErrorMessage("Give a year such as 1990.")
+        if y0 is not None and y1 is not None and int(y0) > int(y1):
+            P["year_to"].setErrorMessage(
+                "The first year is later than the last year.")
+        u = P["max_uncertainty"].value
+        if u is not None and float(u) <= 0:
+            P["max_uncertainty"].setErrorMessage(
+                "Give a number of meters greater than zero, or leave empty.")
+        w = P["max_wait_minutes"].value
+        if w is not None and int(w) < 1:
+            P["max_wait_minutes"].setErrorMessage("Give at least 1 minute.")
+        if P["out_features"].valueAsText:
+            why = G.check_output(P["out_features"].valueAsText)
+            if why:
+                P["out_features"].setErrorMessage(why)
+        return
+
+    def execute(self, parameters, messages):
+        P = {p.name: p for p in parameters}
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(gbif_occurrences)
+            G = gbif_occurrences
+            layer = None
+            area_words = None
+            sa = P["study_area"]
+            if sa.valueAsText:
+                layer = sa.value or sa.valueAsText
+                area_words = "the polygons of " + os.path.basename(
+                    str(sa.valueAsText))
+            ext = None
+            if P["extent"].valueAsText:
+                ext = _extent_arg(P["extent"])
+                if not isinstance(ext, arcpy.Extent):
+                    raise G.GbifError("The rectangle could not be read.")
+                area_words = "a rectangle"
+            mv = P["months"].values
+            kv = P["record_kinds"].values
+            out = G.run(
+                P["out_features"].valueAsText,
+                method=P["method"].valueAsText,
+                taxa=P["taxa"].valueAsText,
+                study_area=layer, extent=ext,
+                country=P["country"].valueAsText,
+                state_province=P["state_province"].valueAsText,
+                include_no_coordinates=bool(
+                    P["include_no_coordinates"].value),
+                year_from=P["year_from"].value, year_to=P["year_to"].value,
+                months=[int(v) for v in mv] if mv else [],
+                record_kinds=[str(v) for v in kv] if kv else [],
+                exclude_location_problems=bool(
+                    P["exclude_location_problems"].value),
+                exclude_centroids=bool(P["exclude_centroids"].value),
+                present_only=bool(P["present_only"].value),
+                exclude_noncommercial=bool(
+                    P["exclude_noncommercial"].value),
+                images_only=bool(P["images_only"].value),
+                max_uncertainty_m=P["max_uncertainty"].value,
+                excluded_sources=P["excluded_sources"].valueAsText,
+                existing_download=P["existing_download"].valueAsText,
+                max_wait_minutes=P["max_wait_minutes"].value or 60,
+                messages=messages, area_words=area_words)
+            P["download_key"].value = out.get("download_key") or ""
+            P["download_doi"].value = out.get("doi") or ""
+            P["download_file"].value = out.get("download_file") or ""
+        except gbif_occurrences.Cancelled as e:
+            messages.addWarningMessage(str(e) or "Cancelled.")
+            try:
+                if arcpy.Exists(P["out_features"].valueAsText):
+                    arcpy.management.Delete(P["out_features"].valueAsText)
+            except Exception:
+                pass
+        except gbif_occurrences.GbifError as e:
+            # a failure the user can act on: an error message and a clean
+            # return fail the tool without a traceback
+            messages.addErrorMessage(str(e))
+        except arcpy.ExecuteError as e:
+            messages.addErrorMessage(str(e) or arcpy.GetMessages(2))
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+
+class MovebankAnimalTracks(object):
+    """Movebank Animal Tracks -- a published Movebank dataset, or a
+    Movebank study read with the user's Movebank account, as points and
+    track lines. See ``movebank_tracks.run``. The Movebank Animal
+    Tracks window runs this tool for its last step, so every run of the
+    window leaves a Geoprocessing History entry."""
+
+    def __init__(self):
+        self.label = "Movebank Animal Tracks"
+        self.description = (
+            "Loads an animal tracking dataset published in the Movebank "
+            "Data Repository as points (one for every location fix), as "
+            "track lines (one for every animal, through its fixes in "
+            "order of time), or both. The dataset is named by its DOI. "
+            "Its files are fetched without an account and kept on disk, "
+            "and its license and citation are recorded with the output. "
+            "A study in Movebank itself can be loaded as well, named by "
+            "its study ID: that needs a Movebank sign-in, the owner's "
+            "permission to download, and your acceptance of the study's "
+            "license terms. A dataset already on disk can be loaded "
+            "again from its folder. This is the scripting form of the "
+            "Movebank Animal Tracks window, which searches the repository "
+            "and Movebank and then runs this tool. Works at every "
+            "license level.")
+        self.category = "Data Tools"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        M = movebank_tracks
+        dataset = arcpy.Parameter(
+            displayName="Dataset (the DOI of a dataset in the Movebank "
+                        "Data Repository, a Movebank study such as "
+                        "study 433126, or a folder or data file already "
+                        "on disk)",
+            name="dataset", datatype="GPString", parameterType="Required",
+            direction="Input")
+        output = arcpy.Parameter(
+            displayName="What to create", name="output",
+            datatype="GPString", parameterType="Required", direction="Input")
+        output.filter.type = "ValueList"
+        output.filter.list = list(M.OUTPUTS)
+        output.value = M.OUT_BOTH
+        out_points = arcpy.Parameter(
+            displayName="Output points (in a file geodatabase)",
+            name="out_points", datatype="DEFeatureClass",
+            parameterType="Optional", direction="Output")
+        out_lines = arcpy.Parameter(
+            displayName="Output track lines (in a file geodatabase)",
+            name="out_lines", datatype="DEFeatureClass",
+            parameterType="Optional", direction="Output")
+        animals = arcpy.Parameter(
+            displayName="Only these animals (their identifiers, separated "
+                        "by semicolons; empty for all)",
+            name="animals", datatype="GPString", parameterType="Optional",
+            direction="Input")
+        date_from = arcpy.Parameter(
+            displayName="First date (UTC)", name="date_from",
+            datatype="GPDate", parameterType="Optional", direction="Input")
+        date_to = arcpy.Parameter(
+            displayName="Last date (UTC)", name="date_to",
+            datatype="GPDate", parameterType="Optional", direction="Input")
+        flagged = arcpy.Parameter(
+            displayName="Include fixes the data owner flagged as outliers",
+            name="include_flagged", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        flagged.value = False
+        out_doi = arcpy.Parameter(
+            displayName="DOI of the dataset", name="dataset_doi",
+            datatype="GPString", parameterType="Derived", direction="Output")
+        out_folder = arcpy.Parameter(
+            displayName="Folder of the dataset's original files",
+            name="download_folder", datatype="GPString",
+            parameterType="Derived", direction="Output")
+        # after every other INPUT and before the derived outputs: ArcGIS Pro
+        # restores a dialog's remembered values by position, so a parameter
+        # put among the inputs would shift them; the derived outputs hold
+        # no remembered value
+        accept = arcpy.Parameter(
+            displayName="I have read and accept the study's license terms "
+                        "(a Movebank study only)",
+            name="accept_terms", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        accept.value = False
+        accept.category = "A study read with a Movebank account"
+        for p in (animals, date_from, date_to, flagged):
+            p.category = "Which fixes"
+        return [dataset, output, out_points, out_lines, animals, date_from,
+                date_to, flagged, accept, out_doi, out_folder]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        M = movebank_tracks
+        o = P["output"].valueAsText or M.OUT_BOTH
+        P["out_points"].enabled = o in (M.OUT_BOTH, M.OUT_POINTS)
+        P["out_lines"].enabled = o in (M.OUT_BOTH, M.OUT_LINES)
+        # a disabled OUTPUT that still holds a path would have its dataset
+        # deleted by the geoprocessing framework on Run: always empty it
+        for nm in ("out_points", "out_lines"):
+            if not P[nm].enabled and P[nm].valueAsText:
+                P[nm].value = None
+        try:
+            ws = arcpy.env.workspace
+            if ws and mahalanobis.is_gdb_workspace(ws) \
+                    and not mahalanobis.is_memory_workspace(ws):
+                for nm, stem in (("out_points", "Movebank_points"),
+                                 ("out_lines", "Movebank_tracks")):
+                    p = P[nm]
+                    if p.enabled and not p.altered and not p.valueAsText:
+                        p.value = _unique_name(stem, ws)
+        except Exception:
+            pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        M = movebank_tracks
+        for nm, what in (("out_points", "points"),
+                         ("out_lines", "track lines")):
+            p = P[nm]
+            if not p.enabled:
+                continue
+            if not p.valueAsText:
+                p.setErrorMessage(
+                    "Give the output feature class for the {}.".format(what))
+            else:
+                why = M.check_output(p.valueAsText)
+                if why:
+                    p.setErrorMessage(why)
+        a, b = P["out_points"], P["out_lines"]
+        if a.enabled and b.enabled and a.valueAsText and b.valueAsText \
+                and a.valueAsText.lower() == b.valueAsText.lower():
+            b.setErrorMessage(
+                "The points and the track lines need different names.")
+        d0, d1 = P["date_from"].value, P["date_to"].value
+        if d0 and d1 and d0 > d1:
+            P["date_to"].setErrorMessage(
+                "The first date is later than the last date.")
+        return
+
+    def execute(self, parameters, messages):
+        P = {p.name: p for p in parameters}
+        outs = [P["out_points"].valueAsText, P["out_lines"].valueAsText]
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            import movebank_account
+            importlib.reload(movebank_account)
+            importlib.reload(movebank_tracks)
+            M = movebank_tracks
+            r = M.run(
+                P["dataset"].valueAsText,
+                output=P["output"].valueAsText,
+                out_points=P["out_points"].valueAsText,
+                out_lines=P["out_lines"].valueAsText,
+                animals=P["animals"].valueAsText,
+                date_from=P["date_from"].value,
+                date_to=P["date_to"].value,
+                include_flagged=bool(P["include_flagged"].value),
+                accept_terms=bool(P["accept_terms"].value),
+                messages=messages)
+            P["dataset_doi"].value = r.get("doi") or ""
+            P["download_folder"].value = r.get("folder") or ""
+        except movebank_tracks.Cancelled:
+            messages.addWarningMessage(
+                "Cancelled. Files already fetched stay in the download "
+                "folder and are not fetched again next time.")
+            for o in outs:
+                try:
+                    if o and arcpy.Exists(o):
+                        arcpy.management.Delete(o)
+                except Exception:
+                    pass
+        except movebank_tracks.MovebankError as e:
+            # a failure the user can act on: an error message and a clean
+            # return fail the tool without a traceback
+            messages.addErrorMessage(str(e))
+        except arcpy.ExecuteError as e:
+            messages.addErrorMessage(str(e) or arcpy.GetMessages(2))
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+
+class INaturalistObservations(object):
+    """iNaturalist Observations -- observations from iNaturalist.org as
+    points. See ``inaturalist_observations.run``. The iNaturalist
+    Observations window runs this tool for its last step, so every run
+    of the window leaves a Geoprocessing History entry."""
+
+    def __init__(self):
+        self.label = "iNaturalist Observations"
+        self.description = (
+            "Gets observations straight from iNaturalist.org and writes "
+            "them as a point feature class, for the species or groups, "
+            "study area or named place, dates and quality grades you "
+            "choose. GBIF holds only the research-grade iNaturalist "
+            "observations under three licenses; this tool also reaches "
+            "the observations that still need an identification, the "
+            "casual ones and the ones under other terms, and it carries "
+            "fields GBIF does not: how many identifiers agreed, the "
+            "annotations, and whether the location was obscured. No "
+            "account is needed. Works at every license level.")
+        self.category = "Data Tools"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        N = inaturalist_observations
+        taxa = arcpy.Parameter(
+            displayName="Species or groups (scientific or common names, or "
+                        "iNaturalist taxon ids, separated by semicolons)",
+            name="taxa", datatype="GPString", parameterType="Optional",
+            direction="Input")
+        study_area = arcpy.Parameter(
+            displayName="Study area polygons (selection honored)",
+            name="study_area", datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Optional", direction="Input")
+        try:
+            study_area.filter.list = ["Polygon"]
+        except Exception:
+            pass
+        extent = arcpy.Parameter(
+            displayName="Or a rectangle as the study area",
+            name="extent", datatype="GPExtent", parameterType="Optional",
+            direction="Input")
+        place = arcpy.Parameter(
+            displayName="Or an iNaturalist place (its name, such as "
+                        "Arizona, US, or its place id)",
+            name="place", datatype="GPString", parameterType="Optional",
+            direction="Input")
+        grades = arcpy.Parameter(
+            displayName="Quality grades", name="quality_grades",
+            datatype="GPString", parameterType="Optional", direction="Input",
+            multiValue=True)
+        grades.filter.type = "ValueList"
+        grades.filter.list = list(N.GRADES)
+        grades.values = list(N.GRADE_DEFAULT)
+        no_captive = arcpy.Parameter(
+            displayName="Leave out captive or cultivated organisms",
+            name="exclude_captive", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        no_captive.value = True
+        date_from = arcpy.Parameter(
+            displayName="Observed on or after", name="date_from",
+            datatype="GPDate", parameterType="Optional", direction="Input")
+        date_to = arcpy.Parameter(
+            displayName="Observed on or before", name="date_to",
+            datatype="GPDate", parameterType="Optional", direction="Input")
+        months = arcpy.Parameter(
+            displayName="Months (empty for all)", name="months",
+            datatype="GPLong", parameterType="Optional", direction="Input",
+            multiValue=True)
+        months.filter.type = "ValueList"
+        months.filter.list = list(range(1, 13))
+        open_lic = arcpy.Parameter(
+            displayName="Only observations under CC0 or a Creative Commons "
+                        "license",
+            name="open_license_only", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        open_lic.value = False
+        no_nc = arcpy.Parameter(
+            displayName="Only observations whose license allows commercial "
+                        "use",
+            name="exclude_noncommercial", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        no_nc.value = False
+        photos = arcpy.Parameter(
+            displayName="Only observations with a photograph",
+            name="photos_only", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        photos.value = False
+        uncert = arcpy.Parameter(
+            displayName="Stated accuracy no more than (meters)",
+            name="max_uncertainty", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        no_obscured = arcpy.Parameter(
+            displayName="Leave out observations whose location is obscured",
+            name="exclude_obscured", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        no_obscured.value = False
+        estab = arcpy.Parameter(
+            displayName="Native or introduced (as iNaturalist lists the "
+                        "taxon for the place of the observation)",
+            name="establishment", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        estab.filter.type = "ValueList"
+        estab.filter.list = list(N.ESTABLISHMENTS)
+        estab.value = N.ESTABLISHMENT_ANY
+        observer = arcpy.Parameter(
+            displayName="Only this observer (iNaturalist login name)",
+            name="observer", datatype="GPString", parameterType="Optional",
+            direction="Input")
+        project = arcpy.Parameter(
+            displayName="Only this iNaturalist project (the last part of "
+                        "its web address, or its id)",
+            name="project", datatype="GPString", parameterType="Optional",
+            direction="Input")
+        out_fc = arcpy.Parameter(
+            displayName="Output point feature class (in a file "
+                        "geodatabase)",
+            name="out_features", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        out_n = arcpy.Parameter(
+            displayName="Points written", name="points_written",
+            datatype="GPLong", parameterType="Derived", direction="Output")
+        for p in (date_from, date_to, months):
+            p.category = "Dates"
+        for p in (grades, no_captive, open_lic, no_nc, photos, uncert,
+                  no_obscured, estab, observer, project):
+            p.category = "Which observations"
+        return [taxa, study_area, extent, place, grades, no_captive,
+                date_from, date_to, months, open_lic, no_nc, photos, uncert,
+                no_obscured, estab, observer, project, out_fc, out_n]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        outp = P["out_features"]
+        if not outp.altered and not outp.valueAsText:
+            try:
+                ws = arcpy.env.workspace
+                if ws and mahalanobis.is_gdb_workspace(ws) \
+                        and not mahalanobis.is_memory_workspace(ws):
+                    outp.value = _unique_name("iNaturalist_observations", ws)
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        N = inaturalist_observations
+        if P["study_area"].valueAsText and P["extent"].valueAsText:
+            P["extent"].setErrorMessage(
+                "Give a study area layer or a rectangle, not both.")
+        if not ((P["taxa"].valueAsText or "").strip()
+                or P["study_area"].valueAsText or P["extent"].valueAsText
+                or (P["place"].valueAsText or "").strip()
+                or (P["observer"].valueAsText or "").strip()
+                or (P["project"].valueAsText or "").strip()):
+            P["taxa"].setErrorMessage(
+                "Choose at least one species or group, a study area, an "
+                "iNaturalist place, an observer or a project. With none of "
+                "them, the request is every observation iNaturalist holds.")
+        gv = [str(v) for v in (P["quality_grades"].values or [])]
+        if gv and N.GRADE_RESEARCH not in gv or len(gv) > 1:
+            P["quality_grades"].setWarningMessage(
+                "Observations that are not research grade have an "
+                "identification nobody has confirmed, or lack what is "
+                "needed to check it. The output's qualityGrade field "
+                "tells them apart.")
+        d0, d1 = P["date_from"].value, P["date_to"].value
+        if d0 and d1 and d0 > d1:
+            P["date_to"].setErrorMessage(
+                "The first date is later than the last date.")
+        u = P["max_uncertainty"].value
+        if u is not None and float(u) <= 0:
+            P["max_uncertainty"].setErrorMessage(
+                "Give a number of meters greater than zero, or leave empty.")
+        if P["out_features"].valueAsText:
+            why = N.check_output(P["out_features"].valueAsText)
+            if why:
+                P["out_features"].setErrorMessage(why)
+        return
+
+    def execute(self, parameters, messages):
+        P = {p.name: p for p in parameters}
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(gbif_occurrences)
+            importlib.reload(inaturalist_observations)
+            N = inaturalist_observations
+            layer = None
+            area_words = None
+            sa = P["study_area"]
+            if sa.valueAsText:
+                layer = sa.value or sa.valueAsText
+                area_words = "the polygons of " + os.path.basename(
+                    str(sa.valueAsText))
+            ext = None
+            if P["extent"].valueAsText:
+                ext = _extent_arg(P["extent"])
+                if not isinstance(ext, arcpy.Extent):
+                    raise N.INatError("The rectangle could not be read.")
+                area_words = "a rectangle"
+            mv = P["months"].values
+            gv = P["quality_grades"].values
+            out = N.run(
+                P["out_features"].valueAsText,
+                taxa=P["taxa"].valueAsText,
+                study_area=layer, extent=ext,
+                place=P["place"].valueAsText,
+                quality_grades=[str(v) for v in gv] if gv else None,
+                exclude_captive=P["exclude_captive"].value is not False,
+                date_from=P["date_from"].value, date_to=P["date_to"].value,
+                months=[int(v) for v in mv] if mv else [],
+                open_license_only=bool(P["open_license_only"].value),
+                exclude_noncommercial=bool(
+                    P["exclude_noncommercial"].value),
+                photos_only=bool(P["photos_only"].value),
+                max_uncertainty_m=P["max_uncertainty"].value,
+                exclude_obscured=bool(P["exclude_obscured"].value),
+                establishment=P["establishment"].valueAsText,
+                observer=P["observer"].valueAsText,
+                project=P["project"].valueAsText,
+                messages=messages, area_words=area_words)
+            P["points_written"].value = int(out.get("written") or 0)
+        except inaturalist_observations.Cancelled:
+            messages.addWarningMessage("Cancelled.")
+            try:
+                if arcpy.Exists(P["out_features"].valueAsText):
+                    arcpy.management.Delete(P["out_features"].valueAsText)
+            except Exception:
+                pass
+        except inaturalist_observations.INatError as e:
+            # a failure the user can act on: an error message and a clean
+            # return fail the tool without a traceback
+            messages.addErrorMessage(str(e))
+        except arcpy.ExecuteError as e:
+            messages.addErrorMessage(str(e) or arcpy.GetMessages(2))
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+
+
+class _BurnSeverityTool(object):
+    """The shared body of the three Burn Severity tools (MTBS, RAVG and
+    BAER). See ``burn_severity.run``. Each program's window runs its
+    tool for the last step, so every run of a window leaves a
+    Geoprocessing History entry."""
+
+    PROGRAM = "MTBS"
+    LABEL = "MTBS Burn Severity"
+    WHAT = ""
+
+    def __init__(self):
+        self.label = self.LABEL
+        self.description = self.WHAT
+        self.category = "Data Tools"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        F = burn_severity
+        info = F.PROGRAMS[self.PROGRAM]
+        fire_name = arcpy.Parameter(
+            displayName="Fire name (all or part of it; several separated "
+                        "by semicolons)",
+            name="fire_name", datatype="GPString", parameterType="Optional",
+            direction="Input")
+        year_from = arcpy.Parameter(
+            displayName="First year", name="year_from", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        year_to = arcpy.Parameter(
+            displayName="Last year", name="year_to", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        study_area = arcpy.Parameter(
+            displayName="Study area polygons (selection honored)",
+            name="study_area", datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Optional", direction="Input")
+        try:
+            study_area.filter.list = ["Polygon"]
+        except Exception:
+            pass
+        extent = arcpy.Parameter(
+            displayName="Or a rectangle as the study area",
+            name="extent", datatype="GPExtent", parameterType="Optional",
+            direction="Input")
+        fire_ids = arcpy.Parameter(
+            displayName="Fire IDs (the programs' event identifiers, "
+                        "separated by semicolons)",
+            name="fire_ids", datatype="GPString", parameterType="Optional",
+            direction="Input")
+        out_fc = arcpy.Parameter(
+            displayName="Output fire perimeters (in a file geodatabase)",
+            name="out_perimeters", datatype="DEFeatureClass",
+            parameterType="Required", direction="Output")
+        products = arcpy.Parameter(
+            displayName="Classified rasters to fetch for each fire",
+            name="products", datatype="GPString", parameterType="Optional",
+            direction="Input", multiValue=True)
+        products.filter.type = "ValueList"
+        products.filter.list = list(info["products"])
+        products.values = list(info["products"])
+        products.category = "Classified rasters"
+        raster_ws = arcpy.Parameter(
+            displayName="Folder or file geodatabase for the rasters "
+                        "(empty: the geodatabase of the perimeters)",
+            name="raster_workspace", datatype="DEWorkspace",
+            parameterType="Optional", direction="Input")
+        raster_ws.category = "Classified rasters"
+        email = arcpy.Parameter(
+            displayName="Email address for a request of the fires' data "
+                        "bundles (empty: no request)",
+            name="bundle_email", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        email.category = "Data bundles, by email"
+        images = arcpy.Parameter(
+            displayName="Include the pre-fire and post-fire images in "
+                        "the bundles",
+            name="bundle_images", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        images.value = False
+        images.category = "Data bundles, by email"
+        projection = arcpy.Parameter(
+            displayName="Projection of the bundles",
+            name="bundle_projection", datatype="GPString",
+            parameterType="Optional", direction="Input")
+        projection.filter.type = "ValueList"
+        projection.filter.list = list(F.PROJECTIONS)
+        projection.value = F.PROJECTIONS[0]
+        projection.category = "Data bundles, by email"
+        found = arcpy.Parameter(
+            displayName="Fires found", name="fires_found", datatype="GPLong",
+            parameterType="Derived", direction="Output")
+        rasters = arcpy.Parameter(
+            displayName="Classified rasters", name="out_rasters",
+            datatype="DERasterDataset", parameterType="Derived",
+            direction="Output", multiValue=True)
+        return [fire_name, year_from, year_to, study_area, extent, fire_ids,
+                out_fc, products, raster_ws, email, images, projection,
+                found, rasters]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        if not P["out_perimeters"].altered and not P["out_perimeters"].valueAsText:
+            try:
+                ws = arcpy.env.workspace
+                if ws and mahalanobis.is_gdb_workspace(ws) \
+                        and not mahalanobis.is_memory_workspace(ws):
+                    P["out_perimeters"].value = _unique_name(
+                        self.PROGRAM + "_fires", ws)
+            except Exception:
+                pass
+        has_email = bool((P["bundle_email"].valueAsText or "").strip())
+        P["bundle_images"].enabled = has_email
+        P["bundle_projection"].enabled = has_email
+        P["raster_workspace"].enabled = bool(P["products"].values)
+        return
+
+    def updateMessages(self, parameters):
+        F = burn_severity
+        P = {p.name: p for p in parameters}
+        if P["study_area"].valueAsText and P["extent"].valueAsText:
+            P["extent"].setErrorMessage(
+                "Give a study area layer or a rectangle, not both.")
+        if not ((P["fire_name"].valueAsText or "").strip()
+                or (P["fire_ids"].valueAsText or "").strip()
+                or P["study_area"].valueAsText or P["extent"].valueAsText
+                or P["year_from"].value or P["year_to"].value):
+            P["fire_name"].setErrorMessage(
+                "Give at least a fire name, a year, a study area or a fire "
+                "ID. With none of them, the request is every fire the "
+                "program has mapped.")
+        import datetime as _dt
+        this_year = _dt.date.today().year
+        v = P["year_from"].value
+        if v is not None and not (1984 <= int(v) <= this_year + 1):
+            P["year_from"].setErrorMessage(
+                "Give a year from 1984 to {}.".format(this_year))
+        # a LAST year later than this one is accepted: the tool clamps it
+        # and names the years that were not available
+        v = P["year_to"].value
+        if v is not None and int(v) < 1984:
+            P["year_to"].setErrorMessage("Give 1984 or a later year.")
+        elif v is not None and int(v) > this_year:
+            P["year_to"].setWarningMessage(
+                "{} not in the catalog yet. The tool will ask for fires "
+                "through {} and say so in its messages.".format(
+                    "The year {} is".format(this_year + 1)
+                    if int(v) == this_year + 1
+                    else "The years {} to {} are".format(this_year + 1, int(v)),
+                    this_year))
+        y0, y1 = P["year_from"].value, P["year_to"].value
+        if y0 and y1 and int(y0) > int(y1):
+            P["year_to"].setErrorMessage(
+                "The first year is later than the last year.")
+        if P["out_perimeters"].valueAsText:
+            why = gbif_occurrences.check_output(
+                P["out_perimeters"].valueAsText)
+            if why:
+                P["out_perimeters"].setErrorMessage(why.replace(
+                    "GBIF_occurrences", self.PROGRAM + "_fires"))
+        ws = P["raster_workspace"].valueAsText
+        if ws and P["products"].values:
+            why = F.check_workspace(ws)
+            if why:
+                P["raster_workspace"].setErrorMessage(why)
+        email = (P["bundle_email"].valueAsText or "").strip()
+        if email:
+            if not F.valid_email(email):
+                P["bundle_email"].setErrorMessage(
+                    "That does not look like an email address.")
+            else:
+                P["bundle_email"].setWarningMessage(
+                    "The Burn Severity Portal will be asked to prepare the "
+                    "data bundles of the fires found and to send a download "
+                    "link to this address. Nothing is downloaded by this "
+                    "tool: you open the email and download the zip file "
+                    "yourself. The portal takes at most {} fires in one "
+                    "request.".format(F.MAX_BUNDLE_FIRES))
+        return
+
+    def execute(self, parameters, messages):
+        P = {p.name: p for p in parameters}
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(gbif_occurrences)
+            importlib.reload(burn_severity)
+            F = burn_severity
+            layer = None
+            area_words = None
+            sa = P["study_area"]
+            if sa.valueAsText:
+                layer = sa.value or sa.valueAsText
+                area_words = "the polygons of " + os.path.basename(
+                    str(sa.valueAsText))
+            ext = None
+            if P["extent"].valueAsText:
+                ext = _extent_arg(P["extent"])
+                if not isinstance(ext, arcpy.Extent):
+                    raise F.FireError("The rectangle could not be read.")
+                area_words = "a rectangle"
+            pv = P["products"].values
+            ws = P["raster_workspace"].valueAsText
+            if pv and not ws:
+                ws = os.path.dirname(P["out_perimeters"].valueAsText)
+            out = F.run(
+                P["out_perimeters"].valueAsText, program=self.PROGRAM,
+                fire_name=P["fire_name"].valueAsText,
+                year_from=P["year_from"].value, year_to=P["year_to"].value,
+                study_area=layer, extent=ext,
+                fire_ids=P["fire_ids"].valueAsText,
+                products=[str(v) for v in pv] if pv else [],
+                raster_workspace=ws,
+                bundle_email=(P["bundle_email"].valueAsText or "").strip()
+                or None,
+                bundle_images=bool(P["bundle_images"].value),
+                bundle_projection=P["bundle_projection"].valueAsText,
+                messages=messages, area_words=area_words)
+            P["fires_found"].value = int(out.get("found") or 0)
+            if out.get("rasters"):
+                P["out_rasters"].values = list(out["rasters"])
+        except burn_severity.Cancelled:
+            messages.addWarningMessage("Cancelled.")
+        except burn_severity.FireError as e:
+            # a failure the user can act on: an error message and a clean
+            # return fail the tool without a traceback
+            messages.addErrorMessage(str(e))
+        except arcpy.ExecuteError as e:
+            messages.addErrorMessage(str(e) or arcpy.GetMessages(2))
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+
+
+class MTBSBurnSeverity(_BurnSeverityTool):
+    """MTBS Burn Severity -- fire perimeters and classified burn severity
+    from Monitoring Trends in Burn Severity."""
+
+    PROGRAM = "MTBS"
+    LABEL = "MTBS Burn Severity"
+    WHAT = (
+        "Finds fires mapped by Monitoring Trends in Burn Severity (MTBS), a "
+        "program of the U.S. Geological Survey and the USDA Forest Service, "
+        "by name, year and place, and writes their perimeters. For each "
+        "fire it can fetch the six-class burn severity raster, and it can "
+        "ask the Burn Severity Portal to email a link to the fire's data "
+        "bundle, which holds the continuous dNBR and RdNBR. MTBS maps "
+        "fires of at least 1,000 acres in the western United States and "
+        "500 acres in the east, since 1984. United States and its "
+        "territories only. Works at every license level.")
+
+
+class RAVGBurnSeverity(_BurnSeverityTool):
+    """RAVG Burn Severity -- fire perimeters and classified vegetation
+    loss from Rapid Assessment of Vegetation Condition after Wildfire."""
+
+    PROGRAM = "RAVG"
+    LABEL = "RAVG Burn Severity"
+    WHAT = (
+        "Finds fires mapped by Rapid Assessment of Vegetation Condition "
+        "after Wildfire (RAVG), a program of the USDA Forest Service, by "
+        "name, year and place, and writes their perimeters. For each fire "
+        "it can fetch the classified rasters of percent basal area loss, "
+        "percent canopy cover loss and the composite burn index, and it "
+        "can ask the Burn Severity Portal to email a link to the fire's "
+        "data bundle, which holds the continuous values. RAVG maps fires "
+        "that burn at least 1,000 acres of forested National Forest System "
+        "land. United States only. Works at every license level.")
+
+
+class BAERBurnSeverity(_BurnSeverityTool):
+    """BAER Burn Severity -- fire perimeters and soil burn severity from
+    Burned Area Emergency Response imagery support."""
+
+    PROGRAM = "BAER"
+    LABEL = "BAER Burn Severity"
+    WHAT = (
+        "Finds fires assessed for Burned Area Emergency Response (BAER) "
+        "teams by the BAER imagery support program of the USDA Forest "
+        "Service and the U.S. Geological Survey, by name, year and place, "
+        "and writes their perimeters. For each fire it can fetch the soil "
+        "burn severity raster where the Forest Service has published one, "
+        "and it can ask the Burn Severity Portal to email a link to the "
+        "fire's data bundle. Soil burn severity describes the fire's "
+        "effect on the soil and ground cover, checked in the field by the "
+        "BAER team. United States only. Works at every license level.")
+
+
+class LoadBurnSeverityBundle(object):
+    """Load Burn Severity Bundle -- the data bundles of the Burn Severity
+    Portal (MTBS, RAVG, BAER) as they arrive by email. See
+    ``burn_severity_bundle.run``."""
+
+    def __init__(self):
+        self.label = "Load Burn Severity Bundle"
+        self.description = (
+            "Loads a data bundle from the Burn Severity Portal: the zip "
+            "file that the portal's email links to after a bundle request "
+            "made by the MTBS, RAVG or BAER Burn Severity tool, or on the "
+            "portal itself. It writes the fires' perimeters, copies every "
+            "raster in its own projection with its true cells, gives every "
+            "classified raster an attribute table with the name of each "
+            "class, and summarizes each fire in a table: the area in each "
+            "class, and the mean, standard deviation and range of the "
+            "continuous dNBR, RdNBR and modelled losses inside the burned "
+            "area. Works at every license level.")
+        self.category = "Data Tools"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        bundle = arcpy.Parameter(
+            displayName="Bundle (the zip file from the portal's email, or "
+                        "the folder it was unzipped into)",
+            name="in_bundle", datatype=["DEFile", "DEFolder"],
+            parameterType="Required", direction="Input")
+        ws = arcpy.Parameter(
+            displayName="Folder or file geodatabase for the rasters",
+            name="out_workspace", datatype="DEWorkspace",
+            parameterType="Required", direction="Input")
+        perims = arcpy.Parameter(
+            displayName="Output fire perimeters (in a file geodatabase)",
+            name="out_perimeters", datatype="DEFeatureClass",
+            parameterType="Optional", direction="Output")
+        summary = arcpy.Parameter(
+            displayName="Output summary table (in a file geodatabase)",
+            name="out_summary", datatype="DETable",
+            parameterType="Optional", direction="Output")
+        found = arcpy.Parameter(
+            displayName="Fires loaded", name="fires_loaded",
+            datatype="GPLong", parameterType="Derived", direction="Output")
+        rasters = arcpy.Parameter(
+            displayName="Rasters", name="out_rasters",
+            datatype="DERasterDataset", parameterType="Derived",
+            direction="Output", multiValue=True)
+        return [bundle, ws, perims, summary, found, rasters]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = {p.name: p for p in parameters}
+        # suggest the two outputs once, when the bundle is first chosen:
+        # an output the user clears stays cleared
+        if P["in_bundle"].valueAsText and not P["in_bundle"].hasBeenValidated:
+            gdb = arcpy.env.workspace or ""
+            wsv = P["out_workspace"].valueAsText or ""
+
+            def is_gdb(path):
+                return bool(path) and mahalanobis.is_gdb_workspace(path) \
+                    and not mahalanobis.is_memory_workspace(path)
+
+            if is_gdb(wsv):
+                gdb = wsv
+            if is_gdb(gdb):
+                if not P["out_workspace"].valueAsText:
+                    P["out_workspace"].value = gdb
+                if not P["out_perimeters"].valueAsText:
+                    P["out_perimeters"].value = _unique_name(
+                        "Burn_bundle_perimeters", gdb)
+                if not P["out_summary"].valueAsText:
+                    P["out_summary"].value = _unique_name(
+                        "Burn_bundle_summary", gdb)
+        return
+
+    def updateMessages(self, parameters):
+        P = {p.name: p for p in parameters}
+        src = P["in_bundle"].valueAsText
+        if src and os.path.isfile(src) and not src.lower().endswith(".zip"):
+            P["in_bundle"].setErrorMessage(
+                "Give the zip file from the Burn Severity Portal, or the "
+                "folder it was unzipped into.")
+        ws = P["out_workspace"].valueAsText
+        if ws:
+            why = burn_severity.check_workspace(ws)
+            if why:
+                P["out_workspace"].setErrorMessage(why)
+        for nm, what in (("out_perimeters", "perimeters"),
+                         ("out_summary", "summary table")):
+            v = P[nm].valueAsText
+            if v and not mahalanobis.in_gdb_container(v):
+                P[nm].setErrorMessage(
+                    "Put the {} in a file geodatabase.".format(what))
+        return
+
+    def execute(self, parameters, messages):
+        P = {p.name: p for p in parameters}
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(gbif_occurrences)
+            importlib.reload(burn_severity)
+            importlib.reload(burn_severity_bundle)
+            out = burn_severity_bundle.run(
+                P["in_bundle"].valueAsText, P["out_workspace"].valueAsText,
+                out_perimeters=P["out_perimeters"].valueAsText or None,
+                out_summary=P["out_summary"].valueAsText or None,
+                messages=messages)
+            P["fires_loaded"].value = int(out.get("fires") or 0)
+            if out.get("rasters"):
+                P["out_rasters"].values = list(out["rasters"])
+        except burn_severity_bundle.Cancelled:
+            messages.addWarningMessage("Cancelled.")
+        except burn_severity_bundle.BundleError as e:
+            messages.addErrorMessage(str(e))
+        except arcpy.ExecuteError as e:
+            messages.addErrorMessage(str(e) or arcpy.GetMessages(2))
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)

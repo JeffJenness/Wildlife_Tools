@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.113.69.5" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.120.70.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>Wildlife and Forestry Tools</Name>
     <Description>Analytical, cartographic and data-management tools for wildlife research, landscape analysis and general GIS work, by Jenness Enterprises: home ranges, topographic analysis, corridor design, geometry, random samples, hillshades and more, at every ArcGIS Pro license level. Free software under the GNU GPL; it supports the Lois Engelman Memorial Award. Help: www.jennessent.com</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -63,6 +63,9 @@
         </group>
         <group id="WildlifeTools_GroupData" caption="Data Tools" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\FavoriteData_32.png" smallImage="Images\FavoriteData_32.png">
           <subgroup refID="WildlifeTools_SubData" />
+          <!-- The online data sources (GBIF first; more to come) open from one
+               drop-down gallery in this group rather than a button each. -->
+          <gallery refID="WildlifeTools_OnlineDataGallery" inline="false" size="large" />
         </group>
         <group id="WildlifeTools_GroupGeometric" caption="Geometric Tools" appearsOnAddInTab="false" sizePriorities="25,125,225" largeImage="Images\Voronoi_32.png" smallImage="Images\Voronoi_32.png">
           <gallery refID="WildlifeTools_GeometricGallery" inline="true" />
@@ -1130,6 +1133,83 @@ Orders a set of points into a short travel route -- a survey route you can load 
             Opens the Load Favorite Datasets window: keep your most-used datasets in four groups you name yourself, then check any combination and add them all to the active map with one click -- no more hunting through folders and web servers. Any dataset a browse dialog can reach can be saved: feature classes, rasters, tables, and online services alike. Add items, remove them, and edit their descriptions; the lists are saved with your user profile and shared across projects. Datasets that appear to be unavailable (a missing path or an unreachable server) show in RED. A modernized recreation of the Load Favorite Datasets tool from the Springs Stewardship Institute (SSI) toolbar for ArcMap.<disabledText />
           </tooltip>
         </button>
+        <button id="WildlifeTools_SpeciesOccurrences"
+                caption="GBIF Species Occurrences"
+                className="OnlineData.Gbif.GbifButton"
+                loadOnClick="true"
+                smallImage="Images\SpeciesOccurrences_16.png"
+                largeImage="Images\SpeciesOccurrences_32.png"
+                keytip="GB">
+          <tooltip heading="GBIF Species Occurrences">
+            Finds and loads species occurrence records from the Global Biodiversity Information Facility (GBIF.org): animals, plants, fungi and every other group, at any rank from a single species to a whole class. Choose real names from GBIF's taxonomy as you type or by browsing, set a study area from a polygon layer or the map extent, limit the years, months and kinds of record, and see how many records match before fetching anything. List the species recorded in the study area, look at photographs, then fetch the records directly or request a GBIF download with its DOI and citation under your own free GBIF account. The records arrive as a point feature class in the active map.
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_MovebankTracks"
+                caption="Movebank Animal Tracks"
+                className="OnlineData.Movebank.MovebankButton"
+                loadOnClick="true"
+                smallImage="Images\MovebankTracks_16.png"
+                largeImage="Images\MovebankTracks_32.png"
+                keytip="MB">
+          <tooltip heading="Movebank Animal Tracks">
+            Finds animal tracking datasets published in the Movebank Data Repository and loads one into the map as points (one for every location fix), as track lines (one for every animal), or both. Search by species, common name or keyword; see each dataset's animals, locations, license and citation; no Movebank account is needed. These published datasets are a small fraction of what Movebank holds; most of its data need an account and the owner's permission, so the published datasets suit general questions about how a species moves better than a study of one species in one place. Movebank offers no search by area, so a dataset's place is judged from its title and summary. The dataset's original files are kept in the project folder, and its license and citation are recorded with the output.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_INaturalistObservations"
+                caption="iNaturalist Observations"
+                className="OnlineData.INaturalist.INatButton"
+                loadOnClick="true"
+                smallImage="Images\INaturalistObservations_16.png"
+                largeImage="Images\INaturalistObservations_32.png"
+                keytip="IN">
+          <tooltip heading="iNaturalist Observations">
+            Gets observations straight from iNaturalist.org and loads them into the map as points, for the species or groups, study area or named place, dates and quality grades you choose. GBIF holds only the research-grade iNaturalist observations under three licenses; this tool also reaches the ones that still need an identification, the casual ones and the ones under other terms, with iNaturalist's own fields: how many identifiers agreed, the annotations, and whether the location was obscured. It also lists the species recorded in an area. No account is needed.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_MTBSBurnSeverity"
+                caption="MTBS Burn Severity"
+                className="OnlineData.BurnSeverity.MtbsBurnButton"
+                loadOnClick="true"
+                smallImage="Images\MTBSBurnSeverity_16.png"
+                largeImage="Images\MTBSBurnSeverity_32.png"
+                keytip="MT">
+          <tooltip heading="MTBS Burn Severity">
+            Finds fires mapped by Monitoring Trends in Burn Severity (MTBS) by name, year and study area, lists them so you can choose, and gets their perimeters and six-class burn severity rasters, with every class named. It can also ask the Burn Severity Portal to email a link to the fires' data bundles, which hold the continuous dNBR and RdNBR. MTBS maps every fire of at least 1,000 acres in the western United States and 500 acres in the east since 1984. A program of the United States Government: United States and its territories only.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_RAVGBurnSeverity"
+                caption="RAVG Burn Severity"
+                className="OnlineData.BurnSeverity.RavgBurnButton"
+                loadOnClick="true"
+                smallImage="Images\RAVGBurnSeverity_16.png"
+                largeImage="Images\RAVGBurnSeverity_32.png"
+                keytip="RV">
+          <tooltip heading="RAVG Burn Severity">
+            Finds fires mapped by Rapid Assessment of Vegetation Condition after Wildfire (RAVG) by name, year and study area, lists them so you can choose, and gets their perimeters and the classified rasters of percent basal area loss, percent canopy cover loss and the composite burn index, with every class named. It can also ask the Burn Severity Portal to email a link to the fires' data bundles. RAVG is a USDA Forest Service program for fires on forested National Forest System land: United States only.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_BAERBurnSeverity"
+                caption="BAER Burn Severity"
+                className="OnlineData.BurnSeverity.BaerBurnButton"
+                loadOnClick="true"
+                smallImage="Images\BAERBurnSeverity_16.png"
+                largeImage="Images\BAERBurnSeverity_32.png"
+                keytip="BR">
+          <tooltip heading="BAER Burn Severity">
+            Finds fires assessed for Burned Area Emergency Response (BAER) teams by name, year and study area, lists them so you can choose, and gets their perimeters and soil burn severity rasters where the Forest Service has published them, with every class named. It can also ask the Burn Severity Portal to email a link to the fires' data bundles. Soil burn severity describes the fire's effect on the soil, checked in the field. A program of the United States Government: United States only.<disabledText />
+          </tooltip>
+        </button>
+        <button id="WildlifeTools_LoadBurnSeverityBundle"
+                caption="Load Burn Severity Bundle"
+                className="OnlineData.BurnSeverity.BurnBundleButton"
+                loadOnClick="true"
+                smallImage="Images\LoadBurnSeverityBundle_16.png"
+                largeImage="Images\LoadBurnSeverityBundle_32.png"
+                keytip="BB">
+          <tooltip heading="Load Burn Severity Bundle">
+            Loads a data bundle from the Burn Severity Portal: the zip file the portal's email links to. It writes the fires' perimeters, copies every raster with its true cells, gives every classified raster an attribute table with the name, area and percent of each class, and summarizes each fire in a table, with the mean and range of the continuous dNBR and RdNBR inside the burned area.<disabledText />
+          </tooltip>
+        </button>
         <button id="WildlifeTools_UnitConverter"
                 caption="Unit Converter"
                 className="UnitConverter.UnitConverterButton"
@@ -1406,6 +1486,26 @@ Orders a set of points into a short travel route -- a survey route you can load 
                  keytip="GE">
           <tooltip heading="Geometric Tools">
             Tools that build and analyze vector geometry: Voronoi and repeating-shape tessellations, random point and sample-array generators, and tools that derive new geometry from existing features such as centerlines, longest interior lines, radiating lines, maximum inscribed shapes and concave hulls.<disabledText />
+          </tooltip>
+        </gallery>
+        <gallery id="WildlifeTools_OnlineDataGallery"
+                 caption="Online Data"
+                 className="OnlineDataGallery"
+                 itemsInRow="4"
+                 itemWidth="76"
+                 itemHeight="62"
+                 showItemCaption="true"
+                 showItemCaptionBelow="true"
+                 showGroup="true"
+                 resizable="true"
+                 loadOnClick="false"
+                 dataTemplateFile="pack://application:,,,/WildlifeTools;component/GalleryTemplates.xaml"
+                 templateID="WildlifeToolGalleryItem"
+                 largeImage="Images\SpeciesOccurrences_32.png"
+                 smallImage="Images\SpeciesOccurrences_16.png"
+                 keytip="OD">
+          <tooltip heading="Online Data">
+            Tools that find and load data from online sources into the active map: species occurrence records from the Global Biodiversity Information Facility (GBIF.org), observations straight from iNaturalist, animal tracking datasets published in the Movebank Data Repository, and burn severity from the MTBS, RAVG and BAER programs of the United States Government.<disabledText />
           </tooltip>
         </gallery>
         <gallery id="WildlifeTools_EcologicalGallery"

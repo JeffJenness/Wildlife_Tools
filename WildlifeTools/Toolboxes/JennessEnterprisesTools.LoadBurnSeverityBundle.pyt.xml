@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<metadata xml:lang="en"><Esri><CreaDate>20261115</CreaDate><CreaTime>00000000</CreaTime><ArcGISFormat>1.0</ArcGISFormat><SyncOnce>TRUE</SyncOnce></Esri>
+	<tool name="LoadBurnSeverityBundle" displayname="Load Burn Severity Bundle" toolboxalias="jenness">
+		<arcToolboxHelpPath>c:\program files\arcgis\pro\Resources\Help\gp</arcToolboxHelpPath>
+		<summary><para>View online help files: <a href="https://www.jennessent.com/data-tools/load-burn-severity-bundle.html" target="_blank">https://www.jennessent.com/data-tools/load-burn-severity-bundle.html</a>
+				<br/><br/>Loads a data bundle from the Burn Severity Portal: the zip file that the portal's email links to after a bundle request made by the MTBS, RAVG or BAER Burn Severity tool, or on the portal itself. It writes the fires' perimeters, copies every raster in its own projection with its true cells, gives every classified raster an attribute table with the name, area and percent of each class, and summarizes each fire in a table. Works at every license level.</para></summary>
+		<usage><b>What a bundle is.</b> For each fire the Burn Severity Portal keeps a bundle of the data its assessment was made from and produced: the perimeter, the continuous indices (dNBR, RdNBR and, for RAVG, the modelled percent basal area loss, percent canopy cover loss and composite burn index), and the classified rasters. The portal delivers bundles by email only: it sends a link to a zip file, which holds a folder for each fire. One zip file can hold many fires, and fires of more than one program.
+
+<b>What this tool does with it.</b> It unpacks the zip file into a folder named Burn_Severity_Bundles beside the output (or reads a folder you unzipped yourself), finds every fire in it, and copies every raster to the output workspace, named for its program, fire, year and product. The rasters keep the bundle's own projection and true cells, so cells can be counted and areas measured.
+
+<b>Class names.</b> The bundles' classified rasters come with colors and no names: their attribute tables, if they have one, hold numbers only. This tool gives each one an attribute table with the name of every class (Class_Name) and its Hectares, Acres and Percent. A classified raster of a kind the tool does not know is copied as it is, and a warning names it.
+
+<b>What the percentages are of.</b> The cells the program assessed. Cells outside the fire, cells without data, and the program's mask classes (cloud, smoke, developed land) are not in the total. A mask class is listed with its area and no percent.
+
+<b>Statistics.</b> The tool computes each raster's statistics itself and stores them with the raster. The statistics stored with a continuous raster describe the whole raster, which is the rectangle around the fire. The summary table describes only the cells inside the fire's perimeter: for each classified raster the cells, hectares, acres and percent in each class, and for each continuous raster the mean, standard deviation, minimum, median and maximum.
+
+<b>No-data values.</b> Some bundle files declare one value as "no data" and use another. The tool finds those cases, leaves both values out of every statistic, and declares the right value on its copy.
+
+<b>United States only.</b> The programs that make these bundles are of the United States Government and map the United States and its territories.</usage>
+		<parameters>
+			<param name="in_bundle" displayname="Bundle (the zip file from the portal's email, or the folder it was unzipped into)" type="Required" direction="Input" datatype="File; Folder" expression="in_bundle"><dialogReference><para>The zip file you downloaded from the link in the Burn Severity Portal's email, or a folder that holds its unzipped contents. A zip file is unpacked into a folder named Burn_Severity_Bundles beside the output workspace, and is itself left untouched.</para></dialogReference></param>
+			<param name="out_workspace" displayname="Folder or file geodatabase for the rasters" type="Required" direction="Input" datatype="Workspace" expression="out_workspace"><dialogReference><para>Where the bundle's rasters are copied: a folder (GeoTIFF files) or a file geodatabase. Each raster is named for its program, fire, year and product, such as MTBS_MUSEUM_2019_dnbr, and a raster of the same name is replaced.</para></dialogReference></param>
+			<param name="out_perimeters" displayname="Output fire perimeters (in a file geodatabase)" type="Optional" direction="Output" datatype="Feature Class" expression="{out_perimeters}"><dialogReference><para>A polygon feature class with the perimeter of every fire in the bundle, and the thresholds the analyst set for each. Clear the box to write no perimeters.</para></dialogReference></param>
+			<param name="out_summary" displayname="Output summary table (in a file geodatabase)" type="Optional" direction="Output" datatype="Table" expression="{out_summary}"><dialogReference><para>A table with one row for each class of each classified raster (cells, hectares, acres and percent of the fire) and one row for each continuous raster (mean, standard deviation, minimum, median and maximum inside the fire's perimeter). Clear the box to write no table.</para></dialogReference></param>
+			<param name="fires_loaded" displayname="Fires loaded" type="Derived" direction="Output" datatype="Long" expression="{fires_loaded}"><dialogReference><para>The number of fires found in the bundle.</para></dialogReference></param>
+			<param name="out_rasters" displayname="Rasters" type="Derived" direction="Output" datatype="Multiple Value" expression="{out_rasters}"><dialogReference><para>The rasters that were copied.</para></dialogReference></param>
+		</parameters>
+		<scriptExamples><scriptExample><title>Load Burn Severity Bundle example (stand-alone script)</title><para>Load a bundle's zip file into a geodatabase, with the perimeters and the summary table.</para><code>import arcpy
+arcpy.ImportToolbox(r"C:\path\to\JennessEnterprisesTools.pyt")  # your install path
+arcpy.jenness.LoadBurnSeverityBundle(
+    in_bundle=r"D:\downloads\bsp_rsihjvhsxhnxlyacln48.zip",
+    out_workspace=r"D:\data\fire.gdb",
+    out_perimeters=r"D:\data\fire.gdb\Bundle_perimeters",
+    out_summary=r"D:\data\fire.gdb\Bundle_summary")</code></scriptExample></scriptExamples>
+	</tool>
+	<dataIdInfo><searchKeys><keyword>burn severity</keyword><keyword>data bundle</keyword><keyword>dNBR</keyword><keyword>RdNBR</keyword><keyword>MTBS</keyword><keyword>RAVG</keyword><keyword>BAER</keyword></searchKeys><idCredit>Jeff Jenness, Jenness Enterprises (http://www.jennessent.com). Data from the Burn Severity Portal of the U.S. Geological Survey and the USDA Forest Service (https://burnseverity.cr.usgs.gov).</idCredit></dataIdInfo>
+</metadata>

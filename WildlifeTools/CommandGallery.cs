@@ -187,6 +187,36 @@ namespace WildlifeTools
     }
 
     /// <summary>
+    /// The Online Data drop-down in the Data Tools group: tools that find
+    /// and load data from online sources. A row for each kind of data (species
+    /// occurrences from GBIF and iNaturalist, animal tracking from Movebank).
+    /// </summary>
+    internal class OnlineDataGallery : CommandGallery
+    {
+        public OnlineDataGallery() : base(new[]
+        {
+            ("Species Occurrences", new[]
+            {
+                "WildlifeTools_SpeciesOccurrences",
+                "WildlifeTools_INaturalistObservations",
+            }),
+            ("Animal Tracking", new[]
+            {
+                "WildlifeTools_MovebankTracks",
+            }),
+            ("Burn Severity", new[]
+            {
+                "WildlifeTools_MTBSBurnSeverity",
+                "WildlifeTools_RAVGBurnSeverity",
+                "WildlifeTools_BAERBurnSeverity",
+                "WildlifeTools_LoadBurnSeverityBundle",
+            }),
+        })
+        {
+        }
+    }
+
+    /// <summary>
     /// The Cartography group's gallery: hillshades, graphic backgrounds
     /// and the standalone cartographic helpers. Add Graphics and North
     /// Arrows stay OUT of this gallery: they are map/layout placement

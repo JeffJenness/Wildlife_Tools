@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+<!-- GBIF Species Occurrences: a globe with three occurrence points and a download arrow, dark theme -->
+<circle cx="14" cy="14" r="11.5" fill="#2F5D7C" stroke="#CFE6F5" stroke-width="1.2"/>
+<path d="M2.5 14 H25.5 M14 2.5 V25.5 M14 2.5 C8 7 8 21 14 25.5 M14 2.5 C20 7 20 21 14 25.5" fill="none" stroke="#CFE6F5" stroke-width="0.9" opacity="0.75"/>
+<circle cx="9" cy="10" r="2.4" fill="#2E8B57" stroke="#14532D" stroke-width="0.8"/>
+<circle cx="17.5" cy="8.5" r="2.4" fill="#D9792B" stroke="#7A3D0E" stroke-width="0.8"/>
+<circle cx="11.5" cy="18.5" r="2.4" fill="#B33A2B" stroke="#6B1D14" stroke-width="0.8"/>
+<circle cx="24" cy="24" r="7" fill="#1E2B36" stroke="#CFE6F5" stroke-width="1.2"/>
+<path d="M24 19.5 V27 M20.6 23.8 L24 27.4 L27.4 23.8" fill="none" stroke="#CFE6F5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

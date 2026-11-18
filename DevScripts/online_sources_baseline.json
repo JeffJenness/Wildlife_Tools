@@ -1,0 +1,22 @@
+{
+  "GBIF occurrence API (OpenAPI)": {
+    "seen": "2026-11-17",
+    "sha256": "c33aa8e48d9a0377750403a2338c40c8205d266ee0b43c692a8f30a5b2cccc7e",
+    "url": "https://techdocs.gbif.org/openapi/occurrence.json"
+  },
+  "Movebank REST API (movebank-api.md on GitHub)": {
+    "seen": "2026-11-17",
+    "sha256": "95e4c482db344841ac05a6be472a6741b9aae3d72f95917a0c4b05eaf434626c",
+    "url": "https://raw.githubusercontent.com/movebank/movebank-api-doc/master/movebank-api.md"
+  },
+  "iNaturalist API version 1 (Swagger)": {
+    "seen": "2026-11-17",
+    "sha256": "0f250d1182947317e5b94e78c211390a099ed56fe5e5ff2743ec7fda56c8277d",
+    "url": "https://api.inaturalist.org/v1/swagger.json"
+  },
+  "iNaturalist API version 2 (OpenAPI)": {
+    "seen": "2026-11-17",
+    "sha256": "e64eaecb082a954f7f92afeecd9f5b29207dc19904573384fb013f086c312dcc",
+    "url": "https://api.inaturalist.org/v2/api-docs"
+  }
+}
