@@ -159,7 +159,7 @@ namespace WildlifeTools
         {
             try
             {
-                Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
+                global::WildlifeTools.SafeLink.Open(e.Uri.AbsoluteUri);
             }
             catch (Exception)
             {

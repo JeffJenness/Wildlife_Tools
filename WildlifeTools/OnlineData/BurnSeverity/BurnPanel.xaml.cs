@@ -677,7 +677,7 @@ namespace WildlifeTools.OnlineData.BurnSeverity
             e.Handled = true;
             try
             {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
+                global::WildlifeTools.SafeLink.Open(e.Uri.AbsoluteUri);
             }
             catch (Exception)
             {

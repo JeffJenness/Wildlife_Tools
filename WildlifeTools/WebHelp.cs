@@ -45,10 +45,7 @@ namespace WildlifeTools
             }
             try
             {
-                System.Diagnostics.Process.Start(
-                    new System.Diagnostics.ProcessStartInfo(
-                        BaseUrl.TrimEnd('/') + "/" + relativePage)
-                    { UseShellExecute = true });
+                global::WildlifeTools.SafeLink.Open(BaseUrl.TrimEnd('/') + "/" + relativePage);
             }
             catch (Exception)
             {

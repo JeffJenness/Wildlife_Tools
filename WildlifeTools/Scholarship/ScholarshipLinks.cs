@@ -55,7 +55,7 @@ namespace WildlifeTools.Scholarship
         {
             try
             {
-                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                global::WildlifeTools.SafeLink.Open(url, allowMail: true);
             }
             catch (Exception)
             {

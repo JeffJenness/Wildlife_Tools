@@ -627,7 +627,7 @@ namespace WildlifeTools.OnlineData.Movebank
             }
             try
             {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+                global::WildlifeTools.SafeLink.Open(url);
             }
             catch (Exception)
             {

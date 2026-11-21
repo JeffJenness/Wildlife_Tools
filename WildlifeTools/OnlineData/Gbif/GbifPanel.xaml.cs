@@ -2152,7 +2152,7 @@ namespace WildlifeTools.OnlineData.Gbif
         {
             try
             {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+                global::WildlifeTools.SafeLink.Open(url);
             }
             catch (Exception)
             {
@@ -2524,7 +2524,7 @@ namespace WildlifeTools.OnlineData.Gbif
                 {
                     try
                     {
-                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+                        global::WildlifeTools.SafeLink.Open(url);
                     }
                     catch (Exception)
                     {
@@ -2640,7 +2640,7 @@ namespace WildlifeTools.OnlineData.Gbif
             {
                 try
                 {
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
+                    global::WildlifeTools.SafeLink.Open(e.Uri.AbsoluteUri);
                 }
                 catch (Exception)
                 {
