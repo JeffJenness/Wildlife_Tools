@@ -207,6 +207,9 @@ namespace WildlifeTools
             ProjectOpenedEvent.Subscribe(OnProjectOpened);
             // A project may already be open when the module first loads.
             EnsureToolboxInProject();
+            // Layers of a PRISM Climate Data file open the map's time slider
+            // on a single date (see PrismTimeSlider for why, and its guards).
+            global::WildlifeTools.OnlineData.Prism.PrismTimeSlider.Start();
             return base.Initialize();
         }
 

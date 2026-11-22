@@ -263,8 +263,8 @@ inside ArcGIS Pro.
   decimals, or normal random values.
 
 The **Online Data** menu of this group holds tools that download data from
-online providers onto your own disk, where every tool can work on them. Each
-has a window and a geoprocessing tool of the same name:
+online providers onto your own disk, where every tool can work on them. Those
+marked as windows have a window and a geoprocessing tool of the same name:
 
 - **GBIF Species Occurrences** *(window)* – species occurrence records from
   the Global Biodiversity Information Facility: which species have been
@@ -278,6 +278,9 @@ has a window and a geoprocessing tool of the same name:
   three programs of the United States Government.
 - **Load Burn Severity Bundle** – loads the full data bundles that those
   programs' portal sends a link to by email.
+- **PRISM Climate Data** – PRISM's grids of precipitation, temperature, dew
+  point, vapor pressure deficit and solar radiation for a study area, by day,
+  month or year, written to one netCDF file with a time dimension.
 
 ### Terrain Graphs
 

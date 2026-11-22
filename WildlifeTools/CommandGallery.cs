@@ -211,6 +211,10 @@ namespace WildlifeTools
                 "WildlifeTools_BAERBurnSeverity",
                 "WildlifeTools_LoadBurnSeverityBundle",
             }),
+            ("Climate", new[]
+            {
+                "WildlifeTools_PRISMClimateData",
+            }),
         })
         {
         }

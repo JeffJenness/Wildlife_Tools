@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Headless test of what the add-in reads from a layer's definition and
+       from a netCDF file before it closes the map's time slider to a single
+       date for layers of a PRISM Climate Data file. Compiles the add-in's
+       own PrismLayerFacts.cs (no ArcGIS types in it). Run from the repo
+       root:  dotnet run (with the project option set to
+       claude_tests/PrismLayerFactsTest; see the top of Program.cs). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <RootNamespace>PrismLayerFactsTest</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\WildlifeTools\OnlineData\Prism\PrismLayerFacts.cs" Link="PrismLayerFacts.cs" />
+  </ItemGroup>
+</Project>

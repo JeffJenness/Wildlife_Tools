@@ -5,7 +5,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 
-  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.120.74.1" desktopVersion="3.7.1901" product="ArcGISPro">
+  <AddInInfo id="{9b04581c-dbfe-4025-8713-1cd30b3b1e47}" version="1.121.75.0" desktopVersion="3.7.1901" product="ArcGISPro">
     <Name>Wildlife and Forestry Tools</Name>
     <Description>Analytical, cartographic and data-management tools for wildlife research, landscape analysis and general GIS work, by Jenness Enterprises: home ranges, topographic analysis, corridor design, geometry, random samples, hillshades and more, at every ArcGIS Pro license level. Free software under the GNU GPL; it supports the Lois Engelman Memorial Award. Help: www.jennessent.com</Description>
     <Image>Images\JennessLogo32.png</Image>
@@ -1210,6 +1210,17 @@ Orders a set of points into a short travel route -- a survey route you can load 
             Loads a data bundle from the Burn Severity Portal: the zip file the portal's email links to. It writes the fires' perimeters, copies every raster with its true cells, gives every classified raster an attribute table with the name, area and percent of each class, and summarizes each fire in a table, with the mean and range of the continuous dNBR and RdNBR inside the burned area.<disabledText />
           </tooltip>
         </button>
+        <button id="WildlifeTools_PRISMClimateData"
+                caption="PRISM Climate Data"
+                className="OnlineData.Prism.PrismButton"
+                loadOnClick="true"
+                smallImage="Images\PRISMClimateData_16.png"
+                largeImage="Images\PRISMClimateData_32.png"
+                keytip="PR">
+          <tooltip heading="PRISM Climate Data">
+            Gets PRISM climate grids for a study area and writes them to one netCDF file with a time dimension: precipitation, temperature, dew point, vapor pressure deficit and solar radiation, by day, month or year, for any span of dates. PRISM, of the PRISM Group at Oregon State University, maps the climate of the conterminous United States on grids of about 4 km and about 800 m, by month and year since 1895 and by day since 1981. PRISM sends one whole-country grid for each variable and date; the tool fetches each grid once, keeps it, and cuts it to the study area. The file holds every cell's edges and true area, ready for summaries by point, line and polygon. No account is needed. Conterminous United States only.<disabledText />
+          </tooltip>
+        </button>
         <button id="WildlifeTools_UnitConverter"
                 caption="Unit Converter"
                 className="UnitConverter.UnitConverterButton"
@@ -1505,7 +1516,7 @@ Orders a set of points into a short travel route -- a survey route you can load 
                  smallImage="Images\SpeciesOccurrences_16.png"
                  keytip="OD">
           <tooltip heading="Online Data">
-            Tools that find and load data from online sources into the active map: species occurrence records from the Global Biodiversity Information Facility (GBIF.org), observations straight from iNaturalist, animal tracking datasets published in the Movebank Data Repository, and burn severity from the MTBS, RAVG and BAER programs of the United States Government.<disabledText />
+            Tools that find and load data from online sources into the active map: species occurrence records from the Global Biodiversity Information Facility (GBIF.org), observations straight from iNaturalist, animal tracking datasets published in the Movebank Data Repository, burn severity from the MTBS, RAVG and BAER programs of the United States Government, and climate grids from PRISM at Oregon State University.<disabledText />
           </tooltip>
         </gallery>
         <gallery id="WildlifeTools_EcologicalGallery"

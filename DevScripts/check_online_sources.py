@@ -7,8 +7,8 @@ Run it once a month or so, and before every release:
 
 It needs an internet connection and nothing else: no ArcGIS license, no
 account, no password. It reads only. It never signs in, never requests a
-GBIF download, never asks the Burn Severity Portal for a data bundle and
-never accepts a Movebank study's license terms.
+GBIF download, never asks the Burn Severity Portal for a data bundle, never
+accepts a Movebank study's license terms and never downloads a PRISM grid.
 
 Three kinds of check:
 
@@ -283,6 +283,50 @@ def tool_requests():
             assert code == 200, "HTTP {}".format(code)
             return "HTTP 200 (no bundle was asked for)"
 
+    prism_requests()
+
+
+def prism_requests():
+    """PRISM's web service. No grid is downloaded: a grid is a whole-country file, and PRISM allows a file
+    to be downloaded twice in 24 hours. The checks ask for the days three grids were issued, for two
+    refusals, and for the first four bytes of one grid nobody is likely to want that day."""
+    print("\nPRISM (services.nacse.org)")
+    try:
+        import prism_climate as P
+    except Exception as e:                                       # noqa: BLE001
+        record("PRISM", "import prism_climate", "FAIL", str(e))
+        return
+
+    @check("PRISM", "the release-date service gives the day a grid was last issued")
+    def _():
+        got = P.Service().release_dates(P.RES_4KM, "ppt", "202001", "202003")
+        assert sorted(got) == ["202001", "202002", "202003"], "it answered for {}".format(sorted(got) or "nothing")
+        return "the precipitation grids of January to March 2020, last issued {}".format(
+            max(got.values()).isoformat())
+
+    def refusal(what, address, words):
+        @check("PRISM", what)
+        def _():
+            code, body, _u = http(address)
+            text = " ".join(body[:400].decode("utf-8", "replace").split())
+            assert code == 200 and not body.startswith(b"PK") and words in text.lower(), \
+                "HTTP {}: {}".format(code, text[:200] or "(nothing)")
+            return text[:90]
+
+    refusal("a date that has no grid is refused in the words the tool looks for",
+            P.SERVICE + "us/4km/ppt/209912", "invalid date")
+    refusal("a variable that does not exist is refused in words, not with a grid",
+            P.SERVICE + "us/4km/rain/202001", "invalid element")
+
+    @check("PRISM", "the grid service sends a zip file (the first four bytes of one grid; no grid is downloaded)")
+    def _():
+        req = urllib.request.Request(P.SERVICE + "us/4km/ppt/189501",
+                                     headers={"User-Agent": AGENT, "Range": "bytes=0-3"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            code, head = r.getcode(), r.read(4)
+        assert head[:2] == b"PK", "HTTP {}; it began with {!r}".format(code, head)
+        return "HTTP {} and a zip file's first bytes".format(code)
+
 
 # =============================================================================
 #  2. web addresses
@@ -328,6 +372,12 @@ PAGES = [
     ("Burn severity", "https://www.mtbs.gov/", (200,)),
     ("Burn severity", "https://www.mtbs.gov/project-overview", (200,)),
     ("Burn severity", "https://www.mtbs.gov/mapping-methods", (200,)),
+    ("PRISM", "https://prism.oregonstate.edu/", (200,)),
+    ("PRISM", "https://prism.oregonstate.edu/overview/", (200,)),
+    ("PRISM", "https://prism.oregonstate.edu/data/", (200,)),
+    ("PRISM", "https://prism.oregonstate.edu/terms/", (200,)),
+    ("PRISM", "https://prism.oregonstate.edu/documents/PRISM_datasets.pdf", (200,)),
+    ("PRISM", "https://prism.oregonstate.edu/documents/PRISM_downloads_web_service.pdf", (200,)),
 ]
 
 

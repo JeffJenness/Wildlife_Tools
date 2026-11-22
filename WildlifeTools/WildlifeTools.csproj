@@ -273,6 +273,10 @@
     <Content Include="Images\LoadBurnSeverityBundle_32.png" />
     <Content Include="DarkImages\LoadBurnSeverityBundle_16.png" />
     <Content Include="DarkImages\LoadBurnSeverityBundle_32.png" />
+    <Content Include="Images\PRISMClimateData_16.png" />
+    <Content Include="Images\PRISMClimateData_32.png" />
+    <Content Include="DarkImages\PRISMClimateData_16.png" />
+    <Content Include="DarkImages\PRISMClimateData_32.png" />
     <Content Include="Images\UnitConverter_16.png" />
     <Content Include="Images\UnitConverter_32.png" />
     <Content Include="DarkImages\UnitConverter_16.png" />

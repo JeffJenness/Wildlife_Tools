@@ -103,6 +103,7 @@ _HELP_PAGES = {
     "RAVGBurnSeverity": "data-tools/ravg-burn-severity.html",
     "BAERBurnSeverity": "data-tools/baer-burn-severity.html",
     "LoadBurnSeverityBundle": "data-tools/load-burn-severity-bundle.html",
+    "PRISMClimateData": "data-tools/prism-climate-data.html",
     "MultiSunHillshade": "cartography/multi-sun-hillshade.html",
     "NormalizeExistingHSM": "corridor-designer-tools/normalize-existing-hsm.html",
     "PatchAnalysis": "corridor-designer-tools/patch-analysis.html",
@@ -217,6 +218,7 @@ import movebank_tracks  # noqa: E402
 import inaturalist_observations  # noqa: E402
 import burn_severity  # noqa: E402
 import burn_severity_bundle  # noqa: E402
+import prism_climate  # noqa: E402
 import tool_metadata  # noqa: E402
 import error_report   # noqa: E402
 
@@ -565,7 +567,7 @@ class Toolbox(object):
                       GBIFSpeciesOccurrences, MovebankAnimalTracks,
                       INaturalistObservations, MTBSBurnSeverity,
                       RAVGBurnSeverity, BAERBurnSeverity,
-                      LoadBurnSeverityBundle]
+                      LoadBurnSeverityBundle, PRISMClimateData]
 
 
 class LoCoHStandard(object):
@@ -19097,6 +19099,431 @@ class LoadBurnSeverityBundle(object):
         except burn_severity_bundle.Cancelled:
             messages.addWarningMessage("Cancelled.")
         except burn_severity_bundle.BundleError as e:
+            messages.addErrorMessage(str(e))
+        except arcpy.ExecuteError as e:
+            messages.addErrorMessage(str(e) or arcpy.GetMessages(2))
+        except Exception:
+            importlib.reload(error_report)
+            error_report.report(messages, self.label, parameters)
+
+
+def _file_output_folder():
+    """A folder for a tool's file output: the folder that holds the
+    current workspace's geodatabase, or the workspace itself when it is a
+    folder. None when there is no such folder."""
+    try:
+        ws = str(arcpy.env.workspace or "").rstrip("\\/")
+        if not ws or mahalanobis.is_memory_workspace(ws):
+            return None
+        while ws and mahalanobis.in_gdb_container(ws):
+            ws = os.path.dirname(ws)
+        return ws if ws and os.path.isdir(ws) else None
+    except Exception:
+        return None
+
+
+class PRISMClimateData(object):
+    """PRISM Climate Data -- PRISM's climate grids for a study area, as one
+    netCDF file with a time dimension. See ``prism_climate.run``."""
+
+    def __init__(self):
+        self.label = "PRISM Climate Data"
+        self.description = (
+            "Gets PRISM climate grids for a study area and writes them to "
+            "one netCDF file with a time dimension: precipitation, "
+            "temperature, dew point, vapor pressure deficit and solar "
+            "radiation, by day, month or year, for any span of dates. PRISM, "
+            "of the PRISM Group at Oregon State University, maps the climate "
+            "of the conterminous United States on grids of about 4 km and "
+            "about 800 m, by month and year since 1895 and by day since "
+            "1981. PRISM's web service sends one whole-country grid for each "
+            "variable and date; this tool fetches each grid once, keeps it, "
+            "and cuts it to the study area. The tool is meant to download "
+            "PRISM data and to assemble it into one file that is ready for "
+            "analysis. A second tool, still in the planning stages, will "
+            "calculate PRISM statistics for the points, lines and polygons "
+            "that intersect that file. No account is needed. "
+            "Conterminous United States only. Works at every license level.")
+        self.category = "Data Tools"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        C = prism_climate
+        study_area = arcpy.Parameter(
+            displayName="Study area features (points, lines or polygons; "
+                        "selection honored)",
+            name="study_area", datatype=["GPFeatureLayer", "DEFeatureClass"],
+            parameterType="Optional", direction="Input")
+        extent = arcpy.Parameter(
+            displayName="Or a rectangle as the study area",
+            name="extent", datatype="GPExtent", parameterType="Optional",
+            direction="Input")
+        variables = arcpy.Parameter(
+            displayName="Climate variables", name="variables",
+            datatype="GPString", parameterType="Required", direction="Input",
+            multiValue=True)
+        variables.filter.type = "ValueList"
+        variables.filter.list = list(C.LABELS)
+        variables.values = list(C.DEFAULT_LABELS)
+        time_step = arcpy.Parameter(
+            displayName="Time step", name="time_step", datatype="GPString",
+            parameterType="Required", direction="Input")
+        time_step.filter.type = "ValueList"
+        time_step.filter.list = list(C.TIME_STEPS)
+        time_step.value = C.STEP_MONTHLY
+        year_from = arcpy.Parameter(
+            displayName="First year", name="year_from", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        year_to = arcpy.Parameter(
+            displayName="Last year", name="year_to", datatype="GPLong",
+            parameterType="Optional", direction="Input")
+        date_from = arcpy.Parameter(
+            displayName="First day", name="date_from", datatype="GPDate",
+            parameterType="Optional", direction="Input")
+        date_to = arcpy.Parameter(
+            displayName="Last day", name="date_to", datatype="GPDate",
+            parameterType="Optional", direction="Input")
+        months = arcpy.Parameter(
+            displayName="Months (empty for all)", name="months",
+            datatype="GPLong", parameterType="Optional", direction="Input",
+            multiValue=True)
+        months.filter.type = "ValueList"
+        months.filter.list = list(range(1, 13))
+        resolution = arcpy.Parameter(
+            displayName="Resolution", name="resolution", datatype="GPString",
+            parameterType="Required", direction="Input")
+        resolution.filter.type = "ValueList"
+        resolution.filter.list = list(C.RESOLUTIONS)
+        resolution.value = C.RES_4KM
+        dataset = arcpy.Parameter(
+            displayName="Dataset", name="dataset", datatype="GPString",
+            parameterType="Required", direction="Input")
+        dataset.filter.type = "ValueList"
+        dataset.filter.list = list(C.DATASETS)
+        dataset.value = C.SET_AN
+        out_nc = arcpy.Parameter(
+            displayName="Output netCDF file", name="out_netcdf",
+            datatype="DEFile", parameterType="Required", direction="Output")
+        try:
+            out_nc.filter.list = ["nc"]
+        except Exception:
+            pass
+        margin = arcpy.Parameter(
+            displayName="Cells to add around the study area",
+            name="margin_cells", datatype="GPLong", parameterType="Optional",
+            direction="Input")
+        margin.value = 1
+        folder = arcpy.Parameter(
+            displayName="Folder for the downloaded PRISM files (remembered "
+                        "for every project)",
+            name="download_folder", datatype="DEFolder",
+            parameterType="Optional", direction="Input")
+        keep = arcpy.Parameter(
+            displayName="Keep the downloaded files for later runs",
+            name="keep_downloads", datatype="GPBoolean",
+            parameterType="Optional", direction="Input")
+        keep.value = True
+        max_gb = arcpy.Parameter(
+            displayName="Largest download allowed (GB)",
+            name="max_download_gb", datatype="GPDouble",
+            parameterType="Optional", direction="Input")
+        max_gb.value = C.DEFAULT_MAX_GB
+        for p in (margin, keep, max_gb):
+            p.category = "Downloading and the study area's cells"
+        written = arcpy.Parameter(
+            displayName="Time steps written", name="time_steps_written",
+            datatype="GPLong", parameterType="Derived", direction="Output")
+        layers = arcpy.Parameter(
+            displayName="Layers", name="out_layers", datatype="GPRasterLayer",
+            parameterType="Derived", direction="Output", multiValue=True)
+        return [study_area, extent, variables, time_step, year_from, year_to,
+                date_from, date_to, months, resolution, dataset, out_nc,
+                folder, margin, keep, max_gb, written, layers]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        C = prism_climate
+        P = {p.name: p for p in parameters}
+        step = P["time_step"].valueAsText or C.STEP_MONTHLY
+        daily = step == C.STEP_DAILY
+        P["year_from"].enabled = not daily
+        P["year_to"].enabled = not daily
+        P["date_from"].enabled = daily
+        P["date_to"].enabled = daily
+        P["months"].enabled = step != C.STEP_ANNUAL
+        outp = P["out_netcdf"]
+        if not outp.altered and not outp.valueAsText:
+            try:
+                where = _file_output_folder()
+                if where:
+                    name, i = "PRISM_climate.nc", 2
+                    while os.path.exists(os.path.join(where, name)):
+                        name = "PRISM_climate_{}.nc".format(i)
+                        i += 1
+                    outp.value = os.path.join(where, name)
+            except Exception:
+                pass
+        # the folder of downloaded files belongs to the Windows user, not
+        # to the project: offer the one remembered from an earlier run (or
+        # the default one), when it is there. An emptied box fills again,
+        # so the box always shows where the files will go.
+        fold = P["download_folder"]
+        if not fold.altered and not fold.valueAsText:
+            try:
+                offer = C.folder_to_offer()
+                if offer:
+                    fold.value = offer
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        C = prism_climate
+        P = {p.name: p for p in parameters}
+        import datetime as _dt
+        today = _dt.date.today()
+        if P["study_area"].valueAsText and P["extent"].valueAsText:
+            P["extent"].setErrorMessage(
+                "Give a study area layer or a rectangle, not both.")
+        elif not P["study_area"].valueAsText and not P["extent"].valueAsText:
+            P["study_area"].setErrorMessage(
+                "Give a study area: a layer of points, lines or polygons, or "
+                "a rectangle. PRISM's grids cover the whole conterminous "
+                "United States, and the tool cuts them to the study area.")
+        step = P["time_step"].valueAsText or C.STEP_MONTHLY
+        res = P["resolution"].valueAsText or C.RES_4KM
+        labels = [str(v) for v in (P["variables"].values or [])]
+        y0 = y1 = d0 = d1 = None
+        dates_ok = True
+        if step == C.STEP_DAILY:
+            try:
+                d0 = C._as_date(P["date_from"].value)
+                d1 = C._as_date(P["date_to"].value)
+            except C.PrismError:
+                d0 = d1 = None
+            if d0 is None:
+                P["date_from"].setErrorMessage(
+                    "Give the first day. PRISM's daily data begin on "
+                    "1 January 1981.")
+                dates_ok = False
+            if d1 is None:
+                P["date_to"].setErrorMessage("Give the last day.")
+                dates_ok = False
+            if d0 is not None and d1 is not None:
+                if d0 > d1:
+                    P["date_to"].setErrorMessage(
+                        "The first day is later than the last day.")
+                    dates_ok = False
+                elif d1 < C.FIRST_DAY:
+                    P["date_to"].setErrorMessage(
+                        "PRISM's daily data begin on 1 January 1981. For "
+                        "earlier years choose Monthly or Annual, which begin "
+                        "in 1895.")
+                    dates_ok = False
+                else:
+                    if d0 < C.FIRST_DAY:
+                        P["date_from"].setWarningMessage(
+                            "PRISM's daily data begin on 1 January 1981: the "
+                            "days before it will be left out.")
+                    if d1 >= today:
+                        P["date_to"].setWarningMessage(
+                            "PRISM's daily data end yesterday: the days from "
+                            "today on will be left out.")
+        else:
+            y0, y1 = P["year_from"].value, P["year_to"].value
+            if y0 is None:
+                P["year_from"].setErrorMessage(
+                    "Give the first year. PRISM's monthly and annual data "
+                    "begin in 1895.")
+                dates_ok = False
+            if y1 is None:
+                P["year_to"].setErrorMessage("Give the last year.")
+                dates_ok = False
+            if y0 is not None and y1 is not None:
+                if int(y0) > int(y1):
+                    P["year_to"].setErrorMessage(
+                        "The first year is later than the last year.")
+                    dates_ok = False
+                elif int(y1) < C.FIRST_YEAR:
+                    P["year_to"].setErrorMessage("PRISM's data begin in 1895.")
+                    dates_ok = False
+                else:
+                    if int(y0) < C.FIRST_YEAR:
+                        P["year_from"].setWarningMessage(
+                            "PRISM's data begin in 1895: the years before it "
+                            "will be left out.")
+                    if int(y1) > today.year or (
+                            step == C.STEP_ANNUAL and int(y1) == today.year):
+                        P["year_to"].setWarningMessage(
+                            "PRISM makes a grid when its month or year is "
+                            "over: the ones that are not over yet will be "
+                            "left out.")
+        if (P["dataset"].valueAsText or C.SET_AN) == C.SET_LT:
+            if step != C.STEP_MONTHLY or res != C.RES_800M:
+                P["dataset"].setErrorMessage(
+                    "PRISM offers its Long-term networks (LT) dataset as "
+                    "monthly grids at 800 m only. Choose Monthly and 800 m, "
+                    "or the All networks (AN) dataset.")
+            solar = [v.label for v in C.VARIABLES
+                     if v.solar and v.label in labels]
+            if solar:
+                P["variables"].setErrorMessage(
+                    "The Long-term networks (LT) dataset has no solar "
+                    "radiation. Leave out: {}.".format("; ".join(solar)))
+        if P["out_netcdf"].valueAsText:
+            why = C.check_output(P["out_netcdf"].valueAsText)
+            if why:
+                P["out_netcdf"].setErrorMessage(why)
+        fold = P["download_folder"]
+        try:
+            if fold.valueAsText:
+                why = C.check_folder(fold.valueAsText)
+                kept = C.remembered_folder()
+                if why:
+                    fold.setErrorMessage(why)
+                elif (P["keep_downloads"].value is not False and kept
+                        and os.path.isdir(kept)
+                        and not C.same_folder(kept, fold.valueAsText)):
+                    fold.setWarningMessage(
+                        "The tool remembers another folder from an earlier "
+                        "run: {}. Running with this folder makes it the one "
+                        "remembered. A grid that is in the other folder and "
+                        "not in this one will be downloaded again; to avoid "
+                        "that, move the contents of that folder into this "
+                        "one first.".format(kept))
+            else:
+                where, how, lost = C.choose_folder(None)
+                if how == C.HOW_DEFAULT:
+                    fold.setWarningMessage(
+                        "No folder has been chosen yet, so the files will go "
+                        "to {}. They are whole-country grids and can take "
+                        "many gigabytes: to keep them somewhere else, choose "
+                        "a folder here. The tool remembers the folder for "
+                        "every project.".format(where))
+                elif how == C.HOW_REMADE:
+                    fold.setWarningMessage(
+                        "The folder remembered from an earlier run, {}, is "
+                        "no longer there. It will be made again in the same "
+                        "place and the grids will be downloaded afresh. To "
+                        "keep them somewhere else, choose a folder "
+                        "here.".format(where))
+                elif how == C.HOW_LOST:
+                    fold.setWarningMessage(
+                        "The folder remembered from an earlier run, {}, "
+                        "cannot be found. If it is on a drive that is not "
+                        "connected, connect the drive and open this tool "
+                        "again. Otherwise the files will go to {}, and a "
+                        "grid that is in the other folder will be downloaded "
+                        "again.".format(lost, where))
+        except Exception:
+            pass
+        v = P["margin_cells"].value
+        if v is not None and not 0 <= int(v) <= 1000:
+            P["margin_cells"].setErrorMessage("Give a number from 0 to 1,000.")
+        g = P["max_download_gb"].value
+        if g is not None and float(g) <= 0:
+            P["max_download_gb"].setErrorMessage(
+                "Give a number of gigabytes greater than zero.")
+        # how much this asks of PRISM, before anything is fetched
+        try:
+            if dates_ok and labels:
+                mv = P["months"].values
+                periods, _notes = C.plan_periods(
+                    step, y0, y1, [int(m) for m in mv] if mv else None,
+                    d0, d1, today)
+                wanted = C.variables_from(labels)
+                n = len(periods) * len(wanted)
+                mb = len(periods) * sum(
+                    C.expected_mb(res, w.code, step) for w in wanted)
+                limit = float(g) if g is not None and float(g) > 0 \
+                    else C.DEFAULT_MAX_GB
+                text = (
+                    "This request is {} grids: about {} to download and at "
+                    "least {}, unless they are already in the folder of "
+                    "downloaded files. Every grid PRISM sends is the whole "
+                    "conterminous United States, whatever the study "
+                    "area.".format(C.n0(n), C.size_words(mb * 1024 * 1024),
+                                   C.span(n * C.PAUSE)))
+                if mb / 1024.0 > limit:
+                    P["max_download_gb"].setWarningMessage(
+                        text + " That is more than the largest download "
+                        "allowed, so the tool will stop before downloading "
+                        "unless enough of the grids are already there.")
+                elif mb >= 1024 or n >= 500:
+                    P["resolution"].setWarningMessage(text)
+        except Exception:
+            pass
+        return
+
+    def execute(self, parameters, messages):
+        P = {p.name: p for p in parameters}
+        try:
+            _scripting_hint(messages, type(self).__name__)
+            importlib.reload(gbif_occurrences)
+            importlib.reload(prism_climate)
+            C = prism_climate
+            layer = None
+            area_words = None
+            sa = P["study_area"]
+            if sa.valueAsText:
+                layer = sa.value or sa.valueAsText
+                area_words = "the features of " + os.path.basename(
+                    str(sa.valueAsText))
+            ext = None
+            if P["extent"].valueAsText:
+                ext = _extent_arg(P["extent"])
+                if not isinstance(ext, arcpy.Extent):
+                    raise C.PrismError("The rectangle could not be read.")
+                area_words = "a rectangle"
+            if layer is not None and ext is not None:
+                raise C.PrismError(
+                    "Give a study area layer or a rectangle, not both.")
+            mv = P["months"].values
+            out = C.run(
+                P["out_netcdf"].valueAsText, study_area=layer, extent=ext,
+                variables=[str(v) for v in (P["variables"].values or [])],
+                time_step=P["time_step"].valueAsText or C.STEP_MONTHLY,
+                year_from=P["year_from"].value, year_to=P["year_to"].value,
+                date_from=P["date_from"].value, date_to=P["date_to"].value,
+                months=[int(v) for v in mv] if mv else [],
+                resolution=P["resolution"].valueAsText or C.RES_4KM,
+                dataset=P["dataset"].valueAsText or C.SET_AN,
+                download_folder=P["download_folder"].valueAsText or None,
+                keep_downloads=P["keep_downloads"].value is not False,
+                margin_cells=P["margin_cells"].value,
+                max_download_gb=P["max_download_gb"].value,
+                messages=messages, area_words=area_words)
+            P["time_steps_written"].value = int(out.get("periods") or 0)
+            # one layer for each variable, for the map (a courtesy: the
+            # file is the result). Pro takes each layer's stretch from
+            # the statistics file the engine wrote beside the netCDF
+            # file, which holds every time step, not only the first.
+            names = []
+            stem = os.path.splitext(os.path.basename(out["path"]))[0]
+            for code in out.get("variables") or []:
+                try:
+                    name = "{}_{}".format(stem, code)
+                    arcpy.md.MakeMultidimensionalRasterLayer(
+                        out["path"], name, [code])
+                    names.append(name)
+                except Exception:
+                    pass
+            if names:
+                try:
+                    P["out_layers"].values = names
+                except Exception:
+                    pass
+        except prism_climate.Cancelled:
+            messages.addWarningMessage(
+                "Cancelled. No netCDF file was written."
+                + (" The grids already downloaded are kept, so the next run "
+                   "will not fetch them again."
+                   if P["keep_downloads"].value is not False else ""))
+        except prism_climate.PrismError as e:
+            # a failure the user can act on: an error message and a clean
+            # return fail the tool without a traceback
             messages.addErrorMessage(str(e))
         except arcpy.ExecuteError as e:
             messages.addErrorMessage(str(e) or arcpy.GetMessages(2))
