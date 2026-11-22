@@ -261,6 +261,10 @@ namespace WildlifeTools.OnlineData.Prism
                 bool ours = PrismLayerFacts.WrittenByTool(nc);
                 notes.Add("   added: " + l.Name + " | file " + nc + " | shows " + Stamp(shown)
                     + " | single date " + single + " | uses time " + usesTime + " | written by the tool " + ours);
+                // A layer of a file the tool wrote is given the metadata the tool wrote beside the file: a
+                // layer of a netCDF variable otherwise shows none (PrismLayerMetadata). This is apart from
+                // the time slider, and is done whatever the guards below answer.
+                if (ours) notes.Add("      " + PrismLayerMetadata.Give(l, nc));
                 if (single && usesTime && ours && (date == null || shown < date.Value)) date = shown;
             }
             if (notes.Count == 0) return null;                    // no netCDF layer was added: nothing to say

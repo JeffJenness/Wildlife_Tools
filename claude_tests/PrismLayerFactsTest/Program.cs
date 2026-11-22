@@ -238,6 +238,42 @@ namespace PrismLayerFactsTest
                     using (var h2 = new FileStream(again, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
                         Check("a file another program has open is still read", PrismLayerFacts.WrittenByTool(again));
                 }
+
+                // ---- the metadata the tool writes beside a file --------------------------------------
+                string nc = Path.Combine(work, "prism.nc");
+                Check("metadata: it lies beside the file, under the file's whole name and .xml",
+                    PrismLayerFacts.MetadataPath(nc) == nc + ".xml");
+                Check("metadata: none beside the file", PrismLayerFacts.ReadFileMetadata(nc, out string why1) == null
+                    && why1 != null && why1.Contains("no metadata file"), why1);
+                string good = "<?xml version=\"1.0\"?>\r\n<metadata xml:lang=\"en\"><dataIdInfo><idCitation>"
+                    + "<resTitle>prism.nc</resTitle></idCitation><idAbs>&lt;p&gt;Grids of the PRISM Group&lt;/p&gt;"
+                    + "</idAbs></dataIdInfo></metadata>";
+                File.WriteAllText(nc + ".xml", good, new UTF8Encoding(true));
+                string read = PrismLayerFacts.ReadFileMetadata(nc, out string why2);
+                Check("metadata: an ArcGIS metadata document is read whole, without its byte order mark",
+                    read == good && why2 == null, why2 ?? read);
+                using (var held = new FileStream(nc + ".xml", FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
+                    Check("metadata: read while another program has it open",
+                        PrismLayerFacts.ReadFileMetadata(nc, out _) == good);
+                File.WriteAllText(nc + ".xml", "<PAMDataset><Metadata/></PAMDataset>");
+                Check("metadata: another kind of XML is not taken", PrismLayerFacts.ReadFileMetadata(nc, out string why3) == null
+                    && why3.Contains("not an ArcGIS metadata document"), why3);
+                File.WriteAllText(nc + ".xml", "<metadata><dataIdInfo></metadata>");
+                Check("metadata: a broken document is not taken", PrismLayerFacts.ReadFileMetadata(nc, out string why4) == null
+                    && why4.Contains("could not be read"), why4);
+                File.WriteAllText(nc + ".xml", "<!DOCTYPE metadata [<!ENTITY x SYSTEM \"file:///C:/Windows/win.ini\">]>"
+                    + "<metadata>&x;</metadata>");
+                Check("metadata: a document that names outside files is not taken",
+                    PrismLayerFacts.ReadFileMetadata(nc, out string why5) == null, why5);
+                File.WriteAllText(nc + ".xml", "");
+                Check("metadata: an empty file", PrismLayerFacts.ReadFileMetadata(nc, out string why6) == null
+                    && why6.Contains("empty"), why6);
+                File.WriteAllText(nc + ".xml", "<metadata>" + new string('x', PrismLayerFacts.MetadataMaxBytes) + "</metadata>");
+                Check("metadata: a file too large to be the tool's", PrismLayerFacts.ReadFileMetadata(nc, out string why7) == null
+                    && why7.Contains("too large"), why7);
+                Check("metadata: no path, and a path that cannot be one",
+                    PrismLayerFacts.ReadFileMetadata(null, out _) == null && PrismLayerFacts.ReadFileMetadata(" ", out _) == null
+                    && PrismLayerFacts.ReadFileMetadata("D:\\a\0b.nc", out _) == null);
             }
             finally
             {

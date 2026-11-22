@@ -240,6 +240,74 @@ namespace WildlifeTools.OnlineData.Prism
             }
         }
 
+        /// <summary>The largest metadata file that is read. The tool's own
+        /// run to a few thousand letters.</summary>
+        public const int MetadataMaxBytes = 2 * 1024 * 1024;
+
+        /// <summary>Where the PRISM Climate Data tool writes the metadata
+        /// of a netCDF file: beside it, under the file's whole name with
+        /// <c>.xml</c> added (prism.nc.xml), which is where ArcGIS Pro keeps
+        /// the metadata of a file.</summary>
+        public static string MetadataPath(string ncPath) => ncPath + ".xml";
+
+        /// <summary>The metadata the tool wrote beside a netCDF file, as
+        /// text, or null with the reason in <paramref name="why"/>: no such
+        /// file, a file too large to be one of the tool's, or text that is
+        /// not an ArcGIS metadata document (its outermost element is not
+        /// <c>metadata</c>). Never throws.</summary>
+        public static string ReadFileMetadata(string ncPath, out string why)
+        {
+            why = null;
+            if (string.IsNullOrWhiteSpace(ncPath))
+            {
+                why = "no file is named";
+                return null;
+            }
+            try
+            {
+                var info = new FileInfo(MetadataPath(ncPath));
+                if (!info.Exists)
+                {
+                    why = "there is no metadata file beside the netCDF file";
+                    return null;
+                }
+                if (info.Length == 0 || info.Length > MetadataMaxBytes)
+                {
+                    why = "the metadata file beside the netCDF file is " + (info.Length == 0 ? "empty" : "too large");
+                    return null;
+                }
+                string text;
+                using (var s = new FileStream(info.FullName, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete))
+                using (var r = new StreamReader(s, Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
+                    text = r.ReadToEnd();
+                var settings = new System.Xml.XmlReaderSettings
+                {
+                    DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                    XmlResolver = null,
+                };
+                using (var reader = System.Xml.XmlReader.Create(new StringReader(text), settings))
+                {
+                    reader.MoveToContent();
+                    if (reader.NodeType != System.Xml.XmlNodeType.Element
+                        || !string.Equals(reader.LocalName, "metadata", StringComparison.Ordinal))
+                    {
+                        why = "the file beside the netCDF file is not an ArcGIS metadata document";
+                        return null;
+                    }
+                    while (reader.Read()) { }                     // the whole of it must be well formed
+                }
+                return text;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException
+                || ex is ArgumentException || ex is NotSupportedException
+                || ex is System.Security.SecurityException || ex is System.Xml.XmlException)
+            {
+                why = "the metadata file beside the netCDF file could not be read (" + ex.GetType().Name + ")";
+                return null;
+            }
+        }
+
         /// <summary>True when the marker's bytes are among the first
         /// <paramref name="limit"/> bytes of the stream.</summary>
         public static bool ContainsMarker(Stream s, int limit)

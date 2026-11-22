@@ -339,9 +339,12 @@ per, _n = P.plan_periods(P.STEP_DAILY, date_from="2020-02-27", date_to="2020-03-
 check("even steps: days across the end of February", P.even_steps(per) and len(per) == 5)
 notes = P.viewing_notes(r)
 check("notes: uneven steps, the stretch and adding the file to another map",
-      len(notes) == 3 and "Multidimensional tab" in notes[0] and "not evenly spaced" in notes[0]
+      len(notes) == 4 and "Multidimensional tab" in notes[0] and "not evenly spaced" in notes[0]
       and "some months are left out" in notes[0] and "all the time steps" in notes[1] and "ppt " in notes[1]
-      and " mm" in notes[1] and "tmean " in notes[1] and "Multidimensional Raster Layer" in notes[2], notes)
+      and " mm" in notes[1] and "tmean " in notes[1] and "choose Multidimensional Data. " in notes[2], notes)
+check("notes: where the notes that go with the data are",
+      "are in the metadata: right-click a layer in the Contents pane and choose View Metadata" in notes[3]
+      and "on the Source tab, under Multidimensional Info" in notes[3], notes[3])
 notes = P.viewing_notes(dict(r, even_steps=True))
 check("notes: even steps, the time slider too, on a single date",
       "time slider moves the layers too" in notes[0] and "a span one month long" in notes[0]
@@ -351,7 +354,8 @@ check("notes: even steps, the time slider too, on a single date",
 notes = P.viewing_notes(dict(r, even_steps=True, time_step=P.STEP_ANNUAL))
 check("notes: by one year", "a span one year long" in notes[0] and "from one year to the next" in notes[0], notes)
 notes = P.viewing_notes(dict(r, periods=1))
-check("notes: one time step, nothing about stepping", len(notes) == 1 and "another map" in notes[0], notes)
+check("notes: one time step, nothing about stepping", len(notes) == 2 and "another map" in notes[0]
+      and "View Metadata" in notes[1], notes)
 v = ds.variables["ppt"]
 check("file: variable attributes", v.units == "mm" and v.grid_mapping == "crs" and v.cell_measures == "area: cell_area"
       and v.cell_methods == "time: sum" and ds.variables["tmean"].units == "degC"
@@ -417,6 +421,112 @@ r4 = build_beside(out4, BOX, variables=["tmax"], time_step=P.STEP_ANNUAL, year_f
 check("not kept: the file is written", os.path.isfile(out4) and r4["periods"] == 3 and r4["downloaded"] == 3)
 check("not kept: nothing is left behind", not os.path.exists(os.path.join(work, "run4", "PRISM_downloads")),
       os.listdir(os.path.join(work, "run4")))
+# ---- the notes of an annual file, and the metadata -----------------------------------------------------------
+ds4 = netCDF4.Dataset(out4)
+note4 = ds4.variables["tmax"].comment
+ds4.close()
+lead = "A year's grid does not always equal its twelve monthly grids added up or averaged."
+check("annual: the caution about years and months LEADS the variable's note, inside what one line shows",
+      note4.startswith(lead) and len(lead) < 100 and "For each year: the average of the daily values" in note4
+      and note4 == P.variable_note(P.BY_CODE["tmax"], P.STEP_ANNUAL), note4)
+check("monthly and daily notes say what a value is, and carry no caution about years",
+      P.variable_note(P.BY_CODE["ppt"], P.STEP_MONTHLY).startswith("For each month: the sum of the daily values")
+      and P.variable_note(P.BY_CODE["ppt"], P.STEP_DAILY).startswith("For each day: ")
+      and "year's grid" not in P.variable_note(P.BY_CODE["ppt"], P.STEP_MONTHLY)
+      and P.variable_note(P.BY_CODE["tmax"], P.STEP_ANNUAL, lead=False).startswith("For each year: "))
+md4 = P.metadata_parts(r4)
+d4 = md4["description"]
+check("metadata: every note of an annual file is in the description",
+      "<b>The variables.</b>" in d4 and "For each year: the average of the daily values" in d4
+      and "In this file its values run from " in d4 and "<b>Annual grids.</b> " + lead in d4
+      and d4.count(lead) == 1, d4[:900])
+check("metadata: the dates, the young grids, the cells, the caution, the citation, the links",
+      "<b>The dates.</b> 3 time steps, one for each year, from 2001 to 2003. Each time step is named by its first day"
+      in d4 and "<b>Grids less than six months old.</b> No time step of this file" in d4
+      and "lat_bnds, lon_bnds" in d4 and "cell_area" in d4 and "narrow northward" in d4
+      and "very long-term trends" in d4 and "<b>How to cite.</b>" in d4 and r4["citation"] in d4
+      and "Multidimensional Info" in d4 and d4.count("<a href=") == 3, d4)
+ds4 = netCDF4.Dataset(out4)
+area_note = ds4.variables["cell_area"].comment
+ds4.close()
+check("the note of cell_area says what it is and gives no advice on weighting by a polygon's share",
+      area_note == "This is each cell's true area. The cells are squares of latitude and longitude, so they narrow "
+                   "northward." and "share" not in area_note and "share of it a polygon" not in d4
+      and "(cell_area). The cells are squares of latitude and longitude, so they narrow northward. For each" in d4,
+      area_note)
+check("metadata: the summary says how the file was made",
+      md4["summary"].startswith("PRISM annual grids at 4 km, All networks (AN): tmax for 3 time steps (2001 to 2003), "
+                                "cut from PRISM's grid to ")
+      and " degrees of longitude, " in md4["summary"] and "Written on " + TODAY.isoformat() in md4["summary"]
+      and md4["credits"] == r4["citation"] and md4["title"] == "prism.nc" and "terms of use" in md4["accessConstraints"],
+      md4["summary"])
+md1 = P.metadata_parts(dict(r, area_words="the features of pts", provisional=2, missing=[("tmean", "2019-07")]))
+md0 = P.metadata_parts(dict(r4, periods=1, last=r4["first"]))
+check("metadata: a file of one time step names its one date",
+      ": tmax for one time step (2001), cut from" in md0["summary"]
+      and "<b>The dates.</b> One time step: 2001. Each time step is named" in md0["description"], md0["summary"])
+check("metadata: a monthly file has no caution about years; young grids and dates not issued are told",
+      "Annual grids." not in md1["description"] and "For each month: " in md1["description"]
+      and "2 of the 6 time steps were less than six months old when their grids were fetched" in md1["description"]
+      and "<b>Dates PRISM had not issued.</b> PRISM had not yet issued: tmean for 2019-07." in md1["description"]
+      and "around the features of pts)" in md1["summary"], (md1["summary"], md1["description"][:600]))
+check("not kept: the run says what it deleted, and no more than that", r4["deleted"] == 3 and P.not_kept_notes(r4) == [
+    "The 3 grids this run downloaded were deleted when their cells had been read."], P.not_kept_notes(r4))
+
+# A run that does not keep its downloads NEVER deletes a file that was in the folder before it began.
+store4 = os.path.join(work, "run4b", "PRISM_downloads")
+out4b = os.path.join(work, "run4b", "prism.nc")
+os.makedirs(os.path.dirname(out4b))
+kw4 = dict(variables=["tmax"], time_step=P.STEP_ANNUAL, download_folder=store4, remember=False)
+P.build(out4b, BOX, year_from=2001, year_to=2002, service=FakeService(), **dict(kw4, **Log().kw()))
+tmax_dir = os.path.dirname(P.kept_path(store4, "an", P.RES_4KM, "tmax", "2001"))
+saved = sorted(os.listdir(tmax_dir))
+svc4b = FakeService()
+r4b = P.build(out4b, BOX, year_from=2001, year_to=2002, service=svc4b, keep_downloads=False, **dict(kw4, **Log().kw()))
+check("not kept: a run that needs only grids already there downloads nothing and deletes nothing",
+      svc4b.fetched == [] and r4b["deleted"] == 0 and r4b["reused"] == 2 and sorted(os.listdir(tmax_dir)) == saved
+      and len(saved) == 2, (svc4b.fetched, r4b["deleted"], os.listdir(tmax_dir)))
+n4b = P.not_kept_notes(r4b)
+check("not kept: and it says so, and how to delete the saved files",
+      len(n4b) == 1 and n4b[0].startswith("This run deleted no files. The grids that were already in " + store4)
+      and "a run never deletes a file that was in the folder before it began" in n4b[0]
+      and n4b[0].endswith("To delete them, use Windows File Explorer."), n4b)
+svc4c = FakeService()
+r4c = P.build(out4b, BOX, year_from=2001, year_to=2004, service=svc4c, keep_downloads=False, **dict(kw4, **Log().kw()))
+check("not kept: of old and new grids, only the ones this run downloaded are deleted",
+      [f[3] for f in svc4c.fetched] == ["2003", "2004"] and r4c["deleted"] == 2 and r4c["periods"] == 4
+      and sorted(os.listdir(tmax_dir)) == saved, (svc4c.fetched, r4c["deleted"], os.listdir(tmax_dir)))
+n4c = P.not_kept_notes(r4c)
+check("not kept: and both are said", len(n4c) == 1 and n4c[0].startswith(
+    "The 2 grids this run downloaded were deleted when their cells had been read. The grids that were already in ")
+    and "Windows File Explorer" in n4c[0], n4c)
+check("not kept: one grid is said in the singular", P.not_kept_notes({"deleted": 1, "reused": 0, "refreshed": 0}) == [
+    "The one grid this run downloaded was deleted when its cells had been read."])
+
+
+# A kept grid that somebody deletes after the run was planned and before the run reaches it.
+os.makedirs(os.path.join(work, "run4d"))
+store4d = os.path.join(work, "run4d", "PRISM_downloads")
+kw4d = dict(variables=["tmax"], time_step=P.STEP_ANNUAL, download_folder=store4d, remember=False)
+P.build(os.path.join(work, "run4d", "p.nc"), BOX, year_from=2002, year_to=2002, service=FakeService(),
+        **dict(kw4d, **Log().kw()))
+
+
+class GoneService(FakeService):
+    """As FakeService; and while it fetches 2001, 'somebody' deletes the kept grid of 2002 with File Explorer."""
+
+    def fetch(self, set_code, resolution, code, token, dest, cancelled=None):
+        if token == "2001":
+            os.remove(P.kept_path(store4d, set_code, resolution, code, "2002"))
+        return FakeService.fetch(self, set_code, resolution, code, token, dest, cancelled)
+
+
+svc4d = GoneService()
+r4d = P.build(os.path.join(work, "run4d", "p.nc"), BOX, year_from=2001, year_to=2002, service=svc4d,
+              **dict(kw4d, **Log().kw()))
+check("a kept grid that is deleted while the run is under way is downloaded again, and the run goes on",
+      [f[3] for f in svc4d.fetched] == ["2001", "2002"] and r4d["downloaded"] == 2 and r4d["periods"] == 2
+      and os.path.isfile(P.kept_path(store4d, "an", P.RES_4KM, "tmax", "2002")), (svc4d.fetched, r4d["downloaded"]))
 ds = netCDF4.Dataset(out4)
 tb = netCDF4.num2date(ds.variables["time_bnds"][:], ds.variables["time"].units, only_use_cftime_datetimes=False)
 check("annual: a year's bounds", tb[0][0].strftime("%Y%m%d") == "20010101" and tb[0][1].strftime("%Y%m%d") == "20020101")
@@ -726,8 +836,59 @@ try:
     dest = os.path.join(work, "dl", "a", "prism_ppt_us_25m_199001.zip")
     t0 = time.time()
     size = s.fetch("an", P.RES_4KM, "ppt", "199001", dest)
-    check("download: the zip arrives whole", size == os.path.getsize(good_zip) and os.path.getsize(dest) == size
-          and not os.path.exists(dest + ".part"))
+    check("download: the zip arrives whole, and nothing unfinished is left beside it",
+          size == os.path.getsize(good_zip) and os.path.getsize(dest) == size
+          and os.listdir(os.path.dirname(dest)) == ["prism_ppt_us_25m_199001.zip"], os.listdir(os.path.dirname(dest)))
+    # A folder shared by several people. Each download is written under a name of its own, so two people
+    # fetching the same grid at once never write into one file; an unfinished download more than a day old
+    # is swept away, and a younger one (somebody's download in progress) is left alone.
+    names = []
+    real_open = open
+
+
+    def spy_open(path, mode="r", *a, **k):
+        if "w" in mode and str(path).endswith(".part"):
+            names.append(os.path.basename(str(path)))
+        return real_open(path, mode, *a, **k)
+
+
+    P.open = spy_open
+    try:
+        shared = os.path.join(work, "dl", "shared")
+        os.makedirs(shared)
+        old_part = os.path.join(shared, "prism_ppt_us_25m_198001.zip.0a1b2c3d.part")
+        young_part = os.path.join(shared, "prism_ppt_us_25m_198002.zip.4e5f6a7b.part")
+        older_style = os.path.join(shared, "prism_ppt_us_25m_198003.zip.part")     # as versions to 1.121.75 wrote
+        not_ours = os.path.join(shared, "somebody_elses_download.part")
+        for p_ in (old_part, young_part, older_style, not_ours):
+            with real_open(p_, "wb") as f:
+                f.write(b"half a file")
+        for p_ in (old_part, older_style, not_ours):
+            os.utime(p_, (time.time() - 3 * 86400, time.time() - 3 * 86400))
+        d1 = os.path.join(shared, "prism_ppt_us_25m_199001.zip")
+        s.fetch("an", P.RES_4KM, "ppt", "199001", d1)
+        s.fetch("an", P.RES_4KM, "ppt", "199001", d1)          # the same grid again, over the first
+    finally:
+        del P.open
+    check("shared folder: each download is written under a name of its own",
+          len(names) == 2 and names[0] != names[1]
+          and all(n.startswith("prism_ppt_us_25m_199001.zip.") and n.endswith(".part") for n in names), names)
+    check("shared folder: the grid is whole and no unfinished file of ours is left",
+          os.path.getsize(d1) == os.path.getsize(good_zip)
+          and sorted(os.listdir(shared)) == sorted([os.path.basename(d1), os.path.basename(young_part),
+                                                    os.path.basename(not_ours)]),
+          os.listdir(shared))
+    check("shared folder: the tool's unfinished downloads three days old are swept away, a new one is left alone",
+          not os.path.exists(old_part) and not os.path.exists(older_style) and os.path.exists(young_part))
+    check("shared folder: an old file that is not the tool's own is never touched", os.path.exists(not_ours))
+    # the grid is open in another program (somebody's run is reading it) when ours finishes: theirs is kept
+    with real_open(d1, "rb") as held:
+        size2 = s.fetch("an", P.RES_4KM, "ppt", "199001", d1)
+        check("shared folder: a grid that is in use is left in place, and ours is discarded quietly",
+              size2 == os.path.getsize(good_zip) and os.path.getsize(d1) == os.path.getsize(good_zip)
+              and not [n for n in os.listdir(shared) if n.endswith(".part")
+                       and n not in (os.path.basename(young_part), os.path.basename(not_ours))],
+              os.listdir(shared))
     check("download: says who is asking, and nothing personal", served.get("agent") == P.USER_AGENT, served.get("agent"))
     raises("download: a date PRISM has not issued", P.NotIssued,
            lambda: s.fetch("an", P.RES_4KM, "ppt", "202712", os.path.join(work, "dl", "b.zip")), "Invalid date")
@@ -735,7 +896,9 @@ try:
     raises("download: any other answer is shown as PRISM wrote it", P.PrismError,
            lambda: s.fetch("an", P.RES_4KM, "rain", "202001", os.path.join(work, "dl", "c.zip")), "Invalid element: rain")
     check("download: a refusal leaves no file", not os.path.exists(os.path.join(work, "dl", "b.zip"))
-          and not os.path.exists(os.path.join(work, "dl", "b.zip.part")) and not os.path.exists(os.path.join(work, "dl", "c.zip")))
+          and not os.path.exists(os.path.join(work, "dl", "c.zip"))
+          and not [n for n in os.listdir(os.path.join(work, "dl")) if n.endswith(".part")],
+          os.listdir(os.path.join(work, "dl")))
     check("download: the LT address ends in /lt", s.grid_url("lt", P.RES_800M, "tmax", "200506").endswith("/us/800m/tmax/200506/lt")
           and s.grid_url("an", P.RES_4KM, "ppt", "199504").endswith("/us/4km/ppt/199504"))
     d = s.release_dates(P.RES_4KM, "ppt", "199001", "199002")
@@ -745,6 +908,83 @@ try:
 finally:
     P.SERVICE = real_service
     server.shutdown()
+
+# ---- a folder shared by several people: a grid that arrives while the run is under way ------------------
+class SharingService(FakeService):
+    """As FakeService; and while it fetches February, 'another person' puts March's grid in the folder."""
+
+    def __init__(self, folder):
+        FakeService.__init__(self)
+        self.folder = folder
+
+    def fetch(self, set_code, resolution, code, token, dest, cancelled=None):
+        size = FakeService.fetch(self, set_code, resolution, code, token, dest, cancelled)
+        if code == "ppt" and token == "201902":
+            write_zip(P.kept_path(self.folder, set_code, resolution, code, "201903"), resolution, code, "201903")
+        return size
+
+
+share_folder = os.path.join(work, "office", "PRISM_downloads")
+out_s = os.path.join(work, "office", "mine.nc")
+os.makedirs(os.path.dirname(out_s))
+svc_s = SharingService(share_folder)
+log_s = Log()
+r_s = P.build(out_s, BOX, variables=["ppt"], time_step=P.STEP_MONTHLY, year_from=2019, year_to=2019,
+              months=[1, 2, 3, 4], service=svc_s, download_folder=share_folder, remember=False, **log_s.kw())
+check("shared folder: a grid another run fetched meanwhile is not asked for again",
+      [f[3] for f in svc_s.fetched] == ["201901", "201902", "201904"] and r_s["downloaded"] == 3
+      and r_s["arrived"] == 1 and r_s["reused"] == 1 and r_s["periods"] == 4,
+      ([f[3] for f in svc_s.fetched], r_s["downloaded"], r_s["arrived"], r_s["reused"]))
+check("shared folder: and the run says so", any("One grid arrived in the folder" in s_ and "another run" in s_
+                                               for s_ in log_s.said), log_s.said[-4:])
+ds_s = netCDF4.Dataset(out_s)
+w_s = r_s["window"]
+march = value_grid(P.RES_4KM, "ppt", "201903")[w_s.row0:w_s.row0 + w_s.rows, w_s.col0:w_s.col0 + w_s.cols]
+check("shared folder: its values are in the file", np.array_equal(ds_s.variables["ppt"][2].filled(-9999.0), march))
+ds_s.close()
+
+
+class RefreshingService(FakeService):
+    """As FakeService; and while it fetches July afresh, 'another person' fetches August afresh."""
+
+    def __init__(self, folder, **kw):
+        FakeService.__init__(self, **kw)
+        self.folder = folder
+
+    def fetch(self, set_code, resolution, code, token, dest, cancelled=None):
+        size = FakeService.fetch(self, set_code, resolution, code, token, dest, cancelled)
+        if token == "202607":
+            write_zip(P.kept_path(self.folder, set_code, resolution, code, "202608"), resolution, code, "202608")
+        return size
+
+
+out_r = os.path.join(work, "office", "theirs.nc")
+P.build(out_r, BOX, variables=["ppt"], time_step=P.STEP_MONTHLY, year_from=2026, year_to=2026, months=[7, 8],
+        service=FakeService(), download_folder=share_folder, remember=False, **Log().kw())
+for tok in ("202607", "202608"):
+    os.utime(P.kept_path(share_folder, "an", P.RES_4KM, "ppt", tok), (old, old))
+both = {("ppt", "202607"): datetime.date(2026, 11, 3), ("ppt", "202608"): datetime.date(2026, 11, 3)}
+svc_r = RefreshingService(share_folder, releases=both)
+r_r = P.build(out_r, BOX, variables=["ppt"], time_step=P.STEP_MONTHLY, year_from=2026, year_to=2026, months=[7, 8],
+              service=svc_r, download_folder=share_folder, remember=False, **Log().kw())
+# a grid PRISM has reissued, fetched afresh over a kept one by a run that does not keep its downloads: it stays
+for tok in ("202607", "202608"):
+    os.utime(P.kept_path(share_folder, "an", P.RES_4KM, "ppt", tok), (old, old))
+svc_k = FakeService(releases={("ppt", "202608"): datetime.date(2026, 11, 3)})
+r_k = P.build(out_r, BOX, variables=["ppt"], time_step=P.STEP_MONTHLY, year_from=2026, year_to=2026, months=[7, 8],
+              service=svc_k, download_folder=share_folder, remember=False, keep_downloads=False, **Log().kw())
+aug = P.kept_path(share_folder, "an", P.RES_4KM, "ppt", "202608")
+check("not kept: a reissued grid fetched afresh over a kept one is not deleted, nor is any other kept grid",
+      [f[3] for f in svc_k.fetched] == ["202608"] and r_k["refreshed"] == 1 and r_k["deleted"] == 0
+      and os.path.isfile(aug) and os.path.getmtime(aug) > old + 86400
+      and os.path.isfile(P.kept_path(share_folder, "an", P.RES_4KM, "ppt", "202607"))
+      and os.path.isfile(P.kept_path(share_folder, "an", P.RES_4KM, "ppt", "201901")),
+      ([f[3] for f in svc_k.fetched], r_k["refreshed"], r_k["deleted"], os.path.isfile(aug)))
+check("shared folder: a reissued grid another run fetched afresh meanwhile is not asked for again",
+      [f[3] for f in svc_r.fetched] == ["202607"] and r_r["refreshed"] == 1 and r_r["arrived"] == 1,
+      ([f[3] for f in svc_r.fetched], r_r["refreshed"], r_r["arrived"]))
+check("the test for an arrived grid never raises", P._arrived(os.path.join(work, "office", "no", "such.zip"), True, 1.0)
+      is False and P._arrived(os.path.join(work, "office", "no", "such.zip"), False, None) is False)
 
 # ---- in ArcGIS Pro ---------------------------------------------------------------------------------------
 import arcpy  # noqa: E402
@@ -863,9 +1103,25 @@ check("run in Pro: the folder it was given is remembered, and it says so",
       P.same_folder(P.remembered_folder(), os.path.join(work, "run1", "PRISM_downloads")) and r11["remembered"]
       and any("in this project or any other: the tool remembers the folder" in s for s in m.lines), m.lines)
 check("run in Pro: says how to cite and how to see the file",
-      any("accessed 21 Nov 2026" in s for s in m.lines) and any("Multidimensional Raster Layer" in s for s in m.lines)
+      any("accessed 21 Nov 2026" in s for s in m.lines) and any("choose Multidimensional Data. " in s for s in m.lines)
       and any("very long-term trends" in s for s in m.lines), m.lines)
 check("run in Pro: metadata written without complaint", not any("metadata" in s for s in m.warnings), m.warnings)
+
+# the same run with the downloads not kept: it needs only grids that are already there, and deletes none
+m2 = Messages()
+run1_store = os.path.join(work, "run1", "PRISM_downloads")
+ppt_dir = os.path.dirname(P.kept_path(run1_store, "an", P.RES_4KM, "ppt", "201901"))
+there = sorted(os.listdir(ppt_dir))
+r12 = P.run(os.path.join(work, "run1", "from_run_2.nc"), study_area=fc, variables=["ppt"],
+            time_step=P.STEP_MONTHLY, year_from=2019, year_to=2019, months=[1, 6, 7], service=FakeService(),
+            today=TODAY, messages=m2, area_words="the features of pts", download_folder=run1_store,
+            keep_downloads=False)
+check("run in Pro, downloads not kept: the grids that were already there are all still there",
+      r12["downloaded"] == 0 and r12["deleted"] == 0 and sorted(os.listdir(ppt_dir)) == there and len(there) >= 3,
+      (r12["downloaded"], r12["deleted"], os.listdir(ppt_dir)))
+check("run in Pro, downloads not kept: it says that it deleted nothing, and how to delete the saved files",
+      any(s.startswith("This run deleted no files.") and s.endswith("To delete them, use Windows File Explorer.")
+          for s in m2.lines) and not any("are kept in" in s for s in m2.lines), m2.lines)
 
 check("settings: the tests left the user's real settings file and default folder alone",
       _state(REAL_SETTINGS) == REAL_BEFORE, (REAL_BEFORE, _state(REAL_SETTINGS)))

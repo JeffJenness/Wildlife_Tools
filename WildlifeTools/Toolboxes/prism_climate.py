@@ -57,9 +57,13 @@ The netCDF file is laid out for the analysis that follows it:
   * the cells are PRISM's own, never resampled, with one extra cell
     (or more) all round the study area;
   * ``lat_bnds`` and ``lon_bnds`` hold every cell's edges and
-    ``cell_area`` its true area, so a summary can weight each cell by
-    the share of it a polygon covers and by its size (the cells are
-    squares of latitude and longitude, so they narrow northward);
+    ``cell_area`` its true area (the cells are squares of latitude
+    and longitude, so they narrow northward). The analysis planned
+    for these files (Jeff, 22 November 2026) summarizes a polygon by
+    the cells whose CENTERS lie inside it, each weighted by its true
+    area, and by the cells the polygon intersects when it holds no
+    center. Weighting by the share of a cell that a polygon covers
+    is a possible later addition: the edges are there for it;
   * the data are chunked in blocks of dates and of cells, so that a
     map of one date and the whole series of one cell are both quick.
 
@@ -78,6 +82,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 import zipfile
 
 import gbif_occurrences as G
@@ -195,11 +200,39 @@ CAUTION = (
     "ideally, backed up with observed data.")
 
 
+# The point comes first, and so does the note itself in a variable's comment: ArcGIS Pro shows a variable's
+# note on ONE line in a layer's properties (Source tab, Multidimensional Info, Description) and cuts it off at
+# the edge of the window, at about 130 letters (Jeff's capture, 22 November 2026).
 ANNUAL_NOTE = (
-    "These are PRISM's own annual grids. PRISM makes a year's grid from that year's monthly grids as they stood "
-    "at the time, and it may reissue a monthly grid after that, so a year's grid need not equal the twelve "
-    "monthly grids added up or averaged today. Where the two must agree, fetch the monthly grids and combine "
+    "A year's grid does not always equal its twelve monthly grids added up or averaged. These are PRISM's own "
+    "annual grids: PRISM makes a year's grid from that year's monthly grids as they stood at the time, and it "
+    "may reissue a monthly grid after that. Where the two must agree, fetch the monthly grids and combine "
     "them.")
+
+TIME_NOTE = ("Each time step is named by its first day. The variable time_bnds holds the span of each step: its "
+             "first day, and the day after its last day.")
+
+PRISM_DAY_NOTE = ("A PRISM day runs from 1200 UTC to 1200 UTC and is named for the day it ends on: the grid of "
+                  "1 January holds the 24 hours that end at 1200 UTC on 1 January.")
+
+PROVISIONAL_NOTE = ("PRISM reissues a grid several times in its first six months, as more station reports "
+                    "arrive, and calls it stable after that. A value of 1 marks a time step that PRISM may "
+                    "since have reissued: run the tool again later to bring it up to date.")
+
+# The note says what the variable is and no more (Jeff, 22 November 2026). It used to tell the reader to
+# weight a cell by the share of it a polygon covers, a method no tool of ours carries out.
+AREA_WHY = "The cells are squares of latitude and longitude, so they narrow northward."
+AREA_NOTE = "This is each cell's true area. " + AREA_WHY
+
+
+def variable_note(v, time_step, lead=True):
+    """The note that goes with a climate variable (its ``comment`` in the file): what one value is. In a file
+    of annual grids the note BEGINS with the caution about years and months when ``lead`` is true."""
+    if time_step == STEP_DAILY:
+        return "For each day: {}.".format(v.what)
+    what = "For each {}: {} of the daily values, which are the {}.".format(
+        "year" if time_step == STEP_ANNUAL else "month", "the sum" if v.total else "the average", v.what)
+    return ANNUAL_NOTE + " " + what if (lead and time_step == STEP_ANNUAL) else what
 
 
 def variables_from(labels):
@@ -529,6 +562,7 @@ class Service(object):
     def __init__(self, pause=PAUSE):
         self.pause = pause
         self._last = 0.0
+        self._swept = set()                  # the folders whose abandoned downloads have been cleared
 
     def _wait(self, cancelled=None):
         while True:
@@ -566,13 +600,21 @@ class Service(object):
         the date. A download that breaks off is tried once more and no more: PRISM allows a file twice
         in 24 hours."""
         url = self.grid_url(set_code, resolution, code, token)
-        part = dest + ".part"
+        # The folder may be shared by several people (a network drive), and two of them may want the same
+        # grid at the same moment. So the file is written under a name of this download's own, and takes its
+        # real name in one step when it is complete: nobody ever sees, or writes into, half a file.
+        part = "{}.{}.part".format(dest, uuid.uuid4().hex[:8])
         folder = os.path.dirname(dest)
-        if folder and not os.path.isdir(folder):
-            os.makedirs(folder)
+        if folder:
+            os.makedirs(folder, exist_ok=True)       # another person's run may be making it this moment
+        if folder not in self._swept:
+            self._swept.add(folder)
+            _sweep_parts(folder)
         last = None
         for attempt in range(2):
             try:
+                if folder:
+                    os.makedirs(folder, exist_ok=True)   # and may have removed it since, when it was empty
                 resp = self._open(url, cancelled)
                 try:
                     head = b""
@@ -605,8 +647,20 @@ class Service(object):
                     raise NotIssued(" ".join(text.split()))
                 raise PrismError("PRISM's web service did not send a grid for {}. It said: {}".format(
                     url, " ".join(text.split())[:400] or "(nothing)"))
-            _remove(dest)
-            os.replace(part, dest)
+            for tries in range(REPLACE_TRIES):
+                try:
+                    os.replace(part, dest)
+                    break
+                except OSError:
+                    # Windows refuses to replace a file that is open. Someone else's run fetched the same
+                    # grid while this one did and is reading it now; a read takes a moment, so wait and try
+                    # again. If it never frees, theirs is kept: it is the same grid, and as good as ours.
+                    if tries + 1 < REPLACE_TRIES:
+                        time.sleep(REPLACE_WAIT)
+                        continue
+                    _remove(part)
+                    if not os.path.isfile(dest):
+                        raise
             return size
         raise last
 
@@ -642,6 +696,31 @@ def _remove(path):
     try:
         if os.path.exists(path):
             os.remove(path)
+    except OSError:
+        pass
+
+
+PART_AGE = 24 * 3600.0               # seconds after which an unfinished download is taken to be abandoned
+REPLACE_TRIES = 5                    # tries at giving a finished download its name, when the name is in use
+REPLACE_WAIT = 0.4                   # seconds between those tries
+_OWN_PART = re.compile(r"^prism_.+\.zip(\.[0-9a-f]{8})?\.part$", re.I)
+
+
+def _sweep_parts(folder):
+    """Removes this tool's unfinished downloads (prism_....zip.part, prism_....zip.<8 letters>.part) in a
+    folder when they are more than a day old: what a run that was killed left behind. A younger one may be
+    another person's download in progress, in a folder that several people share, and is left alone. No
+    other file is touched, whatever its name. Never raises."""
+    try:
+        now = time.time()
+        for name in os.listdir(folder):
+            if _OWN_PART.match(name):
+                p = os.path.join(folder, name)
+                try:
+                    if now - os.path.getmtime(p) > PART_AGE:
+                        os.remove(p)
+                except OSError:
+                    pass
     except OSError:
         pass
 
@@ -687,8 +766,7 @@ def _create(path, window, variables, time_step, set_label, chunks, attributes):
     # moves a multidimensional layer only when the map's time EQUALS a time step, start and end, can then
     # never move it. Without the link Pro reads single dates and a step of 1 month, 1 day or 1 year. The
     # spans stay in the file, in time_bnds.
-    t.comment = ("Each time step is named by its first day. The variable time_bnds holds the span of each "
-                 "step: its first day, and the day after its last day.")
+    t.comment = TIME_NOTE
     tb = ds.createVariable("time_bnds", "f8", ("time", "nv"))
     tb.units = TIME_UNITS
     tb.calendar = "standard"
@@ -732,12 +810,10 @@ def _create(path, window, variables, time_step, set_label, chunks, attributes):
     area.standard_name = "cell_area"
     area.long_name = "true area of the cell on the GRS 80 ellipsoid"
     area.grid_mapping = "crs"
-    area.comment = ("The cells are squares of latitude and longitude, so they narrow northward. Weight a "
-                    "cell by this area, and by the share of it a polygon covers, when averaging over cells.")
+    area.comment = AREA_NOTE
     per_row = np.array(cell_areas_km2(lat_e, window.cell), dtype="float32")
     area[:] = np.repeat(per_row[:, None], window.cols, axis=1)
 
-    step_words = {STEP_MONTHLY: "month", STEP_DAILY: "day", STEP_ANNUAL: "year"}[time_step]
     for v in variables:
         nv = ds.createVariable(v.code, "f4", ("time", "lat", "lon"), zlib=True, complevel=4, shuffle=True,
                                fill_value=FILL, chunksizes=chunks)
@@ -747,22 +823,16 @@ def _create(path, window, variables, time_step, set_label, chunks, attributes):
         nv.cell_measures = "area: cell_area"
         if time_step == STEP_DAILY:
             nv.cell_methods = "time: " + v.within
-            nv.comment = "For each day: {}.".format(v.what)
         else:
             nv.cell_methods = "time: sum" if v.total else "time: {} within days time: mean over days".format(v.within)
-            nv.comment = "For each {}: {} of the daily values, which are the {}.".format(
-                step_words, "the sum" if v.total else "the average", v.what)
-            if time_step == STEP_ANNUAL:
-                nv.comment += " " + ANNUAL_NOTE
+        nv.comment = variable_note(v, time_step)
         nv.prism_element = v.code
         nv.prism_dataset = set_label
         made = ds.createVariable(v.code + "_prism_created", "i4", ("time",), fill_value=0)
         made.long_name = "the day PRISM made this grid of {}, as YYYYMMDD (0 where its file does not say)".format(v.code)
     prov = ds.createVariable("provisional", "i1", ("time",), fill_value=-1)
     prov.long_name = "1 where a grid was less than six months old when it was fetched"
-    prov.comment = ("PRISM reissues a grid several times in its first six months, as more station reports "
-                    "arrive, and calls it stable after that. A value of 1 marks a time step that PRISM may "
-                    "since have reissued: run the tool again later to bring it up to date.")
+    prov.comment = PROVISIONAL_NOTE
     return ds
 
 
@@ -817,6 +887,18 @@ def _read_settings():
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def _arrived(path, had, stamp):
+    """True when a grid this run meant to fetch is in the folder after all, put there by another run since
+    this one was planned: a file where there was none, or (for a grid PRISM has reissued, whose kept file
+    was written at ``stamp``) a file written since. Never raises."""
+    try:
+        if not had:
+            return os.path.isfile(path)
+        return stamp is not None and os.path.getmtime(path) > stamp
+    except OSError:
+        return False
 
 
 def same_folder(a, b):
@@ -1003,6 +1085,7 @@ def build(out_nc, box, variables=None, time_step=STEP_MONTHLY, year_from=None, y
     paths = [[kept_path(folder, set_code, resolution, v.code, p.token) for p in periods] for v in wanted]
     have = [[os.path.isfile(paths[i][k]) for k in range(T)] for i in range(V)]
     stale = [[False] * T for _ in range(V)]
+    stale_stamp = {}                                         # (i, k): when the kept file was written
     for i, v in enumerate(wanted):
         if set_code != "an" or time_step == STEP_ANNUAL:
             continue                                         # PRISM's release-date service covers neither
@@ -1022,6 +1105,7 @@ def build(out_nc, box, variables=None, time_step=STEP_MONTHLY, year_from=None, y
             got = datetime.date.fromtimestamp(os.path.getmtime(paths[i][k]))
             if when is not None and when > got:
                 stale[i][k] = True
+                stale_stamp[(i, k)] = os.path.getmtime(paths[i][k])
     to_fetch = sum(1 for i in range(V) for k in range(T) if not have[i][k] or stale[i][k])
     n_stale = sum(1 for i in range(V) for k in range(T) if stale[i][k])
     reuse = T * V - to_fetch
@@ -1089,13 +1173,11 @@ def build(out_nc, box, variables=None, time_step=STEP_MONTHLY, year_from=None, y
         "time_coverage_end": (periods[-1].end - datetime.timedelta(days=1)).isoformat(),
     }
     if time_step == STEP_DAILY:
-        attributes["prism_day"] = ("A PRISM day runs from 1200 UTC to 1200 UTC and is named for the day it "
-                                   "ends on: the grid of 1 January holds the 24 hours that end at 1200 UTC on "
-                                   "1 January.")
+        attributes["prism_day"] = PRISM_DAY_NOTE
     tmp = out_nc + ".part"
     _remove(tmp)
     ds = _create(tmp, window, wanted, time_step, dataset, chunks, attributes)
-    fetched = refreshed = reused = 0
+    fetched = refreshed = reused = arrived = deleted = 0
     fetched_bytes = 0
     issued_count = [0] * V
     missing = []
@@ -1128,7 +1210,18 @@ def build(out_nc, box, variables=None, time_step=STEP_MONTHLY, year_from=None, y
                     step(100.0 * done / (T * V), "Grid {} of {}: {}, {}{}".format(
                         n0(done + 1), n0(T * V), v.code, p.words(), eta))
                     path = paths[i][k]
-                    if not have[i][k] or stale[i][k]:
+                    fetch_it = not have[i][k] or stale[i][k]
+                    if fetch_it and _arrived(path, have[i][k], stale_stamp.get((i, k))):
+                        # The grid has arrived since this run was planned: another person's run fetched it
+                        # into a folder that is shared. It is whole (a file takes its name only when it is
+                        # complete), so PRISM is not asked for it again.
+                        fetch_it = False
+                        arrived += 1
+                    elif not fetch_it and not os.path.isfile(path):
+                        # The grid was in the folder when this run was planned and is gone now: someone has
+                        # deleted it, or a run that does not keep its downloads has. It is fetched.
+                        fetch_it = True
+                    if fetch_it:
                         t0 = time.time()
                         try:
                             size = service.fetch(set_code, resolution, v.code, p.token, path, cancelled)
@@ -1148,7 +1241,8 @@ def build(out_nc, box, variables=None, time_step=STEP_MONTHLY, year_from=None, y
                             refreshed += 1
                         else:
                             fetched += 1
-                        made_here.add(path)
+                        if not have[i][k]:
+                            made_here.add(path)      # a grid fetched afresh over a kept one is not: see below
                     else:
                         reused += 1
                     info = read_info(path)
@@ -1164,8 +1258,13 @@ def build(out_nc, box, variables=None, time_step=STEP_MONTHLY, year_from=None, y
                         provisional[k] = 1
                     got += 1
                     done += 1
+                    # A run NEVER deletes a file that was in the folder before it began, whatever
+                    # keep_downloads says: the files may serve other projects and other people. Only what
+                    # this run added to the folder is its own to delete. (A grid PRISM had reissued, fetched
+                    # afresh over the kept one, stays: the kept file was there before.)
                     if not keep_downloads and path in made_here:
                         _remove(path)
+                        deleted += 1
                 if got:
                     nc_var[k0:k0 + got] = buf[:got]
                     made_var[k0:k0 + got] = made[:got]
@@ -1212,6 +1311,10 @@ def build(out_nc, box, variables=None, time_step=STEP_MONTHLY, year_from=None, y
             _prune(folder)
     step(100, "Done.")
 
+    if arrived:
+        say("{} arrived in the folder while this run was under way, fetched by another run that shares the "
+            "folder, and {} not downloaded again.".format(
+                "One grid" if arrived == 1 else "{} grids".format(n0(arrived)), "was" if arrived == 1 else "were"))
     short = [wanted[i].code for i in range(V) if issued_count[i] < used]
     if short:
         warn("The file's last dates hold no values for {}, which PRISM had not issued: those cells are no-data "
@@ -1225,11 +1328,14 @@ def build(out_nc, box, variables=None, time_step=STEP_MONTHLY, year_from=None, y
     return {
         "path": out_nc, "variables": [v.code for v in wanted], "periods": used, "rows": window.rows,
         "cols": window.cols, "bytes": os.path.getsize(out_nc), "downloaded": fetched, "refreshed": refreshed,
-        "reused": reused, "downloaded_bytes": fetched_bytes, "missing": missing, "provisional": n_prov,
+        "reused": reused, "arrived": arrived, "deleted": deleted, "downloaded_bytes": fetched_bytes,
+        "missing": missing,
+        "provisional": n_prov,
         "folder": folder, "folder_how": folder_how, "remembered": bool(is_remembered and keep_downloads),
         "kept": bool(keep_downloads), "citation": cite, "window": window,
         "first": periods[0].words(), "last": periods[used - 1].words(), "seconds": time.time() - t_start,
         "ranges": ranges, "time_step": time_step, "even_steps": even_steps(periods[:used]),
+        "dataset": dataset, "resolution": resolution, "run_date": today.isoformat(), "area_words": area_words,
     }
 
 
@@ -1299,6 +1405,23 @@ def service_pause(service):
         return float(service.pause)
     except (AttributeError, TypeError, ValueError):
         return PAUSE
+
+
+def not_kept_notes(out):
+    """What a run that did not keep its downloads says about the files: which it deleted, and that the ones
+    that were in the folder before it began are still there."""
+    n = out.get("deleted", 0)
+    others = out.get("reused", 0) + out.get("refreshed", 0)      # grids this run read and did not add
+    if n:
+        first = "{} this run downloaded {} deleted when {} cells had been read.".format(
+            "The one grid" if n == 1 else "The {} grids".format(n0(n)), "was" if n == 1 else "were",
+            "its" if n == 1 else "their")
+    else:
+        first = "This run deleted no files."
+    if others <= 0:
+        return [first]
+    return [first + " The grids that were already in {} are still there: a run never deletes a file that was "
+            "in the folder before it began. To delete them, use Windows File Explorer.".format(out["folder"])]
 
 
 def _prune(folder):
@@ -1441,6 +1564,9 @@ def _run(out_nc, study_area=None, extent=None, messages=None, area_words=None, *
                 out["folder"],
                 ", in this project or any other: the tool remembers the folder" if out.get("remembered")
                 else ", in this project or any other" if out.get("folder_how") == HOW_DEFAULT else ""))
+    else:
+        for line in not_kept_notes(out):
+            say(line)
     for line in viewing_notes(out):
         say(line)
     say("When the data are used, PRISM asks that they be cited with its name, its web address and the date of "
@@ -1483,41 +1609,130 @@ def viewing_notes(out):
                              "{} {:,.1f} to {:,.1f} {}".format(
                                  code, r["min"], r["max"], BY_CODE[code].units if code in BY_CODE else "").strip()
                              for code, r in sorted(out["ranges"].items())) + ".")
+    # The names are those of ArcGIS Pro 3.7.3 (Jeff's capture, 22 November 2026): the menu choice reads
+    # "Multidimensional Data..." and the window "Add Multidimensional Data". LOOK AGAIN AFTER A PRO UPGRADE.
     notes.append("To add the file to another map: on the Map tab, click the arrow under Add Data and choose "
-                 "Multidimensional Raster Layer. In the dialog box, click Import Variables, choose Import "
-                 "Variables from File and pick the file, then check the variables to show.")
+                 "Multidimensional Data. In the window that opens, click the folder button and pick the file, "
+                 "check the variables to show, and click OK.")
+    notes.append("The notes that go with the data (what a value of each variable is, the dates, the grids less "
+                 "than six months old, how to cite PRISM and the caution below) are in the metadata: "
+                 "right-click a layer in the Contents pane and choose View Metadata. A layer's properties "
+                 "show the note of its variable too: on the Source tab, under Multidimensional Info.")
     return notes
 
 
+def metadata_parts(out):
+    """The metadata that goes with the file, as a dict: title, tags, summary, description, credits and
+    accessConstraints (use limitations). The description holds EVERY note that is in the file itself (what a
+    value of each variable is, the caution about annual grids, the dates, the grids less than six months
+    old, the cells' edges and areas, the caution about change over time, how to cite PRISM), because the
+    metadata is where a reader looks first and ArcGIS Pro shows the notes in the file only in part. The
+    summary says how this file was made. Needs no arcpy."""
+    w = out["window"]
+    step = out.get("time_step")
+    T = out["periods"]
+    one = {STEP_MONTHLY: "month", STEP_DAILY: "day", STEP_ANNUAL: "year"}.get(step, "time step")
+    para = lambda head, text: "<p><b>{}</b> {}</p>".format(G.html_text(head), G.html_text(text))    # noqa: E731
+
+    summary = "PRISM {}grids at {}{}: {} for {}, cut from PRISM's grid to {} by {} cells".format(
+        (step.lower() + " ") if step else "", out.get("resolution") or w.resolution,
+        ", " + out["dataset"] if out.get("dataset") else "", "; ".join(out["variables"]),
+        "one time step ({})".format(out["first"]) if T == 1
+        else "{} time steps ({} to {})".format(n0(T), out["first"], out["last"]),
+        n0(w.cols), n0(w.rows))
+    summary += " ({:.4f} to {:.4f} degrees of longitude, {:.4f} to {:.4f} of latitude{}).".format(
+        w.west, w.east, w.south, w.north,
+        ", around " + out["area_words"] if out.get("area_words") else "")
+    summary += " Written{} by the PRISM Climate Data tool of Wildlife and Forestry Tools for ArcGIS Pro.".format(
+        " on " + out["run_date"] if out.get("run_date") else "")
+
+    items = []
+    for code in out["variables"]:
+        v = BY_CODE.get(code)
+        if v is None:
+            continue
+        r = (out.get("ranges") or {}).get(code)
+        items.append("<b>{}</b>, in {}. {}{}".format(
+            G.html_text(v.label), G.html_text(v.units), G.html_text(variable_note(v, step, lead=False)),
+            "" if not r else G.html_text(" In this file its values run from {:,.1f} to {:,.1f}.".format(
+                r["min"], r["max"]))))
+    n_prov = out.get("provisional") or 0
+    if n_prov:
+        young = ("{} of the {} was less than six months old when its grid was fetched{}. ".format(
+            "One" if n_prov == 1 else n0(n_prov),
+            "time step" if T == 1 else "{} time steps".format(n0(T)),
+            " (" + out["run_date"] + ")" if out.get("run_date") else "")
+            if n_prov == 1 else
+            "{} of the {} time steps were less than six months old when their grids were fetched{}. ".format(
+                n0(n_prov), n0(T), " (" + out["run_date"] + ")" if out.get("run_date") else ""))
+        young += ("PRISM reissues a grid several times in its first six months, as more station reports arrive, "
+                  "and calls it stable after that. The variable named provisional marks those time steps "
+                  "with 1. Run the tool again later, with the same settings, to bring them up to date.")
+    else:
+        young = ("No time step of this file was less than six months old when its grid was fetched, so the "
+                 "variable named provisional is 0 throughout. (PRISM reissues a grid several times in its "
+                 "first six months and calls it stable after that.)")
+    missing = out.get("missing") or []
+
+    description = (
+        "<p>" + G.html_text(
+            "Grids of the PRISM Group, Oregon State University, fetched from PRISM's web service by the "
+            "PRISM Climate Data tool of Wildlife and Forestry Tools and written to one netCDF file with a "
+            "time dimension. The cells are PRISM's own, not resampled.") + "</p>"
+        + "<p><b>The variables.</b> " + G.html_text(
+            "Each is one value for every cell at every time step. No-data cells hold -9999, which is PRISM's "
+            "own no-data value.") + "</p>" + G.html_list(items)
+        + (para("Annual grids.", ANNUAL_NOTE) if step == STEP_ANNUAL else "")
+        + para("The dates.", "{}. {}{}".format(
+            "One time step: {}".format(out["first"]) if T == 1
+            else "{} time steps, one for each {}, from {} to {}".format(n0(T), one, out["first"], out["last"]),
+            TIME_NOTE, " " + PRISM_DAY_NOTE if step == STEP_DAILY else ""))
+        + para("Grids less than six months old.", young)
+        + (para("Dates PRISM had not issued.", "PRISM had not yet issued: {}. The file stops at the last date "
+                "for which it had a grid.".format("; ".join("{} for {}".format(c, when) for c, when in missing)))
+           if missing else "")
+        + para("Also in the file.", "The edges of every cell (lat_bnds, lon_bnds) and its true area in square "
+               "kilometers (cell_area). " + AREA_WHY + " For each climate variable, a second variable (such "
+               "as ppt_prism_created) holds the day PRISM made the grid of each time step.")
+        + "<p>" + G.html_text(CAUTION) + "</p>"
+        + para("How to cite.", "PRISM asks that any description of the use of its data state its name, its web "
+               "address and the date of access: " + out["citation"])
+        + para("Where else these notes are.", "They are inside the netCDF file too, where any program that reads "
+               "netCDF finds them. In ArcGIS Pro, the properties of a layer of the file show the note of its "
+               "variable and of its dates: on the Source tab, under Multidimensional Info.")
+        + "<p><b>Links to the source:</b></p>" + G.html_list([
+            "PRISM: " + G.html_link(SITE),
+            "PRISM's terms of use: " + G.html_link(TERMS),
+            "PRISM's description of its datasets: " + G.html_link(DATASETS_DOC)]))
+    return {
+        "title": os.path.basename(out["path"]),
+        "tags": "PRISM, climate, precipitation, temperature, netCDF, multidimensional, Wildlife and Forestry Tools",
+        "summary": summary,
+        "description": description,
+        "credits": out["citation"],
+        "accessConstraints": "<p>" + G.html_text(
+            "PRISM's terms of use say its data may be freely reproduced and distributed, and ask that any "
+            "description of their use state PRISM's name, its web address and the date of access. ")
+        + G.html_link(TERMS) + "</p>",
+    }
+
+
 def stamp_metadata(out, messages=None):
-    """Title, tags, summary, description, credits and use limitations beside the file. Never raises:
-    metadata is a courtesy, not the result."""
+    """Title, tags, summary, description, credits and use limitations beside the file (<file>.nc.xml). Never
+    raises: metadata is a courtesy, not the result. The add-in gives the same metadata to the layers of the
+    file as they arrive in a map (OnlineData/Prism/PrismLayerMetadata.cs): a layer of a netCDF variable
+    otherwise shows none."""
     try:
         import arcpy
 
-        w = out["window"]
+        parts = metadata_parts(out)
         md = arcpy.metadata.Metadata(out["path"])
-        md.title = os.path.basename(out["path"])
-        md.tags = "PRISM, climate, precipitation, temperature, netCDF, multidimensional, Wildlife and Forestry Tools"
-        md.summary = ("PRISM climate data ({}) for {} time steps from {} to {}, cut from PRISM's {} grid to "
-                      "{} by {} cells.".format("; ".join(out["variables"]), n0(out["periods"]), out["first"],
-                                               out["last"], w.resolution, n0(w.cols), n0(w.rows)))
-        md.description = (
-            "<p>" + G.html_text(
-                "Grids of the PRISM Group, Oregon State University, fetched from PRISM's web service by the "
-                "PRISM Climate Data tool of Wildlife and Forestry Tools and written to one netCDF file with a "
-                "time dimension. The cells are PRISM's own, not resampled. The file also holds each cell's "
-                "edges (lat_bnds, lon_bnds) and true area (cell_area).") + "</p>"
-            + "<p>" + G.html_text(CAUTION) + "</p>"
-            + "<p><b>Links to the source:</b></p>" + G.html_list([
-                "PRISM: " + G.html_link(SITE),
-                "PRISM's terms of use: " + G.html_link(TERMS),
-                "PRISM's description of its datasets: " + G.html_link(DATASETS_DOC)]))
-        md.credits = out["citation"]
-        md.accessConstraints = ("<p>" + G.html_text(
-            "PRISM's terms of use say its data may be freely reproduced and distributed, and ask that any "
-            "description of their use state PRISM's name, its web address and the date of access. ")
-            + G.html_link(TERMS) + "</p>")
+        md.title = parts["title"]
+        md.tags = parts["tags"]
+        md.summary = parts["summary"]
+        md.description = parts["description"]
+        md.credits = parts["credits"]
+        md.accessConstraints = parts["accessConstraints"]
         md.save()
     except Exception as e:                                       # noqa: BLE001
         if messages is not None:
