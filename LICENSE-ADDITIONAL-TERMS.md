@@ -10,8 +10,9 @@ any later version. The full text of the License is in the file `LICENSE`.
 
 In accordance with section 7 of the GNU General Public License version 3,
 the copyright holder supplements the License with the following additional
-terms. Section 7 expressly permits terms of these kinds, and they bind
-every recipient of this program or of any work based on it.
+terms. Section 7 expressly permits terms of these kinds. Sections 1 to 3
+bind every recipient of this program or of any work based on it; section 4
+is an additional permission.
 
 ## 1. Preservation of the Lois Engelman Memorial Award notice
 
@@ -60,6 +61,27 @@ Tools for ArcGIS Pro" may not be used to endorse or promote a modified
 version of this program, or products derived from it, without prior written
 permission. Factual statements of origin ("based on Wildlife and Forestry
 Tools for ArcGIS Pro by Jeff Jenness") are permitted and encouraged.
+
+## 4. Additional permission: linking with ArcGIS Pro
+
+(Section 7: "'Additional permissions' are terms that supplement the terms of
+this License by making exceptions from one or more of its conditions.")
+
+This program runs inside ArcGIS Pro and calls its libraries. In this
+section, "ArcGIS Pro" means the ArcGIS Pro software of Environmental Systems
+Research Institute, Inc. (Esri) and the libraries and components delivered
+with it, including the assemblies of the ArcGIS Pro SDK for .NET and the
+ArcPy Python package.
+
+Additional permission under GNU GPL version 3 section 7
+
+If you modify this Program, or any covered work, by linking or combining it
+with ArcGIS Pro (or a modified version of that software), containing parts
+covered by the terms of Esri's license agreements, the licensors of this
+Program grant you additional permission to convey the resulting work.
+
+ArcGIS Pro is not part of this program and is not distributed with it. It
+remains under Esri's own license agreements.
 
 ## A request that is not a license term
 

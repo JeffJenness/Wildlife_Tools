@@ -374,8 +374,10 @@ later version, with the
 [additional terms](LICENSE-ADDITIONAL-TERMS.md) permitted by section 7 of
 that license: the award notice must be preserved, modified versions
 must be marked as modified, and the Jenness Enterprises name may not be used
-to promote derived works. The bundled fonts are under the SIL Open Font
-License; see `WildlifeTools/Fonts/Licenses`.
+to promote derived works. The additional terms also give permission to
+combine the program with ArcGIS Pro, which is Esri's software and remains
+under Esri's own license agreements. The bundled fonts are under the SIL
+Open Font License; see `WildlifeTools/Fonts/Licenses`.
 
 ## Author
 
