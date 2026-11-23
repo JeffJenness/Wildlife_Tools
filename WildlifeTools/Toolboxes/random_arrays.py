@@ -914,17 +914,8 @@ def run_random_arrays(out_fc, boundary=None, extent=None,
             "or set the Output Coordinate System environment.")
     geographic = out_sr.type == "Geographic"
     if geographic:
-        lon0 = lat0 = None
-        try:
-            if desc is not None:
-                be0 = desc.extent
-                lon0 = 0.5 * (be0.XMin + be0.XMax)
-                lat0 = 0.5 * (be0.YMin + be0.YMax)
-            elif isinstance(extent, arcpy.Extent):
-                lon0 = 0.5 * (extent.XMin + extent.XMax)
-                lat0 = 0.5 * (extent.YMin + extent.YMax)
-        except Exception:                                        # noqa: BLE001
-            pass
+        lon0, lat0 = _rs._center_for_laea(
+            out_sr, boundary if desc is not None else None, extent)
         if lon0 is None:
             raise arcpy.ExecuteError(
                 "Give an area-of-interest layer or an extent (or set "

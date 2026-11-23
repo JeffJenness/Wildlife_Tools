@@ -87,6 +87,8 @@ import os
 
 import numpy as np
 
+import wildlife_geom as _wg
+
 import mahalanobis as _mh
 import land_facet_linkage as _lnk
 import tool_metadata as _tm
@@ -778,7 +780,7 @@ def _densify(geom, step):
     if not getattr(geom, "hasCurves", False):
         return geom
     try:
-        return geom.densify("DISTANCE", step, step)
+        return _wg.densify_curves(geom, step)
     except Exception:                                            # noqa: BLE001
         return geom
 

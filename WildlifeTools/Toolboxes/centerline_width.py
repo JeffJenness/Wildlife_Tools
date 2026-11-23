@@ -61,6 +61,8 @@ import os
 
 import numpy as np
 
+import wildlife_geom as _wg
+
 import mahalanobis as _mh
 import patch_analysis as _pa
 import bottleneck_analysis as _ba
@@ -526,7 +528,7 @@ def run_centerline(in_features, out_lines, mode=None,
         if getattr(gw, "hasCurves", False):
             d = max(gw.length / 500.0, 1e-9)
             try:
-                gw = gw.densify("DISTANCE", d, d)
+                gw = _wg.densify_curves(gw, d)
             except Exception:                                    # noqa: BLE001
                 pass
         parts = _pa._explode(gw)

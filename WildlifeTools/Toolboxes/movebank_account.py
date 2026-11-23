@@ -48,6 +48,7 @@ import csv
 import datetime
 import hashlib
 import html as _html
+import http.client
 import http.cookiejar
 import io
 import os
@@ -280,8 +281,10 @@ def fetch_study(session, rec, folder, date_from=None, date_to=None, step=None, c
     rows = 0
     deployments = {}                           # deployment id -> animal
     resp = session.open(query, timeout=600)
+    whole = False                              # set only when every row has come and been written
     try:
-        text = io.TextIOWrapper(resp, encoding="utf-8", errors="replace", newline="")
+        counted = _Counted(resp)
+        text = io.TextIOWrapper(io.BufferedReader(counted, 1 << 16), encoding="utf-8", errors="replace", newline="")
         first = text.read(1)
         if first == "<":
             words = plain(first + text.read(20000))
@@ -290,7 +293,8 @@ def fetch_study(session, rec, folder, date_from=None, date_to=None, step=None, c
                             "study's owner for access through the study's page: {}".format(
                                 words[:200], session.user, STUDY_PAGE.format(study_id)))
             raise Error("Movebank did not hand over the data. It answered: {}".format(words[:600]))
-        rd = csv.reader(_Chain(first, text))
+        chain = _Chain(first, text)
+        rd = csv.reader(chain)
         header = next(rd, None)
         if not header:
             raise Error("Movebank returned no data for the study.")
@@ -300,10 +304,12 @@ def fetch_study(session, rec, folder, date_from=None, date_to=None, step=None, c
         with open(part, "w", encoding="utf-8", newline="") as f:
             w = csv.writer(f)
             w.writerow(out_header)
+            last_len = len(header)
             for row in rd:
                 if not row:
                     continue
                 rows += 1
+                last_len = len(row)
                 if i_dep is not None and i_animal is not None and len(row) > max(i_dep, i_animal) and row[i_dep]:
                     deployments.setdefault(row[i_dep], row[i_animal])
                 w.writerow(row + [sensors.get(row[i_sensor], "") if i_sensor is not None and i_sensor < len(row) else "",
@@ -314,15 +320,28 @@ def fetch_study(session, rec, folder, date_from=None, date_to=None, step=None, c
                     if step is not None:
                         step(base + width * min(0.99, rows / float(expect) if expect else 0.5),
                              "Fetching the study from Movebank: {} rows".format(n0(rows)))
-    except (TimeoutError, socket.timeout, OSError) as e:
-        raise Error("Movebank stopped sending the study after {} rows ({}). Try again; a range of dates makes "
-                    "the request smaller.".format(n0(rows), e))
+        # Did the whole study come? A connection that closes early gives no error (see
+        # gbif_occurrences.promised_length), and half a study must never be loaded as the whole of it:
+        # the tracks would simply stop short. Two signs of a stream that was cut off: fewer bytes than
+        # Movebank said it would send, and a last row that breaks off in the middle of a line.
+        promised = G.promised_length(resp)
+        if promised is not None and counted.count < promised:
+            raise Error("Movebank stopped sending the study part way: {} of {} bytes came ({} rows), so nothing "
+                        "was kept. Try again; a range of dates makes the request smaller.".format(
+                            n0(counted.count), n0(promised), n0(rows)))
+        if rows and chain.last and not chain.last.endswith(("\n", "\r")) and last_len < len(header):
+            raise Error("Movebank stopped sending the study part way: row {} breaks off in the middle, so "
+                        "nothing was kept. Try again; a range of dates makes the request smaller.".format(n0(rows)))
+        whole = True
+    except (TimeoutError, socket.timeout, OSError, http.client.HTTPException) as e:
+        raise Error("Movebank stopped sending the study after {} rows ({}), so nothing was kept. Try again; a "
+                    "range of dates makes the request smaller.".format(n0(rows), e))
     finally:
         try:
             resp.close()
         except Exception:                                        # noqa: BLE001
             pass
-        if os.path.exists(part) and (rows == 0 or (cancelled is not None and cancelled())):
+        if os.path.exists(part) and (not whole or rows == 0 or (cancelled is not None and cancelled())):
             try:
                 os.remove(part)
             except OSError:
@@ -365,10 +384,12 @@ def fetch_study(session, rec, folder, date_from=None, date_to=None, step=None, c
 
 
 class _Chain(object):
-    """Lines of a text stream, with a first piece that was already read."""
+    """Lines of a text stream, with a first piece that was already read.
+    ``last`` is the last line handed out."""
 
     def __init__(self, first, stream):
         self._first, self._stream = first, stream
+        self.last = ""
 
     def __iter__(self):
         return self
@@ -379,7 +400,25 @@ class _Chain(object):
             line, self._first = self._first + line, None
         if not line:
             raise StopIteration
+        self.last = line
         return line
+
+
+class _Counted(io.RawIOBase):
+    """Passes a response's bytes through, and counts them."""
+
+    def __init__(self, raw):
+        io.RawIOBase.__init__(self)
+        self._raw = raw
+        self.count = 0
+
+    def readable(self):
+        return True
+
+    def readinto(self, b):
+        n = self._raw.readinto(b)
+        self.count += n or 0
+        return n
 
 
 def license_name(rec):

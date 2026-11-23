@@ -209,3 +209,43 @@ def spherical_polygon_area(rings, eq_radius=EQUATORIAL_RADIUS, pol_radius=POLAR_
 def geodesic_area(rings, eq_radius=EQUATORIAL_RADIUS, pol_radius=POLAR_RADIUS):
     """Magnitude of the spheroid-corrected polygon area (sq. m)."""
     return abs(spherical_polygon_area(rings, eq_radius, pol_radius))
+
+
+# ---------------------------------------------------------------------------
+# True curves
+# ---------------------------------------------------------------------------
+# How far, as a share of the step, a densified curve may stray from the true
+# curve. One twentieth: with a step of one raster cell the straight pieces
+# stay within a twentieth of a cell of the curve.
+CURVE_DEVIATION = 0.05
+
+
+def densify_curves(geom, step):
+    """``geom`` (an arcpy polygon or polyline) with its true curves -- arcs,
+    circles, Bezier curves -- replaced by straight pieces that follow them.
+    ``step`` is in the geometry's OWN units: about a raster cell for work
+    against a raster, about 1/500 of the shape's length for vector work.
+    This is the ONE place the toolbox densifies curves: call it, never
+    ``geom.densify`` directly, and only when ``geom.hasCurves`` (it also
+    cuts straight sides into pieces no longer than ``step``).
+
+    WHY NOT ``geom.densify("DISTANCE", step, step)``, which the toolbox used
+    everywhere until 2026-11-23. Measured on full circles in ArcGIS Pro 3.8.1:
+    on a true curve the SECOND argument does not set the spacing of the
+    vertices at all. The curve is cut into chords that stay within the THIRD
+    argument (the deviation) of it, with never fewer than 36 chords to a
+    full circle. So with the deviation equal to the step, a curved boundary
+    could sit a whole step INSIDE the true curve: a circle of 10 km radius
+    densified "at 30 m" came back with 41 vertices, sides 1.5 km long, 29 m
+    inside the circle and 0.39 percent short in area. With the deviation at
+    a twentieth of the step it has 182 vertices, is within 1.5 m of the
+    circle and 0.02 percent short in area. (Straight sides are cut at
+    ``step`` whatever the deviation is.)
+
+    AND NOT ``geom.densify("GEODESIC", ...)`` for a curve, ever: it draws
+    the straight geodesic between an arc's two ENDS (a 3,184 m arc in
+    latitude and longitude came back 1,826 m long). For geodesic spacing,
+    replace the curves with this function first, with ``step`` in degrees.
+    """
+    step = max(float(step), 1e-12)
+    return geom.densify("DISTANCE", step, step * CURVE_DEVIATION)

@@ -54,6 +54,8 @@ import re
 
 import numpy as np
 
+import wildlife_geom as _wg
+
 import mahalanobis as _mh
 import hillshade as _hs
 import topographic_tools as _tt
@@ -2836,7 +2838,7 @@ def _run_zonal_shapes(in_zone, zone_field, shape_type, band, gt, W, H,
             # so the boundary error is far below the cell size.
             if getattr(geom, "hasCurves", False):
                 try:
-                    geom = geom.densify("DISTANCE", min_cs, min_cs * 0.05)
+                    geom = _wg.densify_curves(geom, min_cs)
                     n_curved += 1
                 except Exception:
                     pass

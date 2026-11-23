@@ -71,6 +71,8 @@ import os
 
 import numpy as np
 
+import wildlife_geom as _wg
+
 
 # ---------------------------------------------------------------------------
 #  basics
@@ -867,7 +869,7 @@ def _extract_from_polygons(points_xy, layer, class_field, radius_cs,
             if getattr(gw, "hasCurves", False):
                 d = max(gw.length / 500.0, 1e-9)
                 try:
-                    gw = gw.densify("DISTANCE", d, d)
+                    gw = _wg.densify_curves(gw, d)
                 except Exception:                                # noqa: BLE001
                     pass
             rings = _pa.rings_of(gw)
@@ -1538,7 +1540,7 @@ def run_classification_accuracy(
         import random_points as _rp
         lsr = arcpy.Describe(layer).spatialReference
         try:
-            _t, _s, _hs = _mh.selection_info(layer, str(layer))
+            _t, _s, _hs = _mh.selection_info(layer, layer)
             if _hs:
                 _warn(messages,
                       "The {} classification layer has an ACTIVE "

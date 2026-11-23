@@ -71,6 +71,8 @@ import os
 
 import numpy as np
 
+import wildlife_geom as _wg
+
 import mahalanobis as _mh
 import hillshade as _hs
 import kernel_density as _kd
@@ -242,7 +244,7 @@ def _projected_extent(d, out_sr, path=None):
     step = max(ext.width, ext.height) / 100.0
     if step > 0:
         try:
-            poly = poly.densify("DISTANCE", step, step)
+            poly = _wg.densify_curves(poly, step)
         except Exception:                                        # noqa: BLE001
             pass
     pext = _ct.project_geometry(poly, out_sr).extent
@@ -427,7 +429,7 @@ def _polygon_geoms(ds, path, name, use_selected, out_sr, densify_step,
                     pass
             if getattr(g, "hasCurves", False):
                 try:
-                    g = g.densify("DISTANCE", densify_step, densify_step)
+                    g = _wg.densify_curves(g, densify_step)
                     n_curved += 1
                 except Exception:                                # noqa: BLE001
                     pass

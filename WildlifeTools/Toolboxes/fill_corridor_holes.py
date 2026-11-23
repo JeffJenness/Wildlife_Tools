@@ -127,7 +127,8 @@ def _fill_small_holes(geom, threshold_m2):
         ext = geom.extent
         step = max((ext.width + ext.height) / 1000.0, 1e-9)
         try:
-            geom = geom.densify("DISTANCE", step, step)
+            import wildlife_geom as _wg
+            geom = _wg.densify_curves(geom, step)
         except Exception:                                          # noqa: BLE001
             pass
 

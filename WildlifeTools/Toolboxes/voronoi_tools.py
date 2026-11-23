@@ -73,6 +73,8 @@ import os
 
 import numpy as np
 
+import wildlife_geom as _wg
+
 import mahalanobis as _mh
 import clip_tools as _ct
 import patch_analysis as _pa
@@ -544,7 +546,7 @@ def _densify_if_curved(geom):
         try:
             e = geom.extent
             d = max(math.hypot(e.width, e.height) / 500.0, 1e-9)
-            return geom.densify("DISTANCE", d, d)
+            return _wg.densify_curves(geom, d)
         except Exception:                                        # noqa: BLE001
             pass
     return geom

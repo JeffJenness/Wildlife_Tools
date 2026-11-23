@@ -57,6 +57,8 @@ import math
 
 import numpy as np
 
+import wildlife_geom as _wg
+
 # --------------------------------------------------------------------------
 #  Statistic catalogue (the "Property" value list, in dialog order)
 # --------------------------------------------------------------------------
@@ -809,7 +811,7 @@ def lines_window_in_dem_crs(in_lines, dem_sr):
                 arcpy.Point(x0, y1), arcpy.Point(x0, y0)]), lsr)
             step = max((x1 - x0 + y1 - y0) / 40.0, 1e-9)
             try:
-                poly = poly.densify("DISTANCE", step, step)
+                poly = _wg.densify_curves(poly, step)
             except Exception:
                 pass
             ext = project_geometry(poly, dem_sr, ext).extent
@@ -964,19 +966,26 @@ def _densify_if_curved(shape, interval_m=None):
     """TRUE-CURVE polylines (arcs) expose only their arc endpoints when the
     vertices are read, so downstream sampling would follow the CHORD of each
     arc. Replace curves with straight segments: at the DEM sampling interval
-    when one is known (GEODESIC on geographic data), else at 1/200 of the
-    line's length. No-op for ordinary vertex polylines."""
+    when one is known, else at 1/200 of the line's length. No-op for
+    ordinary vertex polylines.
+
+    On geographic data the interval is turned into DEGREES and the curve is
+    followed in the line's own coordinates. It was once handed to a GEODESIC
+    densify, which does the very thing this function exists to prevent: it
+    draws the straight geodesic between an arc's two ends (a 3,184 m arc
+    came back 1,826 m long; found 2026-11-23). The samples are spaced
+    geodesically afterward, by ``_densify_geodesic``."""
     if not getattr(shape, "hasCurves", False):
         return shape
     try:
         sr = shape.spatialReference
         if interval_m:
-            method = "GEODESIC" if (sr and sr.type == "Geographic") else "DISTANCE"
             d = max(float(interval_m), 0.01)
+            if sr and sr.type == "Geographic":
+                d = d / 111320.0             # meters to degrees (of latitude)
         else:
-            method = "DISTANCE"
             d = max(shape.length / 200.0, 1e-6)
-        return shape.densify(method, d, d)
+        return _wg.densify_curves(shape, d)
     except Exception:
         return shape
 

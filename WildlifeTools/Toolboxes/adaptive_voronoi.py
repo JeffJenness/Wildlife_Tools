@@ -69,6 +69,8 @@ import time
 
 import numpy as np
 
+import wildlife_geom as _wg
+
 import mahalanobis as _mh
 import patch_analysis as _pa
 import voronoi_tools as _vt
@@ -210,7 +212,7 @@ def run_adaptive_voronoi(boundary, out_fc, in_points=None, n_random=None,
         be0 = bnd.extent
         d = max(math.hypot(be0.width, be0.height) / 500.0, 1e-9)
         try:
-            bnd = bnd.densify("DISTANCE", d, d)
+            bnd = _wg.densify_curves(bnd, d)
         except Exception:                                        # noqa: BLE001
             pass
 

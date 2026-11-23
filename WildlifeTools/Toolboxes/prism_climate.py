@@ -616,6 +616,7 @@ class Service(object):
                 if folder:
                     os.makedirs(folder, exist_ok=True)   # and may have removed it since, when it was empty
                 resp = self._open(url, cancelled)
+                promised = G.promised_length(resp)
                 try:
                     head = b""
                     size = 0
@@ -640,6 +641,14 @@ class Service(object):
             except BaseException:
                 _remove(part)
                 raise
+            if promised is not None and size < promised:
+                # the connection closed early, which Python reports as an ordinary end (see
+                # gbif_occurrences.promised_length): half a grid must not take the grid's name in a
+                # folder that later runs, and other people, read from
+                last = PrismError("PRISM's web service stopped sending {} part way: {} of {} bytes came. Try "
+                                  "again in a few minutes.".format(url, G.n0(size), G.n0(promised)))
+                _remove(part)
+                continue
             if head[:2] != b"PK":
                 _remove(part)
                 text = head.decode("utf-8", "replace").strip()
@@ -1478,7 +1487,8 @@ def study_area_box(layer=None, extent=None):
                 size = max(ext.width, ext.height) / 200.0
                 projected = sr is not None and getattr(sr, "type", "") == "Projected"
                 if size > 0 and (getattr(g, "hasCurves", False) or (projected and g.pointCount < 400)):
-                    g = g.densify("DISTANCE", size, size)
+                    import wildlife_geom as _wg
+                    g = _wg.densify_curves(g, size)
         except Exception:                                        # noqa: BLE001
             pass
         if sr is not None and getattr(sr, "name", "") not in ("", "Unknown") and sr.factoryCode != 4269:

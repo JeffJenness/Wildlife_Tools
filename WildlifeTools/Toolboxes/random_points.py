@@ -73,6 +73,8 @@ import os
 
 import numpy as np
 
+import wildlife_geom as _wg
+
 import clip_tools as _ct
 import mahalanobis as _mh
 import patch_analysis as _pa
@@ -232,7 +234,7 @@ def _prep_rings(geom):
     if getattr(geom, "hasCurves", False):
         d = max(geom.length / 500.0, 1e-9)
         try:
-            geom = geom.densify("DISTANCE", d, d)
+            geom = _wg.densify_curves(geom, d)
         except Exception:                                        # noqa: BLE001
             pass
     rings = _pa.rings_of(geom)
@@ -442,9 +444,10 @@ class _NetworkSpacing:
                 self.adj.setdefault(n2, []).append((n1, w))
         if messages is not None and self.n_junctions:
             _say(messages,
-                 "{:,} junction{} connect the line network{}.".format(
+                 "{:,} junction{} the line network{}.".format(
                      self.n_junctions,
-                     "" if self.n_junctions == 1 else "s",
+                     " connects" if self.n_junctions == 1
+                     else "s connect",
                      "" if len(groups) == 1 else "s"))
 
     def try_admit(self, part, s):
@@ -562,7 +565,7 @@ def _line_parts(geom):
     if getattr(geom, "hasCurves", False):
         d = max(geom.length / 500.0, 1e-9)
         try:
-            geom = geom.densify("DISTANCE", d, d)
+            geom = _wg.densify_curves(geom, d)
         except Exception:                                        # noqa: BLE001
             pass
     out = []
@@ -855,7 +858,8 @@ class _RasterPool:
             self.ncols, nr, nodata_to_value=sent)
         allowed = np.isin(arr, self.values)
         if self._gap_m:
-            from scipy.ndimage import distance_transform_edt
+            from scipy.ndimage import (binary_dilation,
+                                       distance_transform_edt)
             if self.geographic:
                 lat0 = math.radians(self.ymax - 0.5 * self.nrows
                                     * self.ch)
@@ -869,7 +873,20 @@ class _RasterPool:
             padded = np.zeros((allowed.shape[0] + 2,
                                allowed.shape[1] + 2), dtype=bool)
             padded[1:-1, 1:-1] = allowed
-            dist = distance_transform_edt(padded,
+            # A cell takes points only when ALL of it is at least the
+            # gap from every cell that cannot take them: points land
+            # anywhere in a cell, so the distance that counts is from
+            # the near edge of this cell to the near edge of that one,
+            # not from center to center (which let points come one
+            # cell nearer than asked, and made a gap of one cell or
+            # less do nothing: found by test, 2026-11-23). The gap
+            # between two cells' edges is the distance between their
+            # centers with one cell taken off along each axis, which
+            # is the center distance to the blocked cells GROWN by
+            # one cell all round.
+            blocked = binary_dilation(~padded,
+                                      structure=np.ones((3, 3), bool))
+            dist = distance_transform_edt(~blocked,
                                           sampling=(sy, sx))[1:-1,
                                                              1:-1]
             allowed = allowed & (dist >= self._gap_m)
@@ -1140,7 +1157,10 @@ def run_random_points(out_fc, boundary=None, extent=None,
                            strata_field, alloc, n_points,
                            n_per_stratum, population_field, density,
                            density_units, min_spacing, boundary_gap,
-                           linear_units, rng, attempts, messages)
+                           linear_units, rng, attempts, messages,
+                           strata_txt=strata_method or strata,
+                           alloc_txt=alloc_method or alloc,
+                           random_seed=random_seed)
 
     # ---- vector / extent: coordinate system + working projection ---------
     src_sr = None
@@ -1156,17 +1176,10 @@ def run_random_points(out_fc, boundary=None, extent=None,
             "set the Output Coordinate System environment.")
     geographic = out_sr.type == "Geographic"
     if geographic:
-        lon0 = lat0 = None
-        try:
-            if desc is not None:
-                be0 = desc.extent
-                lon0 = 0.5 * (be0.XMin + be0.XMax)
-                lat0 = 0.5 * (be0.YMin + be0.YMax)
-            elif isinstance(extent, arcpy.Extent):
-                lon0 = 0.5 * (extent.XMin + extent.XMax)
-                lat0 = 0.5 * (extent.YMin + extent.YMax)
-        except Exception:                                        # noqa: BLE001
-            pass
+        # the middle of the area IN out_sr (its own extent is in its own
+        # coordinate system: meters, for an area in a projection)
+        lon0, lat0 = _rs._center_for_laea(
+            out_sr, boundary if desc is not None else None, extent)
         if lon0 is None:
             raise arcpy.ExecuteError(
                 "Give an area-of-interest layer or an extent (or set "
@@ -1361,8 +1374,11 @@ def _run_polygons_core(boundary, extent, desc, work_sr, out_sr, strata,
         strata_list = [["the area of interest",
                         [(None, merged, a)], a, 0.0]]
     else:
+        # the count is taken from the DATASET (its catalog path): with
+        # the layer itself given as the path the "total" was the
+        # selected count, and the message read "1 of 1 features"
         n_total, n_sel, has_sel = _mh.selection_info(
-            boundary, str(boundary))
+            boundary, getattr(desc, "catalogPath", None) or boundary)
         if has_sel:
             _say(messages, "The area layer has an active selection: "
                            "{} of {} features are used.".format(
@@ -1486,8 +1502,8 @@ def _run_lines_core(boundary, extent, desc, work_sr, out_sr, strata,
                     linear_units, min_spacing, messages):
     import arcpy
 
-    n_total, n_sel, has_sel = _mh.selection_info(boundary,
-                                                 str(boundary))
+    n_total, n_sel, has_sel = _mh.selection_info(
+        boundary, getattr(desc, "catalogPath", None) or boundary)
     if has_sel:
         _say(messages, "The line layer has an active selection: {} of "
                        "{} polylines are used.".format(n_sel, n_total))
@@ -1635,7 +1651,8 @@ def _run_lines_core(boundary, extent, desc, work_sr, out_sr, strata,
 def _run_raster(out_fc, boundary, desc, strata, strata_field, alloc,
                 n_points, n_per_stratum, population_field, density,
                 density_units, min_spacing, boundary_gap, linear_units,
-                rng, attempts, messages):
+                rng, attempts, messages, strata_txt=None,
+                alloc_txt=None, random_seed=None):
     import arcpy
 
     path = getattr(desc, "catalogPath", str(boundary))
@@ -1785,9 +1802,10 @@ def _run_raster(out_fc, boundary, desc, strata, strata_field, alloc,
                              strat_field=strata != STRATA_NONE,
                              messages=messages,
                              starved_any=starved_any)
-    _stamp(out_path, "raster", strata, alloc, placed, want_total,
-           boundary, min_spacing, boundary_gap, linear_units, density,
-           density_units, None)
+    # the dialog's own words and the seed, as the vector runs record
+    _stamp(out_path, "raster", strata_txt or strata, alloc_txt or alloc,
+           placed, want_total, boundary, min_spacing, boundary_gap,
+           linear_units, density, density_units, random_seed)
     _mh.end_phases()
     return out_path
 

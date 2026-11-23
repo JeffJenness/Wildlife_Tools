@@ -238,7 +238,8 @@ def _flatten_curves(geom, step_m):
     arc endpoints otherwise -- standing rule)."""
     try:
         if getattr(geom, "hasCurves", False):
-            return geom.densify("DISTANCE", step_m, step_m)
+            import wildlife_geom as _wg
+            return _wg.densify_curves(geom, step_m)
     except Exception:                                            # noqa: BLE001
         pass
     return geom

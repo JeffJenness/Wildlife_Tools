@@ -75,6 +75,8 @@ from collections import deque
 
 import numpy as np
 
+import wildlife_geom as _wg
+
 import mahalanobis as _mh
 import patch_analysis as _pa
 import centerline_width as _cw
@@ -1285,7 +1287,7 @@ def run_inscribed_geometry(in_features, geometry_type, out_features,
         if getattr(gw, "hasCurves", False):
             d = max(gw.length / 500.0, 1e-9)
             try:
-                gw = gw.densify("DISTANCE", d, d)
+                gw = _wg.densify_curves(gw, d)
             except Exception:                                    # noqa: BLE001
                 pass
         if tol_m:

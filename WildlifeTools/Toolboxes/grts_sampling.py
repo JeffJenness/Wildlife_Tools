@@ -33,6 +33,8 @@ import os
 
 import numpy as np
 
+import wildlife_geom as _wg
+
 import grts_core as _gc
 import mahalanobis as _mh
 import patch_analysis as _pa
@@ -87,7 +89,7 @@ def _densified(geom, work_sr):
     if getattr(geom, "hasCurves", False):
         try:
             step = max(geom.length / 500.0, 1e-6)
-            geom = geom.densify("DISTANCE", step, step)
+            geom = _wg.densify_curves(geom, step)
         except Exception:                                    # noqa: BLE001
             pass
     return geom

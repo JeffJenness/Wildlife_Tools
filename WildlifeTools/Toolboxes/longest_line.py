@@ -69,6 +69,8 @@ import os
 
 import numpy as np
 
+import wildlife_geom as _wg
+
 import mahalanobis as _mh
 import patch_analysis as _pa
 import centerline_width as _cw
@@ -582,7 +584,7 @@ def run_longest_line(in_features, out_lines, transfer_fields=None,
         if getattr(gw, "hasCurves", False):
             d = max(gw.length / 500.0, 1e-9)
             try:
-                gw = gw.densify("DISTANCE", d, d)
+                gw = _wg.densify_curves(gw, d)
             except Exception:                                    # noqa: BLE001
                 pass
         if tol_m:
@@ -816,7 +818,7 @@ def run_station_fetch(stations, in_features, out_radials,
         if getattr(gw, "hasCurves", False):
             d = max(gw.length / 500.0, 1e-9)
             try:
-                gw = gw.densify("DISTANCE", d, d)
+                gw = _wg.densify_curves(gw, d)
             except Exception:                                    # noqa: BLE001
                 pass
         if tol_nat:

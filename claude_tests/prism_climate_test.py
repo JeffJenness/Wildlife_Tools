@@ -1126,6 +1126,60 @@ check("run in Pro, downloads not kept: it says that it deleted nothing, and how 
 check("settings: the tests left the user's real settings file and default folder alone",
       _state(REAL_SETTINGS) == REAL_BEFORE, (REAL_BEFORE, _state(REAL_SETTINGS)))
 
+# ---- a download that is cut off on its way (against the stand-in service of stand_in_service.py) ------------
+# Python's web client gives no error when a connection closes before all the bytes a server promised have come:
+# reading simply ends. So a grid's zip file that arrived half is given the grid's own name and kept, in a
+# folder that may be shared, where every later run finds it and stops. And PRISM allows a file only twice a day.
+import io as _io  # noqa: E402
+
+sys.path.insert(0, HERE)
+from stand_in_service import StandIn, no_internet, pointed  # noqa: E402
+
+_guard = no_internet()
+_buf = _io.BytesIO()
+with zipfile.ZipFile(_buf, "w", zipfile.ZIP_STORED) as _z:
+    _z.writestr("prism_ppt_us_25m_201901.tif", os.urandom(200000))
+_whole = _buf.getvalue()
+_dest = os.path.join(work, "cut_off", "prism_ppt_us_25m_201901.zip")
+with StandIn() as _web:
+    _web.fail(None, "cut", body=_whole)
+    with pointed(P, SERVICE=_web.url):
+        try:
+            _got = P.Service(pause=0.0).fetch("an", list(P.GRIDS)[0], "ppt", "201901", _dest)
+        except P.PrismError as e:
+            _got = e
+    _asked = len(_web.requests)
+    _left = os.listdir(os.path.dirname(_dest)) if os.path.isdir(os.path.dirname(_dest)) else []
+    # cut off once, whole the second time
+    _web.forget()
+    _web.fail(None, "cut", body=_whole, times=1)
+    _web.answer(None, body=_whole)
+    _dest2 = os.path.join(work, "cut_once", "prism_ppt_us_25m_201901.zip")
+    with pointed(P, SERVICE=_web.url):
+        _size2 = P.Service(pause=0.0).fetch("an", list(P.GRIDS)[0], "ppt", "201901", _dest2)
+    _asked2 = len(_web.requests)
+    # sent in pieces with no length promised, and cut off
+    _web.forget()
+    _web.fail(None, "cut stream", body=_whole)
+    _dest3 = os.path.join(work, "cut_stream", "prism_ppt_us_25m_201901.zip")
+    with pointed(P, SERVICE=_web.url):
+        try:
+            _got3 = P.Service(pause=0.0).fetch("an", list(P.GRIDS)[0], "ppt", "201901", _dest3)
+        except P.PrismError as e:
+            _got3 = e
+check("a download cut off on its way: the stand-in was asked, and nothing reached another computer",
+      _asked >= 1 and _guard.attempts == [], (_asked, _guard.attempts))
+_guard.stop()
+check("a download cut off on its way is not kept as if it were whole: an error that says how much came",
+      isinstance(_got, P.PrismError) and "stopped sending" in str(_got) and "part way: 100," in str(_got) and not os.path.isfile(_dest),
+      "%r; %s of %s bytes were kept under the grid's own name" % (_got, os.path.getsize(_dest) if os.path.isfile(_dest) else 0, len(_whole)))
+check("a download cut off on its way: asked for twice and no more (PRISM allows a file twice in a day), and no working file is left",
+      _asked == 2 and _left == [], (_asked, _left))
+check("a download cut off once and whole the second time: the whole file is kept",
+      _asked2 == 2 and _size2 == len(_whole) and open(_dest2, "rb").read() == _whole, (_asked2, _size2))
+check("a download sent in pieces with no length promised, and cut off: an error, and nothing kept",
+      isinstance(_got3, P.PrismError) and not os.path.isfile(_dest3), repr(_got3))
+
 del r_pro, lyr
 print("\n%d passed, %d failed" % (passed, failed))
 try:

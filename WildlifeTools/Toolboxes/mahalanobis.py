@@ -1509,6 +1509,29 @@ def pinned_layer(path, oids, name):
     return name
 
 
+def _count_where(path, where):
+    """How many rows of the dataset at ``path`` a where clause keeps, or
+    None when that cannot be counted (a query that names a joined field,
+    for one). A scratch table view does the counting, so the database's
+    own indexes are used; it is removed again."""
+    name = "jenness_count_view_{}".format(os.getpid())
+    try:
+        try:
+            arcpy.management.Delete(name)
+        except Exception:                                          # noqa: BLE001
+            pass
+        arcpy.management.MakeTableView(path, name, where)
+        try:
+            return int(arcpy.management.GetCount(name)[0])
+        finally:
+            try:
+                arcpy.management.Delete(name)
+            except Exception:                                      # noqa: BLE001
+                pass
+    except Exception:                                              # noqa: BLE001
+        return None
+
+
 def selection_info(item, path):
     """``(n_total, n_selected, has_selection)`` for one Feature Layer GP
     input.
@@ -1521,11 +1544,28 @@ def selection_info(item, path):
     concept at all -- for it, ``n_selected`` always equals ``n_total`` and
     ``has_selection`` is False, same as a layer with an empty selection.
     Never raises; an unreadable count comes back as ``(None, None, False)``.
+
+    ``n_total`` is the number of features THE LAYER SHOWS: the dataset's
+    features, less those a definition query hides (the tools work on what
+    the layer shows; counting the whole dataset recorded "3 used" for a
+    layer whose query shows 2). It is counted on the dataset behind the
+    item whatever ``path`` holds: callers that passed the layer itself as
+    the path got the SELECTED count as the total, and their messages read
+    "1 of 1 features are used" for 1 of 3 (both found by test, 2026-11-23).
     """
     try:
-        n_total = int(arcpy.management.GetCount(path)[0])
+        behind = arcpy.Describe(item).catalogPath
+    except Exception:                                              # noqa: BLE001
+        behind = None
+    try:
+        n_total = int(arcpy.management.GetCount(behind or path)[0])
     except Exception:                                              # noqa: BLE001
         return None, None, False
+    where = definition_query(item)
+    if where:
+        shown = _count_where(behind or path, where)
+        if shown is not None:
+            n_total = shown
     has_selection = False
     n_selected = n_total
     try:

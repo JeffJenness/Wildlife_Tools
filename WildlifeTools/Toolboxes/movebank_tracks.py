@@ -38,6 +38,7 @@ import array
 import csv
 import datetime
 import html
+import http.client
 import json
 import os
 import re
@@ -280,38 +281,56 @@ def _safe_name(name):
 
 def download_file(f, folder, step, cancelled, base, width):
     """Saves one file (through a .part file). A file already there with
-    the same size is not fetched again. Returns its path."""
+    the same size is not fetched again. A transfer that is cut off part
+    way is tried once more; a file that has not come whole is never kept
+    (see ``gbif_occurrences.promised_length``). Returns its path."""
     path = os.path.join(folder, _safe_name(f["name"]))
     if os.path.isfile(path) and f["size"] and os.path.getsize(path) == f["size"]:
         return path, False
-    resp = _open(f["url"], accept="*/*", timeout=300)
     tmp = path + ".part"
-    try:
-        total = int(resp.headers.get("Content-Length") or f["size"] or 0)
-        done = 0
-        with open(tmp, "wb") as dst:
-            while True:
-                if cancelled():
-                    raise Cancelled()
-                buf = resp.read(1 << 18)
-                if not buf:
-                    break
-                dst.write(buf)
-                done += len(buf)
-                step(base + (width * done / total if total else 0),
-                     "Fetching {}: {}{}".format(f["name"], size_words(done),
-                                                " of " + size_words(total) if total else ""))
-        os.replace(tmp, path)
-    except BaseException:
+
+    def drop():
         try:
             if os.path.exists(tmp):
                 os.remove(tmp)
         except OSError:
             pass
-        raise
-    finally:
-        resp.close()
-    return path, True
+
+    cut = None
+    for _attempt in range(2):
+        resp = _open(f["url"], accept="*/*", timeout=300)
+        cut = None
+        try:
+            promised = G.promised_length(resp)
+            total = int(promised or f["size"] or 0)
+            done = 0
+            with open(tmp, "wb") as dst:
+                while True:
+                    if cancelled():
+                        raise Cancelled()
+                    buf = resp.read(1 << 18)
+                    if not buf:
+                        break
+                    dst.write(buf)
+                    done += len(buf)
+                    step(base + (width * done / total if total else 0),
+                         "Fetching {}: {}{}".format(f["name"], size_words(done),
+                                                    " of " + size_words(total) if total else ""))
+            if promised is not None and done < promised:
+                cut = "{} of {} came".format(size_words(done), size_words(promised))
+        except (http.client.HTTPException, TimeoutError, ConnectionError) as e:
+            cut = str(e) or type(e).__name__
+        except BaseException:
+            drop()
+            raise
+        finally:
+            resp.close()
+        if cut is None:
+            os.replace(tmp, path)
+            return path, True
+        drop()
+    raise MovebankError("{} was cut off on its way from the Movebank Data Repository, twice ({}), so it was not "
+                        "kept. Run the tool again.".format(f["name"], cut))
 
 
 def downloads_folder(anchor_fc, name):
@@ -499,8 +518,11 @@ def scan_files(paths, step, cancelled, base, width):
 def extra_fields(sc):
     """(column, field name, type, length) for the columns beyond the
     core ones. A column is a whole number or a decimal number only when
-    every value in it is one, so nothing is lost; a column with no
-    values at all is left out."""
+    every value in it is one AND the field can hold every digit, so
+    nothing is lost: whole numbers of up to 9 digits are a LONG field, of
+    up to 15 a DOUBLE (which holds them exactly), and longer ones (an
+    identifier of 20 digits, say) stay TEXT. A column with no values at
+    all is left out."""
     out, used = [], set(field_name(c) for c in CORE) | {"timestamp_text"}
     for c in sc.columns:
         if c in CORE:
@@ -516,7 +538,7 @@ def extra_fields(sc):
         used.add(name)
         if all_int and maxlen <= 9:
             out.append((c, name, "LONG", None))
-        elif all_float:
+        elif all_float and not (all_int and maxlen > 15):
             out.append((c, name, "DOUBLE", None))
         else:
             out.append((c, name, "TEXT", max(8, min(4000, maxlen))))
@@ -576,8 +598,15 @@ def run(dataset, **kwargs):
         before = arcpy.env.autoCancelling
     except Exception:                                            # noqa: BLE001
         before = None
+    made = []                          # the outputs this run has begun to write
     try:
-        return _run(dataset, **kwargs)
+        return _run(dataset, _made=made, **kwargs)
+    except BaseException:
+        # cancelled or failed while writing: half a set of points, or points without their lines, would
+        # pass for the finished result, so what this run began is removed
+        for path in made:
+            G.discard_output(path)
+        raise
     finally:
         if before is not None:
             try:
@@ -587,7 +616,7 @@ def run(dataset, **kwargs):
 
 
 def _run(dataset, output=OUT_BOTH, out_points=None, out_lines=None, animals=None, date_from=None,
-         date_to=None, include_flagged=False, messages=None, accept_terms=False):
+         date_to=None, include_flagged=False, messages=None, accept_terms=False, _made=None):
     import arcpy
     import mahalanobis
 
@@ -810,6 +839,8 @@ def _run(dataset, output=OUT_BOTH, out_points=None, out_lines=None, animals=None
             arcpy.management.Delete(out_points)
         arcpy.management.CreateFeatureclass(os.path.dirname(out_points), os.path.basename(out_points), "POINT",
                                             has_m="DISABLED", has_z="DISABLED", spatial_reference=sr)
+        if _made is not None:
+            _made.append(out_points)
         spec = []
         for c, name in core_fields:
             if c == "timestamp":
@@ -937,6 +968,8 @@ def _run(dataset, output=OUT_BOTH, out_points=None, out_lines=None, animals=None
             arcpy.management.Delete(out_lines)
         arcpy.management.CreateFeatureclass(os.path.dirname(out_lines), os.path.basename(out_lines), "POLYLINE",
                                             has_m="DISABLED", has_z="DISABLED", spatial_reference=sr)
+        if _made is not None:
+            _made.append(out_lines)
         arcpy.management.AddFields(out_lines, [[nm, ft, alias, ln] for nm, alias, ft, ln, _d in LINE_FIELDS])
         wgs = arcpy.SpatialReference(4326)
         with arcpy.da.InsertCursor(out_lines, ["SHAPE@"] + [x[0] for x in LINE_FIELDS]) as cur:
@@ -975,6 +1008,9 @@ def _run(dataset, output=OUT_BOTH, out_points=None, out_lines=None, animals=None
                 n_lines += 1
                 step(91 + 7.0 * (k + 1) / max(1, len(tracks)), "Building the track lines: {} of {}".format(
                     k + 1, len(tracks)))
+
+    if _made is not None:
+        del _made[:]                   # the outputs are whole: nothing that follows may remove them
 
     # ---- the report ---------------------------------------------------------
     left = []

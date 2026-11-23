@@ -70,6 +70,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
+
+import wildlife_geom as _wg
 from scipy.spatial import cKDTree
 
 import arcpy
@@ -1130,9 +1132,8 @@ def _polyline_segments(fc, messages):
             # densify so the segment sampling follows the arc, not the chord.
             if getattr(shape, "hasCurves", False):
                 try:
-                    shape = shape.densify(
-                        "DISTANCE", max(shape.length / 500.0, 1e-6),
-                        max(shape.length / 500.0, 1e-6))
+                    shape = _wg.densify_curves(
+                        shape, max(shape.length / 500.0, 1e-6))
                 except Exception:
                     pass
             n_features += 1

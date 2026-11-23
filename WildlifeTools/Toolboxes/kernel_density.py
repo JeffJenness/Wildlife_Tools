@@ -1307,7 +1307,7 @@ def _kd_mask(xmin, ymax, csx, csy, ncols, nrows, sr, messages):
                     if getattr(g, "hasCurves", False):    # true curves: densify
                         step = (csx if (msr is not None and msr.type == sr.type)
                                 else max(g.length / 500.0, 1e-9))
-                        g = g.densify("DISTANCE", step, step)
+                        g = wg.densify_curves(g, step)
                     if msr is not None and not _same_cs(msr, sr):
                         g = _ct.project_geometry(g, sr)
                     geoms.append(g)

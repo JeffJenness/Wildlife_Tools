@@ -757,6 +757,17 @@ def write_points(out_fc, records, keep=None, progress=None, cancelled=None):
     arcpy.management.AddFields(out_fc, [
         [f[0], types[f[2]], f[1], f[3] if f[2] == "T" else None] for f in FIELDS])
     kinds = [(f[0], f[2], f[3]) for f in FIELDS]
+    try:
+        seen = _write_rows(arcpy, out_fc, records, keep, kinds, r, progress, cancelled)
+    except BaseException:
+        G.discard_output(out_fc)        # cancelled or failed part way: no half-written output is left
+        raise
+    if progress is not None:
+        progress(seen)
+    return r
+
+
+def _write_rows(arcpy, out_fc, records, keep, kinds, r, progress, cancelled):
     seen = 0
     with arcpy.da.InsertCursor(out_fc, ["SHAPE@XY"] + FIELD_NAMES) as cur:
         for lon, lat, has, vals in records:
@@ -802,9 +813,7 @@ def write_points(out_fc, records, keep=None, progress=None, cancelled=None):
                 r.taxa.add(vals["taxonID"])
             if progress is not None and r.written % 1000 == 0:
                 progress(seen)
-    if progress is not None:
-        progress(seen)
-    return r
+    return seen
 
 
 # ---------------------------------------------------------------------------

@@ -352,6 +352,41 @@ def _open(url, data=None, auth=None, accept="application/json", method=None, tim
         raise GbifError("GBIF did not answer in time ({}). Try again.".format(e))
 
 
+def promised_length(resp):
+    """The number of bytes a response said it would send (its
+    Content-Length), or None when it did not say.
+
+    WHY (found by test, 2026-11-23). Python's web client gives NO error
+    when a connection closes before all the promised bytes have come:
+    ``resp.read(n)`` returns nothing, exactly as it does at the true end.
+    A loop of ``read(n)`` therefore cannot tell a file that came whole
+    from one that was cut off half way, and the half was being kept under
+    the file's own name (in PRISM's shared folder, in Data_Downloads; of a
+    Movebank study, half the rows were loaded as the whole). Every
+    download that is read in pieces now compares the bytes it received
+    with this number before it keeps anything. (``resp.read()`` with no
+    size does raise, so a body read in one piece needs no such check.)"""
+    try:
+        n = int(resp.headers.get("Content-Length"))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return n if n >= 0 else None
+
+
+def discard_output(path):
+    """Removes a feature class this run had begun to write. A run that is
+    cancelled, or that fails, while it writes must not leave half its rows
+    under the output's name: they would pass for the finished result.
+    Never raises."""
+    try:
+        import arcpy
+
+        if arcpy.Exists(path):
+            arcpy.management.Delete(path)
+    except Exception:                                            # noqa: BLE001
+        pass
+
+
 def _text(url, data=None, auth=None, accept="application/json", method=None, tries=1):
     """The body of a response as text. ``tries`` > 1 repeats a request
     that failed for a reason that may pass (network, 5xx)."""
@@ -794,7 +829,8 @@ def _to_wgs84(geom):
         step = max(ext.width, ext.height) / 200.0
         projected = sr is not None and getattr(sr, "type", "") == "Projected"
         if step > 0 and (getattr(geom, "hasCurves", False) or (projected and geom.pointCount < 400)):
-            geom = geom.densify("DISTANCE", step, step)
+            import wildlife_geom as _wg
+            geom = _wg.densify_curves(geom, step)
     except Exception:                                            # noqa: BLE001
         pass
     if sr is not None and getattr(sr, "name", "") not in ("", "Unknown") and sr.factoryCode != 4326:
@@ -1131,6 +1167,17 @@ def write_points(out_fc, records, keep=None, keep_unlocated=False, dataset_title
 
     titles = dataset_titles or {}
     kinds = [(f[0], f[2], f[3]) for f in FIELDS]
+    try:
+        _write_rows(arcpy, out_fc, records, keep, keep_unlocated, titles, kinds, result, progress, cancelled)
+    except BaseException:
+        discard_output(out_fc)          # cancelled or failed part way: no half-written output is left
+        raise
+    if progress is not None:
+        progress(result.written)
+    return result
+
+
+def _write_rows(arcpy, out_fc, records, keep, keep_unlocated, titles, kinds, result, progress, cancelled):
     with arcpy.da.InsertCursor(out_fc, ["SHAPE@XY"] + FIELD_NAMES) as cur:
         for lon, lat, has, vals in records:
             if cancelled is not None and result.written % 500 == 0 and cancelled():
@@ -1184,9 +1231,6 @@ def write_points(out_fc, records, keep=None, keep_unlocated=False, dataset_title
                 result.written_without_location += 1
             if progress is not None and result.written % 1000 == 0:
                 progress(result.written)
-    if progress is not None:
-        progress(result.written)
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1385,38 +1429,59 @@ def wait_for_download(key, max_wait_minutes, say, step, cancelled, first_delay=1
 
 
 def fetch_download_file(d, zip_path, step, cancelled):
-    """Saves a finished download's zip file (through a .part file)."""
+    """Saves a finished download's zip file (through a .part file). A
+    transfer that is cut off part way is tried once more. A file that
+    has not come whole is never kept: see ``promised_length``."""
     url = d.get("downloadLink") or (V1 + "occurrence/download/request/"
                                     + urllib.parse.quote(d.get("key")) + ".zip")
-    resp = _open(url, accept="*/*", timeout=300)
     tmp = zip_path + ".part"
-    try:
-        total = int(resp.headers.get("Content-Length") or d.get("size") or 0)
-        done = 0
-        with open(tmp, "wb") as dst:
-            while True:
-                if cancelled():
-                    raise Cancelled()
-                buf = resp.read(1 << 16)
-                if not buf:
-                    break
-                dst.write(buf)
-                done += len(buf)
-                step(62 + (23.0 * done / total if total > 0 else 0),
-                     "Fetching the file: {}{}".format(
-                         size_words(done), " of " + size_words(total) if total > 0 else ""))
-        if os.path.exists(zip_path):
-            os.remove(zip_path)
-        os.replace(tmp, zip_path)
-    except BaseException:
+
+    def drop():
         try:
             if os.path.exists(tmp):
                 os.remove(tmp)
         except OSError:
             pass
-        raise
-    finally:
-        resp.close()
+
+    cut = None
+    for _attempt in range(2):
+        resp = _open(url, accept="*/*", timeout=300)
+        cut = None
+        try:
+            promised = promised_length(resp)
+            total = int(promised or d.get("size") or 0)
+            done = 0
+            with open(tmp, "wb") as dst:
+                while True:
+                    if cancelled():
+                        raise Cancelled()
+                    buf = resp.read(1 << 16)
+                    if not buf:
+                        break
+                    dst.write(buf)
+                    done += len(buf)
+                    step(62 + (23.0 * done / total if total > 0 else 0),
+                         "Fetching the file: {}{}".format(
+                             size_words(done), " of " + size_words(total) if total > 0 else ""))
+            if promised is not None and done < promised:
+                cut = "{} of {} came".format(size_words(done), size_words(promised))
+        except (http.client.HTTPException, TimeoutError, ConnectionError) as e:
+            cut = str(e) or type(e).__name__
+        except BaseException:
+            drop()
+            raise
+        finally:
+            resp.close()
+        if cut is None:
+            if os.path.exists(zip_path):
+                os.remove(zip_path)
+            os.replace(tmp, zip_path)
+            return
+        drop()
+    raise GbifError(
+        "The file of download {} was cut off on its way from GBIF, twice ({}), so it was not kept. The "
+        "download itself is still at GBIF: run the tool again with the method \"{}\" and that key.".format(
+            d.get("key") or "", cut, METHOD_LOAD))
 
 
 def downloads_folder(out_fc):

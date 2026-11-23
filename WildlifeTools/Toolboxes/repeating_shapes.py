@@ -72,6 +72,8 @@ import os
 
 import numpy as np
 
+import wildlife_geom as _wg
+
 import mahalanobis as _mh
 import patch_analysis as _pa
 import voronoi_tools as _vt
@@ -497,7 +499,7 @@ def _read_features(boundary, work_sr, shape_kind, messages):
                 if getattr(g, "hasCurves", False):
                     d = max(g.length / 500.0, 1e-9)
                     try:
-                        g = g.densify("DISTANCE", d, d)
+                        g = _wg.densify_curves(g, d)
                     except Exception:                        # noqa: BLE001
                         pass
                 for pth in json.loads(g.JSON).get("paths", []):
@@ -652,6 +654,60 @@ def _laea_for(gcs_sr, lon0, lat0):
     return sr
 
 
+def _center_for_laea(gcs_sr, boundary=None, extent=None):
+    """(longitude, latitude), in ``gcs_sr``, of the middle of the area of
+    interest: where ``_laea_for`` is to be centered. (None, None) when no
+    area is given at all.
+
+    The area is the boundary layer, else the extent (an ``arcpy.Extent``
+    or ``"xmin ymin xmax ymax"`` text), else the Extent environment. Its
+    extent is in the AREA's own coordinate system, so it is projected to
+    ``gcs_sr`` first: with an area in a projection and a geographic
+    Output Coordinate System environment the raw extent is in meters,
+    the working projection built on it is invalid, and the run stopped
+    with a bare "Spatial reference string is invalid" (found by test,
+    2026-11-23, in Random Point Generator, Random Sample Array Generator
+    and Repeating Shapes alike)."""
+    import arcpy
+
+    def named(sr):
+        return sr is not None \
+            and getattr(sr, "name", "Unknown") not in (None, "", "Unknown")
+
+    box = sr = None
+    if boundary not in (None, ""):
+        d = arcpy.Describe(boundary)
+        box, sr = d.extent, d.spatialReference
+    elif isinstance(extent, arcpy.Extent):
+        box, sr = extent, extent.spatialReference
+    elif extent not in (None, ""):
+        parts = [float(v) for v in str(extent).split()[:4]]
+        if len(parts) == 4:
+            box = arcpy.Extent(parts[0], parts[1], parts[2], parts[3])
+    else:
+        env = arcpy.env.extent
+        if env not in (None, "", "DEFAULT", "MAXOF", "MINOF") \
+                and not isinstance(env, str):
+            box, sr = env, env.spatialReference
+    if box is None:
+        return None, None
+    x0, y0, x1, y1 = box.XMin, box.YMin, box.XMax, box.YMax
+    if named(sr) and not _vt._same_cs(sr, gcs_sr):
+        e = _vt._project_geom(_vt._rect_polygon(x0, y0, x1, y1, sr),
+                              gcs_sr).extent
+        x0, y0, x1, y1 = e.XMin, e.YMin, e.XMax, e.YMax
+    lon, lat = 0.5 * (x0 + x1), 0.5 * (y0 + y1)
+    if not (math.isfinite(lon) and math.isfinite(lat)
+            and -180.0 <= lon <= 180.0 and -90.0 <= lat <= 90.0):
+        raise arcpy.ExecuteError(
+            "Could not find the middle of the area of interest in the "
+            "output coordinate system ({}): its extent there runs from "
+            "{:g} to {:g} east and {:g} to {:g} north. Check the area's "
+            "coordinate system, or copy the area to a geodatabase and "
+            "try again.".format(gcs_sr.name, x0, x1, y0, y1))
+    return lon, lat
+
+
 # ---------------------------------------------------------------------------
 #  orchestrator
 # ---------------------------------------------------------------------------
@@ -707,21 +763,7 @@ def run_repeating_shapes(shape_type, out_fc, boundary=None, extent=None,
     # is computed there and the results are projected back to the input
     # geographic CS on write.
     if geographic:
-        lon0 = lat0 = None
-        try:
-            if boundary not in (None, ""):
-                be0 = arcpy.Describe(boundary).extent
-                lon0 = 0.5 * (be0.XMin + be0.XMax)
-                lat0 = 0.5 * (be0.YMin + be0.YMax)
-            elif isinstance(extent, arcpy.Extent):
-                lon0 = 0.5 * (extent.XMin + extent.XMax)
-                lat0 = 0.5 * (extent.YMin + extent.YMax)
-            elif extent not in (None, ""):
-                parts = [float(v) for v in str(extent).split()[:4]]
-                lon0 = 0.5 * (parts[0] + parts[2])
-                lat0 = 0.5 * (parts[1] + parts[3])
-        except Exception:                                        # noqa: BLE001
-            pass
+        lon0, lat0 = _center_for_laea(out_sr, boundary, extent)
         if lon0 is None:
             raise arcpy.ExecuteError(
                 "Give an area-of-interest layer or an extent (or set "
@@ -834,7 +876,7 @@ def run_repeating_shapes(shape_type, out_fc, boundary=None, extent=None,
                                if k not in ("area", "offset") and v]
                               or [1.0])
             try:
-                bnd = bnd.densify("DISTANCE", dstep, dstep)
+                bnd = _wg.densify_curves(bnd, dstep)
             except Exception:                                    # noqa: BLE001
                 pass
         clip_geom = bnd

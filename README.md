@@ -19,8 +19,10 @@ below.
 
 ## Requirements and installation
 
-- ArcGIS Pro 3.7 or newer. Every tool runs at the Basic license level with no
-  extension licenses required.
+- ArcGIS Pro 3.8 or newer. Every tool runs at the Basic license level with no
+  extension licenses required. (Version 1.121.76.0 is the last version built
+  for ArcGIS Pro 3.7; it is on the
+  [releases page](https://github.com/JeffJenness/Wildlife_Tools/releases/tag/v1.121.76.0).)
 - Close ArcGIS Pro, download `WildlifeTools.esriAddinX` from the
   [latest release](https://github.com/JeffJenness/Wildlife_Tools/releases/latest)
   (or from the [Overview and Download page](https://www.jennessent.com/tool-reference.html)

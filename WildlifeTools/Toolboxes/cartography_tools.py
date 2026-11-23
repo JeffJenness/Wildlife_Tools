@@ -299,7 +299,8 @@ def _translate(geom, dx, dy, tol_native):
         return geom
     if getattr(geom, "hasCurves", False):
         try:
-            geom = geom.densify("DISTANCE", tol_native, tol_native)
+            import wildlife_geom as _wg
+            geom = _wg.densify_curves(geom, tol_native)
         except Exception:
             pass
     j = json.loads(geom.JSON)

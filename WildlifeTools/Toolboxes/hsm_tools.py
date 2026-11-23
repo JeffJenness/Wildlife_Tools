@@ -102,6 +102,8 @@ import clip_tools as _ct
 
 import numpy as np
 
+import wildlife_geom as _wg
+
 import mahalanobis as _mh
 import hillshade as _hs
 import topographic_tools as _tt
@@ -971,7 +973,7 @@ def _read_feature_geoms(in_features, rast_sr, densify_step, messages):
                     pass
             if getattr(g, "hasCurves", False):
                 try:
-                    g = g.densify("DISTANCE", densify_step, densify_step)
+                    g = _wg.densify_curves(g, densify_step)
                     n_curved += 1
                 except Exception:                                # noqa: BLE001
                     pass

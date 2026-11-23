@@ -83,7 +83,10 @@ the poles.
 PERCENTILE BANDS are computed directly with ``numpy.percentile`` on the
 finite corridor values across the whole surface -- the continuous version
 of the original's ``Slice`` into 1000 equal-COUNT classes followed by
-cumulative ``ExtractByAttributes`` calls, without discretization. Each
+cumulative ``ExtractByAttributes`` calls, without discretization. Cells
+whose values are equal but for rounding (the cells of the least-cost path
+are all zero) go into a slice together, so a slice can hold more than its
+percentage of the cells and never holds part of the path only. Each
 band's connected regions (8-connected, matching Identify Termini Polygons's
 convention) become separate polygon rows, all in ONE feature class across
 every category, block pair and percentile -- filter or group by Category,
@@ -851,6 +854,21 @@ def run_least_cost_corridor(in_termini, cost_raster=None, cost_workspace=None,
             n_rasters[0] += 1
 
             vals = corridor[both]
+            # Cells that are equal but for rounding go into a slice
+            # TOGETHER. Every cell of the least-cost path has the same
+            # sum (zero here), and every cell of a rival route another
+            # same sum; but each sum comes out of a long chain of
+            # additions, and they differ in the 11th decimal place or
+            # so. Without a tolerance, a threshold that fell on such a
+            # set (a slice that holds fewer cells than the path has:
+            # the 0.1 percent slice of a raster under a million cells
+            # or so) took an arbitrary part of it, and the narrowest
+            # "corridor" stopped partway between the blocks (found by
+            # test, 2026-11-23). The tolerance is a billionth of the
+            # largest sum: hundreds of thousands of times the rounding,
+            # and a sixtieth of what the corridor raster's own 32-bit
+            # values can tell apart.
+            tie = 1e-9 * float(np.max(d1[both] + d2[both]))
             n_pieces = 0
             # Widest slice first, narrowest last (Jeff, 2026-09-10). The
             # interactive map view actually draws by the layer's
@@ -860,7 +878,7 @@ def run_least_cost_corridor(in_termini, cost_raster=None, cost_workspace=None,
             # draw by OID (e.g. a plain export or a non-Pro consumer).
             for p in sorted(percentiles, reverse=True):
                 thr = float(np.percentile(vals, p))
-                mask_p = both & (corridor <= thr)
+                mask_p = both & (corridor <= thr + tie)
                 n_pieces += _insert_pieces(mask_p, p, label, fid, b1, b2,
                                           gt, proj, rast_sr)
             n_pieces_grand[0] += n_pieces

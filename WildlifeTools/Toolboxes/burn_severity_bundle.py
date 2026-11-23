@@ -370,6 +370,65 @@ def classify_product(product, a, nodata, is_byte, np):
     return "continuous", None, "Continuous raster ({})".format(product)
 
 
+def fill_values(kind, classes, a, nodata, np):
+    """The values of a bundle raster's cells that mean "nothing here", in
+    the order they are to be treated: the FIRST is the one the loaded copy
+    declares as its "no data" value, and cells of the others are rewritten
+    as the first (a raster can declare only one). An empty list: the cells
+    use no such value.
+
+    A bundle's files do not always say what their cells do. Seen, or met by
+    test: a class raster that declares nothing and has 0 outside the fire
+    (MTBS); one that declares a value it does not use and is filled with
+    255 (BAER's soil burn severity); one that declares nothing and is filled
+    with 255; a continuous raster that declares one value and holds -32768;
+    and one that holds BOTH the value it declares and -32768. So:
+
+      * the value the file declares counts when the cells really hold it;
+      * in a class raster of a kind this tool knows, 0 and 255 count as well
+        wherever they are not classes;
+      * in a class raster of a kind it does not know, only 0, and only when
+        the file declares nothing (255 may be a class there);
+      * in a continuous raster of whole numbers, -32768 counts as well.
+    """
+    def holds(v):
+        return bool((a == v).any())
+
+    fills = []
+    if nodata is not None and holds(nodata):
+        fills.append(nodata)
+    whole = a.dtype.kind in "iu"
+    if kind == "classified":
+        known = set(int(c["value"]) for c in (classes or []))
+        more = [v for v in (0, 255) if v not in known] if classes else ([0] if nodata is None else [])
+    else:
+        more = [-32768]
+    for v in more:
+        if whole and v not in fills and holds(v):
+            fills.append(v)
+    return fills
+
+
+def merge_fill(tif, values, into):
+    """Rewrites the cells of a one-band GeoTIFF that hold any of ``values``
+    as ``into``. Only ever used on this tool's scratch copy of a bundle
+    raster: the bundle's own file is not touched."""
+    import numpy as np
+    from osgeo import gdal
+
+    gdal.UseExceptions()
+    ds = gdal.Open(tif, gdal.GA_Update)
+    band = ds.GetRasterBand(1)
+    a = band.ReadAsArray()
+    hit = np.isin(a, list(values))
+    if bool(hit.any()):
+        a[hit] = into
+        band.WriteArray(a)
+        band.FlushCache()
+    band = None
+    ds = None
+
+
 def stamp_raster(raster, program, fire_words, event, what, named_classes, older, source, today):
     """Title, summary, description and credits for one loaded raster, so
     that the raster says where it came from when it is found on its own.
@@ -626,16 +685,16 @@ def _run(source, out_workspace, out_perimeters=None, out_summary=None, messages=
                 # drop the bundle's color table: with it ArcGIS Pro draws Colormap symbology and lists
                 # some 250 black boxes without names; the colors go into the attribute table instead
                 B.drop_color_table(tmp)
+            # what the cells really use for "nothing here" (see fill_values): the copy declares the first
+            # of those values, and where the cells use more than one the others are rewritten as the first
             fix = None
-            if kind == "classified" and nodata is None and not any(c["value"] == 0 for c in (classes or [])):
-                fix = 0                    # 0 is "outside the fire", though the file does not say so
-            elif (kind == "classified" and classes and nodata != 255
-                  and not any(int(c["value"]) == 255 for c in classes) and bool((a == 255).any())
-                  and (nodata is None or not bool((a == nodata).any()))):
-                fix = 255                  # filled with 255 outside the fire, though the file declares another
-                #                            value (or none) and holds no cell of it: seen in BAER's sbs rasters
-            elif kind == "continuous" and a.dtype.kind in "iu" and int(a.min()) == -32768 and nodata != -32768:
-                fix = -32768               # the file declares another value and holds this one
+            fills = fill_values(kind, classes, a, nodata, np)
+            if len(fills) > 1 and bands == 1:          # (an image of several bands is copied as it is)
+                merge_fill(tmp, fills[1:], fills[0])
+                a = a.copy()
+                a[np.isin(a, fills[1:])] = fills[0]
+            if fills and fills[0] != nodata:
+                fix = fills[0]
             write_stats = B.write_statistics(tmp, also_nodata=fix)
             if fix is not None:
                 nodata = fix
@@ -734,7 +793,8 @@ def _run(source, out_workspace, out_perimeters=None, out_summary=None, messages=
                     v = year if nm == "fire_year" else attrs.get(srcf)
                     if nm == "program" and not v:
                         v = key[0]
-                    if v in (None, "None", "NULL", ""):
+                    # (a shapefile gives an empty text field back as one space)
+                    if v is None or (isinstance(v, str) and v.strip() in ("", "None", "NULL")):
                         v = None
                     elif kind == "TEXT":
                         v = str(v)[:length]

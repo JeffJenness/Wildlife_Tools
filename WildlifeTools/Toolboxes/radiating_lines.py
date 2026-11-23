@@ -55,6 +55,8 @@ import os
 
 import numpy as np
 
+import wildlife_geom as _wg
+
 import mahalanobis as _mh
 import patch_analysis as _pa
 import centerline_width as _cw
@@ -105,7 +107,7 @@ def _blocker_edges(layers, densify_m, out_sr, messages):
     for lyr in layers:
         if lyr in (None, ""):
             continue
-        n_total, n_sel, has_sel = _mh.selection_info(lyr, str(lyr))
+        n_total, n_sel, has_sel = _mh.selection_info(lyr, lyr)
         if has_sel:
             _say(messages,
                  "Barrier layer {}: an active selection limits it to "
@@ -131,7 +133,7 @@ def _blocker_edges(layers, densify_m, out_sr, messages):
                 if getattr(g, "hasCurves", False):
                     d = max(g.length / 500.0, floor_lyr)
                     try:
-                        g = g.densify("DISTANCE", d, d)
+                        g = _wg.densify_curves(g, d)
                     except Exception:                            # noqa: BLE001
                         pass
                 js = json.loads(g.JSON)
@@ -226,7 +228,7 @@ def run_radiating_lines(points, n_lines=None, bearing_interval=None,
                      "location", "x_coord", "y_coord"})
     fields = [p[0] for p in plan]
 
-    n_total, n_sel, has_sel = _mh.selection_info(points, str(points))
+    n_total, n_sel, has_sel = _mh.selection_info(points, points)
     if has_sel:
         _say(messages, "The point layer has an active selection: {} "
                        "of {} points are used.".format(n_sel,
