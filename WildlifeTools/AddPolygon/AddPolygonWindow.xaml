@@ -36,7 +36,8 @@
               Padding="10,3" ToolTip="Open the Format Polygon Symbol editor." />
       <Border x:Name="Swatch" Width="46" Height="24" Margin="10,0,0,0"
               BorderBrush="#808080" BorderThickness="1"
-              ToolTip="Preview of the chosen symbol (before transparency).">
+              Background="Transparent" Cursor="Hand" MouseLeftButtonUp="OnSwatchClicked"
+              ToolTip="Preview of the chosen symbol (before transparency). Click it to open the Format Polygon Symbol editor.">
         <Image x:Name="SwatchImage" Stretch="Uniform" />
       </Border>
     </StackPanel>

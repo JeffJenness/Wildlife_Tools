@@ -74,6 +74,7 @@ namespace WildlifeTools.SlopeGraphic
         public SlopeGraphicWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             var fonts = Fonts.SystemFontFamilies
                 .Select(f => f.Source).OrderBy(n => n).ToList();

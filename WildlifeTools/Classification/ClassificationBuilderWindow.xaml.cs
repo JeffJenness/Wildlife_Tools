@@ -50,6 +50,7 @@ namespace WildlifeTools.Classification
         public ClassificationBuilderWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             FamilyBox.ItemsSource = ClassificationStore.Families;
             SystemList.ItemsSource = _systems;

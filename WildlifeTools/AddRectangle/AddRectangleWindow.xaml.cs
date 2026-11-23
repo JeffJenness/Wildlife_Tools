@@ -60,6 +60,7 @@ namespace WildlifeTools
             double mapShadowMax = 100)
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             _symbol = defaultSymbol;
             _prefs = prefs ?? new BackgroundToolPrefs();
@@ -91,6 +92,19 @@ namespace WildlifeTools
                              !string.Equals(e.RemovedItems[0] as string, BackgroundUnits.PercentLabel);
             if (e.RemovedItems.Count > 0 && wasLinear != linear)
                 HorizExtentBox.Text = VertExtentBox.Text = linear ? "0" : "100";
+        }
+
+        /// <summary>A click on the symbol's preview opens the symbol editor,
+        /// as the symbol boxes in ArcGIS Pro's own panes do (asked for by
+        /// Jeff, 23 November 2026). The "Design symbology" button stays: it
+        /// is the way in from the keyboard.</summary>
+        private void OnSwatchClicked(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            e.Handled = true;
+            if (DesignButton.IsEnabled)
+            {
+                OnDesignSymbology(DesignButton, new RoutedEventArgs());
+            }
         }
 
         private void OnDesignSymbology(object sender, RoutedEventArgs e)

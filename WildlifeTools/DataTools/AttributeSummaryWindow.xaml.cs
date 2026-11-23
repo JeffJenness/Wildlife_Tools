@@ -54,6 +54,7 @@ namespace WildlifeTools.DataTools
         public AttributeSummaryWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             var s = SummaryFormatStore.LoadSettings();
             txtFormat.Text = string.IsNullOrWhiteSpace(s.FormatText)

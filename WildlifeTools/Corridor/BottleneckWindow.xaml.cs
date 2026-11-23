@@ -110,6 +110,7 @@ namespace WildlifeTools.Corridor
         public BottleneckWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             DataContext = this;      // lets the framework's drag-drop
                                      // behavior find IDropTarget below

@@ -64,6 +64,7 @@ namespace WildlifeTools.Corridor
         public HistogramWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             ArcGIS.Desktop.Framework.DragDrop.DragDrop.SetDropHandler(this, this);
             AllowDrop = true;
@@ -1073,6 +1074,7 @@ namespace WildlifeTools.Corridor
             buttons.Children.Add(cancel);
             panel.Children.Add(buttons);
             win.Content = panel;
+            WindowFit.Apply(win);            // never larger than the screen
             txtBase.Focus();
             txtBase.SelectAll();
             win.ShowDialog();
@@ -1255,6 +1257,7 @@ namespace WildlifeTools.Corridor
             Grid.SetColumnSpan(panel, 5);
             grid.Children.Add(panel);
             win.Content = grid;
+            WindowFit.Apply(win);            // never larger than the screen
             win.ShowDialog();
             return applied;
         }
@@ -1323,6 +1326,7 @@ namespace WildlifeTools.Corridor
             cancel.Click += (_, __) => win.Close();
             panel.Children.Add(cancel);
             win.Content = panel;
+            WindowFit.Apply(win);            // never larger than the screen
             win.ShowDialog();
             return result;
 
@@ -1421,6 +1425,7 @@ namespace WildlifeTools.Corridor
             grid.Children.Add(box);
             grid.Children.Add(panel);
             win.Content = grid;
+            WindowFit.Apply(win);            // never larger than the screen
             box.Focus();
             box.SelectAll();
             win.ShowDialog();

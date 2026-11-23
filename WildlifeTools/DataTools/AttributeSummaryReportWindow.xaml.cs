@@ -44,6 +44,7 @@ namespace WildlifeTools.DataTools
                                               string format)
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             _result = r;
             _format = format;

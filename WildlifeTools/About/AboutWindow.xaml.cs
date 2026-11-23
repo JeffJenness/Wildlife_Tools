@@ -59,17 +59,10 @@ namespace WildlifeTools.About
         public AboutWindow()
         {
             InitializeComponent();
-            // Never taller than the screen's work area: past that the card
-            // scrolls (SizeToContent stops at MaxHeight, the ScrollViewer
-            // takes over), which matters on laptops at 125% scaling.
-            try
-            {
-                MaxHeight = Math.Max(480, SystemParameters.WorkArea.Height - 24);
-            }
-            catch (Exception)
-            {
-                // keep the XAML value
-            }
+            WindowFit.Apply(this, scrollContent: false);   // never larger than the screen; the card scrolls its own text
+            // (WindowFit: never taller than the screen's work area. Past that the
+            // card scrolls: SizeToContent stops at MaxHeight and the ScrollViewer
+            // takes over, which matters on laptops at 125% scaling.)
             LoadLogo();
             FillVersion();
             NoticeRun.Text = ScholarshipInfo.Notice + " ";

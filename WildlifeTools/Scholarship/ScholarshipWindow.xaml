@@ -102,6 +102,13 @@
                 Foreground="{StaticResource GreenBrush}" Background="Transparent"
                 BorderThickness="0" ToolTip="Close" />
 
+        <!-- On a short screen (a laptop) the card stops at the height of the screen
+             and its text scrolls, so the three buttons can always be reached.
+             Focusable="False" matters: a ScrollViewer that can take focus marks
+             MouseLeftButtonDown handled when it does, and the drag handler on the
+             outer Border would never see the press. -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                      Focusable="False" Padding="0">
         <StackPanel Margin="34,26,34,22">
           <TextBlock Text="Lois Engelman Memorial Award"
                      FontFamily="{StaticResource BodyFont}" FontSize="29"
@@ -184,6 +191,7 @@
                     Style="{StaticResource QuietButton}" />
           </StackPanel>
         </StackPanel>
+        </ScrollViewer>
       </Grid>
     </Border>
   </Border>

@@ -219,6 +219,7 @@ namespace WildlifeTools.Corridor
         public LandFacetWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             ShowStep(1);                 // paint the step chips for the initial state
             Loaded += (_, __) =>
@@ -748,6 +749,7 @@ namespace WildlifeTools.Corridor
             Add("Convert to degrees and proceed", SlopeChoice.ConvertDegrees, true);
             Add("Do not proceed", SlopeChoice.DoNotProceed, false);
             dlg.Content = sp;
+            WindowFit.Apply(dlg);            // never larger than the screen
             dlg.ShowDialog();
             return result;
         }
@@ -2083,7 +2085,7 @@ namespace WildlifeTools.Corridor
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             };
-            new Window
+            var help = new Window
             {
                 Title = title,
                 Owner = this,
@@ -2095,7 +2097,9 @@ namespace WildlifeTools.Corridor
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 ShowInTaskbar = false,
                 Content = viewer,
-            }.Show();
+            };
+            WindowFit.Apply(help);           // never larger than the screen
+            help.Show();
         }
 
         private static ImageSource _jennessIcon;

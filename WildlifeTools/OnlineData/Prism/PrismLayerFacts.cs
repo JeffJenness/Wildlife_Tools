@@ -52,6 +52,13 @@ namespace WildlifeTools.OnlineData.Prism
         private static readonly Regex NetCdfInXml = new Regex(@">\s*([^<>]+?\.nc)\s*<",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
+        // A file named in two pieces: the folder, as a workspace's PathName, and beside the workspace the
+        // file's name. This is how a layer made by Add Multidimensional Data names its file.
+        private static readonly Regex NetCdfBesideFolder = new Regex(
+            @"<WorkspaceName\b[^>]*>(?:(?!</WorkspaceName>).)*?<PathName>([^<>]*)</PathName>(?:(?!</WorkspaceName>).)*?"
+            + @"</WorkspaceName>\s*<Name>\s*([^<>]+?\.nc)\s*</Name>",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline);
+
         private static readonly Dictionary<string, (long Length, DateTime Written, bool Ours)> Known =
             new Dictionary<string, (long, DateTime, bool)>(StringComparer.OrdinalIgnoreCase);
 
@@ -106,9 +113,12 @@ namespace WildlifeTools.OnlineData.Prism
         /// <summary>Reads a multidimensional raster layer of a netCDF file
         /// from its definition: the file, the date the layer shows, and
         /// whether that date is a single date (not a span of days). False
-        /// for every other kind of layer.</summary>
+        /// for every other kind of layer. <paramref name="relativeTo"/> is
+        /// the folder of the project, for a definition that names the file's
+        /// folder from there (as a saved project does); without it such a
+        /// layer is not read.</summary>
         public static bool TryReadNetCdfLayer(string layerJson, out string ncPath, out DateTime shownDate,
-            out bool singleDate)
+            out bool singleDate, string relativeTo = null)
         {
             ncPath = null;
             shownDate = default;
@@ -132,7 +142,7 @@ namespace WildlifeTools.OnlineData.Prism
                         singleDate = false;         // a time with no end is not a single date
                     if (!root.TryGetProperty("dataConnection", out JsonElement conn)
                         || conn.ValueKind != JsonValueKind.Object) return false;
-                    ncPath = NetCdfPath(conn);
+                    ncPath = NetCdfPath(conn, relativeTo);
                     return ncPath != null;
                 }
             }
@@ -166,23 +176,54 @@ namespace WildlifeTools.OnlineData.Prism
 
         /// <summary>The netCDF file a data connection points at, or null. A
         /// multidimensional layer names its file inside a description of
-        /// the dataset written as XML; a plainer connection gives a folder
-        /// and a file name.</summary>
-        private static string NetCdfPath(JsonElement conn)
+        /// the dataset written as XML, in one of two ways. A layer the tool
+        /// adds gives the whole path in one piece. A layer added by hand
+        /// (Add Multidimensional Data) gives the folder as its workspace's
+        /// PathName and the file's name beside it: that form was not read
+        /// until 23 November 2026, so a file added by hand got neither its
+        /// metadata nor the time slider's single date. A plainer connection
+        /// gives a folder and a file name.</summary>
+        private static string NetCdfPath(JsonElement conn, string relativeTo)
         {
             string dataset = conn.TryGetProperty("dataset", out JsonElement d) && d.ValueKind == JsonValueKind.String
                 ? d.GetString() : null;
             if (string.IsNullOrWhiteSpace(dataset)) return null;
             if (dataset.TrimStart().StartsWith("<", StringComparison.Ordinal))
             {
-                string found = null;
+                var paths = new List<string>();
                 foreach (Match m in NetCdfInXml.Matches(dataset))
                 {
                     string path = WebUtility.HtmlDecode(m.Groups[1].Value).Trim();
-                    if (!Path.IsPathRooted(path)) continue;
-                    if (found != null && !string.Equals(found, path, StringComparison.OrdinalIgnoreCase))
+                    if (Path.IsPathRooted(path)) paths.Add(path);
+                }
+                foreach (Match m in NetCdfBesideFolder.Matches(dataset))
+                {
+                    string folder = WebUtility.HtmlDecode(m.Groups[1].Value).Trim();
+                    string name = WebUtility.HtmlDecode(m.Groups[2].Value).Trim();
+                    if (name.Length == 0 || Path.IsPathRooted(name)) continue;      // a whole path: counted above
+                    if (folder.Length == 0) continue;
+                    try
+                    {
+                        if (!Path.IsPathRooted(folder))
+                        {
+                            // a saved project names the folder from its own: "." or ".\climate"
+                            if (string.IsNullOrWhiteSpace(relativeTo) || !Path.IsPathRooted(relativeTo)) continue;
+                            folder = Path.GetFullPath(Path.Combine(relativeTo, folder));
+                        }
+                        paths.Add(Path.Combine(folder, name));
+                    }
+                    catch (Exception ex) when (ex is ArgumentException || ex is NotSupportedException
+                        || ex is PathTooLongException)
+                    {
+                        continue;                    // a folder that is no folder: not a file we can find
+                    }
+                }
+                string found = null;
+                foreach (string path in paths)
+                {
+                    if (found != null && !SameFile(found, path))
                         return null;                 // two different files: not a layer of one netCDF file
-                    found = path;
+                    found = found ?? path;
                 }
                 return found;
             }
@@ -201,6 +242,20 @@ namespace WildlifeTools.OnlineData.Prism
                 }
             }
             return null;
+        }
+
+        private static bool SameFile(string a, string b)
+        {
+            if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase)) return true;
+            try
+            {
+                return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is NotSupportedException
+                || ex is PathTooLongException || ex is System.Security.SecurityException)
+            {
+                return false;
+            }
         }
 
         /// <summary>True when the netCDF file was written by the PRISM

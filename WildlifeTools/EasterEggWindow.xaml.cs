@@ -49,6 +49,7 @@ namespace WildlifeTools
         private EasterEggWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this, scrollContent: false);   // never larger than the screen; the card scrolls its own text
         }
 
         /// <summary>

@@ -54,6 +54,7 @@ namespace WildlifeTools.Corridor
         internal HistogramAddDataWindow(Layer preselect = null)
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             cboStride.ItemsSource = new[]
             {

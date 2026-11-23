@@ -101,6 +101,7 @@ namespace WildlifeTools.DataTools
         public FavoriteDatasetsWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             var store = FavoritesStore.Load();
             var slots = new[] { grp1, grp2, grp3, grp4 };
@@ -544,6 +545,7 @@ namespace WildlifeTools.DataTools
             btns.Children.Add(cancel);
             panel.Children.Add(btns);
             win.Content = panel;
+            WindowFit.Apply(win);            // never larger than the screen
             box.SelectAll();
             box.Focus();
             win.ShowDialog();

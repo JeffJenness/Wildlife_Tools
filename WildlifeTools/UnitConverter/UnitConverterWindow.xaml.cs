@@ -36,6 +36,7 @@ namespace WildlifeTools.UnitConverter
         public UnitConverterWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             panel.CloseRequested += (_, _) => Close();
         }

@@ -71,6 +71,7 @@ namespace WildlifeTools.Corridor
         public LandFacetDescribeWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             Loaded += (_, __) =>
             {

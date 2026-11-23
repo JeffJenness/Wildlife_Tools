@@ -43,6 +43,7 @@ namespace WildlifeTools.Corridor
                                      string sourceName)
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             if (member != null)
             {

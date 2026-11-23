@@ -143,6 +143,7 @@ namespace WildlifeTools.PolarPlots
                 ShowInTaskbar = false,
                 Content = panel,
             };
+            WindowFit.Apply(dlg);            // never larger than the screen
             ok.Click += (_, __) => dlg.DialogResult = true;
             list.MouseDoubleClick += (_, __) => dlg.DialogResult = true;
             if (dlg.ShowDialog() == true && list.SelectedIndex >= 0)

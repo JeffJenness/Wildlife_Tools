@@ -251,11 +251,13 @@ namespace WildlifeTools.OnlineData.Prism
             // netCDF layer that shows a date.
             var notes = new List<string>();
             DateTime? date = null;
+            string home = ProjectFolder();
             foreach (Layer l in mine)
             {
                 if (!(l is BasicRasterLayer)) continue;
                 string json = Definition(l);
-                if (json == null || !PrismLayerFacts.TryReadNetCdfLayer(json, out string nc, out DateTime shown, out bool single))
+                if (json == null
+                    || !PrismLayerFacts.TryReadNetCdfLayer(json, out string nc, out DateTime shown, out bool single, home))
                     continue;
                 bool usesTime = PrismLayerFacts.IsTimeAware(json);
                 bool ours = PrismLayerFacts.WrittenByTool(nc);
@@ -295,13 +297,14 @@ namespace WildlifeTools.OnlineData.Prism
         private static bool OnlyOurs(Map map, out string why)
         {
             why = null;
+            string home = ProjectFolder();
             foreach (Layer l in map.GetLayersAsFlattenedList())
             {
                 bool? usesTime = UsesTime(l);
                 if (usesTime == false) continue;
                 string json = Definition(l);
                 bool ours = json != null
-                    && PrismLayerFacts.TryReadNetCdfLayer(json, out string nc, out _, out bool single)
+                    && PrismLayerFacts.TryReadNetCdfLayer(json, out string nc, out _, out bool single, home)
                     && single && PrismLayerFacts.WrittenByTool(nc);
                 if (!ours)
                 {
@@ -312,6 +315,22 @@ namespace WildlifeTools.OnlineData.Prism
                 }
             }
             return true;
+        }
+
+        /// <summary>The folder of the open project, from which a layer's
+        /// definition may name the folder of its file; null when there is
+        /// none.</summary>
+        private static string ProjectFolder()
+        {
+            try
+            {
+                string aprx = ArcGIS.Desktop.Core.Project.Current?.Path;
+                return string.IsNullOrWhiteSpace(aprx) ? null : Path.GetDirectoryName(aprx);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         private static string Definition(Layer l)

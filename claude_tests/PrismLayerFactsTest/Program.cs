@@ -67,6 +67,35 @@ namespace PrismLayerFactsTest
                 + "</XmlRasterDataset>";
         }
 
+        /// <summary>The dataset of a layer made by Add Multidimensional
+        /// Data, as ArcGIS Pro 3.8.1 writes it: the folder is the
+        /// workspace's PathName and the file's name stands beside the
+        /// workspace.</summary>
+        private static string HandAddedXml(string folder, string name, string variable = "ppt")
+        {
+            return "<XmlRasterDataset xsi:type='typens:FunctionRasterDatasetName' xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' "
+                + "xmlns:xs='http://www.w3.org/2001/XMLSchema' xmlns:typens='http://www.esri.com/schemas/ArcGIS/3.7.0'>"
+                + "<Function xsi:type='typens:MultidimensionalRasterFunction' id='ID1'><Name>Multidimensional Raster Function</Name>"
+                + "<Description></Description><PixelType>UNKNOWN</PixelType></Function>"
+                + "<Arguments xsi:type='typens:MultidimensionalRasterFunctionArguments' id='ID2'><Names xsi:type='typens:ArrayOfString' id='ID3'>"
+                + "<String>Raster</String><String>Variables</String><String>InterpolationMethod</String><String>InterpolationCellsize</String></Names>"
+                + "<Values xsi:type='typens:ArrayOfAnyType' id='ID4'><AnyType xsi:type='typens:RasterDatasetName' id='ID5'>"
+                + "<WorkspaceName xsi:type='typens:WorkspaceName' id='ID6'><NameString>Raster Workspace = " + folder + ";</NameString>"
+                + "<PathName>" + folder + "</PathName><BrowseName>Raster Data</BrowseName>"
+                + "<WorkspaceFactoryProgID>esriDataSourcesRaster.RasterWorkspaceFactory</WorkspaceFactoryProgID>"
+                + "<WorkspaceType>esriFileSystemWorkspace</WorkspaceType><ConnectionProperties xsi:type='typens:PropertySet' id='ID7'>"
+                + "<PropertyArray xsi:type='typens:ArrayOfPropertySetProperty' id='ID8'><PropertySetProperty xsi:type='typens:PropertySetProperty' id='ID9'>"
+                + "<Key>DATABASE</Key><Value xsi:type='xs:string'>" + folder + "</Value></PropertySetProperty></PropertyArray>"
+                + "</ConnectionProperties></WorkspaceName><Name>" + name + "</Name>"
+                + "<NameString>RASTER: Workspace = " + folder + "; RasterDataset = " + name + ";</NameString>"
+                + "<Category>Raster Dataset</Category></AnyType><AnyType xsi:type='typens:ArrayOfString' id='ID10'><String>" + variable
+                + "</String></AnyType><AnyType xsi:type='xs:int'>0</AnyType><AnyType xsi:type='xs:double'>0</AnyType></Values></Arguments>"
+                + "<Properties xsi:type='typens:PropertySet' id='ID11'><PropertyArray xsi:type='typens:ArrayOfPropertySetProperty' id='ID12'>"
+                + "<PropertySetProperty xsi:type='typens:PropertySetProperty' id='ID13'><Key>DataType</Key>"
+                + "<Value xsi:type='xs:string'>Scientific</Value></PropertySetProperty></PropertyArray></Properties><Metadata></Metadata>"
+                + "<BrowseName>" + name + "_" + variable + "</BrowseName></XmlRasterDataset>";
+        }
+
         private static string RasterLayer(string datasetXml, long start, long? end, bool useTime = true)
         {
             using var ms = new MemoryStream();
@@ -153,6 +182,63 @@ namespace PrismLayerFactsTest
             ok = PrismLayerFacts.TryReadNetCdfLayer(written, out path, out shown, out single);
             Check("dates written out, and a path with forward slashes",
                 ok && single && shown == new DateTime(2020, 3, 1) && path == "D:/x/p.nc", shown.ToString("s") + " " + path);
+
+            // ---- a layer added BY HAND (Add Multidimensional Data) ------------------------------------------
+            // Such a layer names its file in two pieces, the folder and the file's name. The form below is the
+            // one ArcGIS Pro 3.8.1 gives (read from a saved project on 23 November 2026, with the folders
+            // changed). Until that day it was not read, so a file added by hand got no metadata.
+            string hand = RasterLayer(HandAddedXml(@"D:\Climate\Arizona", "PRISM_climate.nc"), Jan2020, Jan2020);
+            ok = PrismLayerFacts.TryReadNetCdfLayer(hand, out path, out shown, out single);
+            Check("added by hand: the file is the folder and the name put together",
+                ok && path == @"D:\Climate\Arizona\PRISM_climate.nc" && single && shown == new DateTime(2020, 1, 1), path);
+            Check("added by hand: uses time", PrismLayerFacts.IsTimeAware(hand));
+
+            string handAmp = RasterLayer(HandAddedXml(@"D:\Rain &amp; Snow", "PRISM &apos;20.NC"), Jan2020, Jan2020);
+            ok = PrismLayerFacts.TryReadNetCdfLayer(handAmp, out path, out shown, out single);
+            Check("added by hand: a folder with an ampersand, a name with an apostrophe and .NC in capitals",
+                ok && path == @"D:\Rain & Snow\PRISM '20.NC", path);
+
+            string handUnc = RasterLayer(HandAddedXml(@"\\server\share\climate", "p.nc"), Jan2020, Jan2020);
+            ok = PrismLayerFacts.TryReadNetCdfLayer(handUnc, out path, out shown, out single);
+            Check("added by hand: a folder on a network share", ok && path == @"\\server\share\climate\p.nc", path);
+
+            // a saved project names the folder from its own folder
+            string handSaved = RasterLayer(HandAddedXml(".", "PRISM_climate.nc"), Jan2020, Jan2020);
+            Check("added by hand, folder named from the project's: not read when the project's folder is not known",
+                !PrismLayerFacts.TryReadNetCdfLayer(handSaved, out path, out shown, out single) && path == null, path);
+            ok = PrismLayerFacts.TryReadNetCdfLayer(handSaved, out path, out shown, out single, @"D:\Projects\Fire");
+            Check("added by hand, folder named from the project's: read when it is known",
+                ok && path == @"D:\Projects\Fire\PRISM_climate.nc", path);
+            string handBelow = RasterLayer(HandAddedXml(@".\climate\2024", "p.nc"), Jan2020, Jan2020);
+            ok = PrismLayerFacts.TryReadNetCdfLayer(handBelow, out path, out shown, out single, @"D:\Projects\Fire");
+            Check("added by hand, a folder below the project's", ok && path == @"D:\Projects\Fire\climate\2024\p.nc", path);
+            string handAbove = RasterLayer(HandAddedXml(@"..\shared", "p.nc"), Jan2020, Jan2020);
+            ok = PrismLayerFacts.TryReadNetCdfLayer(handAbove, out path, out shown, out single, @"D:\Projects\Fire");
+            Check("added by hand, a folder beside the project's", ok && path == @"D:\Projects\shared\p.nc", path);
+            Check("added by hand, folder named from the project's: a project folder that is no folder is not used",
+                !PrismLayerFacts.TryReadNetCdfLayer(handSaved, out path, out shown, out single, "Fire"));
+
+            string handTif = RasterLayer(HandAddedXml(@"D:\Climate", "elevation.tif"), Jan2020, Jan2020);
+            Check("added by hand, another kind of file: not read",
+                !PrismLayerFacts.TryReadNetCdfLayer(handTif, out path, out shown, out single));
+            string handTwo = RasterLayer(HandAddedXml(@"D:\Climate", "a.nc").Replace("<BrowseName>a.nc_ppt",
+                "<AnyType>D:\\Other\\b.nc</AnyType><BrowseName>a.nc_ppt"), Jan2020, Jan2020);
+            Check("added by hand, with a second and different netCDF file in the layer: not read",
+                !PrismLayerFacts.TryReadNetCdfLayer(handTwo, out path, out shown, out single) && path == null, path);
+            string handSame = RasterLayer(HandAddedXml(@"D:\Climate", "a.nc").Replace("<BrowseName>a.nc_ppt",
+                "<AnyType>D:/Climate/A.NC</AnyType><BrowseName>a.nc_ppt"), Jan2020, Jan2020);
+            ok = PrismLayerFacts.TryReadNetCdfLayer(handSame, out path, out shown, out single);
+            Check("added by hand, with the same file named a second time in another spelling: read",
+                ok && path == "D:/Climate/A.NC", path);
+            string handNoFolder = RasterLayer(HandAddedXml(@"D:\Climate", "a.nc").Replace("<PathName>D:\\Climate</PathName>", ""),
+                Jan2020, Jan2020);
+            Check("added by hand, with no folder given: not read",
+                !PrismLayerFacts.TryReadNetCdfLayer(handNoFolder, out path, out shown, out single));
+            // the name must lie beside ITS workspace: a folder named elsewhere in the layer is not borrowed
+            string handFar = RasterLayer(HandAddedXml(@"D:\Climate", "a.tif").Replace("</XmlRasterDataset>",
+                "<Other><Name>b.nc</Name></Other></XmlRasterDataset>"), Jan2020, Jan2020);
+            Check("a netCDF name that does not lie beside a workspace's folder: not read",
+                !PrismLayerFacts.TryReadNetCdfLayer(handFar, out path, out shown, out single));
 
             // ---- layers that are not ---------------------------------------------------------------------
             string plainRaster = "{\"type\":\"CIMRasterLayer\",\"name\":\"dem\",\"dataConnection\":{\"type\":"

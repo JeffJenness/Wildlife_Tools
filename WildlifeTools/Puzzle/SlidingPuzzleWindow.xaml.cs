@@ -57,6 +57,7 @@ namespace WildlifeTools.Puzzle
         public SlidingPuzzleWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             Loaded += async (_, __) => await CaptureAndBuildAsync();
         }

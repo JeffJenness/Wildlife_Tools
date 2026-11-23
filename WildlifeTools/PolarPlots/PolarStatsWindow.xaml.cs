@@ -51,6 +51,7 @@ namespace WildlifeTools.PolarPlots
                                   string plainText)
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             _plainText = plainText ?? "";
             _stats = st;

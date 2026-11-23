@@ -45,6 +45,7 @@ namespace WildlifeTools.SlopeGraphic
         internal SlopeStatsWindow(SlopeStats st, IReadOnlyList<string> headers)
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             _st = st;
             _headers = headers;

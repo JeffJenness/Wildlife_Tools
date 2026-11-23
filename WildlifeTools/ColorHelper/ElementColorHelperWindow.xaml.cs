@@ -38,6 +38,7 @@ namespace WildlifeTools.ColorHelper
         public ElementColorHelperWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             panel.CloseRequested += (_, _) => Close();
         }

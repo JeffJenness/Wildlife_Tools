@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Headless test of WindowFit, which keeps every window of the add-in
+       inside the screen it opens on. Compiles the add-in's own WindowFit.cs
+       (WPF only, no ArcGIS types in it) and shapes plain windows for a work
+       area that is given, without showing them. Run from the repo root:
+       dotnet run (with the project option set to claude_tests/WindowFitTest;
+       see the top of Program.cs). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>disable</Nullable>
+    <RootNamespace>WindowFitTest</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\WildlifeTools\WindowFit.cs" Link="WindowFit.cs" />
+  </ItemGroup>
+</Project>

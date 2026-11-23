@@ -38,6 +38,7 @@ namespace WildlifeTools.CropPlots
         public ArrayAlongAxesWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             panel.CloseRequested += (_, _) => Close();
             Closed += (_, _) => panel.Shutdown();

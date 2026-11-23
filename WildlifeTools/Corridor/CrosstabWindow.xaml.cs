@@ -60,6 +60,7 @@ namespace WildlifeTools.Corridor
         public CrosstabWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             Loaded += (_, __) =>
             {
@@ -745,6 +746,7 @@ namespace WildlifeTools.Corridor
             buttons.Children.Add(cancel);
             root.Children.Add(buttons);
             win.Content = root;
+            WindowFit.Apply(win);            // never larger than the screen
             win.ShowDialog();
             return applied;
         }

@@ -48,7 +48,7 @@ namespace WildlifeTools.OnlineData.BurnSeverity
             panel.SetProgram(program);
             Title = BurnActions.Title(panel.Program);
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
-            OnlineWindowFit.Apply(this);     // never larger than the screen
+            WindowFit.Apply(this);     // never larger than the screen
             panel.CloseRequested += (_, _) => Close();
             HookMapEvents();
             Closed += (_, _) =>

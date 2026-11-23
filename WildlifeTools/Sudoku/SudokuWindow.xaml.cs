@@ -174,6 +174,7 @@ namespace WildlifeTools.Sudoku
         public SudokuWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
 
             foreach (var (name, _) in Skins)

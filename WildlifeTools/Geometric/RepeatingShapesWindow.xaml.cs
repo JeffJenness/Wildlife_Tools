@@ -112,6 +112,7 @@ namespace WildlifeTools.Geometric
         public RepeatingShapesWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
             BuildTiles();
             cboAreaUnits.ItemsSource = RsMath.AreaUnits;

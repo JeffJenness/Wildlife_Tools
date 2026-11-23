@@ -40,7 +40,7 @@ namespace WildlifeTools.OnlineData.INaturalist
         {
             InitializeComponent();
             global::WildlifeTools.Corridor.JennessIcon.Apply(this);
-            OnlineWindowFit.Apply(this);     // never larger than the screen
+            WindowFit.Apply(this);     // never larger than the screen
             panel.CloseRequested += (_, _) => Close();
             HookMapEvents();
             Closed += (_, _) =>

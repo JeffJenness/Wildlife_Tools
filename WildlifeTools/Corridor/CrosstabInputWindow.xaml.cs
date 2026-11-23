@@ -62,6 +62,7 @@ namespace WildlifeTools.Corridor
         public CrosstabInputWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this);     // never larger than the screen
             JennessIcon.Apply(this);
             _statsAll = new[]
             {

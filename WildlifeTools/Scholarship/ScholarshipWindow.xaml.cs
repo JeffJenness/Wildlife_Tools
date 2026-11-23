@@ -58,6 +58,7 @@ namespace WildlifeTools.Scholarship
         public ScholarshipWindow()
         {
             InitializeComponent();
+            WindowFit.Apply(this, scrollContent: false);   // never larger than the screen; the card scrolls its own text
             NoticeRun.Text = ScholarshipInfo.Notice + " ";
             NoticeLinkRun.Text = ScholarshipInfo.NoticeUrl
                 .Replace("https://", "").TrimEnd('/');
