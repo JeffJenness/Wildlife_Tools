@@ -419,6 +419,14 @@ a = web.asked("/v1/ping")[0]
 check("requests say who is asking; a plain request carries no sign-in",
       a.headers.get("user-agent") == G.USER_AGENT and a.headers.get("accept") == "application/json"
       and "authorization" not in a.headers and "@" not in G.USER_AGENT, a.headers)
+# GBIF's API reference: "we highly recommend you set the HTTP User-Agent to a URL or email address. We can then
+# contact you if there is a problem."
+check("requests give GBIF a web address to reach the tool's author at, and name the add-in",
+      a.headers.get("user-agent") == "WildlifeTools-AddIn (Jenness Enterprises; ArcGIS Pro; https://www.jennessent.com)",
+      a.headers.get("user-agent"))
+client_cs = open(os.path.join(HERE, "..", "WildlifeTools", "OnlineData", "Gbif", "GbifClient.cs"), encoding="utf-8").read()
+check("the add-in's window names itself to GBIF in the same words as the geoprocessing tool",
+      '"%s"' % G.USER_AGENT in client_cs and "GbifClient(string userAgent = UserAgent)" in client_cs)
 web.forget()
 web.answer("/v1/busy", status=503, body="<html>busy</html>", times=2)
 web.answer("/v1/busy", json={"ok": 1})

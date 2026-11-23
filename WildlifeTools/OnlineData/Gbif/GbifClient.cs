@@ -151,7 +151,15 @@ namespace WildlifeTools.OnlineData.Gbif
         private readonly HttpClient _http;
         private string _user, _password;
 
-        internal GbifClient(string userAgent = "WildlifeTools-AddIn (Jenness Enterprises; ArcGIS Pro)")
+        /// <summary>How the window names itself to GBIF. GBIF's API reference
+        /// asks for it: "we highly recommend you set the HTTP User-Agent to a
+        /// URL or email address. We can then contact you if there is a
+        /// problem." It must stay the same as USER_AGENT in
+        /// gbif_occurrences.py (a test compares the two).</summary>
+        internal const string UserAgent =
+            "WildlifeTools-AddIn (Jenness Enterprises; ArcGIS Pro; https://www.jennessent.com)";
+
+        internal GbifClient(string userAgent = UserAgent)
         {
             _http = new HttpClient { Timeout = TimeSpan.FromSeconds(100) };
             _http.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);

@@ -56,7 +56,10 @@ from concurrent.futures import ThreadPoolExecutor
 V1 = "https://api.gbif.org/v1/"
 V2 = "https://api.gbif.org/v2/"
 BACKBONE = "d7dddbf4-2cf0-4f39-9b2a-bb099caae36c"
-USER_AGENT = "WildlifeTools-AddIn (Jenness Enterprises; ArcGIS Pro)"
+# GBIF's API reference: "we highly recommend you set the HTTP User-Agent to a URL or email address. We can then
+# contact you if there is a problem." So the line carries the web address of Jenness Enterprises (added
+# 23 November 2026; it must stay the same as GbifClient.UserAgent in the add-in's window).
+USER_AGENT = "WildlifeTools-AddIn (Jenness Enterprises; ArcGIS Pro; https://www.jennessent.com)"
 CREDENTIAL_TARGET = "JennessWildlifeTools.GBIF"
 
 MAX_PAGE = 300                  # records per search page
