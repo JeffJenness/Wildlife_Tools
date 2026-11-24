@@ -49,8 +49,21 @@ namespace WildlifeTools
     ///     row that takes "the rest"), its content is put inside a scroll
     ///     box, so that the buttons at the bottom can always be reached. On
     ///     a screen the content fits, nothing looks different.
-    ///   - When the window has loaded it is moved back inside the work
-    ///     area, if centering it on Pro's window pushed part of it out.
+    ///   - When the window has its place on the screen it is fitted AGAIN,
+    ///     to the monitor it is really on: made no larger than that
+    ///     monitor's work area, and moved back inside it.
+    ///
+    /// Why it is fitted twice (found by Jeff on 23 November 2026, with his
+    /// monitors set to 1366 by 768: the TPI Neighborhood Sampler and
+    /// Repeating Shapes opened too tall, their buttons below the screen).
+    /// ArcGIS Pro's ProWindow remembers the size and place each window had
+    /// when it was last closed, and puts them back when the window opens.
+    /// That happens after the window's constructor, so a size set there is
+    /// overwritten by the remembered one: a window last used on a large
+    /// monitor came back at its large size. The first fit (in Apply) is
+    /// therefore only the size for a window with nothing remembered; the
+    /// second (Refit, when the window is shown) is the one that holds.
+    ///
     /// Nothing here can stop a window from opening: every error is
     /// swallowed and the window is then as its XAML made it.
     /// </summary>
@@ -76,6 +89,18 @@ namespace WildlifeTools
 
         [DllImport("user32.dll")]
         private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hwnd, out NativeRect rect);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
+        private const uint SwpNoZOrder = 0x0004, SwpNoActivate = 0x0010;
+
+        /// <summary>For tests only: a work area, in pixels, that stands in for
+        /// the monitor's. Null in the add-in.</summary>
+        internal static Int32Rect? TestWorkArea { get; set; }
 
         /// <summary>The work area (the screen less the taskbar) of the monitor
         /// that holds <paramref name="owner"/>, in WPF units; the primary
@@ -148,12 +173,139 @@ namespace WildlifeTools
             {
                 Window owner = window.Owner ?? Application.Current?.MainWindow;
                 Shape(window, WorkAreaOf(ReferenceEquals(owner, window) ? null : owner), scrollContent);
-                window.Loaded += (s, e) => KeepInside(window);
+                // ProWindow puts a remembered size and place back after this, at a moment that is its own
+                // business. So the window is fitted again at each step of its opening, and once more when
+                // everything else that was waiting has run. Fitting a window that fits changes nothing.
+                window.SourceInitialized += (s, e) => Refit(window);
+                window.Loaded += (s, e) => Refit(window);
+                window.ContentRendered += (s, e) =>
+                {
+                    Refit(window);
+                    try
+                    {
+                        window.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle,
+                            new Action(() => Refit(window)));
+                    }
+                    catch (Exception)
+                    {
+                        // fitted three times already
+                    }
+                };
             }
             catch (Exception)
             {
                 // the size the XAML asks for stands
             }
+        }
+
+        /// <summary>Fits a window that has its place on the screen to the
+        /// monitor it is on: no larger than that monitor's work area less
+        /// the margin, and wholly inside it. Works on the window itself, in
+        /// pixels, whatever gave it its size (its XAML, a remembered
+        /// placement, the user). A window that is maximized or minimized
+        /// is left alone. Never throws.</summary>
+        internal static void Refit(Window window)
+        {
+            try
+            {
+                if (window == null || window.WindowState != WindowState.Normal)
+                {
+                    return;
+                }
+                IntPtr hwnd = new WindowInteropHelper(window).Handle;
+                if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out NativeRect at))
+                {
+                    return;
+                }
+                Int32Rect work;
+                if (TestWorkArea.HasValue)
+                {
+                    work = TestWorkArea.Value;
+                }
+                else
+                {
+                    var info = new MonitorInfo { Size = Marshal.SizeOf(typeof(MonitorInfo)) };
+                    if (!GetMonitorInfo(MonitorFromWindow(hwnd, 2 /* the nearest monitor */), ref info))
+                    {
+                        return;
+                    }
+                    work = new Int32Rect(info.Work.Left, info.Work.Top, info.Work.Right - info.Work.Left,
+                                         info.Work.Bottom - info.Work.Top);
+                }
+                if (work.Width < 200 || work.Height < 200)
+                {
+                    return;
+                }
+                DpiScale dpi = VisualTreeHelper.GetDpi(window);
+                double sx = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0, sy = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1.0;
+                bool wide = window.SizeToContent == SizeToContent.Width || window.SizeToContent == SizeToContent.WidthAndHeight;
+                bool tall = window.SizeToContent == SizeToContent.Height || window.SizeToContent == SizeToContent.WidthAndHeight;
+
+                // WPF's own limits first, in its units: a least size above the screen's would undo the fit, and
+                // a window that sizes itself to its content is held by its greatest size
+                Size limit = Limit(new Rect(work.X / sx, work.Y / sy, work.Width / sx, work.Height / sy));
+                if (window.MinWidth > limit.Width)
+                {
+                    window.MinWidth = limit.Width;
+                }
+                if (window.MinHeight > limit.Height)
+                {
+                    window.MinHeight = limit.Height;
+                }
+                if (wide && !(window.MaxWidth <= limit.Width))
+                {
+                    window.MaxWidth = limit.Width;
+                }
+                if (tall && !(window.MaxHeight <= limit.Height))
+                {
+                    window.MaxHeight = limit.Height;
+                }
+
+                var now = new Int32Rect(at.Left, at.Top, at.Right - at.Left, at.Bottom - at.Top);
+                Int32Rect fit = FitInside(now, work, (int)Math.Round(Margin * sx), (int)Math.Round(Margin * sy),
+                                          keepWidth: wide, keepHeight: tall);
+                if (fit.X != now.X || fit.Y != now.Y || fit.Width != now.Width || fit.Height != now.Height)
+                {
+                    SetWindowPos(hwnd, IntPtr.Zero, fit.X, fit.Y, fit.Width, fit.Height, SwpNoZOrder | SwpNoActivate);
+                }
+            }
+            catch (Exception)
+            {
+                // a window that could not be fitted is still a window
+            }
+        }
+
+        /// <summary>The place and size, in pixels, of a window fitted to a
+        /// work area: no wider or taller than the area less the margin (and
+        /// never asked to be smaller than 320 by 240), and moved the least
+        /// distance that puts it inside the area. A window larger than the
+        /// area keeps its top left corner in view.
+        /// <paramref name="keepWidth"/> and <paramref name="keepHeight"/>
+        /// leave a side alone that the window sizes to its content (its
+        /// greatest size holds it instead).</summary>
+        internal static Int32Rect FitInside(Int32Rect window, Int32Rect work, int marginX, int marginY,
+            bool keepWidth = false, bool keepHeight = false)
+        {
+            int w = keepWidth ? window.Width : Math.Min(window.Width, Math.Max(320, work.Width - marginX));
+            int h = keepHeight ? window.Height : Math.Min(window.Height, Math.Max(240, work.Height - marginY));
+            int x = window.X, y = window.Y;
+            if (x + w > work.X + work.Width)
+            {
+                x = work.X + work.Width - w;
+            }
+            if (y + h > work.Y + work.Height)
+            {
+                y = work.Y + work.Height - h;
+            }
+            if (x < work.X)
+            {
+                x = work.X;
+            }
+            if (y < work.Y)
+            {
+                y = work.Y;
+            }
+            return new Int32Rect(x, y, w, h);
         }
 
         /// <summary>The part of <see cref="Apply"/> that needs no screen:
@@ -259,59 +411,6 @@ namespace WildlifeTools
             window.Content = null;
             box.Content = content;
             window.Content = box;
-        }
-
-        /// <summary>Moves a loaded window back inside the work area of the
-        /// monitor it is on. Never throws.</summary>
-        internal static void KeepInside(Window window)
-        {
-            try
-            {
-                Rect now = WorkAreaOf(window);
-                Point at = Inside(new Rect(window.Left, window.Top, window.ActualWidth, window.ActualHeight), now);
-                if (at.X != window.Left)
-                {
-                    window.Left = at.X;
-                }
-                if (at.Y != window.Top)
-                {
-                    window.Top = at.Y;
-                }
-            }
-            catch (Exception)
-            {
-                // a window that could not be moved is still a window
-            }
-        }
-
-        /// <summary>Where the top left corner of <paramref name="window"/>
-        /// goes so that the window lies inside <paramref name="area"/>; a
-        /// window larger than the area keeps its top left corner in
-        /// view.</summary>
-        internal static Point Inside(Rect window, Rect area)
-        {
-            double left = window.Left, top = window.Top;
-            if (double.IsNaN(left) || double.IsNaN(top))
-            {
-                return new Point(left, top);
-            }
-            if (left + window.Width > area.Right)
-            {
-                left = area.Right - window.Width;
-            }
-            if (top + window.Height > area.Bottom)
-            {
-                top = area.Bottom - window.Height;
-            }
-            if (left < area.Left)
-            {
-                left = area.Left;
-            }
-            if (top < area.Top)
-            {
-                top = area.Top;
-            }
-            return new Point(left, top);
         }
     }
 }

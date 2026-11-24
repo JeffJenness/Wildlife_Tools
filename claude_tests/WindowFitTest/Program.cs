@@ -32,9 +32,12 @@
 // (That every window CALLS WindowFit is checked by claude_tests/window_fit_test.py.)
 
 using System;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
+using System.Windows.Threading;
 using WildlifeTools;
 
 namespace WindowFitTest
@@ -66,6 +69,87 @@ namespace WindowFitTest
                 g.Children.Add(b);
             }
             return g;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativeRect { public int Left, Top, Right, Bottom; }
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hwnd, out NativeRect rect);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
+        /// <summary>A window that behaves as ArcGIS Pro's ProWindow does: at
+        /// some moment of its opening, after its constructor, the size and
+        /// place it had when it was last closed are put back, straight onto
+        /// the window. The moments tried are every one a window offers,
+        /// before and after the listeners of each.</summary>
+        private sealed class Remembering : Window
+        {
+            public const int Never = 0, WhenItGetsItsHandle = 1, AfterThat = 2, WhenLoadedFirst = 3, WhenLoadedLast = 4,
+                WhenFirstDrawn = 5, AfterFirstDrawn = 6;
+            public int When;
+            public Int32Rect Remembered = new Int32Rect(1490, 28, 1120, 788);    // Jeff's TPI Neighborhood Sampler
+
+            public Remembering()
+            {
+                // (ProWindow's own constructor runs before the window's: what it listens for, it hears first)
+                Loaded += (s, e) => { if (When == WhenLoadedFirst) PutBack(); };
+            }
+
+            public void ListenLast()
+            {
+                Loaded += (s, e) => { if (When == WhenLoadedLast) PutBack(); };
+            }
+
+            protected override void OnSourceInitialized(EventArgs e)
+            {
+                if (When == WhenItGetsItsHandle) PutBack();
+                base.OnSourceInitialized(e);                    // the listeners hear it here
+                if (When == AfterThat) PutBack();
+            }
+
+            protected override void OnContentRendered(EventArgs e)
+            {
+                if (When == WhenFirstDrawn) PutBack();
+                base.OnContentRendered(e);
+                if (When == AfterFirstDrawn) PutBack();
+            }
+
+            private void PutBack()
+            {
+                SetWindowPos(new WindowInteropHelper(this).Handle, IntPtr.Zero, Remembered.X, Remembered.Y, Remembered.Width,
+                    Remembered.Height, 0x0004 | 0x0010);
+            }
+        }
+
+        /// <summary>Opens a window for a moment, lets everything that was
+        /// waiting run, and says where the window ended up, in pixels.</summary>
+        private static Int32Rect OpenAndMeasure(Window w)
+        {
+            w.ShowActivated = w.WindowState == WindowState.Maximized;     // (a maximized window may not open unactivated)
+            w.ShowInTaskbar = false;
+            w.Show();
+            var frame = new DispatcherFrame();
+            var timer = new DispatcherTimer(DispatcherPriority.ApplicationIdle) { Interval = TimeSpan.FromMilliseconds(350) };
+            timer.Tick += (s, e) => { timer.Stop(); frame.Continue = false; };
+            timer.Start();
+            Dispatcher.PushFrame(frame);
+            GetWindowRect(new WindowInteropHelper(w).Handle, out NativeRect r);
+            w.Close();
+            return new Int32Rect(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
+        }
+
+        private static bool Fits(Int32Rect at, Int32Rect work, int margin)
+        {
+            return at.Width <= work.Width - margin && at.Height <= work.Height - margin && at.X >= work.X && at.Y >= work.Y
+                && at.X + at.Width <= work.X + work.Width && at.Y + at.Height <= work.Y + work.Height;
+        }
+
+        private static string Px(Int32Rect r)
+        {
+            return r.Width + " x " + r.Height + " at " + r.X + ", " + r.Y;
         }
 
         private static string Size(Window w)
@@ -212,20 +296,70 @@ namespace WindowFitTest
             Check("a form that fits: the scroll box asks for the form's own height and no more, so the window looks as before",
                 Math.Abs(box.DesiredSize.Height - 264) < 1, "asks for " + box.DesiredSize.Height);
 
-            // ---- back inside the screen ----------------------------------------------------------------------
-            var area = new Rect(0, 0, 1280, 672);
-            Point p = WindowFit.Inside(new Rect(600, 200, 1040, 656), area);
-            Check("hanging off the right and the bottom: moved left and up until it is inside", p.X == 240 && p.Y == 16, p.ToString());
-            p = WindowFit.Inside(new Rect(-80, -30, 400, 300), area);
-            Check("hanging off the left and the top: moved right and down", p.X == 0 && p.Y == 0, p.ToString());
-            p = WindowFit.Inside(new Rect(100, 100, 400, 300), area);
-            Check("inside already: not moved", p.X == 100 && p.Y == 100, p.ToString());
-            p = WindowFit.Inside(new Rect(50, 50, 1500, 900), area);
-            Check("larger than the screen: its top left corner stays in view", p.X == 0 && p.Y == 0, p.ToString());
-            p = WindowFit.Inside(new Rect(2000, 300, 800, 600), new Rect(1920, 0, 1280, 672));
-            Check("on a second monitor to the right: kept inside that monitor", p.X == 2000 && p.Y == 72, p.ToString());
-            p = WindowFit.Inside(new Rect(double.NaN, double.NaN, 400, 300), area);
-            Check("a window with no place yet: left alone", double.IsNaN(p.X) && double.IsNaN(p.Y));
+            // ---- a window on the screen, fitted to its monitor (in pixels) ---------------------------------------
+            var small = new Int32Rect(0, 0, 1366, 728);          // a 1366 by 768 monitor less its taskbar
+            Int32Rect r = WindowFit.FitInside(new Int32Rect(1490, 28, 1120, 788), small, 16, 16);
+            Check("the TPI Neighborhood Sampler as ArcGIS Pro remembered it (1120 by 788 at 1490, 28), on a 1366 by 768 monitor: "
+                + "712 high and wholly on the screen", r.Width == 1120 && r.Height == 712 && r.X == 246 && r.Y == 16, Px(r));
+            r = WindowFit.FitInside(new Int32Rect(100, 28, 577, 843), small, 16, 16);
+            Check("Repeating Shapes as remembered (577 by 843): 712 high, moved up to show its last row",
+                r.Width == 577 && r.Height == 712 && r.X == 100 && r.Y == 16, Px(r));
+            r = WindowFit.FitInside(new Int32Rect(-80, -30, 400, 300), small, 16, 16);
+            Check("hanging off the left and the top: moved right and down, its size kept",
+                r.X == 0 && r.Y == 0 && r.Width == 400 && r.Height == 300, Px(r));
+            r = WindowFit.FitInside(new Int32Rect(100, 100, 400, 300), small, 16, 16);
+            Check("inside already: not touched", r.X == 100 && r.Y == 100 && r.Width == 400 && r.Height == 300, Px(r));
+            r = WindowFit.FitInside(new Int32Rect(50, 50, 3000, 2000), small, 16, 16);
+            Check("far larger than the screen: brought down to the screen less the margin, and moved the least that puts it inside",
+                r.X == 16 && r.Y == 16 && r.Width == 1350 && r.Height == 712, Px(r));
+            r = WindowFit.FitInside(new Int32Rect(1700, 300, 900, 700), new Int32Rect(1366, 0, 1366, 728), 16, 16);
+            Check("on a second monitor to the right: fitted to THAT monitor",
+                r.X == 1700 && r.Y == 28 && r.Width == 900 && r.Height == 700, Px(r));
+            r = WindowFit.FitInside(new Int32Rect(10, 10, 900, 900), small, 24, 24, keepWidth: false, keepHeight: true);
+            Check("a side the window sizes to its content is not resized here (its greatest size holds it), only moved",
+                r.Height == 900 && r.Y == 0 && r.Width == 900 && r.X == 10, Px(r));
+            r = WindowFit.FitInside(new Int32Rect(0, 0, 500, 400), new Int32Rect(0, 0, 300, 200), 16, 16);
+            Check("a work area too small to be true: never asked to be smaller than 320 by 240",
+                r.Width == 320 && r.Height == 240, Px(r));
+
+            // ---- windows that REALLY open, with a remembered size put back after the constructor -------------------
+            // What Jeff met on 23 November 2026. Each window below is made as a XAML window is (a size, a least size,
+            // WindowFit.Apply in the constructor's place), opened on this screen for a third of a second, and measured.
+            // The work area is given, so the test does not need a small monitor.
+            WindowFit.TestWorkArea = small;
+            var moments = new[]
+            {
+                (Remembering.Never, "nothing remembered (a first use): the size its XAML asks for is cut to the screen"),
+                (Remembering.WhenItGetsItsHandle, "remembered size put back as the window gets its handle"),
+                (Remembering.AfterThat, "put back just after that, when the listeners have already heard"),
+                (Remembering.WhenLoadedFirst, "put back when the window is loaded, by a listener that came first"),
+                (Remembering.WhenLoadedLast, "put back when the window is loaded, by a listener that came last"),
+                (Remembering.WhenFirstDrawn, "put back as the window is first drawn"),
+                (Remembering.AfterFirstDrawn, "put back after the window is first drawn, when the listeners have already heard"),
+            };
+            foreach (var (when, words) in moments)
+            {
+                var win = new Remembering { When = when, Width = 1120, Height = 800, MinWidth = 880, MinHeight = 600, Content = Form(4, true) };
+                WindowFit.Apply(win);
+                win.ListenLast();
+                Int32Rect at = OpenAndMeasure(win);
+                Check("opened for real, " + words + ": it ends no larger than the screen and wholly on it",
+                    Fits(at, small, 16) && at.Height == 712 && at.Width == 1120, "it ended " + Px(at));
+            }
+
+            var tallForm = Form(20, false, 60);                   // 1,224 high: a form that cannot give way
+            var content = new Remembering { When = Remembering.Never, Width = 380, SizeToContent = SizeToContent.Height, Content = tallForm };
+            WindowFit.Apply(content);
+            Int32Rect got = OpenAndMeasure(content);
+            Check("opened for real, a window sized to content taller than the screen: held to the screen, with a scroll box",
+                Fits(got, small, 16) && content.Content is ScrollViewer, "it ended " + Px(got));
+
+            var big = new Remembering { When = Remembering.Never, Width = 600, Height = 400, WindowState = WindowState.Maximized };
+            WindowFit.Apply(big);
+            Int32Rect full = OpenAndMeasure(big);
+            Check("opened for real, maximized: left alone (it is larger than the small work area given, and stays so)",
+                full.Width > small.Width || full.Height > small.Height, "it ended " + Px(full));
+            WindowFit.TestWorkArea = null;
 
             Console.WriteLine();
             Console.WriteLine(_passed + " passed, " + _failed + " failed");
